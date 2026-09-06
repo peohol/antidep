@@ -505,6 +505,98 @@ describe('checkExtraction — tallene', () => {
     expect(report.checkedFields).toContain('estimate')
   })
 
+  // Forvekslingen skjer *inne i* ett verifisert utdrag: utdraget navngir riktig
+  // arm, men tallet står i en setning om en annen.
+  it('bekrefter ikke en utvalgsstørrelse som står i en setning om en annen arm', () => {
+    const utdrag =
+      'Weight change was assessed. Sertraline and paroxetine were compared; ' +
+      'paroxetine patients (N = 48) completed the trial.'
+    const report = check(
+      { extraction: { sampleSize: 48, rawExtraction: { sitat: utdrag } } },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+  })
+
+  // Samme, for endepunktet: utdraget navngir både armen og målendepunktet, men
+  // det eneste estimatet står i setningen om HAM-D.
+  it('bekrefter ikke et estimat som står i en setning om et annet endepunkt', () => {
+    const utdrag =
+      'Sertraline-treated patients had a mean change of 5.0 points on HAM-D; ' +
+      'body weight change was also recorded.'
+    const report = check(
+      {
+        extraction: {
+          estimate: '5.0',
+          estimateUnit: null,
+          effectMeasure: 'risk_ratio',
+          outcomeLabel: 'body weight change',
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+  })
+
+  it('bekrefter ikke et konfidensintervall som står i setningen om et annet endepunkt', () => {
+    const utdrag =
+      'Sertraline-treated patients had a mean change of 5.0 points (95% CI 0.4 to 2.6) ' +
+      'on HAM-D; body weight change was also recorded.'
+    const report = check(
+      {
+        extraction: {
+          estimateAvailability: 'not_reported',
+          estimate: null,
+          estimateUnit: null,
+          effectMeasure: null,
+          outcomeLabel: 'body weight change',
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
+  it('bekrefter når arm, endepunkt og verdi står i samme setning', () => {
+    const utdrag =
+      'Sertraline-treated patients had a mean body weight change of 5.0 kg; ' +
+      'HAM-D was also recorded.'
+    const report = check(
+      {
+        extraction: {
+          estimate: '5.0',
+          outcomeLabel: 'body weight change',
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.checkedFields).toContain('estimate')
+  })
+
   // Et nakent tall ved ankeret er ikke et nivå. Her er `90` en utvalgsstørrelse,
   // og kilden sier aldri prosent — den sier ikke hvilket nivå intervallet har.
   it('bekrefter ikke et nivå kilden aldri oppgir som prosent', () => {
@@ -544,29 +636,30 @@ describe('checkExtraction — tallene', () => {
   })
 
   it.each([
-    ['95% CI 0.4 to 2.6', 'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6).'],
+    ['95% CI 0.4 to 2.6', 'mean weight change was 1.5 kg (95% CI 0.4 to 2.6)'],
     // Den positive formen benektelsene over er en variant av. Uten denne ville
     // rettelsen kunne bestå ved å avvise alt.
-    ['nøytralt «was» som lim', 'Mean weight change. 95% CI was 0.4 to 2.6'],
-    ['CI etter nivået med kolon', 'Mean weight change was 1.5 kg (CI 95%: 0.4 to 2.6).'],
-    ['nivået skrevet ut', 'Mean weight change was 1.5 kg, 95% confidence interval 0.4 to 2.6.'],
-    ['grensene før ankeret', 'Mean weight change was 1.5 kg, 0.4 to 2.6 (95% CI).'],
-    ['norsk kilde', 'Vektendringen var 1,5 kg (95 % konfidensintervall 0,4 til 2,6).'],
+    ['nøytralt «was» som lim', 'mean weight change, 95% CI was 0.4 to 2.6'],
+    ['CI etter nivået med kolon', 'mean weight change was 1.5 kg (CI 95%: 0.4 to 2.6)'],
+    ['nivået skrevet ut', 'mean weight change was 1.5 kg, 95% confidence interval 0.4 to 2.6'],
+    ['grensene før ankeret', 'mean weight change was 1.5 kg, 0.4 to 2.6 (95% CI)'],
+    ['norsk kilde', 'weight change var 1,5 kg (95 % konfidensintervall 0,4 til 2,6)'],
     // Den vanligste skrivemåten i MEDLINE-sammendrag. Utenfor et navngitt
     // intervall leses en bindestrek fortsatt ikke som intervallstrek.
-    ['bindestrek som intervallstrek', 'Mean weight change was 1.5 kg (95% CI 0.4-2.6).'],
-    ['nivået skrevet «percent»', 'Weight change 1.5 kg, 95 percent CI 0.4 to 2.6.'],
+    ['bindestrek som intervallstrek', 'mean weight change was 1.5 kg (95% CI 0.4-2.6)'],
+    ['nivået skrevet «percent»', 'weight change 1.5 kg, 95 percent CI 0.4 to 2.6'],
     [
       'ankeret i parentes mellom nivå og grenser',
       'Weight change, 95% confidence interval (CI) 0.4 to 2.6.',
     ],
-    ['grensene før ankeret og nivået', 'Weight change 0.4 to 2.6 (CI 95%).'],
+    ['grensene før ankeret og nivået', 'weight change 0.4 to 2.6 (CI 95%)'],
   ])('kjenner igjen intervallet skrevet som «%s»', (_navn, kilde) => {
     // Teksten er funnets eget utdrag: tallene kontrolleres mot den, ikke mot
     // resten av artikkelen.
     // Utdraget må navngi både armen og endepunktet: et intervall hører til
     // ett endepunkt hos én arm.
-    const utdrag = `Sertraline, weight change. ${kilde}`
+    // Arm, endepunkt og verdi i samme setning: bindingen er på setningen.
+    const utdrag = `Sertraline, ${kilde}`
     const report = check({ extraction: { rawExtraction: { sitat: utdrag } } }, `Forord. ${utdrag}`)
 
     expect(report.checkedFields).toContain('confidence_interval')
@@ -680,29 +773,29 @@ describe('checkExtraction — tallene', () => {
   })
 
   it.each([
-    ['N = 48', 'Patients (sertraline, N = 48) completed the trial.', 48],
-    ['sample size was 48', 'The sample size was 48 in the sertraline arm.', 48],
-    ['284 adults', 'A total of 284 adults were randomised.', 284],
-    ['48 patients', 'We enrolled 48 patients at two sites.', 48],
-    ['norsk form', 'Studien inkluderte 48 pasienter.', 48],
+    ['N = 48', 'Patients (sertraline, N = 48) completed the trial', 48],
+    ['sample size was 48', 'the sample size was 48 in the sertraline arm', 48],
+    ['284 adults', 'a total of 284 adults were randomised to sertraline', 284],
+    ['48 patients', 'in the sertraline arm we enrolled 48 patients', 48],
+    ['norsk form', 'sertraline-studien inkluderte 48 pasienter', 48],
   ])('kjenner igjen utvalgsstørrelsen skrevet som «%s»', (_navn, kilde, størrelse) => {
     const report = check(
       {
         extraction: {
           sampleSize: størrelse,
-          rawExtraction: { sitat: `Sertraline. ${kilde}` },
+          rawExtraction: { sitat: kilde },
         },
       },
-      `Forord. Sertraline. ${kilde}`,
+      `Forord. ${kilde}`,
     )
 
     expect(report.checkedFields).toContain('sample_size')
   })
 
   it.each([
-    ['mean weight gain of', 'Vekt. Patients had a mean weight gain of 0.8 kg.'],
-    ['mean difference', 'Vekt. The mean difference was 0.8 kg.'],
-    ['norsk form', 'Vekt. Gjennomsnittlig endring var 0,8 kg.'],
+    ['mean weight gain of', 'sertraline patients had a weight change, a mean gain of 0.8 kg'],
+    ['mean difference', 'for sertraline the weight change mean difference was 0.8 kg'],
+    ['norsk form', 'sertraline weight change, gjennomsnittlig endring var 0,8 kg'],
   ])('kjenner igjen estimatet skrevet som «%s»', (_navn, kilde) => {
     const report = check(
       {

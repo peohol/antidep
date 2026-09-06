@@ -4845,6 +4845,28 @@ stå uavklart for de fleste reelle kilder inntil et ledd som forstår språk fin
 enden å ta feil i — alternativet er en bekreftelse som bygger på at to sanne setninger om
 forskjellige ting stod i samme artikkel. Begge rettelsene er mutasjonstestet hver for seg.
 
+**Den fjortende runden flyttet bindingen fra utdraget til setningen.** Å velge ut de utdragene som
+navngir armen — og for effektmål endepunktet — var ikke nok, fordi ett utdrag kan navngi flere:
+
+```text
+«Weight change was assessed. Sertraline and paroxetine were compared;
+ paroxetine patients (N = 48) completed the trial.»
+
+«Sertraline-treated patients had a mean change of 5.0 points on HAM-D;
+ body weight change was also recorded.»
+```
+
+Det første utdraget navngir sertralin, men den eneste utvalgsstørrelsen tilhører paroksetin. Det
+andre navngir både riktig arm og riktig endepunkt, men det eneste estimatet tilhører HAM-D — og det
+nådde `verified`. Begge er reprodusert.
+
+Utdragene deles nå i setninger, og et tall teller bare fra en setning som selv navngir armen — og
+for estimat og konfidensintervall også endepunktet. Delingen går på punktum, semikolon, utropstegn
+og spørsmålstegn; ikke på kolon, fordi «CI 95%: 0,4 til 2,6» ville blitt delt i to, og ikke på komma,
+fordi et komma sjelden skiller to påstander om forskjellige armer. Et punktum mellom to sifre er et
+desimalskilletegn og deler ingenting. Mutasjonstestet: settes bindingen tilbake til utdragsnivå,
+feller de tre nye testene den.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

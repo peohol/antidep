@@ -185,6 +185,22 @@ function stripTags(text: string): string {
   return text.replaceAll(/<[^>]*>/g, ' ')
 }
 
+/**
+ * Setningene i en tekst.
+ *
+ * Deler på punktum, semikolon, utropstegn og spørsmålstegn — ikke på kolon,
+ * fordi et konfidensintervall skrives «CI 95%: 0,4 til 2,6» og ville blitt delt
+ * i to, og ikke på komma, fordi et komma sjelden skiller to påstander om
+ * forskjellige armer. Et punktum mellom to sifre er et desimalskilletegn og
+ * deler ingenting.
+ */
+function sentences(text: string): readonly string[] {
+  return text
+    .split(/(?<!\d)[.;!?](?!\d)/u)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+}
+
 /** De to høystakkene et søk gjøres mot. */
 export function searchProjections(sourceText: string): readonly string[] {
   const raw = normalize(decodeEntities(sourceText))
@@ -1063,18 +1079,27 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // fleste reelle kilder inntil et ledd som forstår språk finnes. Det er den
   // riktige enden å ta feil i: alternativet er en bekreftelse som bygger på at
   // to sanne setninger om forskjellige ting stod i samme artikkel.
-  const quotesNaming = (term: string) =>
-    quotesFound ? quotes.filter((quote) => termOccursIn(searchProjections(quote.text), term)) : []
-
-  const armQuotes = quotesNaming(item.extraction.interventionDrugName)
-  const armAndOutcomeQuotes = armQuotes.filter((quote) =>
-    termOccursIn(searchProjections(quote.text), item.extraction.outcomeLabel),
+  // Bindingen er på *setningen*, ikke på utdraget. Et helt utdrag som nevner
+  // riktig arm er ikke nok, for det kan nevne flere:
+  //
+  //   «Sertraline and paroxetine were compared; paroxetine patients (N = 48) …»
+  //   «Sertraline … a mean change of 5.0 points on HAM-D; body weight change …»
+  //
+  // Begge navngir det raden trenger, og i begge tilhører tallet noe annet.
+  // Utdragene deles derfor i setninger, og et tall teller bare fra en setning
+  // som selv navngir armen — og for effektmål endepunktet.
+  const quoteFragments = quotesFound
+    ? quotes.flatMap((quote) => searchProjections(quote.text)).flatMap(sentences)
+    : []
+  const armFragments = quoteFragments.filter((fragment) =>
+    termOccursIn([fragment], item.extraction.interventionDrugName),
   )
-  const projectionsOf = (subset: readonly { readonly text: string }[]) =>
-    subset.flatMap((quote) => searchProjections(quote.text))
+  const outcomeBoundFragments = armFragments.filter((fragment) =>
+    termOccursIn([fragment], item.extraction.outcomeLabel),
+  )
 
-  const claimProjections = projectionsOf(armQuotes)
-  const outcomeBoundProjections = projectionsOf(armAndOutcomeQuotes)
+  const claimProjections = armFragments
+  const outcomeBoundProjections = outcomeBoundFragments
   const unmatchedNumbers: string[] = []
   const numericFields = new Set<EvidenceCheckField>()
   const unresolvedFields = new Set<EvidenceCheckField>()
