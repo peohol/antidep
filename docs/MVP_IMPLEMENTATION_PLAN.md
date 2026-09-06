@@ -1383,7 +1383,8 @@ PR G  db: add publication events and gate                                   (#15
       docs: record the evidence registration deployed to the hosted project (#46)  merget   ingen migrasjon
       docs: record the first real evidence registration in production       (#47)  merget   ingen migrasjon
       db: add technical agent identity and agent runs                        (#48)  merget   migrasjon 005d, 008c, 005e, 005f
-      db: add the extraction verification registration write path            (#50)  åpen     migrasjon 008d, 005g
+      db: add the extraction verification registration write path            (#50)  merget   migrasjon 008d, 005g
+      feat: run the extraction verifier from source version to verification (#51)  åpen     migrasjon 008e, 007f, 005h
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1466,20 +1467,26 @@ De fire neste hører til agentidentiteten (§74.31): 005d utvider agentrollevoka
 `extraction_verification`, 008c utvider auditvokabularet med agentidentitetenes tre
 livssyklushendelser, 005e bygger identitets- og kjøringsmodellen med sine to
 api-inngangspunkter, og 005f registrerer den første agentidentiteten.
-De to siste hører til det neste leddet i pipelinen (§74.30, §74.31, §74.32): 008d utvider
+De to neste hører til skriveveien for verifikasjonen (§74.30, §74.31, §74.32): 008d utvider
 auditvokabularet en sjette gang, med `evidence_verification_registered`, og 005g bygger den
 kontrollerte skriveveien som lar den registrerte ekstraksjonsverifikatoren registrere en
 verifikasjon i `workflow.evidence_verifications` — bundet deklarativt til riktig aktør og
 riktig agentrolle med to sammensatte fremmednøkler mot `provenance.agent_runs`.
+De fire siste lukker kjeden fra kildeversjon til kjørt verifikasjon (§74.33): 008e utvider
+auditvokabularet en sjuende gang med `source_version_registered`, 007f gir api-lesemodellen
+sitt tredje skrivbare medlem — skriveveien for å registrere en kildeversjon, med
+fingeravtrykket beregnet av databasen — 005h gir verifikatoren leseveien inn til
+grunnlaget den kontrollerer mot, og 006b lar publiseringsgaten lese hva kontrollene faktisk
+dekket, slik at en delkontroll ikke alene kan tilfredsstille den.
 Filrekkefølgen er dermed 001, 002, 003, 004, 005, 006, 006a, 007, 008, 007a, 005a, 005b,
-007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c, 005e, 005f, 008d, 005g — sortert
-på tidsstempel, ikke på migrasjonsnummer, og de seksten siste filene bærer alle et
-bokstavnummer, altså et nummer utenfor den planlagte rekken. (Setningen sa tidligere at «de
+007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c, 005e, 005f, 008d, 005g, 008e,
+007f, 005h, 006b — sortert på tidsstempel, ikke på migrasjonsnummer, og de tjue siste filene
+bærer alle et bokstavnummer, altså et nummer utenfor den planlagte rekken. (Setningen sa tidligere at «de
 seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot listen over —
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1430 pgTAP-assertions over 44 testfiler.
+Databaselaget teller nå 1510 pgTAP-assertions over 46 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1628,12 +1635,13 @@ bak G4/G5, er planlagt i §74.30.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   39 enum-typer, fordelt på de tjueseks migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   39 enum-typer, fordelt på de tjueni migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
-   005e, 005f, 008d og 005g — i filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
-   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 og 0.
+   005e, 005f, 008d, 005g, 008e, 007f, 005h og 006b — i filrekkefølge, ikke i
+   nummerrekkefølge — med henholdsvis 1, 6,
+   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle tjueseks ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle tretti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -4551,6 +4559,582 @@ ekte HTTP gjennom PostgREST med publishable-nøkkelen som `anon`: feil hemmeligh
 rolle gir begge 401 med identisk melding, riktig legitimasjon gir en kjøring, avslutningen gir
 200, og tabellene selv er ikke eksponert.
 
+**To i den fjerde runden, begge i selve evidenskontrollen.** Den første er den andre feilen i
+denne PR-en som kunne gitt en falsk `verified`:
+
+1. **Kliniske tallverdier mistet presisjon på vei ut av databasen.**
+   `api.extraction_verification_input(...)` la `estimate`, `ci_lower`, `ci_upper` og
+   `ci_level_percent` rett inn i jsonb som `numeric`. De ble da JSON-tall, og et JSON-tall blir en
+   IEEE-754 double i det `JSON.parse` leser svaret — før noen linje i verifikatoren kjører.
+   Et lagret `9007199254740993` var allerede blitt `9007199254740992`, og
+   `0.1234567890123456789` var blitt `0.12345678901234568`. Kommentaren i parseren sa at den leste
+   tall som tekst for å bevare presisjonen; avrundingen hadde skjedd et lag tidligere.
+
+   Konsekvensen er en falsk bekreftelse: står den avrundede verdien i kilden mens den lagrede ikke
+   gjør det, ville `estimate` blitt ført som kontrollert for et tall som ikke står der. De fire
+   feltene serialiseres nå med `::text`, slik `timepoint_min` og `timepoint_max` alt gjorde, og
+   parseren *kaster* på et tall framfor å bruke det — så en senere endring i api-funksjonen ikke
+   kan gjeninnføre avrundingen stille. Prøvd i begge ender: pgTAP kontrollerer at svaret gir tekst
+   og at `1.0000000000000000001` beholder hvert siffer, og enhetstestene går gjennom `JSON.parse`
+   framfor et håndbygd objekt, fordi det er nettopp der presisjonen gikk tapt.
+
+2. **Konfidensintervallet ble ført som kontrollert uten at nivået var det.** Kontrollen så bare på
+   `ci_lower` og `ci_upper`. Et registrert 90 %-intervall kunne dermed bli `verified` mot en kilde
+   som skriver «95% CI 0.4 to 2.6», og auditsporet ville sagt at intervallet var etterprøvd.
+   «0,4 til 2,6» er ikke samme påstand med 90 % som med 95 %, og databasen krever da også begge
+   eller ingen (`evidence_items_confidence_level_pairing_check`). Nivået inngår nå i tallkontrollen
+   under `confidence_interval`, og feltet føres først som kontrollert når nedre grense, øvre grense
+   og nivå alle er gjenfunnet.
+
+Begge er mutasjonstestet, og ingen av dem endrer utfallet for de to seedede funnene: de rapporterer
+ikke konfidensintervall, og estimatet `0.8` har ingen presisjon å miste.
+
+**Den femte runden fant at nivåkontrollen over var halv.** Rettelsen la nivået til som et *tredje
+uavhengig tallsøk*, og tre tall søkt hver for seg i hele teksten kan komme fra tre forskjellige
+steder:
+
+```text
+90 participants were enrolled. The effect was 1.5 kg (95% CI 0.4 to 2.6).
+```
+
+Et funn registrert med 0,4–2,6 og nivå **90 %** fant alle tre tallene her: `90` fra utvalget, og
+grensene fra et intervall kilden oppgir med *et annet* nivå. Kilden sier 95 %, raden sier 90 %, og
+kontrollen sa `verified`. Reprodusert før rettelsen.
+
+Intervallet kontrolleres nå som **én påstand rundt et anker**: stedet der kilden selv navngir et
+konfidensintervall. Nivået må stå inntil ankeret, slik kilder faktisk skriver det («95% CI»,
+«CI 95%», «95 % konfidensintervall»), og de to grensene må stå som *ett intervalluttrykk* i vinduet
+rundt det samme ankeret — ikke som to tall som tilfeldigvis begge finnes der. Den andre halvdelen er
+like nødvendig som den første: «0,4 til 1,9 … 1,1 til 2,6» inneholder både 0,4 og 2,6, men ingen av
+intervallene er 0,4–2,6.
+
+Inne i et navngitt intervall leses en bindestrek som intervallets strek og ikke som et minustegn, så
+«95% CI 0.4-2.6» — den vanligste skrivemåten i MEDLINE-sammendrag — kjennes igjen. Utenfor et slikt
+anker gjelder fortsatt den strengere regelen fra fjerde runde, der en bindestrek ikke kan skilles
+fra et fortegn. Navngir kilden ikke noe intervall, er utfallet `uncertain` og ikke et avvik:
+grensene kan stå i en tabell som ikke er med i representasjonen.
+
+Mutasjonstestet: settes kontrollen tilbake til tre uavhengige globale tallsøk, feller de tre nye
+testene den. De to seedede funnene er kjørt på nytt mot sine reelle NCBI-poster og er fortsatt
+`verified` — ingen av dem rapporterer konfidensintervall.
+
+**Den sjette runden viste at «samme vindu» ikke er «samme uttrykk».** Ankerregelen over lukket
+eksempelet den ble skrevet for, men to nye viste at et vindu fortsatt har et «i nærheten» et annet
+tall kan smyge seg inn i:
+
+```text
+n=90; CI 0.4 to 2.6
+95% CI was not reported; observed values ranged from 0.4 to 2.6.
+```
+
+I den første er `90` en utvalgsstørrelse — kilden sier aldri prosent, og sier dermed ikke hvilket
+nivå intervallet har. I den andre sier kilden uttrykkelig at intervallet *ikke* er rapportert, og
+grenseparet hører til noe annet. Begge lå innenfor vinduet, og begge ble bekreftet. Reprodusert
+før rettelsen.
+
+Intervallet kontrolleres nå som **ett sammenhengende uttrykk**, og de to kravene er hver for seg
+det som stopper hvert av eksemplene:
+
+| Krav | Hva det stopper |
+| --- | --- |
+| Nivået må være en eksplisitt prosentangivelse (`95%`, `95 %`, `95 percent`) | `n=90; CI …` — et nakent tall ved ankeret er ikke et nivå |
+| Delene bindes sammen av høyst 16 tegn uten et eneste siffer | `95% CI was not reported; … 0.4 to 2.6` — det er ikke ett uttrykk, det er to setninger |
+
+Fire rekkefølger godtas, og det er de kilder faktisk skriver: nivået foran eller bak ankeret, og
+grensene foran eller bak begge. Begge kravene er mutasjonstestet hver for seg — fjernes
+prosentkravet feller to tester, løsnes limet feller en.
+
+**Den syvende runden fant at «kort og sifferfritt» ikke er det samme som «nøytralt».** Limet var
+«hva som helst uten siffer, høyst 16 tegn», og en benektelse passer i den beskrivelsen:
+
+```text
+95% CI was not 0.4 to 2.6
+95% CI, not 0.4 to 2.6
+```
+
+Kilden sier uttrykkelig at 0,4–2,6 *ikke* er intervallet, og begge ble bekreftet. Reprodusert før
+rettelsen. En verifikator som skal lete etter numeriske avvik, må ikke kunne bekrefte et talluttrykk
+gjennom en benektelse.
+
+Limet er nå en **tillatelsesliste** og ikke en lengdegrense: skilletegn, mellomrom, en gjentakelse
+av selve intervallnavnet («… interval (CI) …»), og en kort liste nøytrale koblingsord (`of`, `was`,
+`is`, `med`, `fra` …). Et ord som ikke står på listen — `not`, `except`, `unlike`, `ikke` — bryter
+uttrykket. Punktum er heller ikke lim: en setningsgrense er ingen forbindelse.
+
+Listen er bevisst kort, og retningen på feilen er valgt: en skrivemåte kontrollen ikke kjenner igjen
+gir `uncertain`, altså en uavklart kontroll — ikke en falsk bekreftelse. Mutasjonstestet: settes
+limet tilbake til den sifferfrie lengdegrensen, feller fire tester det, mens den positive formen
+«95% CI was 0.4 to 2.6» fortsatt må bekreftes.
+
+**Den åttende runden tok den samme lærdommen til skalarene.** Konfidensintervallet var kontrollert
+mot sin egen kontekst, men `sample_size` og `estimate` ble fortsatt søkt som nakne sifferrekker i
+hele representasjonen:
+
+```text
+registrert sample_size = 90   kilden sier «90% improved»
+registrert estimate = 15      kilden sier «15 mg once daily»
+```
+
+Tallet fantes; verdien var aldri oppgitt for det feltet. Feltet ble likevel ført opp i
+`checked_fields`, og raden kunne bli `verified`. Reprodusert før rettelsen.
+
+Tallet må nå stå inntil et uttrykk som navngir feltet — «N = 48», «284 adults», «mean weight gain
+of 0.8» — med det samme nøytrale limet som konfidensintervallet bruker. Ordlistene er korte med
+vilje, og **enheten alene er ikke et anker for estimatet**: «15 mg» navngir en dose, ikke et
+effektestimat, og et felt kontrollert mot en dose ville vært nøyaktig feilen dette skal hindre.
+
+Samme runde lukket en grense til: `1.5` ble funnet inne i `1.5e-3`, som er 0,0015 og altså et helt
+annet tall. En eksponent hører til tallet og er ikke tekst etter det, så tallgrensen avviser den nå
+— også på øvre konfidensgrense, der `2.6` ikke lenger finnes i `2.6e-3`.
+
+**Prøven som betyr noe:** begge de reelle NCBI-funnene er fortsatt `verified` under den strengere
+regelen. «sertraline, N = 48» og «a mean weight gain of 0.8 +/- 2.7 kg» er begge former listene
+kjenner igjen — og i den første kilden står `48` dessuten i et titalls referanser, som den gamle
+regelen ville akseptert som treff. Begge rettelsene er mutasjonstestet hver for seg.
+
+**Den niende runden strammet ordlistene til å faktisk navngi feltet.** Første utkast hadde verb i
+ankerlisten for utvalgsstørrelse, og et verb sier hva som ble gjort — ikke hva som telles:
+
+```text
+registrert sample_size = 12   kilden sier «Participants completed 12 weeks of treatment.»
+registrert estimate = 12      kilden sier «The median was 12 months.»
+```
+
+Begge ble bekreftet. Reprodusert før rettelsen — den andre fant jeg da jeg lette etter samme
+feilklasse på estimatsiden, som gjennomgangen ikke hadde pekt på.
+
+| Fjernet | Hvorfor | Hva som dekker de virkelige formene i stedet |
+| --- | --- | --- |
+| `included`, `enrolled`, `recruited`, `completed`, `randomized`, `total of` foran tallet | Sier hva som ble gjort, ikke hva som telles | Deltakerordene *bak* tallet: «enrolled 48 **patients**», «a total of 284 **adults**» |
+| `mean`, `median`, `average`, `gjennomsnitt*` som anker for estimatet | Statistikk over hva som helst, ikke navnet på et effektmål | Det effektspesifikke ordet, som står der uansett: «a mean weight **gain** of 0.8», «the mean **difference** was 0.8» |
+
+`n` krever nå `=` eller `:` rett etter: «N = 48» navngir utvalget, en løs `n` i nærheten av et tall
+gjør det ikke. Verbene ga altså ingen dekning listene ikke allerede hadde — bare en åpning. Begge
+innstrammingene er mutasjonstestet, og begge de reelle NCBI-funnene er fortsatt `verified`.
+
+**Den tiende runden lukket to ting: en SSRF-omvei og bindingen mellom tall og funn.**
+
+*NAT64 er to prefikser, ikke ett.* Vakten leste de siste 32 bitene som destinasjonen for hele
+`64:ff9b::/32`. Det er bare riktig for `/96`. RFC 6052 tillater også kortere prefikser, og den lokale
+blokken `64:ff9b:1::/48` (RFC 8215) bruker en slik: der er de siste 32 bitene suffiks. I
+`64:ff9b:1:a00:0:100:808:808` er destinasjonen **10.0.0.1** — privat — mens de siste 32 bitene er
+8.8.8.8 og ser offentlige ut. Vakten slapp den gjennom; det er prøvd. Nå pakkes bare `/96` ut, og
+resten av `64:ff9b::/32` avvises: en destinasjon vakten ikke kan lese, er ikke en den kan godkjenne.
+Samme runde tok inn de IPv6-blokkene registeret har fått siden: `100:0:0:1::/64` (dummy),
+`3fff::/20` og `5f00::/16` — og Teredo-regelen ble utvidet til hele `2001::/23`, som også dekker
+benchmarking, ORCHIDv2 og drone remote id. Grensene er prøvd i begge retninger, slik at
+publikumsadresser like utenfor blokkene fortsatt slipper gjennom.
+
+*Et tall må tilhøre funnet, ikke bare artikkelen.* Tallene ble søkt i hele representasjonen, og en
+artikkel beskriver ofte flere armer og flere utfall:
+
+```text
+raden gjelder sertralin med sample_size = 48
+artikkelen sier «paroxetine, N = 48» et annet sted
+```
+
+Feltet ble ført opp i `checked_fields` fordi en *annen arm* hadde det tallet. Bindingen som manglet,
+fantes allerede: `raw_extraction` er funnets egne ordrette utdrag, og de er nettopp verifisert ord
+for ord mot representasjonen. Tallene søkes derfor i dem. Er ingen utdrag gjenfunnet, føres ingen
+tallfelt opp — samme regel som gjelder kildepekeren, og av samme grunn.
+
+Innstrammingen krevde at fiksturen fikk to utdrag, som de seedede radene alt hadde: et funn som
+oppgir utvalgsstørrelse må ha et utdrag som sier den. **Begge de reelle NCBI-funnene er fortsatt
+`verified`** — «sertraline, N = 48» og «a mean weight gain of 0.8 +/- 2.7 kg» står begge i funnenes
+egne utdrag, mens `48` i den samme artikkelens referanseliste og i paroksetin-armen nå er utenfor.
+Begge rettelsene er mutasjonstestet hver for seg.
+
+**Den ellevte runden fant tre ting, og den første gjorde at hele kjøringen falt.**
+
+*`uncertain` kunne ikke registreres.* `workflow.evidence_verifications` krever en ikke-tom
+`findings` for alt som ikke er `verified` (migrasjon 005), mens kontrollen med vilje ga
+`findings: null` for et uavklart utfall. En helt normal uavklart kontroll ble derfor avvist av
+databasen, og `runExtractionVerification` felte hele kjøringen. Feilen var usynlig i alle tidligere
+kjøringer, fordi begge de reelle funnene endte som `verified` — reprodusert ende-til-ende først da
+innstrammingen under gjorde dem uavklarte:
+
+```
+api.register_extraction_verification ble avvist:
+new row … violates check constraint "evidence_verifications_findings_required_check"
+```
+
+Databasens regel er den riktige: en rad som ikke er bekreftet, skal si hvorfor der en leser ser
+etter det. Kontrollen skriver derfor en begrunnelse, og den begynner med «Kontrollen konkluderte
+ikke, og dette er ikke et avvik», slik at den ikke kan leses som en anklage. Bare de merknadene som
+faktisk sier hva som *ikke* ble avgjort går inn; `rationale` beholder alle.
+
+*IPv6-vakten var en avvisningsliste der den måtte være en tillatelsesliste.* IANA deler ut global
+unicast fra `2000::/3`; resten av rommet er reservert. `4000::1` og `6000::1` sto ikke i noe
+special-purpose-register og slapp derfor gjennom — men et reservert prefiks kan godt ha en intern
+rute. Vanlige IPv6-adresser må nå ligge innenfor `2000::/3`, med de innpakkede formene håndtert før
+regelen og avvisningslisten beholdt foran den, fordi den gir presise grunner for loopback og
+link-local framfor den generiske.
+
+*Et tall må tilhøre armen, ikke bare utdraget.* Å søke i funnets egne utdrag var ikke nok: et helt
+vanlig utdrag beskriver flere armer i én setning, og da står den registrerte verdien der — men det
+gjør de andre armenes verdier også. Kontrollen teller nå opp **alle** verdiene utdraget oppgir for
+feltet. Er det nøyaktig én, og den er den registrerte, er raden bekreftet; er det flere, står feltet
+uavklart. Samme regel gjelder konfidensintervallet, der flere intervalluttrykk i ett utdrag gir
+samme utfall.
+
+Grensen er skrevet ut framfor pyntet på: opptellingen ser det samme mønsteret bekreftelsen ser, så
+en andre arm skrevet på en form ankerlisten ikke dekker, blir ikke oppdaget. Å telle med en løsere
+regel enn den som bekrefter ble prøvd og forkastet — den fant tall langt unna og gjorde nesten
+enhver rad uavklart, altså en verifikator som ikke lenger sier noe. Alle tre rettelsene er
+mutasjonstestet hver for seg.
+
+**Den tolvte runden fant at en samling utdrag ikke er en binding, og at 4000-grensen bare var halvt
+håndhevet.**
+
+*Utdraget må selv si hvilken arm det gjelder.* Å lese tallene fra funnets utdrag var ikke nok, fordi
+utdragene ble slått sammen til én tekst. Et funn med to utdrag:
+
+```text
+«Sertraline-treated patients were included in the trial.»
+«Paroxetine patients (N = 48) had mean weight change 1.5 kg (95% CI 0.4 to 2.6).»
+```
+
+Begge står ordrett i kilden, sertralin finnes, endepunktet finnes, og det er nøyaktig én kandidat
+per felt — men alle tallene tilhører paroksetin. Utfallet ble `verified`. Reprodusert før rettelsen.
+Tallene leses nå bare fra de utdragene som *selv* navngir funnets intervensjon, og begrepene leses
+fra funnets utdrag av samme grunn: at legemiddelnavnet står et sted i artikkelen, sier ingenting om
+denne raden. Det er også blitt en regel for redaktøren, og en rimelig en: et utdrag som skal
+etterprøve et tall, må ta med armen tallet gjelder.
+
+*Begge tekstfeltene har en grense, ikke bare det ene.* `findings` og `rationale` er begrenset til
+4000 tegn hver, mens `raw_extraction` er jsonb uten tilsvarende grense. Avkortingen gjaldt bare
+fallback-teksten for `uncertain`: et funn med mange eller lange utdragsnøkler ga en `rationale` på
+10 448 tegn, som basen ville avvist. Grensen håndheves nå på begge feltene og på hver vei ut av
+kontrollen.
+
+*Og registreringen er flyttet innenfor innkapslingen.* En avvist rad felte hele kjøringen, slik at
+de øvrige funnene sto ukontrollert av en grunn som ikke var deres. En avvisning er nå den ene radens
+problem: funnet føres som overhoppet med databasens egen begrunnelse, og køen går videre. Alle tre
+rettelsene er mutasjonstestet hver for seg.
+
+**Den trettende runden fant to forvekslinger til, og den første er den farligste i akkurat dette
+registeret.**
+
+*Legemiddelnavn ble matchet som delstreng.* «citalopram» står inne i «escitalopram», og
+«venlafaxine» inne i «desvenlafaxine». Et ordrett utdrag om escitalopram bandt derfor en
+citalopramrad, og tallene i det ble kontrollert som om de var citalopramradens. Begreper matches nå
+med ordgrense.
+
+Grensen foran begrepet er den som avgjør, fordi de klinisk farlige forvekslingene er nettopp de
+prefikserte formene — `es-`, `des-`, `levo-`. Etter begrepet tillates inntil to bokstaver, fordi
+katalogen er på norsk og kildene på engelsk og forskjellen som regel er en endelse: «sertralin» mot
+«sertraline». Uten den åpningen ville ingen norsk legemiddeletikett matchet en engelsk kilde. To
+bokstaver er nok til endelsen og for lite til å nå et annet virkestoffnavn.
+
+*Et estimat hører til ett endepunkt hos én arm.* Bindingen filtrerte bare på intervensjonen, mens
+endepunktet ble kontrollert mot alle utdragene under ett. To sanne utdrag kunne dermed settes sammen
+til en gal rad:
+
+```text
+«Sertraline-treated patients had a mean change of 5.0 points on the HAM-D scale.»
+«Body weight change was the prespecified primary outcome.»
+```
+
+Begge står ordrett i kilden, og sammen «bekreftet» de en sertralinrad om vektendring med estimat
+5,0 — et tall som hører til HAM-D. Estimat og konfidensintervall krever nå ett utdrag som navngir
+både armen og endepunktet. Utvalgsstørrelsen krever fortsatt bare armen, fordi den er en egenskap
+ved armen og ikke ved endepunktet.
+
+**Konsekvensen er skrevet ut framfor pyntet på:** katalogen er på norsk og kildene på engelsk, så et
+endepunkt som «vektendring» står sjelden i en engelsk kilde. Estimat og konfidensintervall vil derfor
+stå uavklart for de fleste reelle kilder inntil et ledd som forstår språk finnes. Det er den riktige
+enden å ta feil i — alternativet er en bekreftelse som bygger på at to sanne setninger om
+forskjellige ting stod i samme artikkel. Begge rettelsene er mutasjonstestet hver for seg.
+
+**Den fjortende runden flyttet bindingen fra utdraget til setningen.** Å velge ut de utdragene som
+navngir armen — og for effektmål endepunktet — var ikke nok, fordi ett utdrag kan navngi flere:
+
+```text
+«Weight change was assessed. Sertraline and paroxetine were compared;
+ paroxetine patients (N = 48) completed the trial.»
+
+«Sertraline-treated patients had a mean change of 5.0 points on HAM-D;
+ body weight change was also recorded.»
+```
+
+Det første utdraget navngir sertralin, men den eneste utvalgsstørrelsen tilhører paroksetin. Det
+andre navngir både riktig arm og riktig endepunkt, men det eneste estimatet tilhører HAM-D — og det
+nådde `verified`. Begge er reprodusert.
+
+Utdragene deles nå i setninger, og et tall teller bare fra en setning som selv navngir armen — og
+for estimat og konfidensintervall også endepunktet. Delingen går på punktum, semikolon, utropstegn
+og spørsmålstegn; ikke på kolon, fordi «CI 95%: 0,4 til 2,6» ville blitt delt i to, og ikke på komma,
+fordi et komma sjelden skiller to påstander om forskjellige armer. Et punktum mellom to sifre er et
+desimalskilletegn og deler ingenting. Mutasjonstestet: settes bindingen tilbake til utdragsnivå,
+feller de tre nye testene den.
+
+**Den femtende runden viste at setning heller ikke er det samme som påstand.** To endepunkt kan stå
+i én grammatisk setning:
+
+```text
+«Sertraline-treated patients had a mean HAM-D change of 5.0 points
+ (95% CI 4.0 to 6.0), while body weight change was also recorded.»
+```
+
+Setningen navngir både armen og radens endepunkt, mens estimatet og intervallet tilhører HAM-D — og
+den nådde `verified`. Reprodusert.
+
+Rettelsen er **nærhet**, ikke enda et skilletegn i delingen: et tall må stå *inntil* det som binder
+det. Utvalgsstørrelsen bindes til armen («sertraline patients (N = 284)»), og effektmålene til
+endepunktet («weight change of 1.5 kg»); armen er allerede bundet på setningen. Å kreve armen inntil
+et effektmål ville krevd at den sto klistret til verdien, og det gjør den nesten aldri — armen er
+setningens subjekt og endepunktet står imellom. Konfidensintervallet må stå inntil endepunktet, med
+radens *eget* estimat som lim, fordi intervallet hører til nettopp det tallet: er estimatet ikke
+bekreftet, er intervallet det heller ikke.
+
+Samme runde lukket to mindre feil som ble synlige underveis:
+
+| Feil | Hva den gjorde |
+| --- | --- |
+| Setningsdeleren delte ikke et punktum rett etter et tall | «… N = 48. Sertraline …» ble én setning. Regelen skulle verne desimaltall, men et punktum er bare et desimalskilletegn når det står *mellom* to sifre |
+| Et registrert tall med etterfølgende nuller kunne aldri gjenfinnes | `4,0` ble trimmet til `4`, og grensen bak mønsteret avviste så «4.0» i kilden. Et registrert `4,0` kunne dermed ikke matche en kilde som skriver `4.0` |
+
+Den siste er verdt å merke seg: den gjorde at et helt korrekt tall aldri kunne bekreftes, altså en
+feil i den trygge retningen — men like fullt en feil, og den ble bare synlig fordi kontrollen ble
+prøvd mot et intervall skrevet med nuller. Alle fire rettelsene er mutasjonstestet hver for seg.
+
+**Den sekstende runden lukket tre huller i nærhetsbindingen.**
+
+*Begrepsankeret hadde ikke grensene kommentaren lovet.* `termAnchor` var igjen en delstrengsjekk, så
+i «`Citalopram was compared with escitalopram-treated patients (N = 48).`» slapp setningen gjennom
+det ytre filteret på ekte «Citalopram», mens nærhetsmønsteret bandt tallet til delstrengen inne i
+«escitalopram». Ankeret har nå de samme ordgrensene som filteret.
+
+*Et snitt av tallverdier er ikke en binding.* To forskjellige forekomster kunne dekke hver sin
+halvdel: «`Sertraline 48 mg daily was used`» ga 48 fra armnærheten, «`Sertraline was compared with
+paroxetine patients (N = 48)`» ga 48 fra feltankeret, og snittet ble `{48}` uten at noen ett sted sa
+at sertralinarmen hadde 48 deltakere. Mønsteret krever nå at det bindende begrepet, feltets anker og
+tallet står i **samme treff**.
+
+*Enheten bak tallet forteller hvilken rolle det har.* «`body weight change at 5.0 weeks`» oppgir et
+tidspunkt, «`Sertraline 48 mg daily`» en dose — og et generelt nærhetsmønster ser ingen forskjell.
+En utvalgsstørrelse er et antall personer og står aldri med en måleenhet etter seg; et effektestimat
+er verken et tidspunkt eller et antall personer. Et tall som står rett etter «N =» er dessuten et
+utvalg uansett hva som kommer etter det. Samme runde tok `and`/`og` ut av limet, av samme grunn som
+`while` og `not`: de føyer til en ny påstand, og et intervall fra ett endepunkt skal ikke kunne
+kobles til det neste gjennom dem.
+
+Alle tre er mutasjonstestet hver for seg.
+
+**Den syttende runden fant tre veier til en falsk `verified` i den samme bindingen — og alle tre
+handlet om at tallet tilhørte noe annet enn raden.**
+
+*Et legemiddelnavn navngir armen, ikke feltet.* Begrepet kunne stå som *alternativ* til feltets eget
+anker, og for utvalgsstørrelsen er begrepet bare legemiddelnavnet. «`Sertraline: 48 tablets were
+dispensed`» bekreftet dermed en registrert `sample_size = 48`. Å svarteliste `tablets`, `centres`,
+`sites` … ville aldri blitt komplett; uttrykkene som *navngir* et utvalg, er derimot få og kjente.
+Begrepene er nå krav ved siden av ankeret og ikke alternativer til det, og utvalgsstørrelsen
+bekreftes bare når samme treff både sier at tallet er et antall personer og binder det til armen.
+
+*Én setning kan navngi det raden trenger og likevel tilskrive tallet en annen arm.* Effektmålene var
+bundet til armen på setningen og til endepunktet i uttrykket, så «`Sertraline and paroxetine were
+compared, and body weight change was 5.0 kg (95% CI 4.0 to 6.0) in paroxetine patients`» bekreftet en
+**sertralin**rad med både estimat og intervall. Armen, endepunktet og verdien må nå stå i samme
+sammenhengende treff, i en hvilken som helst rekkefølge. Det som stopper en gal binding, er at limet
+er en tillatelsesliste: et annet legemiddelnavn er alltid et ord limet ikke kjenner. Rekkevidden er
+en sekundær grense, og radens *egne* øvrige tall — «`(N = 48)`» mellom armen og verdien — er lim,
+fordi et fremmed tall der er nettopp signalet om at setningen har begynt å snakke om noe annet.
+
+*Enheten er en del av påstanden.* `estimate_unit` ble ikke brukt i det hele tatt, så en rad med
+`estimate = 1,5` og `estimate_unit = kg` ble bekreftet av «`a mean weight change of 1.5%`» — samme
+tall, en helt annen klinisk størrelse. Et dimensjonalt estimat må nå gjenfinnes sammen med enheten
+det er registrert med, og estimatet limer bare konfidensintervallet til endepunktet med den samme
+enheten.
+
+Alle tre er mutasjonstestet, og de to som ikke falt på første forsøk fikk skarpere tester framfor
+mildere krav: intervallets armbinding er prøvd på en setning der radens eget estimat *er* bekreftet,
+og enhetslimet på en setning der samme sifferrekke står både med og uten enhet.
+
+**Den attende runden fant den siste veien til en falsk `verified`, og den ble tydeligere nettopp
+fordi tallbindingen var blitt strengere.** Et registrert klinisk begrep som ikke lot seg gjenfinne,
+ble notert i begrunnelsen og holdt utenfor `checked_fields` — men det påvirket ikke utfallet.
+Databasen fanger det ikke: for `verified` krever den `source_locator` i `checked_fields`, ikke armen
+eller endepunktet. En rad uten oppgitte tallfelt hadde da ingenting igjen som kunne gjøre den
+uavklart, og et ordrett — men fullstendig irrelevant — utdrag bar hele raden:
+
+> Raden gjelder `sertraline` og `weight change`. `raw_extraction` er utdraget
+> «`The trial was randomized and double blind.`», som står ordrett i riktig kildeversjon.
+
+Sitatet ble gjenfunnet, kildepekeren korroborert, ingen tallkontroll kunne slå ut — og utfallet ble
+`verified`, uten at kontrollen noen gang hadde sett at utdraget handlet om dette legemiddelet eller
+dette endepunktet. Et manglende begrep gjør nå utfallet `uncertain`, fortsatt ikke
+`needs_correction`: en norsk etikett mot en engelsk kilde er den vanligste grunnen, og den er ikke en
+feilekstraksjon.
+
+Regelen er prøvd ett begrep om gangen — intervensjon, endepunkt, aktiv komparator og rapportert
+populasjon — med et utdrag som navngir alt *unntatt* det ene testen handler om, pluss reviewerens
+egen sak i sin helhet og en positiv kontroll der begrepene faktisk står der. Mutasjonstestet: uten
+regelen feller fem tester.
+
+Fiksturens `population_label` var samtidig den eneste norske etiketten i en ellers engelsk fikstur,
+og det var en inkonsistens uten konsekvens fram til nå. Den positive kontrollen skal være positiv,
+så etiketten følger resten av fiksturen; at en norsk etikett mot en engelsk kilde gir `uncertain`, er
+prøvd der det hører hjemme.
+
+**Den nittende runden tok den samme lærdommen til begrepene.** Rettelsen i runde 18 krevde at hvert
+begrep var gjenfunnet, men hvert *for seg*, mot den flate samlingen av utdrag — nøyaktig den feilen
+tallene ble rettet for i runde 12 og 14. To ordrette og sanne utdrag kunne dermed sys sammen til én
+gal rad:
+
+> «`Sertraline-treated patients discontinued treatment because of nausea.`»
+> «`Paroxetine-treated patients had a mean body weight change over the trial.`»
+
+Begge står i kilden, `intervention_arm` ble kontrollert fra det første og `outcome` fra det andre, og
+ingen del av kilden sier at vektendringen gjelder sertralin. Å kreve dem i samme *utdrag* ville ikke
+holdt: ett utdrag kan beskrive flere armer, og ren forekomst skiller ikke en positiv binding fra en
+benektelse — «`No participants received sertraline; paroxetine-treated patients had …`».
+
+For `verified` kreves nå et lokalt støttefragment som binder intervensjonen til endepunktet: begge
+begrepene i **ett sammenhengende treff**, med bare kjent lim imellom, akkurat som for tallene. `not`,
+`and` og et fremmed legemiddelnavn er alle ord limet ikke kjenner. Regresjon for begge reviewerens
+saker, for en benektelse i samme setning, og for to påstander skilt med semikolon — den siste viser
+at setningsdelingen er bærende, siden semikolon er lim inne i et uttrykk («`CI 95%: 0,4 til 2,6`»)
+men skiller to påstander. Den positive kontrollen er beholdt.
+
+Tre mutasjoner faller: at bindingen ikke påvirker utfallet, at den søkes i hele utdraget framfor i
+påstanden, og at den bare er samforekomst.
+
+**Den tjuende runden tok bindingen ut til resten av raden — og avviste ett av tre punkter.**
+
+*Komparatoren og populasjonen var fortsatt bare ordtreff.* «`Paroxetine was not used as a comparator
+in this analysis`» førte `comparator_arm` opp som kontrollert, og «`Patients with major depressive
+disorder were excluded from this analysis`» gjorde det samme for populasjonen — begge mens
+arm-til-endepunkt-bindingen kom fra et helt annet utdrag. Begge deler er nå bundet lokalt:
+komparatoren må stå navngitt **som** komparator (`compared with`, `versus`, `kontrollgruppen`, …), og
+populasjonen må stå knyttet til armen. Benektelser stoppes av det samme limet som ellers — `not` er
+ikke lim. `placebo` er samtidig gjort til et kontrollerbart begrep på linje med et virkestoffnavn;
+det var ikke kontrollert i det hele tatt før.
+
+*Forskjellen på en presisering og en kontrast er skrevet inn.* Radens egen populasjonsetikett er lim
+mellom armen og verdien — «`Sertraline-treated patients with major depressive disorder had a mean
+weight change`» er én påstand — mens komparatornavnet ikke er det. Et kontrastord mellom armen og
+verdien er nettopp signalet om at verdien kan tilhøre den andre armen, og forskjellen er
+mutasjonstestet.
+
+*Det tredje punktet er ikke en feil.* Reviewer leste `comparator_kind = none` som «det finnes ingen
+komparator», og pekte på at fiksturen har `none` mens kilden sier «`Fluoxetine was the comparator.`».
+Vokabularet sier noe annet: `none` betyr at **funnet** er armspesifikt, ikke at studien manglet en
+komparator — «et enarmet gjennomsnitt hentet fra en sammenlignende studie har komparator none»
+(migrasjon `20260819064500`). Fiksturen er nettopp det dokumenterte tilfellet: et `mean_change` for
+sertralinarmen, hentet fra en sammenlignende studie. Å gjøre `none` til noe som blokkerer `verified`
+ville gjort hvert eneste armspesifikke funn permanent uavklart, av en grunn som ikke er et avvik.
+`none` er en påstand om hvordan ekstraksjonen er avgrenset, ikke om kildens tekst, og det finnes
+ingenting i teksten å kontrollere den mot.
+
+Fem mutasjoner faller: komparatoren uten relasjonsanker, populasjonen uten binding til armen, placebo
+som ukontrollerbart, bindingene uten virkning på utfallet, og komparatornavnet som lim.
+
+**Den tjueførste runden gjorde bindingene til én binding — og byttet ut hvordan de matches.**
+
+*Flere bindinger som holder hver for seg, er ikke én binding.* Runde 20 kontrollerte arm↔endepunkt,
+komparator og populasjon som hver sin binding. Hver av dem kunne da komme fra sin egen påstand:
+«`Sertraline-treated patients had a mean weight change over the trial.`» sammen med «`Fluoxetine was
+compared with paroxetine for remission.`» ga en bekreftet rad der ingen påstand sier at paroksetin er
+komparator for *dette* funnet. Populasjonen hadde samme form, og radens tall var ikke bundet til
+kontrasten i det hele tatt. Alle radens aktive deler må nå stå i **ett** sammenhengende treff, og for
+estimatet og konfidensintervallet inngår kontrasten i det samme treffet.
+
+*Fiksturen var selv et tilfelle av feilen.* Den bandt populasjonen til armen i metodeutdraget og
+endepunktet til armen i resultatutdraget. Resultatutdraget navngir nå alle tre.
+
+*Matchingen er skrevet om, og det var nødvendig.* Ett mønster per rekkefølge betyr 120 mønstre med
+fem deler, hvert med nøstede kvantorer — og på en tekst som *ikke* passer, prøver motoren alle måter
+å dele limet på. Målt: over 20 sekunder på ett funn. Kildeteksten er utrygg ekstern data (§3.8), så
+kjøretiden kan ikke avhenge av at den er snill. Teksten skannes nå én gang venstre til høyre etter
+deler og lim; et sammenhengende treff er en ubrutt rekke av slike. Samme regel, uten baksporing:
+testfilen gikk fra 44 til 3,5 sekunder.
+
+*Én ekte feil kom ut av omskrivingen.* Limlisten inneholder både `g` og `gjennomsnittlig`. Med
+baksporing kom mønsteret seg rundt at `g` stumper av det lange ordet; én gjennomgang gjør ikke det.
+Limbitene har derfor en ordgrense bak seg — delt av alle de ordlignende formene, som også er det som
+gjør skanningen rask.
+
+Sju mutasjoner faller: radbindingen uten komparatoren, uten populasjonen, estimatet og intervallet
+uten kontrasten, limbitene uten ordgrense, rekkevidden uten håndheving, og sammenhengen uten
+håndheving.
+
+**Den tjueandre runden lukket det siste stedet der to påstander kunne bli én.** Runde 21 gjorde
+radens deler til én binding, men *tallets* binding krevde bare arm, endepunkt og kontrast.
+Populasjonen lå i limet — altså som noe som *fikk* stå mellom delene, ikke som noe som *måtte*
+finnes. Radbindingen og tallbindingen kunne dermed komme fra hver sin populasjon:
+
+> «`Sertraline-treated patients with major depressive disorder had weight change …`»
+> «`Sertraline-treated patients had weight change of 5.0 kg … in adolescents.`»
+
+Den første binder raden, den andre bekreftet tallet, og tallet gjelder uttrykkelig ungdom. En verdi
+hører til én arm, ett endepunkt, én kontrast og **én populasjon**, så rapportert populasjon er nå en
+påkrevd del av tallets egen binding — også for utvalgsstørrelsen, der et «N = 48» fra en undergruppe
+ikke er radens utvalg. Kravet motsa dessuten dokumentasjonen fra forrige runde, som allerede sa at
+alle aktive deler *og verdien* skulle stå i samme treff.
+
+Tre mutasjoner faller: utvalgsstørrelsen, estimatet og intervallet uten populasjonen som påkrevd del.
+
+Innstrammingen traff 27 eksisterende tester som bytter ut fiksturens utdrag med sitt eget: de
+forteller en annen historie enn fiksturen, og populasjonen er støy i dem. De slår den derfor av
+eksplisitt (`UTEN_POPULASJON`) framfor at kravet mykes opp. Fiksturen selv oppgir fortsatt en
+populasjon, og utdraget navngir den.
+
+**Den tjuetredje runden fant en kontraktsfeil mellom verifikatoren og publiseringsgaten — ikke i
+verifikatoren selv.**
+
+Den deterministiske kontrollen bedømmer **en delmengde** av feltene, og har aldri påstått noe annet:
+`checked_fields` sier presist hva den gikk gjennom (DATABASE_ARCHITECTURE.md §29). Den ser verken
+tidspunkt, retning, effektmål, availability-semantikk eller forbehold. Publiseringsgatens G5 leste
+imidlertid bare `outcome`. En rad registrert med `timepoint = 12 uker` mot en kilde som sier 8, eller
+med `sample_size_availability = not_reported` mot et utdrag som sier «N = 48», kunne dermed passere
+en gate som er ment å bety at ekstraksjonen er kontrollert.
+
+Feilen er *pre-eksisterende* i gaten, men denne PR-en er det som gjør en automatisk `verified` mulig
+i skala, så den lukkes her. Migrasjon **006b** legger til `workflow.required_check_fields(...)` og et
+nytt vilkår **G5b**: unionen av `checked_fields` over funnets bekreftede kontroller må dekke feltene
+raden faktisk påstår noe om. Kravet utledes fra raden selv framfor fra en liste noen må vedlikeholde
+— et felt som ikke er rapportert, påstår ingenting og kreves ikke, men *at* det står som ikke
+rapportert, dekkes av `availability_semantics`, som alltid kreves. Unionen, ikke den siste raden:
+flere verifikatorledd kan dele arbeidet, mens G5 fortsatt krever at den *siste* kontrollen er en
+bekreftelse.
+
+Konsekvensen, skrevet ut: **den deterministiske kontrollen kan aldri alene lukke publiseringsgaten.**
+Det er den riktige lesningen av hva den er, og den er nå håndhevet av databasen framfor forutsatt.
+
+Kontrakten er prøvd fra begge sider. I basen: en delkontroll med `outcome = 'verified'` avvises av
+gaten, kravet nevner et rapportert tidspunkt og availability-semantikken, og to verifikatorledd som
+til sammen dekker kravet, slipper gjennom. I kjøreren: `CHECKABLE_FIELDS` er den ene siden av
+kontrakten, og en test feller enhver `checked_fields` som går utenfor den — også på den lykkede
+stien, der raden er `verified` med felter som fortsatt står ukontrollert. To mutasjoner faller: G5b
+fjernet, og `availability_semantics` tatt ut av kravet.
+
+Sju eksisterende testrader måtte oppgi full dekning framfor `array['source_locator', 'estimate']`.
+De bruker nå `workflow.required_check_fields(e.id)`, altså den samme utledningen gaten bruker, slik
+at de holder seg selv oppdatert.
+
+**Den tjuefjerde runden fant en feil i G5b selv, i måten den møter G5 på.** Dekningen ble regnet som
+unionen over *alle* historiske bekreftelser. Da fikk et senere avvik en vei ut som G5 er ment å
+stenge:
+
+> t1 full bekreftelse, dekker alt · t2 ny kontroll, tidspunktet er uavklart (G5 blokkerer, riktig) ·
+> t3 delkontroll bekrefter sitat og begreper → G5 slipper, fordi siste utfall er `verified`, og G5b
+> slipper, fordi dekningen for tidspunkt hentes fra t1 — som t2 nettopp underkjente.
+
+Det åpne funnet fra t2 ville dermed vært borte uten at noen så på tidspunktet igjen. Dekningen har nå
+**samme gjeldende-semantikk som utfallet**: en bekreftelse teller bare når ingen ikke-bekreftende
+kontroll er nyere enn den, med samme rekkefølge G5 bruker for «den siste», slik at de to vilkårene
+ikke kan bli uenige om hva som er nyere.
+
+Nullstillingen gjelder alle felter, ikke bare det omstridte, og det er ikke strengere enn nødvendig:
+en uavklart kontroll fører opp i `checked_fields` det den *bekreftet*, så feltet den ikke fikk
+avklart, er nettopp det som ikke står der. Hvilket felt som er omstridt, er altså ikke avlesbart, og
+da er den trygge lesningen at hele ekstraksjonen står åpen til den er kontrollert på nytt.
+
+Regresjonen er reviewerens egen sekvens, i publiseringsgaten: full bekreftelse → uavklart kontroll →
+delkontroll som ikke dekker det omstridte feltet (blokkeres) → kontroll som faktisk re-kontrollerer
+alt (slipper gjennom). To mutasjoner faller: gjeldende-semantikken fjernet, og bare
+`needs_correction` — ikke `uncertain` — som nullstiller.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen
@@ -4628,6 +5212,209 @@ claim-verifikasjon (`workflow.claim_verifications`, `citation_support_verificati
 senere PR.
 
 ---
+
+### 74.33 Kjeden er kjørt: fra kildeversjon til registrert verifikasjon
+
+§74.32 endte med en skrivevei som var reviewbar og fullt prøvd, men som ingen hadde kjørt:
+`agent-identity:extraction-verification-01` var registrert uten legitimasjon, det fantes ingen
+skrivevei for kildeversjoner (punkt 1, issue #44), ingen lesevei inn til grunnlaget, og ingen
+kjører. **Denne PR-en lukker alle fire, og kjører kjeden hele veien gjennom mot en reell
+kilde.**
+
+**Tre migrasjoner, ingen av dem med en ny enum-type.**
+
+| Migrasjon | Hva den gjør |
+| --- | --- |
+| 008e | `audit.event_operation` får `source_version_registered`. Alene i sin egen fil, fordi `ALTER TYPE ... ADD VALUE` ikke kan brukes i samme transaksjon som verdien |
+| 007f | Skriveveien for kildeversjoner: attribusjon på `knowledge.source_versions`, hashen som databasens eiendom, auditskriveren og `api.create_source_version(...)` |
+| 005h | `api.extraction_verification_input(...)` — grunnlaget verifikatoren arbeider fra |
+
+**Punkt 1 er lukket, og tillitsmodellen for `content_hash` er avgjort.** Issue #44 spurte
+etter en skrivevei; kommentaren på issuen la til det som var det egentlige spørsmålet: en hash
+klienten oppgir, er en påstand ingen kan etterprøve. Svaret er at **hashen aldri er en
+parameter**. `api.create_source_version(...)` tar imot representasjonen, og databasen beregner
+`knowledge.source_version_content_hash(text)` i samme transaksjon som raden skrives — samme
+resonnement som gjorde `content_hash` på et evidensfunn til databasens eiendom (§74.27). De
+tre spørsmålene har dermed hvert sitt entydige svar: PostgreSQL beregner den, den beregnes av
+nøyaktig den teksten som ble oppgitt uten normalisering, og den etterprøves med
+`curl <retrieved_from> | sha256sum`.
+
+**Grensen for hva basen kan garantere er skrevet ut framfor pyntet på.** PostgreSQL kan ikke
+hente en URL, så basen kan ikke vite at teksten faktisk kom fra adressen — bare at hashen er
+hashen *av den teksten*. Den siste koblingen er verifikatorens, og den er reell: kjøreren
+henter adressen på nytt og sammenligner. En registrering der teksten ikke kom fra adressen,
+overlever derfor ikke første verifikasjon.
+
+**Attribusjonen som manglet.** `knowledge.source_versions` var den ene kunnskapstabellen uten
+`created_by_actor_id` — migrasjon 005 la den på fem tabeller, men ikke på denne, fordi det
+ikke fantes noen skrivevei å attribuere. Nå finnes det en. Kolonnen heter
+`retrieved_by_actor_id`, fordi raden er en observasjon og ikke et kunnskapsobjekt, og de to
+seedede radene er backfilt til ekstraksjonsagenten — samme aktør migrasjon 005 attribuerte
+evidensfunnene fra samme seed til, og samme arbeid.
+
+**Kjøreren er deterministisk, og det er et valg og ikke en mangel.** Kontrollen sammenligner
+hver ordrett gjengivelse i `raw_extraction` mot representasjonen, og hvert oppgitt tall mot
+den samme. ANTIDEP_CONSTITUTION.md §17 sier at kliniske kontroller skal være deterministiske
+«der det er mulig», og for sitat- og tallkontroll er det mulig — og strengere enn et
+språkmodellkall. §20 er samtidig oppfylt: kjøringen registrerer leverandør (`antidep`), modell
+(`deterministic-extraction-check`) og modellversjon som ethvert annet agentledd, så et senere
+ledd med språkmodell er et adapterbytte og ikke en datamodellendring.
+
+**Asymmetrien mellom å bekrefte og å avkrefte er kontrollens viktigste regel.** Et sitat er en
+påstand om ordrett gjengivelse fra nøyaktig den representasjonen raden peker på, og den
+påstanden er falsifiserbar: mangler teksten, er utfallet `needs_correction`. Et *tall* er noe
+annet — det kan stå skrevet med bokstaver («Thirty-one HV»), i en annen enhet eller i en
+tabell som ikke er med i representasjonen — så et manglende talltreff gir `uncertain` og ikke
+et avvik, og feltet føres ikke opp i `checked_fields`. En verifikator som roper ulv, er verre
+enn ingen verifikator. Regelen ble ikke funnet på: den ble oppdaget da kjeden ble kjørt mot en
+reell kilde som skriver utvalgsstørrelsen med bokstaver.
+
+**Kjøringen registrerer ingen verifikasjon i tre tilfeller**, og det strengeste er det tredje:
+funnet mangler kildeversjon eller fingeravtrykk; kilden lot seg ikke hente; eller
+fingeravtrykket stemmer ikke med det registrerte. I det siste tilfellet har verifikatoren sett
+*en* utgave, men ikke den ekstraksjonen ble gjort fra — og ingen av de tre verdiene i
+`workflow.verification_source_access` beskriver det sant. Å oppgi en usann verdi for å få
+registrert at kontrollen mislyktes, ville byttet en manglende opplysning mot en usann. Avviket
+står i kjøringens `output_manifest`, som er proveniensen for KI-operasjoner.
+
+---
+
+**Kjeden er kjørt mot en reell kilde, i en lokal stack, og dette er avlesningen.** Kilden er
+Carbone, Vanuytsel og Tack (2017), *The effect of mirtazapine on gastric accommodation,
+gastric sensitivity to distention, and nutrient tolerance in healthy subjects*,
+Neurogastroenterology and motility 29(12) — en reell randomisert studie om mirtazapin og
+kroppsvekt, hentet fra NCBI eutils.
+
+| Ledd | Avlesning |
+| --- | --- |
+| 1. Kilde | Opprettet av den navngitte redaktøren gjennom `api.create_source(...)` |
+| 2. Kildeversjon | Representasjonen hentet over nett (8 000 byte). Lokal `sha256sum` og databasens egen `content_hash` er identiske: `sha256:73d7f5d6…` |
+| 3. EvidenceItem | Registrert med `source_version_id` satt, `extraction_method = manual` |
+| 4. Agentkjøring | Åpnet av `agent-identity:extraction-verification-01` som `anon`, med legitimasjon utstedt av redaktøren |
+| 5. Kontroll | Adressen hentet på nytt; fingeravtrykket reprodusert; sitatet gjenfunnet ordrett i representasjonen |
+| 6. Verifikasjon | `verified`, `verifiable_representation`, `checked_fields = {raw_extraction, source_locator, intervention_arm}` (kjørt før innstrammingene under; se avsnittet om de seedede funnene) |
+| 7. Proveniens | Verifikasjonen peker på kjøringen, kjøringen på identiteten, identiteten på agentaktøren — og auditsporet viser `source_created → source_version_registered → evidence_item_created → evidence_verification_registered`, med menneskelig aktør på de tre første og agentaktøren på den siste |
+
+**Den negative veien er kjørt like reelt.** En kildeversjon registrert med et innhold adressen
+ikke lenger gir, ble avvist av kjøreren med «Kilden har endret seg», begge fingeravtrykk
+oppgitt, og ingen rad ble registrert. Det er den kontrollen som gjør at en `verified`-rad
+faktisk betyr noe.
+
+**De to seedede evidensfunnene er også kontrollert, mot sine egne reelle MEDLINE-poster.**
+Begge kildeversjonene fra migrasjon 003 reproduserer fortsatt sine registrerte
+fingeravtrykk fra NCBI i dag — seks uker etter at de ble registrert. At «adresse pluss hash» er et
+etterprøvbart grunnlag (§74.32), er dermed ikke lenger bare et resonnement: det er en avlesning.
+
+Etter innstrammingene under får begge funnene **`uncertain`**, og det er riktig svar. Utdragene
+deres er flerarms: «Patients (fluoxetine, N = 44; sertraline, N = 48; paroxetine, N = 47) …». En
+deterministisk kontroll kan ikke avgjøre hvilken av dem som er sertralinradens, og sier det, med
+kandidatene oppgitt i `findings`. Sitatene, kildepekeren og intervensjonsarmen står fortsatt som
+kontrollert. Et `verified` her ville vært en gjetning som så ut som en kontroll.
+
+---
+
+**Rettet under teknisk review: hentingen var en SSRF-vei.** Den første versjonen av kjøreren
+hentet `retrieved_from` med `fetch()` og fulgte redirect automatisk, uten noen grense på hvilke
+adresser den kunne nå. Gjennomgangen fanget at det gjør en registrert kilde til en fjernstyring
+av hva den betrodde maskinen kobler seg til: `localhost`, et privat nett, eller
+169.254.169.254 — skymiljøenes metadatatjeneste. Responsen ble dessuten lest ubegrenset inn i
+minnet.
+
+Rettelsen er ikke en filtrering av URL-en, og det er hele poenget. Å slå opp navnet, godkjenne
+adressen og *deretter* kalle `fetch` ville etterlatt et vindu der DNS kan svare noe annet enn
+det som ble godkjent (rebinding). Hentingen bruker derfor `node:https` med en egen
+`lookup`-funksjon — den samme funksjonen socketen bruker som sitt eget navneoppslag — slik at
+adressen som godkjennes *er* adressen det kobles til. Det finnes ikke to oppslag å komme
+imellom.
+
+| Kontroll | Hva den stopper |
+| --- | --- |
+| Bare `http:` og `https:` | `file:`, `ftp:` og resten |
+| Bokstavelige IP-verter kontrolleres direkte | `http://127.0.0.1:8080/`. Node slår ikke opp noe når verten allerede er en adresse, så `lookup` ville aldri sett den — en egen test fanget nettopp den blindsonen i første forsøk på rettelsen |
+| Navn kontrolleres i socketens eget oppslag | et navn som peker på en privat adresse, og DNS-rebinding |
+| Alle adressene et navn gir, ikke bare den første | et navn som peker på både en offentlig og en privat adresse |
+| Hvert redirect-hopp kontrolleres på nytt | en offentlig kilde som sender kjøreren videre innover |
+| Størrelsesgrense og samlet tidsavbrudd | en kilde som bruker opp minnet eller tiden til kjøreren |
+
+Adresseparsingen er streng med vilje: `127.000.000.1`, `0x7f.0.0.1` og `2130706433` avvises som
+uleselige framfor å bli tolket. En vakt som leser en adresse annerledes enn socketen som kobler
+til, er ingen vakt. De innkapslede formene som *er* kanoniske — `::ffff:127.0.0.1` og NAT64 —
+pakkes ut og kontrolleres som den IPv4-adressen de bærer.
+
+**Tre ting til, fanget i den andre gjennomgangsrunden.** Alle tre var reelle, og den midterste
+er den eneste av alle funnene i denne PR-en som kunne påvirket klinisk innhold:
+
+1. **Tidsavbruddet sluttet å vente uten å rive forbindelsen.** Kilden fortsatte å strømme i
+   bakgrunnen, og en kø med mange kilder ville samlet opp åpne socketer. Det samme gjaldt en
+   redirect-kropp og et feilsvar, som ble tømt med `resume()` framfor revet. Forespørselen
+   rives nå i et `finally` som gjelder hver vei ut av funksjonen, og både redirect og feilsvar
+   destrueres framfor å leses ferdig. Prøvd ved å telle socketer på en ekte server — og
+   mutasjonstestet: uten rettelsen feller de nye testene den.
+
+2. **Tallkontrollen mistet fortegnet.** `-1,5` ble søkt som `1.5`, så et registrert `-1,5` ble
+   bekreftet av en kilde som oppgir `1,5` — og omvendt. En vektendring på −1,5 kg og en på
+   1,5 kg peker motsatt vei, så dette kunne gitt `verified` på et funn som snur
+   effektretningen. Fortegnet er nå en del av mønsteret: et negativt tall krever et minustegn
+   rett foran seg, og et positivt tall avvises når det står med minustegn foran. Skriver kilden
+   retningen med ord framfor med fortegn, finner kontrollen ingenting — og da er utfallet
+   `uncertain`, som er den riktige enden av asymmetrien. Samme runde tettet at «12» ble funnet
+   inne i «12.5».
+
+3. **CI kunne maskert en mislykket kjøring.** Siste linje i arbeidsflyten rørte kjøreren
+   gjennom `tee`, og uten `pipefail` er det `tee` sin exit-kode som gjelder — alltid 0. En
+   feilet verifikasjonskjøring ville sett grønn ut. `shell: bash` og `set -euo pipefail` er nå
+   eksplisitte, og forskjellen er prøvd i et skall før den ble skrevet inn.
+
+**To til, fanget i den tredje gjennomgangsrunden.** Begge var reelle, og den første brøt
+nøyaktig den kjeden denne PR-en finnes for å bygge:
+
+1. **Redaktørflaten kunne ikke bevare bytene `content_hash` hevder å beskrive.**
+   `/source-versions/new` tok imot representasjonen i en `<textarea>`, og HTML-standarden
+   normaliserer linjeskift i feltets API-verdi: en kilde levert med CRLF ble hashet som om den
+   hadde LF. Verifikatoren hasher de faktiske bytene fra nettet, så den ville rapportert
+   `needs_correction` — «kilden har endret seg» — for en kilde som var uendret, og for hver
+   eneste kilde som leveres med CRLF. Feilen var stille: ingenting i basen kunne oppdage den,
+   fordi hashen var korrekt beregnet av en tekst som bare ikke var kildens.
+
+   Registreringen tar nå imot en fil. `arrayBuffer()` gir bytene uten normalisering, og
+   `src/lib/read-utf8-file.ts` dekoder dem strengt som UTF-8 — samme regel kjøreren bruker på
+   svaret sitt — og avviser filen framfor å lagre et fingeravtrykk ingen kan etterprøve.
+   Rettelsen er prøvd tre steder: en enhetstest på lesefunksjonen, en sidetest som feller
+   `textarea`-semantikken (mutasjonstestet ved å normalisere CRLF i siden — testen feller det),
+   og i en faktisk nettleser, der `File` gir kodepunktene `97,13,10,98` mens en `textarea` gir
+   `97,10,98`.
+
+2. **En ugyldig numerisk entitet i kildeinnhold kunne felle hele kjøringen.** Søkeprojeksjonen
+   avkoder HTML-entiteter for å finne et sitat som står med `&amp;` eller `&#8722;` i kilden.
+   `String.fromCodePoint` kaster på et kodepunkt over `0x10FFFF`, så `&#x110000;` i én kilde
+   avbrøt hele kjøringen — også kontrollen av alle de andre funnene i køen. Avkodingen er nå
+   total: et kodepunkt utenfor området beholdes ordrett framfor å kastes på. I tillegg er hvert
+   funn isolert, slik at en uventet feil på én kilde gir «ikke registrert, med begrunnelse» for
+   det funnet og lar resten av køen gå videre.
+
+**Og en tredje av samme slag, funnet i gjennomlesingen av rettelsen selv: BOM-en.**
+`TextDecoder` fjerner et innledende U+FEFF med mindre man ber den la være, og flaggets navn
+(`ignoreBOM`) betyr det motsatte av hva det ser ut til. En kilde som leveres med BOM ville
+dermed fått de tre bytene EF BB BF fjernet på vei inn — samme stille brudd som CRLF — og på
+vei ut ville verifikatorens gjenkoding manglet dem, slik at `bytesAreUtf8` ble usann og kilden
+aldri kunne verifiseres. Begge sider leser nå med `ignoreBOM: true`, og at det henger sammen
+er avlest og ikke resonnert: `sha256sum` på en fil med BOM og
+`knowledge.source_version_content_hash(...)` på den samme teksten gir samme verdi. Begge de nye
+testene er mutasjonstestet — uten flagget feller de rettelsen.
+
+**Hva denne PR-en bevisst ikke gjør.** Den registrerer ingenting i det hostede prosjektet:
+migrasjonene er ikke deployet dit, ingen legitimasjon er utstedt der, og ingen verifikasjon er
+registrert der. Alt over er kjørt mot en lokal stack. Den bygger heller ikke
+claim-verifikasjon, reviewbeslutning eller publisering, og den svekker ingen eksisterende
+kontroll: ingen CHECK, ingen policy, ingen grant og ingen gate er fjernet eller myknet opp.
+
+**Hva som gjenstår for Milepæl B.** Ekstraksjonsverifikasjonene er nå *kjørbare*, og G4/G5 kan
+lukkes for et funn ved å kjøre kjøreren mot det. De to andre står urørt: claim-verifikasjonene
+(G8/G9) og den menneskelige godkjenningen (G11/G12/G13).
+
+**Neste steg.** Deploy av de tre migrasjonene til det hostede prosjektet og utstedelse av
+legitimasjon der, slik at kjeden kan kjøres i produksjon — og deretter claim-verifikasjon
+(`workflow.claim_verifications`, `citation_support_verification`) som egen, senere PR.
 
 ---
 

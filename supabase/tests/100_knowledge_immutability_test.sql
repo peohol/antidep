@@ -15,7 +15,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(29);
+select plan(30);
 
 -- ---------------------------------------------------------------------------
 -- Testdata som bare finnes inne i denne transaksjonen
@@ -33,9 +33,10 @@ insert into knowledge.sources (source_type, title, authors_or_issuer, created_by
 values ('journal_article', 'Immutabilitetstestkilde', 'Testforfatter I', pg_temp.extraction_actor());
 
 insert into knowledge.source_versions
-  (source_id, retrieved_at, retrieved_from, external_version, content_hash)
+  (source_id, retrieved_at, retrieved_from, external_version, content_hash,
+   retrieved_by_actor_id)
 select id, timestamptz '2026-01-02T03:04:05Z', 'https://example.invalid/immutabilitet',
-       'testversjon 1', 'sha256:' || repeat('b', 64)
+       'testversjon 1', 'sha256:' || repeat('b', 64), pg_temp.extraction_actor()
 from knowledge.sources where title = 'Immutabilitetstestkilde';
 
 create function pg_temp.insert_evidence(
@@ -243,6 +244,17 @@ select throws_ok(
   $$update knowledge.source_versions set external_version = 'testversjon 2'$$,
   '23001', null,
   'kildens eget versjonsmerke kan ikke endres i ettertid'
+);
+-- Attribusjonen er en del av observasjonen (migrasjon 20260907091000). Uten
+-- denne kontrollen kunne «hvem hentet dette» skrives om i ettertid, og
+-- auditraden ville stått igjen som eneste spor av den opprinnelige verdien.
+select throws_ok(
+  $$update knowledge.source_versions
+    set retrieved_by_actor_id = (
+      select id from provenance.actors where actor_key = 'agent:claim-synthesis'
+    )$$,
+  '23001', null,
+  'aktøren som hentet et øyeblikksbilde kan ikke byttes ut i ettertid'
 );
 
 -- Vernet skal ikke overblokkere: hvor et lagret øyeblikksbilde ligger er

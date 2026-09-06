@@ -121,12 +121,12 @@ values (
 -- outcome := 'verified' + source_access := 'verifiable_representation' vært en
 -- påstand uten grunnlag, som funksjonen avviser (se avsnitt 8).
 insert into knowledge.source_versions (
-  id, source_id, retrieved_at, retrieved_from, content_hash
+  id, source_id, retrieved_at, retrieved_from, content_hash, retrieved_by_actor_id
 )
 values (
   '44000000-0000-4000-8000-000000000021', '44000000-0000-4000-8000-000000000001',
   now(), 'https://example.test/440-kilde',
-  'sha256:' || repeat('a', 64)
+  'sha256:' || repeat('a', 64), (select id from fixture where name = 'extractor')
 );
 
 -- Et sporet besøk uten fingeravtrykk: retrieved_from er satt, content_hash er
@@ -134,11 +134,12 @@ values (
 -- trekker opp — at source_version_id alene ikke er nok, kildeversjonen må
 -- selv ha content_hash for å telle som en etterprøvbar representasjon.
 insert into knowledge.source_versions (
-  id, source_id, retrieved_at, retrieved_from
+  id, source_id, retrieved_at, retrieved_from, retrieved_by_actor_id
 )
 values (
   '44000000-0000-4000-8000-000000000022', '44000000-0000-4000-8000-000000000001',
-  now(), 'https://example.test/440-kilde-uten-hash'
+  now(), 'https://example.test/440-kilde-uten-hash',
+  (select id from fixture where name = 'extractor')
 );
 
 insert into knowledge.evidence_items (

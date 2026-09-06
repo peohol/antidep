@@ -483,3 +483,125 @@ Katalogdataene for den første golden slicen — sertralin, mirtazapin, `vektend
 `depressiv lidelse` og populasjonen «voksne med depressiv lidelse» — seedes av migrasjon 002.
 Norske produktdata seedes ikke for hånd; de kommer gjennom `catalog.drug_products` og
 FEST-importen i migrasjon 009.
+
+## Kildeversjoner: hvem beregner fingeravtrykket
+
+`knowledge.source_versions` er øyeblikksbildet Antidep faktisk leste av en kilde. Den er
+det som gjør en ekstraksjon etterprøvbar: `retrieved_from` sier hvor representasjonen ble
+hentet, og `content_hash` sier hva den inneholdt.
+
+**Hashen beregnes av databasen, aldri av kalleren.** `api.create_source_version(...)`
+(migrasjon 007f) tar imot representasjonen — ikke hashen — og beregner
+`knowledge.source_version_content_hash(text)` i samme transaksjon som raden skrives. Det er
+den samme grunnen som gjør at `content_hash` på et evidensfunn eies av databasen: en hash
+kalleren kunne oppgi, ville sett ut som en garanti uten å være det.
+
+De tre spørsmålene en verifikator må kunne besvare, har dermed hvert sitt entydige svar:
+
+| Spørsmål                 | Svar                                                                  |
+| ------------------------ | --------------------------------------------------------------------- |
+| Hvem beregner hashen?    | PostgreSQL, inne i skriveveien                                        |
+| Hva hashes?              | Nøyaktig den teksten som ble oppgitt, UTF-8-kodet, uten normalisering |
+| Hvordan etterprøves den? | `curl <retrieved_from> \| sha256sum`                                  |
+
+Grensen er skrevet ut framfor pyntet på: PostgreSQL kan ikke hente en URL, så basen kan ikke
+vite at teksten faktisk kom fra adressen. Den kan bare garantere at hashen er hashen _av den
+teksten_. Den siste koblingen kontrolleres av ekstraksjonsverifikatoren, som henter adressen
+på nytt og sammenligner — en registrering der teksten ikke kom fra adressen, overlever derfor
+ikke første verifikasjon.
+
+**Redaktørflaten laster opp en fil, den limer ikke inn tekst.** `/source-versions/new` tar
+imot representasjonen som en fil, fordi et `<textarea>` normaliserer linjeskift i sin
+API-verdi: en kilde levert med CRLF ville blitt hashet som om den hadde LF, og
+verifikatoren — som hasher de faktiske bytene fra nettet — ville rapportert endring for en
+uendret kilde. Filen dekodes strengt som UTF-8 etter samme regel som verifikatoren bruker
+på svaret sitt, og avvises hvis den ikke er det, framfor å lagre et fingeravtrykk ingen kan
+etterprøve, og et innledende byte-order-mark beholdes framfor å bli fjernet av dekoderen.
+Lagre derfor svaret rett fra nettet (`curl -o`), ikke via utklippstavlen.
+
+## Legitimasjon til agentidentiteten
+
+`agent-identity:extraction-verification-01` (migrasjon 005f) er registrert uten utstedt
+legitimasjon og kan ikke gjøre noe før den får en. Utstedelsen er en bevisst, manuell
+handling i det miljøet kjøreren skal lese hemmeligheten fra — ikke noe en migrasjon gjør,
+fordi en hemmelighet generert av en migrasjon enten måtte ligget i repoet eller blitt
+returnert gjennom en logg (`docs/MVP_IMPLEMENTATION_PLAN.md` §74.31).
+
+```bash
+# Lokal stack
+npm run db:start
+./scripts/issue-agent-credential.sh
+
+# Hostet prosjekt: hent tilkoblingsstrengen i Supabase
+# (Project Settings → Database → Connection string, direkte forbindelse)
+./scripts/issue-agent-credential.sh --db-url "postgresql://..."
+```
+
+Skriptet skriver hemmeligheten til stdout **én gang**. Databasen lagrer bare hashen, og det
+finnes ingen vei til å lese verdien ut igjen; mister du den, utsteder du en ny, som samtidig
+ugyldiggjør den gamle. Skriptet nekter å kjøre når `CI` er satt: i en CI-jobb er stdout en
+logg som lagres og deles.
+
+Kjøreren leser fire miljøvariabler, ingen av dem med `VITE_`-prefiks — Vite eksponerer
+nøyaktig de variablene til nettleseren, så et prefiks her ville lagt hemmeligheten i
+klientbunten:
+
+```
+ANTIDEP_SUPABASE_URL=
+ANTIDEP_SUPABASE_PUBLISHABLE_KEY=
+ANTIDEP_AGENT_IDENTITY_KEY=agent-identity:extraction-verification-01
+ANTIDEP_AGENT_SECRET=
+```
+
+Lokalt legges de i `.env.agent.local`, som er gitignorert og leses av
+`npm run agent:verify-extraction`. I CI legges de inn som krypterte secrets (GitHub:
+Settings → Secrets and variables → Actions), der arbeidsflyten
+`.github/workflows/extraction-verification.yml` leser dem. **Publishable key, aldri
+`service_role`:** agenten autentiseres av sin egen legitimasjon inne i api-funksjonene, ikke
+av Data API-rollen, og en `service_role`-nøkkel ville omgått RLS og gitt kjøreren alt
+(`docs/DATABASE_ARCHITECTURE.md` §49).
+
+## Kjøre ekstraksjonsverifikatoren
+
+```bash
+npm run agent:verify-extraction -- --dry-run          # kontroller, registrer ingenting
+npm run agent:verify-extraction                        # hele arbeidskøen
+npm run agent:verify-extraction -- --evidence-item <uuid>
+npm run agent:verify-extraction -- --limit 5
+```
+
+Kjøreren åpner en `provenance.agent_runs`-kjøring, leser grunnlaget med
+`api.extraction_verification_input(...)` (migrasjon 005h), henter hver kildeversjons adresse
+på nytt over nett, sammenligner fingeravtrykket, kontrollerer ekstraksjonen deterministisk mot
+representasjonen og registrerer resultatet med `api.register_extraction_verification(...)`
+(migrasjon 005g). Også en tørrkjøring registreres som en kjøring, og lukkes som `aborted`.
+
+**Kjøringen registrerer ingen verifikasjon** når funnet mangler kildeversjon eller
+fingeravtrykk, når kilden ikke lot seg hente, eller når fingeravtrykket ikke stemmer med det
+registrerte. Da har verifikatoren ikke sett den utgaven ekstraksjonen ble gjort fra, og ingen
+av verdiene i `workflow.verification_source_access` ville beskrevet situasjonen sant. Avviket
+står i kjøringens `output_manifest`.
+
+### Hentingen er begrenset til det offentlige internettet
+
+`retrieved_from` er redaktørstyrt data, og kjøreren henter den adressen fra en maskin som har
+tilgang til nettet — lokalt, eller fra en GitHub Actions-runner. Uten en grense ville en
+registrert kilde kunne fjernstyre hva den maskinen kobler seg til. Kjøreren henter derfor bare
+fra offentlige adresser, og kontrollen ligger på fire steder:
+
+| Kontroll                                       | Hva den hindrer                                                                                        |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Bare `http:` og `https:`                       | `file:`, `ftp:` og andre skjemaer                                                                      |
+| Bokstavelige IP-verter kontrolleres direkte    | `http://127.0.0.1:8080/`, `http://169.254.169.254/`                                                    |
+| Navn kontrolleres i socketens eget DNS-oppslag | et navn som peker på en privat adresse, og DNS-rebinding — det finnes bare ett oppslag å komme imellom |
+| Hvert redirect-hopp kontrolleres på nytt       | en offentlig kilde som sender kjøreren videre innover                                                  |
+
+Avvist er loopback, private nett, operatørnett, link-local (inkludert skyens metadatatjeneste
+på 169.254.169.254), multicast, dokumentasjons- og testnett, og de tilsvarende IPv6-områdene —
+også når en IPv4-adresse er pakket inn i en IPv6-form. Svaret leses med en øvre
+størrelsesgrense og et samlet tidsavbrudd, slik at en kilde ikke kan bruke opp minnet eller
+tiden til kjøreren.
+
+Konsekvens for drift: kontrollen gjelder adressen socketen kobler til. Skal kjøreren en dag stå
+bak en utgående proxy på et privat nett, må det gjøres som en bevisst endring — ikke ved at
+kontrollen mykes opp.

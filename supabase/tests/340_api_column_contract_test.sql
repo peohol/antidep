@@ -458,9 +458,11 @@ values ((select id from fixture where name = 'rich_source'), 'doi', '10.1000/ant
 
 with inserted as (
   insert into knowledge.source_versions
-    (source_id, retrieved_at, retrieved_from, external_version, content_hash)
+    (source_id, retrieved_at, retrieved_from, external_version, content_hash,
+     retrieved_by_actor_id)
   values ((select id from fixture where name = 'rich_source'), now() - interval '10 days',
-          'https://eksempel.invalid/340', 'v2', 'sha256:' || repeat('a', 64))
+          'https://eksempel.invalid/340', 'v2', 'sha256:' || repeat('a', 64),
+          (select id from fixture where name = 'extraction'))
   returning id
 )
 insert into fixture (name, id) select 'rich_version', id from inserted;
@@ -550,9 +552,11 @@ insert into fixture (name, id) select 'lean_source', id from inserted;
 -- NULL i noen probe-rad for api.editor_source_versions. Evidensfunnet under
 -- peker bevisst ikke på den: source_version_id skal også kunne være NULL.
 insert into knowledge.source_versions
-  (source_id, retrieved_at, retrieved_from, external_version, content_hash)
+  (source_id, retrieved_at, retrieved_from, external_version, content_hash,
+   retrieved_by_actor_id)
 values ((select id from fixture where name = 'lean_source'), now() - interval '9 days',
-        'https://eksempel.invalid/340-minimal', null, null);
+        'https://eksempel.invalid/340-minimal', null, null,
+        (select id from fixture where name = 'extraction'));
 
 with inserted as (
   insert into knowledge.evidence_items (
@@ -597,7 +601,9 @@ insert into workflow.evidence_verifications
   (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
    source_access, checked_fields, rationale, verified_at)
 select e.id, e.created_by_actor_id, v.id, 'verified', 'original_source',
-       array['source_locator', 'estimate']::workflow.evidence_check_field[],
+       -- Full dekning, utledet av raden selv: publiseringsgatens G5b krever at
+       -- kontrollene til sammen dekker det funnet påstår noe om.
+       workflow.required_check_fields(e.id),
        'Kontrollert mot originalkilden.', now() - interval '5 days'
 from knowledge.evidence_items e, fixture v
 where v.name = 'verifier'

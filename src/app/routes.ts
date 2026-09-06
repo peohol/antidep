@@ -34,6 +34,7 @@ export const ROUTE_PATTERNS = {
   claimEvidence: '/claims/:claimId/evidence',
   source: '/sources/:sourceId',
   sourceNew: '/sources/new',
+  sourceVersionNew: '/source-versions/new',
   evidenceNew: '/evidence/new',
   access: '/access',
 } as const
@@ -104,6 +105,20 @@ export function sourcePath(sourceId: Uuid): string {
  */
 export function newSourcePath(): string {
   return '/sources/new'
+}
+
+/**
+ * Registrer kildeversjon (MVP_IMPLEMENTATION_PLAN.md §15, issue #44): leddet
+ * mellom å opprette kilden og å registrere et evidensfunn fra den.
+ *
+ * Adressen er `/source-versions/new` og ikke `/sources/:sourceId/versions/new`,
+ * av samme grunn som for evidensfunn: skjemaet lar redaktøren velge kilden i en
+ * nedtrekksliste, fordi listen er nettopp det hen trenger å se for å velge
+ * riktig. En adresse som bakte kilden inn ville forutsatt at valget allerede var
+ * tatt et sted som ikke finnes ennå.
+ */
+export function newSourceVersionPath(): string {
+  return '/source-versions/new'
 }
 
 /**

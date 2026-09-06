@@ -1,0 +1,25 @@
+-- ============================================================================
+-- Migrasjon 008e — audit.event_operation får verdien source_version_registered
+--
+-- Utvider auditvokabularet fra migrasjon 008 (§25) en femte gang, slik 008a,
+-- 008b, 008c og 008d gjorde før den, og får derfor neste bokstav.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor denne ene setningen er sin egen migrasjon
+--
+-- Nøyaktig samme grunn som i 008a til 008d: `ALTER TYPE ... ADD VALUE` kan ikke
+-- brukes i samme transaksjon som verdien den legger til, og migrasjonsløperen
+-- sender hver fil som én transaksjon.
+-- `20260907091000_source_version_registration.sql` bygger om CASE-uttrykkene i
+-- audit.events sine genererte kolonner og events_snapshot_shape_check for å
+-- dekke verdien, og bygger selve skriveveien inn i knowledge.source_versions —
+-- og kan derfor ikke også innføre den.
+--
+-- Migrasjonen gjør ingenting annet. Fram til neste migrasjon har kjørt, kan
+-- audit.events ikke motta en rad med denne operasjonen: object_schema og
+-- object_table ville gitt NULL og feilet på sin egen NOT NULL, og
+-- events_snapshot_shape_check ville truffet ELSE false. Samme bevisste
+-- uttømmelighet migrasjon 008 sin kommentar beskriver.
+-- ============================================================================
+
+alter type audit.event_operation add value 'source_version_registered';

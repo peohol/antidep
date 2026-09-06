@@ -29,8 +29,9 @@
 // SECURITY DEFINER-funksjon (DATABASE_ARCHITECTURE.md §43). `Tables` står tom:
 // ingen tabell er eller skal bli direkte eksponert. `Functions` fikk sitt
 // første medlem i migrasjon 007c: `create_source`, den kontrollerte skriveveien
-// for å opprette en Source (MVP_IMPLEMENTATION_PLAN.md §29, §74.24), og sitt
-// andre i migrasjon 007e: `create_evidence_item`. Args-typene speiler
+// for å opprette en Source (MVP_IMPLEMENTATION_PLAN.md §29, §74.24), sitt
+// andre i migrasjon 007e: `create_evidence_item`, og sitt tredje i migrasjon
+// 007f: `create_source_version`. Args-typene speiler
 // parametrene i migrasjonene; hvert vokabular og hvert tidsrom er `string` der
 // den underliggende kolonnen er en enum eller et interval, av samme grunn som
 // migrasjonenes hodekommentarer gir: PostgREST caster JSON-verdien til
@@ -170,6 +171,27 @@ export type Database = {
           p_ci_level_percent?: string | null
           p_limitations_text?: string | null
           p_source_quote?: string | null
+        }
+        Returns: Uuid
+      }
+      // Det tredje medlemmet, fra migrasjon 007f: den kontrollerte skriveveien
+      // for å registrere en kildeversjon (issue #44). `p_retrieved_content` er
+      // representasjonen slik den ble hentet, og den er påkrevd — databasen
+      // beregner `content_hash` av den. Hashen er derfor ikke en parameter, av
+      // samme grunn som `content_hash` ikke er det på et evidensfunn: en verdi
+      // klienten kunne oppgi, ville sett ut som en garanti uten å være det.
+      //
+      // `p_retrieved_at` er `timestamptz` i SQL og en ISO-8601-streng her.
+      // Tidspunktet er en hendelse fra virkeligheten (da representasjonen ble
+      // hentet), ikke registreringstidspunktet for raden.
+      create_source_version: {
+        Args: {
+          p_source_id: Uuid
+          p_retrieved_at: string
+          p_retrieved_from: string
+          p_retrieved_content: string
+          p_external_version?: string | null
+          p_storage_reference?: string | null
         }
         Returns: Uuid
       }
