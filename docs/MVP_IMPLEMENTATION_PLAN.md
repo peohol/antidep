@@ -4975,6 +4975,29 @@ og det var en inkonsistens uten konsekvens fram til nå. Den positive kontrollen
 så etiketten følger resten av fiksturen; at en norsk etikett mot en engelsk kilde gir `uncertain`, er
 prøvd der det hører hjemme.
 
+**Den nittende runden tok den samme lærdommen til begrepene.** Rettelsen i runde 18 krevde at hvert
+begrep var gjenfunnet, men hvert *for seg*, mot den flate samlingen av utdrag — nøyaktig den feilen
+tallene ble rettet for i runde 12 og 14. To ordrette og sanne utdrag kunne dermed sys sammen til én
+gal rad:
+
+> «`Sertraline-treated patients discontinued treatment because of nausea.`»
+> «`Paroxetine-treated patients had a mean body weight change over the trial.`»
+
+Begge står i kilden, `intervention_arm` ble kontrollert fra det første og `outcome` fra det andre, og
+ingen del av kilden sier at vektendringen gjelder sertralin. Å kreve dem i samme *utdrag* ville ikke
+holdt: ett utdrag kan beskrive flere armer, og ren forekomst skiller ikke en positiv binding fra en
+benektelse — «`No participants received sertraline; paroxetine-treated patients had …`».
+
+For `verified` kreves nå et lokalt støttefragment som binder intervensjonen til endepunktet: begge
+begrepene i **ett sammenhengende treff**, med bare kjent lim imellom, akkurat som for tallene. `not`,
+`and` og et fremmed legemiddelnavn er alle ord limet ikke kjenner. Regresjon for begge reviewerens
+saker, for en benektelse i samme setning, og for to påstander skilt med semikolon — den siste viser
+at setningsdelingen er bærende, siden semikolon er lim inne i et uttrykk («`CI 95%: 0,4 til 2,6`»)
+men skiller to påstander. Den positive kontrollen er beholdt.
+
+Tre mutasjoner faller: at bindingen ikke påvirker utfallet, at den søkes i hele utdraget framfor i
+påstanden, og at den bare er samforekomst.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

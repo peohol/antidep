@@ -1115,6 +1115,37 @@ function intervalOrders(level: string, bounds: string): readonly string[] {
   ]
 }
 
+/**
+ * Om et fragment binder begrepene til *hverandre*, ikke bare inneholder dem.
+ *
+ * Å lete etter hvert begrep for seg er ikke en binding, på nøyaktig samme måte
+ * som å lete etter hvert tall for seg ikke er det. To ordrette og sanne utdrag
+ * kan da sys sammen til én gal rad:
+ *
+ *   «Sertraline-treated patients discontinued treatment because of nausea.»
+ *   «Paroxetine-treated patients had a mean body weight change over the trial.»
+ *
+ * Begge står i kilden, sertralin finnes, endepunktet finnes — og ingen del av
+ * kilden sier at vektendringen gjelder sertralin. Å kreve dem i samme *utdrag*
+ * er heller ikke nok: ett utdrag kan beskrive flere armer, og ren forekomst
+ * skiller ikke en positiv binding fra en benektelse («No participants received
+ * sertraline; paroxetine-treated patients had …»).
+ *
+ * Bindingen er derfor den samme som for tallene: begge begrepene i ett
+ * sammenhengende treff, med bare kjent lim imellom. `not`, `and` og et fremmed
+ * legemiddelnavn er alle ord limet ikke kjenner, og bryter kjeden.
+ */
+function termsBoundTogether(
+  projections: readonly string[],
+  terms: readonly string[],
+  glueExtra: readonly string[],
+): boolean {
+  const binding = glue(glueExtra, BINDING_REACH)
+  return permutations(terms.map(termAnchor))
+    .map((parts) => parts.join(binding))
+    .some((pattern) => projections.some((projection) => new RegExp(pattern, 'iu').test(projection)))
+}
+
 function confidenceIntervalPatterns(
   interval: ConfidenceInterval,
   contextTerms: readonly string[],
@@ -1532,6 +1563,31 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     )
   }
 
+  // At begge begrepene finnes, er ikke det samme som at raden finnes. Se
+  // hodekommentaren over `termsBoundTogether`.
+  const armBoundToOutcome =
+    unmatchedTerms.length === 0 &&
+    termsBoundTogether(
+      claimProjections,
+      [item.extraction.interventionDrugName, item.extraction.outcomeLabel],
+      [
+        ...sampleSizeExpressions(item.extraction),
+        ...estimateExpressions(
+          item.extraction,
+          isReported(item.extraction.estimateAvailability) ? item.extraction.estimate : null,
+        ),
+      ],
+    )
+  if (!armBoundToOutcome && unmatchedTerms.length === 0) {
+    noteUnresolved(
+      `Ingen av funnets ordrette utdrag binder «${item.extraction.interventionDrugName}» til ` +
+        `«${item.extraction.outcomeLabel}» i samme påstand. Begge begrepene finnes, men et ` +
+        'utdrag som nevner dem hver for seg — eller som tilskriver endepunktet en annen arm — ' +
+        'sier ikke at dette endepunktet gjelder denne armen. Raden er derfor ikke ført opp som ' +
+        'bekreftet.',
+    )
+  }
+
   // 5. Utfallet.
   //
   // Rekkefølgen er ikke tilfeldig: et avvik er sterkere enn en manglende
@@ -1552,7 +1608,8 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     unmatchedNumbers.length > 0 ||
     ambiguousNumbers.length > 0 ||
     confidenceIntervalUnresolved ||
-    unmatchedTerms.length > 0
+    unmatchedTerms.length > 0 ||
+    !armBoundToOutcome
   ) {
     // Et oppgitt tall som ikke lot seg gjenfinne, er ikke et avvik — men det er
     // heller ikke en bekreftelse av raden som helhet. Utfallet sier nettopp det.

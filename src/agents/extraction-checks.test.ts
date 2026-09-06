@@ -1330,6 +1330,47 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
     expect(report.checkedFields).not.toContain('outcome')
   })
 
+  // ..og begrepene må være bundet til hverandre, ikke bare finnes hver for seg.
+  // Ellers kan to sanne utdrag om hver sin arm sys sammen til én gal rad.
+  it.each([
+    [
+      'to utdrag som hver for seg navngir sitt begrep',
+      {
+        a: 'Sertraline-treated patients discontinued treatment because of nausea',
+        b: 'Paroxetine-treated patients had a mean body weight change over the trial',
+      },
+    ],
+    [
+      'ett utdrag der endepunktet uttrykkelig gjelder en annen arm',
+      {
+        a:
+          'No participants received sertraline; paroxetine-treated patients had a mean ' +
+          'body weight change over the trial',
+      },
+    ],
+    [
+      'ett utdrag der bindingen er benektet',
+      { a: 'Sertraline was not associated with a mean weight change over the trial' },
+    ],
+    // Semikolonet er lim inne i et uttrykk («CI 95%: 0,4 til 2,6»), men det
+    // skiller to påstander. Uten setningsdelingen bandt det disse to.
+    [
+      'ett utdrag der de to står i hver sin semikolonskilte påstand',
+      { a: 'Sertraline patients; a mean weight change was the primary endpoint' },
+    ],
+  ])('bekrefter ikke en rad der %s', (_navn, rawExtraction) => {
+    const quotes = Object.values(rawExtraction)
+    const report = check(
+      {
+        extraction: { ...utenTall, populationAvailability: 'not_reported', rawExtraction },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n${quotes.map((quote) => `<p>${quote}</p>`).join('\n')}`,
+    )
+
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toContain('Kontrollen konkluderte ikke')
+  })
+
   // Den positive kontrollen: står begrepene faktisk i utdraget, er raden
   // bekreftet som før. Uten denne kunne rettelsen over gjort alt uavklart.
   it('bekrefter en rad uten tallfelt når begrepene faktisk står i utdraget', () => {
