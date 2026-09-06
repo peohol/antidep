@@ -170,9 +170,19 @@ hver gang (§74.34):
 
 Skriptet leser `SUPABASE_PROJECT_REF` og `SUPABASE_ACCESS_TOKEN` fra miljøet, sammenligner
 historikken med filene i `migrations/`, og stopper ved første feil uten å forsøke resten.
-Kontrollen er på versjon og navn, ikke på innholdet i `statements`-kolonnen: `db push` deler
-filen i enkeltsetninger og fjerner kommentarene, mens Management-API-kjøringene la inn hele
-filen, så en sammenligning på innhold ville meldt avvik på filer ingen har rørt.
+Sammenligningen ligger i `src/ops/migration-plan.ts` med tester, og kontrollerer tre ting:
+versjon og navn, at ingen av listene har rader den andre ikke har, og at det som er kjørt
+utgjør et **sammenhengende prefiks** av filene i repoet.
+
+Det siste er ikke en formalitet. Uten det ville registrert historikk `A, C` mot lokal
+`A, B, C` fått skriptet til å kjøre `B` etter `C` — altså en eldre migrasjon etter en nyere,
+med de forutsetningene den er skrevet under brutt. Et hull betyr at prosjektet og repoet har
+kommet fra hverandre, og hvorfor er et spørsmål et menneske må svare på; skriptet melder fra
+og kjører ingenting.
+
+Kontrollen er derimot _ikke_ på innholdet i `statements`-kolonnen: `db push` deler filen i
+enkeltsetninger og fjerner kommentarene, mens Management-API-kjøringene la inn hele filen, så
+en sammenligning på innhold ville meldt avvik på filer ingen har rørt.
 
 **Kjør aldri `supabase config push` mot det hostede prosjektet.** Kommandoen pusher hele
 `config.toml`, og filen her er i praksis `supabase init`-standardene for en lokal stack —

@@ -33,8 +33,15 @@
 # ----------------------------------------------------------------------------
 # Driftskontrollen skriptet gjør før det skriver noe
 #
-# Kontrollen er på versjon og navn, og på at ingen av de to listene har rader
-# den andre ikke har. Den er *ikke* på innholdet i `statements`-kolonnen, og det
+# Kontrollen ligger i `src/ops/migration-plan.ts`, som har tester, og den er på
+# versjon og navn, på at ingen av de to listene har rader den andre ikke har, og
+# på at det som er kjørt utgjør et **sammenhengende prefiks** av filene i
+# repoet. Det siste er ikke en formalitet: uten det ville registrert historikk
+# `A, C` mot lokal `A, B, C` fått skriptet til å kjøre `B` etter `C`. Et hull
+# betyr at prosjektet og repoet har kommet fra hverandre, og det er ikke noe et
+# deployskript skal reparere selv — det melder fra og kjører ingenting.
+#
+# Kontrollen er *ikke* på innholdet i `statements`-kolonnen, og det
 # er en avlesning og ikke en forglemmelse: kolonnen inneholder forskjellig tekst
 # avhengig av hvilket verktøy som skrev raden. `supabase db push` deler filen i
 # enkeltsetninger og fjerner kommentarene (de tretten første radene i dette
@@ -97,51 +104,10 @@ echo 'select version, name from supabase_migrations.schema_migrations order by v
   > "$arbeid/historikk.sql"
 kjor_sql "$arbeid/historikk.sql" > "$arbeid/historikk.json"
 
-node -e '
-  const fs = require("fs");
-  const path = require("path");
-  const [arbeid] = process.argv.slice(1);
-  const historikk = JSON.parse(fs.readFileSync(`${arbeid}/historikk.json`, "utf8"));
-  const kjort = new Map(historikk.map((r) => [r.version, r]));
-
-  const filer = fs
-    .readdirSync("supabase/migrations")
-    .filter((f) => f.endsWith(".sql"))
-    .sort();
-
-  const avvik = [];
-  const mangler = [];
-  for (const fil of filer) {
-    const versjon = fil.slice(0, 14);
-    const navn = path.basename(fil, ".sql").slice(15);
-    const rad = kjort.get(versjon);
-    if (!rad) {
-      mangler.push({ fil, versjon, navn });
-      continue;
-    }
-    if (rad.name !== navn) {
-      avvik.push(`${versjon}: historikken heter «${rad.name}», filen «${navn}»`);
-    }
-    kjort.delete(versjon);
-  }
-  for (const [versjon, rad] of kjort) {
-    avvik.push(`${versjon} ${rad.name}: kjørt i prosjektet, men finnes ikke i repoet`);
-  }
-
-  fs.writeFileSync(`${arbeid}/mangler.json`, JSON.stringify(mangler));
-  console.log(`${historikk.length} migrasjoner registrert i prosjektet, ${filer.length} filer i repoet.`);
-  if (avvik.length) {
-    console.error("\nAvvik mellom repoet og prosjektet:");
-    for (const a of avvik) console.error(`  ${a}`);
-    process.exit(1);
-  }
-  if (!mangler.length) {
-    console.log("Ingenting mangler.");
-  } else {
-    console.log(`\n${mangler.length} migrasjoner mangler:`);
-    for (const m of mangler) console.log(`  ${m.versjon} ${m.navn}`);
-  }
-' "$arbeid"
+# Selve sammenligningen ligger i `src/ops/migration-plan.ts`, som har tester.
+# Den avgjør om det skrives til produksjon, og den avviser blant annet et hull i
+# historikken framfor å kjøre en eldre migrasjon etter en nyere.
+node src/ops/migration-plan-cli.ts "$arbeid/historikk.json" "$arbeid/mangler.json"
 
 antall=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).length)' "$arbeid/mangler.json")
 [ "$antall" = "0" ] && exit 0
@@ -155,7 +121,7 @@ fi
 # 2. Kjør dem, én fil om gangen, i tidsstempelrekkefølge.
 echo
 for i in $(seq 0 $((antall - 1))); do
-  fil=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[process.argv[2]].fil)' "$arbeid/mangler.json" "$i")
+  fil=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[process.argv[2]].file)' "$arbeid/mangler.json" "$i")
   versjon="${fil:0:14}"
   navn=$(basename "$fil" .sql)
   navn="${navn:15}"

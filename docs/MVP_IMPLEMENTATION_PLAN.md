@@ -5448,6 +5448,23 @@ planen, og en operasjon som gjentar seg og som skriver til produksjon hører hje
 kan reviewes én gang. `./scripts/deploy-migrations.sh` gjør nøyaktig det `db push` gjør, og
 `--dry-run` svarer på «er produksjon i synk med repoet?» uten å skrive noe.
 
+**Rettet under teknisk review: skriptet ville kjørt en eldre migrasjon etter en nyere.**
+Første utgave behandlet enhver lokal migrasjon uten en historikkrad som «manglende», uten å
+kontrollere at det som *var* kjørt utgjorde et sammenhengende prefiks av filene i repoet. Med
+registrert historikk `A, C` mot lokal `A, B, C` ga det `B` som manglende — og `B` ville blitt
+kjørt etter `C`. En migrasjon er skrevet under den forutsetningen at alt før den har kjørt, så
+den kunne da gjort noe annet enn den gjorde lokalt, eller gjeninnført en endring i feil
+rekkefølge. I et verktøy som skriver til produksjon er det en alvorligere feil enn den ser ut
+som, nettopp fordi den bare inntreffer når historikken allerede har drevet.
+
+Regelen er nå: **når en lokal migrasjon mangler, skal ingen nyere versjon allerede være
+registrert.** Er den brutt, skrives ingenting — et hull betyr at prosjektet og repoet har kommet
+fra hverandre, og hvorfor er et spørsmål et menneske må svare på, ikke noe et deployskript skal
+reparere selv. Supabase gjør det samme skillet med `--include-all`. Sammenligningen ligger i
+`src/ops/migration-plan.ts` framfor i skallet, og er mutasjonstestet: uten hullkontrollen
+feller to av testene rettelsen. Prøvd ende-til-ende mot den ekte historikken med én migrasjon
+fjernet midt i: avvist før noen skriving, med hullet navngitt.
+
 **Én ting skriptet bevisst ikke kontrollerer, fordi kontrollen ikke ville vært sann.** Første
 utkast sammenlignet `statements`-kolonnen med filens tekst for å oppdage en merget migrasjon
 som var redigert etterpå. Den meldte avvik på seksten filer. Ingen av dem var rørt:
