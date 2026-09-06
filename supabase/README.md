@@ -139,12 +139,14 @@ endringer i Supabase Dashboard skal ikke være kilden til produksjonsschema
 (`docs/MVP_IMPLEMENTATION_PLAN.md` §54). Eksponerte schemaer i det hostede prosjektet må
 holdes i synk med `[api].schemas` her.
 
-**Det hostede prosjektet er i synk med `main`, lest 4. september 2026.** Alle sytten
-migrasjonene over er kjørt der og registrert i `supabase_migrations.schema_migrations`, med
-nøyaktig de samme versjonsnumrene og navnene som filene i `migrations/`, og Data API-ets
-eksponerte schemaer er `api, graphql_public` — samme verdi som `[api].schemas` her.
-Tilstanden er lest fra produksjonsdatabasen gjennom Management-API-et, ikke gjengitt fra
-dashboardet.
+**Det hostede prosjektet er i synk med `main`, lest 6. september 2026.** Alle tretti
+migrasjonsfilene i `migrations/` er kjørt der og registrert i
+`supabase_migrations.schema_migrations`, med nøyaktig de samme versjonsnumrene og navnene,
+og Data API-ets eksponerte schemaer er `api, graphql_public` — samme verdi som
+`[api].schemas` her. Tilstanden er lest fra produksjonsdatabasen gjennom Management-API-et,
+ikke gjengitt fra dashboardet.
+
+Kontroller det selv, uten å skrive noe, med `./scripts/deploy-migrations.sh --dry-run`.
 
 **Datoen står der med hensikt.** Ingen vaktpost i CI ser på det hostede prosjektet, så en
 påstand om det er sann bare til noen endrer noe uten å oppdatere setningen — nøyaktig det som
@@ -153,9 +155,24 @@ handler på den; hvordan avlesningen ble gjort, står i `docs/MVP_IMPLEMENTATION
 At ingenting oppdager avviket maskinelt, er ført som GitHub-issue 42.
 
 Merk at `supabase link` og `supabase db push` ikke kan kjøres fra en agentsesjon: den pinnede
-CLI-ens Bun-runtime klarer ikke TLS gjennom sesjonens HTTPS-proxy (§74.23, prøvd på nytt 3. september 2026 og feilen står). Det er en egenskap ved agentmiljøet og ingen grunn til å
-endre pinningen; migrasjonene ble derfor kjørt gjennom Management-API-et, én fil om gangen,
-med historikkraden i samme transaksjon — samme operasjon `db push` gjør (§74.26).
+CLI-ens Bun-runtime klarer ikke TLS gjennom sesjonens HTTPS-proxy (§74.23, prøvd på nytt 6. september 2026 og feilen står — `supabase projects list` gir fortsatt
+`LegacyProjectsListNetworkError`). Det er en egenskap ved agentmiljøet og ingen grunn til å
+endre pinningen; migrasjonene kjøres derfor gjennom Management-API-et, én fil om gangen, med
+historikkraden i samme transaksjon — samme operasjon `db push` gjør (§74.26).
+
+Den framgangsmåten ligger nå i `./scripts/deploy-migrations.sh` framfor å gjengis for hånd
+hver gang (§74.34):
+
+```bash
+./scripts/deploy-migrations.sh --dry-run   # hva mangler? skriver ingenting
+./scripts/deploy-migrations.sh             # kjør dem, i tidsstempelrekkefølge
+```
+
+Skriptet leser `SUPABASE_PROJECT_REF` og `SUPABASE_ACCESS_TOKEN` fra miljøet, sammenligner
+historikken med filene i `migrations/`, og stopper ved første feil uten å forsøke resten.
+Kontrollen er på versjon og navn, ikke på innholdet i `statements`-kolonnen: `db push` deler
+filen i enkeltsetninger og fjerner kommentarene, mens Management-API-kjøringene la inn hele
+filen, så en sammenligning på innhold ville meldt avvik på filer ingen har rørt.
 
 **Kjør aldri `supabase config push` mot det hostede prosjektet.** Kommandoen pusher hele
 `config.toml`, og filen her er i praksis `supabase init`-standardene for en lokal stack —
@@ -535,7 +552,22 @@ npm run db:start
 # Hostet prosjekt: hent tilkoblingsstrengen i Supabase
 # (Project Settings → Database → Connection string, direkte forbindelse)
 ./scripts/issue-agent-credential.sh --db-url "postgresql://..."
+
+# Hostet prosjekt uten databasepassord for hånden: Management-API-et kjører SQL
+# som `postgres`, og gir den privilegerte forbindelsen funksjonen krever.
+./scripts/issue-agent-credential.sh --management-api
+
+# Der stdout blir en lagret logg (for eksempel en agentsesjon): skriv de to
+# variablene rett i den gitignorerte miljøfila, uten å vise verdien noe sted.
+./scripts/issue-agent-credential.sh --management-api --write-env
 ```
+
+**Identiteten er aktivert i det hostede prosjektet, 6. september 2026.**
+`secret_version` er `1` og `secret_issued_by_actor_id` peker på `human:peder-holman`;
+utstedelsen står i auditloggen som `agent_identity_credential_issued`. Legitimasjonen ble
+utstedt med `--write-env` og finnes bare i miljøet den ble utstedt i. Skal en annen
+maskin — for eksempel en GitHub Actions-runner — kjøre verifikatoren, utstedes en ny
+legitimasjon der; den gamle blir da ugyldig, som avsnittet under beskriver.
 
 Skriptet skriver hemmeligheten til stdout **én gang**. Databasen lagrer bare hashen, og det
 finnes ingen vei til å lese verdien ut igjen; mister du den, utsteder du en ny, som samtidig
