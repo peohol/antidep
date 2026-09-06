@@ -1472,20 +1472,21 @@ auditvokabularet en sjette gang, med `evidence_verification_registered`, og 005g
 kontrollerte skriveveien som lar den registrerte ekstraksjonsverifikatoren registrere en
 verifikasjon i `workflow.evidence_verifications` — bundet deklarativt til riktig aktør og
 riktig agentrolle med to sammensatte fremmednøkler mot `provenance.agent_runs`.
-De tre siste lukker kjeden fra kildeversjon til kjørt verifikasjon (§74.33): 008e utvider
+De fire siste lukker kjeden fra kildeversjon til kjørt verifikasjon (§74.33): 008e utvider
 auditvokabularet en sjuende gang med `source_version_registered`, 007f gir api-lesemodellen
 sitt tredje skrivbare medlem — skriveveien for å registrere en kildeversjon, med
-fingeravtrykket beregnet av databasen — og 005h gir verifikatoren leseveien inn til
-grunnlaget den kontrollerer mot.
+fingeravtrykket beregnet av databasen — 005h gir verifikatoren leseveien inn til
+grunnlaget den kontrollerer mot, og 006b lar publiseringsgaten lese hva kontrollene faktisk
+dekket, slik at en delkontroll ikke alene kan tilfredsstille den.
 Filrekkefølgen er dermed 001, 002, 003, 004, 005, 006, 006a, 007, 008, 007a, 005a, 005b,
 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c, 005e, 005f, 008d, 005g, 008e,
-007f, 005h — sortert på tidsstempel, ikke på migrasjonsnummer, og de nitten siste filene
+007f, 005h, 006b — sortert på tidsstempel, ikke på migrasjonsnummer, og de tjue siste filene
 bærer alle et bokstavnummer, altså et nummer utenfor den planlagte rekken. (Setningen sa tidligere at «de
 seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot listen over —
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1500 pgTAP-assertions over 46 testfiler.
+Databaselaget teller nå 1507 pgTAP-assertions over 46 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1636,11 +1637,11 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
    39 enum-typer, fordelt på de tjueni migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
-   005e, 005f, 008d, 005g, 008e, 007f og 005h — i filrekkefølge, ikke i nummerrekkefølge —
-   med henholdsvis 1, 6,
-   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0 og 0.
+   005e, 005f, 008d, 005g, 008e, 007f, 005h og 006b — i filrekkefølge, ikke i
+   nummerrekkefølge — med henholdsvis 1, 6,
+   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle tjueni ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle tretti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -5077,6 +5078,39 @@ Innstrammingen traff 27 eksisterende tester som bytter ut fiksturens utdrag med 
 forteller en annen historie enn fiksturen, og populasjonen er støy i dem. De slår den derfor av
 eksplisitt (`UTEN_POPULASJON`) framfor at kravet mykes opp. Fiksturen selv oppgir fortsatt en
 populasjon, og utdraget navngir den.
+
+**Den tjuetredje runden fant en kontraktsfeil mellom verifikatoren og publiseringsgaten — ikke i
+verifikatoren selv.**
+
+Den deterministiske kontrollen bedømmer **en delmengde** av feltene, og har aldri påstått noe annet:
+`checked_fields` sier presist hva den gikk gjennom (DATABASE_ARCHITECTURE.md §29). Den ser verken
+tidspunkt, retning, effektmål, availability-semantikk eller forbehold. Publiseringsgatens G5 leste
+imidlertid bare `outcome`. En rad registrert med `timepoint = 12 uker` mot en kilde som sier 8, eller
+med `sample_size_availability = not_reported` mot et utdrag som sier «N = 48», kunne dermed passere
+en gate som er ment å bety at ekstraksjonen er kontrollert.
+
+Feilen er *pre-eksisterende* i gaten, men denne PR-en er det som gjør en automatisk `verified` mulig
+i skala, så den lukkes her. Migrasjon **006b** legger til `workflow.required_check_fields(...)` og et
+nytt vilkår **G5b**: unionen av `checked_fields` over funnets bekreftede kontroller må dekke feltene
+raden faktisk påstår noe om. Kravet utledes fra raden selv framfor fra en liste noen må vedlikeholde
+— et felt som ikke er rapportert, påstår ingenting og kreves ikke, men *at* det står som ikke
+rapportert, dekkes av `availability_semantics`, som alltid kreves. Unionen, ikke den siste raden:
+flere verifikatorledd kan dele arbeidet, mens G5 fortsatt krever at den *siste* kontrollen er en
+bekreftelse.
+
+Konsekvensen, skrevet ut: **den deterministiske kontrollen kan aldri alene lukke publiseringsgaten.**
+Det er den riktige lesningen av hva den er, og den er nå håndhevet av databasen framfor forutsatt.
+
+Kontrakten er prøvd fra begge sider. I basen: en delkontroll med `outcome = 'verified'` avvises av
+gaten, kravet nevner et rapportert tidspunkt og availability-semantikken, og to verifikatorledd som
+til sammen dekker kravet, slipper gjennom. I kjøreren: `CHECKABLE_FIELDS` er den ene siden av
+kontrakten, og en test feller enhver `checked_fields` som går utenfor den — også på den lykkede
+stien, der raden er `verified` med felter som fortsatt står ukontrollert. To mutasjoner faller: G5b
+fjernet, og `availability_semantics` tatt ut av kravet.
+
+Sju eksisterende testrader måtte oppgi full dekning framfor `array['source_locator', 'estimate']`.
+De bruker nå `workflow.required_check_fields(e.id)`, altså den samme utledningen gaten bruker, slik
+at de holder seg selv oppdatert.
 
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den

@@ -93,6 +93,34 @@ export type EvidenceCheckField =
   | 'source_locator'
   | 'raw_extraction'
 
+/**
+ * Feltene denne kontrollen kan bedømme.
+ *
+ * Den er en **delkontroll**, og det er ikke en mangel som skal skjules: den
+ * leser ordrette utdrag og tall, og har ingen måte å avgjøre om tidspunktet er
+ * 8 eller 12 uker, om effektmålet er riktig valgt, om retningen er riktig
+ * tolket, om et felt med rette står som «ikke rapportert», eller om
+ * forbeholdene er dekkende. `checked_fields` sier derfor alltid nøyaktig hva
+ * kontrollen gikk gjennom (DATABASE_ARCHITECTURE.md §29).
+ *
+ * Publiseringsgaten leser det samme vokabularet: `verified` fra denne
+ * kontrollen betyr «alt jeg kontrollerte, stemte», ikke «ekstraksjonen er
+ * kontrollert», og gatens G5b krever at kontrollene *til sammen* dekker det
+ * raden påstår noe om (migrasjon 20260907093000). Listen her er den ene siden
+ * av den kontrakten, og er prøvd mot den andre.
+ */
+export const CHECKABLE_FIELDS = [
+  'raw_extraction',
+  'source_locator',
+  'intervention_arm',
+  'outcome',
+  'comparator_arm',
+  'population',
+  'sample_size',
+  'estimate',
+  'confidence_interval',
+] as const satisfies readonly EvidenceCheckField[]
+
 /** Verdiene `workflow.verification_outcome` tillater (migrasjon 005). */
 export type VerificationOutcome = 'verified' | 'needs_correction' | 'rejected' | 'uncertain'
 

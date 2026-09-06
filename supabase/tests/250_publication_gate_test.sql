@@ -31,7 +31,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(29);
+select plan(32);
 
 create temporary table fixture (name text primary key, id uuid not null) on commit drop;
 
@@ -151,11 +151,56 @@ select throws_like(
   'gaten avviser publisering når ekstraksjonen ikke er kontrollert (ANTIDEP_CONSTITUTION.md §11)'
 );
 
+-- G5b: en delkontroll er ikke en kontrollert ekstraksjon.
+--
+-- Feltene under er nøyaktig de den deterministiske ekstraksjonsverifikatoren
+-- kan bedømme når ingen tall er oppgitt. Den ser verken tidspunkt, retning,
+-- effektmål, availability-semantikk eller forbehold, og `checked_fields` sier
+-- det — men før G5b leste gaten bare `outcome`, og en slik rad passerte som om
+-- hele ekstraksjonen var kontrollert.
 insert into workflow.evidence_verifications
   (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
    source_access, checked_fields, rationale, verified_at)
 select e.id, e.created_by_actor_id, v.id, 'verified', 'original_source',
-       array['source_locator', 'estimate']::workflow.evidence_check_field[],
+       array['raw_extraction', 'source_locator', 'intervention_arm', 'outcome']
+         ::workflow.evidence_check_field[],
+       'Deterministisk kontroll av sitat, kildepeker og begreper.',
+       now() - interval '26 days'
+from knowledge.evidence_items e, fixture v
+where e.id = (select id from fixture where name = 'evidence_a') and v.name = 'verifier';
+
+select throws_like(
+  $$select knowledge.assert_claim_revision_publishable(
+      (select id from fixture where name = 'rev'))$$,
+  '%uten fullstendig kontrollert ekstraksjon%',
+  'en delkontroll med outcome verified tilfredsstiller ikke publiseringsgaten'
+);
+
+-- Tidspunktet er en av feltene den deterministiske kontrollen aldri ser, og
+-- raden oppgir det. Kravet må nevne det.
+select ok(
+  'timepoint' = any (workflow.required_check_fields(
+    (select id from fixture where name = 'evidence_a'))),
+  'et rapportert tidspunkt kreves kontrollert før publisering'
+);
+
+-- At feltene er ført som rapportert eller ikke rapportert, er selv en påstand
+-- om kilden, og kreves alltid kontrollert.
+select ok(
+  'availability_semantics' = any (workflow.required_check_fields(
+    (select id from fixture where name = 'evidence_a'))),
+  'availability-semantikken kreves kontrollert uansett hvordan raden er fylt ut'
+);
+
+-- Kravet gjelder unionen: to verifikatorledd kan dele arbeidet, og det andre
+-- leddet dekker resten.
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, rationale, verified_at)
+select e.id, e.created_by_actor_id, v.id, 'verified', 'original_source',
+       -- Full dekning, utledet av raden selv: publiseringsgatens G5b krever at
+       -- kontrollene til sammen dekker det funnet påstår noe om.
+       workflow.required_check_fields(e.id),
        'Kontrollert mot originalkilden.', now() - interval '25 days'
 from knowledge.evidence_items e, fixture v
 where e.id = (select id from fixture where name = 'evidence_a') and v.name = 'verifier';
@@ -252,7 +297,9 @@ insert into workflow.evidence_verifications
   (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
    source_access, checked_fields, rationale, verified_at)
 select e.id, e.created_by_actor_id, v.id, 'verified', 'original_source',
-       array['source_locator', 'estimate']::workflow.evidence_check_field[],
+       -- Full dekning, utledet av raden selv: publiseringsgatens G5b krever at
+       -- kontrollene til sammen dekker det funnet påstår noe om.
+       workflow.required_check_fields(e.id),
        'Fortegnet var riktig ved fornyet kontroll mot kilden.', now() - interval '8 days'
 from knowledge.evidence_items e, fixture v
 where e.id = (select id from fixture where name = 'evidence_a') and v.name = 'verifier';
@@ -428,7 +475,9 @@ insert into workflow.evidence_verifications
   (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
    source_access, checked_fields, rationale, verified_at)
 select e.id, e.created_by_actor_id, v.id, 'verified', 'original_source',
-       array['source_locator', 'estimate']::workflow.evidence_check_field[],
+       -- Full dekning, utledet av raden selv: publiseringsgatens G5b krever at
+       -- kontrollene til sammen dekker det funnet påstår noe om.
+       workflow.required_check_fields(e.id),
        'Kontrollert mot originalkilden.', now() - interval '25 days'
 from knowledge.evidence_items e, fixture v
 where e.id = (select id from fixture where name = 'evidence_b') and v.name = 'verifier';

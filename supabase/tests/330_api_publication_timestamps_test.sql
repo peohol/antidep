@@ -126,7 +126,9 @@ insert into workflow.evidence_verifications
   (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
    source_access, checked_fields, rationale, verified_at)
 select e.id, e.created_by_actor_id, v.id, 'verified', 'original_source',
-       array['source_locator', 'estimate']::workflow.evidence_check_field[],
+       -- Full dekning, utledet av raden selv: publiseringsgatens G5b krever at
+       -- kontrollene til sammen dekker det funnet påstår noe om.
+       workflow.required_check_fields(e.id),
        'Kontrollert mot originalkilden.', now() - interval '9 days'
 from knowledge.evidence_items e, fixture v
 where v.name = 'verifier'

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CHECKABLE_FIELDS,
   checkExtraction,
   numberOccursIn,
   searchProjections,
@@ -25,6 +26,55 @@ function check(
 // bytter ut utdraget, forteller en annen historie: da er populasjonen støy og
 // slås av, slik at testen måler det den sier den måler.
 const UTEN_POPULASJON = { populationAvailability: 'not_reported' } as const
+
+// ----------------------------------------------------------------------------
+// Kontrakten mot publiseringsgaten
+//
+// Denne kontrollen bedømmer en delmengde av feltene. Gaten (G5b, migrasjon
+// 20260907093000) krever at kontrollene til sammen dekker det raden påstår noe
+// om, og leser det fra `checked_fields`. Da må denne siden aldri føre opp et
+// felt den ikke faktisk gikk gjennom.
+// ----------------------------------------------------------------------------
+describe('checkExtraction — fører aldri opp et felt den ikke kan bedømme', () => {
+  const UTENFOR: readonly string[] = [
+    'timepoint',
+    'reported_direction',
+    'effect_measure',
+    'availability_semantics',
+    'limitations',
+  ]
+
+  it.each([
+    ['den lykkede stien', {}],
+    ['et avvik', { extraction: { rawExtraction: { sitat: 'står ikke i kilden' } } }],
+    ['en uavklart kontroll', { extraction: { estimate: '2.7' } }],
+    [
+      'et rapportert tidspunkt kilden motsier',
+      { extraction: { timepointAvailability: 'reported_value' } },
+    ],
+    [
+      'en utvalgsstørrelse ført som ikke rapportert',
+      { extraction: { sampleSize: null, sampleSizeAvailability: 'not_reported' } },
+    ],
+  ] as const)('holder seg innenfor de kontrollerbare feltene (%s)', (_navn, overrides) => {
+    const report = check(overrides)
+
+    expect(report.checkedFields.filter((field) => UTENFOR.includes(field))).toEqual([])
+    for (const field of report.checkedFields) {
+      expect(CHECKABLE_FIELDS).toContain(field)
+    }
+  })
+
+  // Det er nettopp derfor gaten ikke kan nøye seg med `outcome`: selv den
+  // lykkede stien lar felter stå ukontrollert.
+  it('lar felter stå ukontrollert også når utfallet er verified', () => {
+    const report = check()
+
+    expect(report.outcome).toBe('verified')
+    expect(report.checkedFields).not.toContain('availability_semantics')
+    expect(report.checkedFields).not.toContain('reported_direction')
+  })
+})
 
 describe('checkExtraction — den lykkede stien', () => {
   it('bekrefter et funn der sitatet og alle tallene står i kilden', () => {

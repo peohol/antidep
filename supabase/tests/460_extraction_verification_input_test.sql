@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(33);
+select plan(37);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -503,6 +503,54 @@ select throws_ok(
   'det samme gjelder kildeversjonene: grunnlaget nås bare gjennom funksjonen'
 );
 reset role;
+
+-- ----------------------------------------------------------------------------
+-- Kravet publiseringsgaten stiller, utledet av raden selv
+--
+-- Den deterministiske kontrollen bedømmer en delmengde av feltene, og
+-- `checked_fields` sier hvilken. Gaten leser nå det samme vokabularet
+-- (migrasjon 20260907093000), så de to lagene må være enige om hva raden
+-- faktisk påstår noe om.
+-- ----------------------------------------------------------------------------
+select set_eq(
+  $$select unnest(workflow.required_check_fields(
+      '46000000-0000-4000-8000-000000000011'))::text$$,
+  $$values ('raw_extraction'), ('source_locator'), ('intervention_arm'), ('outcome'),
+           ('reported_direction'), ('availability_semantics'), ('effect_measure'),
+           ('comparator_arm'), ('population'), ('sample_size'), ('estimate'),
+           ('confidence_interval')$$,
+  'kravet dekker nøyaktig det raden påstår noe om'
+);
+
+-- Tidspunktet er ført som ikke rapportert, og raden påstår da ingenting om
+-- det. Forbehold er ikke oppgitt. Ingen av dem kreves kontrollert — men *at*
+-- de står som ikke rapportert, dekkes av availability_semantics.
+select ok(
+  not ('timepoint' = any (workflow.required_check_fields(
+    '46000000-0000-4000-8000-000000000011'))),
+  'et tidspunkt som ikke er rapportert, kreves ikke kontrollert'
+);
+select ok(
+  not ('limitations' = any (workflow.required_check_fields(
+    '46000000-0000-4000-8000-000000000011'))),
+  'forbehold som ikke er oppgitt, kreves ikke kontrollert'
+);
+
+-- Feltene den deterministiske kontrollen kan føre opp, er en ekte delmengde av
+-- kravet. Det er hele grunnen til at gaten ikke kan nøye seg med `outcome`.
+select ok(
+  exists (
+    select 1
+    from unnest(workflow.required_check_fields(
+      '46000000-0000-4000-8000-000000000011')) as required(field)
+    where required.field <> all (array[
+      'raw_extraction', 'source_locator', 'intervention_arm', 'outcome',
+      'comparator_arm', 'population', 'sample_size', 'estimate',
+      'confidence_interval'
+    ]::workflow.evidence_check_field[])
+  ),
+  'den deterministiske kontrollen kan aldri alene dekke kravet'
+);
 
 select * from finish();
 rollback;
