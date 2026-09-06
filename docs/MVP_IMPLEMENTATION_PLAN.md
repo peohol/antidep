@@ -4691,6 +4691,26 @@ regelen. «sertraline, N = 48» og «a mean weight gain of 0.8 +/- 2.7 kg» er b
 kjenner igjen — og i den første kilden står `48` dessuten i et titalls referanser, som den gamle
 regelen ville akseptert som treff. Begge rettelsene er mutasjonstestet hver for seg.
 
+**Den niende runden strammet ordlistene til å faktisk navngi feltet.** Første utkast hadde verb i
+ankerlisten for utvalgsstørrelse, og et verb sier hva som ble gjort — ikke hva som telles:
+
+```text
+registrert sample_size = 12   kilden sier «Participants completed 12 weeks of treatment.»
+registrert estimate = 12      kilden sier «The median was 12 months.»
+```
+
+Begge ble bekreftet. Reprodusert før rettelsen — den andre fant jeg da jeg lette etter samme
+feilklasse på estimatsiden, som gjennomgangen ikke hadde pekt på.
+
+| Fjernet | Hvorfor | Hva som dekker de virkelige formene i stedet |
+| --- | --- | --- |
+| `included`, `enrolled`, `recruited`, `completed`, `randomized`, `total of` foran tallet | Sier hva som ble gjort, ikke hva som telles | Deltakerordene *bak* tallet: «enrolled 48 **patients**», «a total of 284 **adults**» |
+| `mean`, `median`, `average`, `gjennomsnitt*` som anker for estimatet | Statistikk over hva som helst, ikke navnet på et effektmål | Det effektspesifikke ordet, som står der uansett: «a mean weight **gain** of 0.8», «the mean **difference** was 0.8» |
+
+`n` krever nå `=` eller `:` rett etter: «N = 48» navngir utvalget, en løs `n` i nærheten av et tall
+gjør det ikke. Verbene ga altså ingen dekning listene ikke allerede hadde — bare en åpning. Begge
+innstrammingene er mutasjonstestet, og begge de reelle NCBI-funnene er fortsatt `verified`.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

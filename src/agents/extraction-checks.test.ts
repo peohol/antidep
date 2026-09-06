@@ -312,8 +312,50 @@ describe('checkExtraction — tallene', () => {
     expect(report.rationale).toContain('estimat (15)')
   })
 
+  // Et verb sier hva som ble gjort, ikke hva som telles. «12» er her en
+  // varighet, og kilden oppgir ingen utvalgsstørrelse i det hele tatt.
+  it.each([
+    ['completed 12 weeks', 'Vekt. Participants completed 12 weeks of treatment.'],
+    ['included 12 weeks', 'Vekt. The study included 12 weeks of follow-up.'],
+    ['enrolled over 12 months', 'Vekt. Patients were enrolled at 12 sites.'],
+  ])('fører ikke utvalgsstørrelsen som kontrollert på «%s»', (_navn, kilde) => {
+    const report = check(
+      { extraction: { sampleSize: 12, rawExtraction: { sitat: 'Vekt' } } },
+      kilde,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+    expect(report.rationale).toContain('utvalgsstørrelse (12)')
+  })
+
+  // Samme klasse på estimatet: «mean», «median» og «average» er statistikk over
+  // hva som helst, ikke navnet på et effektmål.
+  it.each([
+    ['median var en varighet', 'Vekt. The median was 12 months.'],
+    ['mean var en alder', 'Vekt. The mean was 12 years.'],
+    ['average var en varighet', 'Vekt. An average of 12 weeks of treatment.'],
+  ])('fører ikke estimatet som kontrollert på «%s»', (_navn, kilde) => {
+    const report = check(
+      {
+        extraction: {
+          estimate: '12',
+          estimateUnit: null,
+          effectMeasure: 'risk_ratio',
+          rawExtraction: { sitat: 'Vekt' },
+        },
+      },
+      kilde,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.rationale).toContain('estimat (12)')
+  })
+
   it.each([
     ['N = 48', 'Patients (sertraline, N = 48) completed the trial.', 48],
+    ['sample size was 48', 'The sample size was 48 in the sertraline arm.', 48],
     ['284 adults', 'A total of 284 adults were randomised.', 284],
     ['48 patients', 'We enrolled 48 patients at two sites.', 48],
     ['norsk form', 'Studien inkluderte 48 pasienter.', 48],

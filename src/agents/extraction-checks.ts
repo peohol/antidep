@@ -504,21 +504,22 @@ const CI_GLUE = glue([CI_ANCHOR_SOURCE])
 // nøyaktig den feilen dette skal hindre.
 // ----------------------------------------------------------------------------
 
-/** Uttrykk som kan stå foran eller bak tallet og navngi utvalgsstørrelsen. */
-const SAMPLE_SIZE_ANCHORS_BEFORE = [
-  '\\bn\\b',
-  'sample sizes?',
-  'total of',
-  'totalt',
-  'included',
-  'enrolled',
-  'recruited',
-  'completed',
-  'randomi[sz]ed',
-  'utvalgsstørrelse\\w*',
-  'inkluderte',
-  'randomiserte?',
-]
+/**
+ * Uttrykk som *navngir* utvalgsstørrelsen, og som derfor kan stå foran tallet.
+ *
+ * Bare navngivende former. Verb som `included`, `enrolled` og `completed` sto
+ * her først, og det var galt: de sier hva som ble gjort, ikke hva som telles.
+ * «Participants completed 12 weeks of treatment» bekreftet et registrert
+ * `sample_size = 12`, der `12` er en varighet.
+ *
+ * De virkelige formene de skulle dekke — «enrolled 48 patients», «a total of
+ * 284 adults» — er allerede dekket av deltakerordene under, som binder tallet
+ * til antall personer. Verbene ga altså ingen dekning, bare en åpning.
+ *
+ * `n` krever `=` eller `:` rett etter: «N = 48» navngir utvalget, en løs `n`
+ * i nærheten av et tall gjør det ikke.
+ */
+const SAMPLE_SIZE_ANCHORS_BEFORE = ['\\bn\\s*[=:]', 'sample sizes?', 'utvalgsstørrelse\\w*']
 
 const SAMPLE_SIZE_ANCHORS_AFTER = [
   'patients?',
@@ -539,11 +540,17 @@ const SAMPLE_SIZE_ANCHORS_AFTER = [
   'menn',
 ]
 
-/** Uttrykk som navngir et effektestimat. Enheten alene teller ikke. */
+/**
+ * Uttrykk som navngir et effektestimat. Enheten alene teller ikke.
+ *
+ * `mean`, `median`, `average` og `gjennomsnitt` står bevisst *ikke* her, av
+ * samme grunn som verbene er borte fra utvalgsstørrelsen: de er statistikk over
+ * hva som helst, ikke navnet på et effektmål. «The median was 12 months»
+ * bekreftet et registrert estimat på 12. Ordene finnes fortsatt i de virkelige
+ * formene — «a mean weight **gain** of 0.8», «the mean **difference** was
+ * 0.8» — der det er det effektspesifikke ordet som bærer.
+ */
 const ESTIMATE_ANCHORS = [
-  'mean',
-  'median',
-  'average',
   'difference',
   'differences',
   'change',
@@ -563,7 +570,6 @@ const ESTIMATE_ANCHORS = [
   'odds ratios?',
   'risk ratios?',
   'hazard ratios?',
-  'gjennomsnitt\\w*',
   'forskjell\\w*',
   'endring\\w*',
   'økning\\w*',
