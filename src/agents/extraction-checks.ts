@@ -280,33 +280,52 @@ function escapeRegExp(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Om tallet står i teksten som et selvstendig tall, med riktig fortegn. */
-export function numberOccursIn(projections: readonly string[], value: string): boolean {
+interface NumberPattern {
+  /** Sifrene som regex, med desimalskilletegn og etterfølgende nuller åpne. */
+  readonly body: string
+  readonly isNegative: boolean
+}
+
+/** Sifferdelen av et tall som regex, eller `null` når verdien ikke er et tall. */
+function numberPattern(value: string): NumberPattern | null {
   const normalized = trimNumericText(value).replace(/^\+/, '')
   if (!/^-?\d+(\.\d+)?$/.test(normalized)) {
-    return false
+    return null
   }
-
-  const isNegative = normalized.startsWith('-')
   const digits = normalized.replace('-', '')
   const [integerPart = '', decimalPart] = digits.split('.')
-  const body =
-    decimalPart === undefined
-      ? escapeRegExp(integerPart)
-      : `${escapeRegExp(integerPart)}[.,]${escapeRegExp(decimalPart)}0*`
+  return {
+    body:
+      decimalPart === undefined
+        ? escapeRegExp(integerPart)
+        : `${escapeRegExp(integerPart)}[.,]${escapeRegExp(decimalPart)}0*`,
+    isNegative: normalized.startsWith('-'),
+  }
+}
 
-  // Foran: et negativt tall krever minustegnet, og minustegnet må selv ikke
-  // stå rett etter et tall — ellers ville «8-12» blitt lest som «-12». Et
-  // positivt tall avvises når det står med minustegn foran.
-  //
-  // `normalize()` har allerede gjort typografiske minus- og bindestreker om til
-  // ASCII, så det er nok å se etter ett tegn her.
-  const before = isNegative ? '(?<![\\d.,])-' : '(?<![\\d.,-])'
-  // Bak: verken et siffer til, eller et desimalskilletegn med et siffer etter.
-  // Uten det siste ville «12» blitt funnet inne i «12.5».
-  const after = '(?![\\d]|[.,]\\d)'
+// Foran: et negativt tall krever minustegnet, og minustegnet må selv ikke stå
+// rett etter et tall — ellers ville «8-12» blitt lest som «-12». Et positivt
+// tall avvises når det står med minustegn foran.
+//
+// `normalize()` har alt gjort typografiske minus- og bindestreker om til ASCII,
+// så det er nok å se etter ett tegn her.
+function leadingBoundary(isNegative: boolean): string {
+  return isNegative ? '(?<![\\d.,])-' : '(?<![\\d.,-])'
+}
 
-  const pattern = new RegExp(`${before}${body}${after}`)
+// Bak: verken et siffer til, eller et desimalskilletegn med et siffer etter.
+// Uten det siste ville «12» blitt funnet inne i «12.5».
+const TRAILING_BOUNDARY = '(?![\\d]|[.,]\\d)'
+
+/** Om tallet står i teksten som et selvstendig tall, med riktig fortegn. */
+export function numberOccursIn(projections: readonly string[], value: string): boolean {
+  const number = numberPattern(value)
+  if (number === null) {
+    return false
+  }
+  const pattern = new RegExp(
+    `${leadingBoundary(number.isNegative)}${number.body}${TRAILING_BOUNDARY}`,
+  )
   return projections.some((haystack) => pattern.test(haystack))
 }
 
@@ -345,36 +364,167 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
   if (isReported(e.estimateAvailability) && e.estimate !== null) {
     claims.push({ field: 'estimate', label: 'estimat', value: e.estimate })
   }
-  if (isReported(e.confidenceIntervalAvailability)) {
-    if (e.ciLower !== null) {
-      claims.push({
-        field: 'confidence_interval',
-        label: 'nedre konfidensgrense',
-        value: e.ciLower,
-      })
-    }
-    if (e.ciUpper !== null) {
-      claims.push({
-        field: 'confidence_interval',
-        label: 'øvre konfidensgrense',
-        value: e.ciUpper,
-      })
-    }
-    // Nivået hører til intervallet, ikke ved siden av det: «0,4 til 2,6» er
-    // en annen påstand med 90 % enn med 95 %. Databasen krever da også begge
-    // eller ingen (`evidence_items_confidence_level_pairing_check`). Uten
-    // denne kontrollen ville `confidence_interval` blitt ført som kontrollert
-    // mot en kilde som oppgir et annet nivå enn det registrerte — og
-    // auditsporet ville sagt at intervallet var etterprøvd.
-    if (e.ciLevelPercent !== null) {
-      claims.push({
-        field: 'confidence_interval',
-        label: 'konfidensnivå',
-        value: e.ciLevelPercent,
-      })
+  // Konfidensintervallet står ikke her: det er én påstand med tre deler, og de
+  // tre kan ikke søkes hver for seg. Se `confidenceIntervalCheck`.
+  return claims
+}
+
+// ----------------------------------------------------------------------------
+// Konfidensintervallet: én påstand, ikke tre tall
+//
+// «0,4 til 2,6 med 95 % konfidens» er én påstand. Søkes de tre tallene hver for
+// seg i hele representasjonen, kan de komme fra tre forskjellige steder, og da
+// er det ikke intervallet som er bekreftet. Feilen er ikke teoretisk:
+//
+//   «90 participants were enrolled. The effect was 1.5 kg (95% CI 0.4 to 2.6).»
+//
+// Et funn registrert med 0,4–2,6 og nivå **90 %** fant alle tre tallene her —
+// `90` fra utvalget, `0.4` og `2.6` fra et intervall som er oppgitt med et
+// annet nivå. Kilden sier 95 %, raden sier 90 %, og kontrollen sa `verified`.
+//
+// Intervallet kontrolleres derfor rundt et anker: stedet i teksten der kilden
+// selv navngir et konfidensintervall. Nivået må stå *inntil* ankeret, slik
+// kilder faktisk skriver det («95% CI», «CI 95%», «95 % konfidensintervall»),
+// og begge grensene innenfor et avgrenset vindu rundt det samme ankeret. Et
+// tall et helt annet sted i teksten kan da ikke lenger tre inn i rollen.
+//
+// Finner kontrollen ikke et slikt uttrykk, er utfallet `uncertain` og feltet
+// føres ikke opp — ikke et avvik. En kilde kan oppgi intervallet i en tabell,
+// i en annen enhet eller uten å navngi det, og asymmetrien gjelder her som
+// ellers: bekreftelse teller, fravær konkluderer ikke.
+// ----------------------------------------------------------------------------
+
+/**
+ * Der kilden selv navngir et konfidensintervall.
+ *
+ * `\bCI\b` er med små bokstaver også, fordi kilder skriver «ci» i tabeller.
+ * Et anker som treffer feil er ufarlig: det åpner bare for en kontroll som
+ * fortsatt krever nivå *og* begge grenser på rett plass.
+ */
+const CI_ANCHOR = /\bCI\b|\bC\.I\.|confidence intervals?|konfidensintervall\w*/gi
+
+/** Hvor nær ankeret nivået må stå. «95 % konfidensintervall» er 5 tegn. */
+const CI_LEVEL_ADJACENCY = 12
+
+/** Hvor langt fra ankeret grensene kan stå. «CI 0.4 to 2.6 (p = 0.01)» får plass. */
+const CI_BOUNDS_WINDOW = 80
+
+// Det som skiller de to grensene i et intervall. Inne i et navngitt
+// konfidensintervall er en bindestrek intervallets strek og ikke et minustegn —
+// «95% CI 0.4-2.6» er den vanligste skrivemåten i MEDLINE-sammendrag. Utenfor
+// et slikt anker gjelder fortsatt den strengere regelen i `numberOccursIn`,
+// der en bindestrek ikke kan skilles fra et fortegn.
+const CI_RANGE_SEPARATOR = '\\s*(?:to|til|and|og|[,;-])\\s*'
+
+/**
+ * Om de to grensene står i teksten som ett intervall.
+ *
+ * Dette er hele forskjellen fra to uavhengige tallsøk: «0,4 til 1,9 … 1,1 til
+ * 2,6» inneholder både 0,4 og 2,6, men ingen av intervallene er 0,4–2,6. Bare
+ * en sammenhengende skrivemåte teller.
+ */
+export function boundsPairOccursIn(text: string, lower: string, upper: string): boolean {
+  const low = numberPattern(lower)
+  const high = numberPattern(upper)
+  if (low === null || high === null) {
+    return false
+  }
+  // Etter separatoren er en bindestrek separatoren selv. Et negativt
+  // *øvre* tall trenger derfor sitt eget minustegn i tillegg.
+  const pattern = new RegExp(
+    `${leadingBoundary(low.isNegative)}${low.body}${CI_RANGE_SEPARATOR}` +
+      `${high.isNegative ? '-' : ''}${high.body}${TRAILING_BOUNDARY}`,
+  )
+  return pattern.test(text)
+}
+
+function windowAround(text: string, start: number, end: number, radius: number): string {
+  return text.slice(Math.max(0, start - radius), Math.min(text.length, end + radius))
+}
+
+/** Det registrerte intervallet, slik det skal gjenfinnes. */
+export interface ConfidenceInterval {
+  readonly lower: string
+  readonly upper: string
+  readonly levelPercent: string
+}
+
+export interface ConfidenceIntervalReport {
+  readonly confirmed: boolean
+  /** Delene som ikke ble gjenfunnet på rett plass, som «konfidensnivå (90)». */
+  readonly unmatched: readonly string[]
+  /** Sant når kilden ikke navngir et konfidensintervall i det hele tatt. */
+  readonly noAnchor: boolean
+}
+
+/**
+ * Om representasjonen bekrefter det registrerte konfidensintervallet som ett
+ * uttrykk. Kalles bare når intervallet er oppgitt.
+ *
+ * Begge betingelsene må holde ved *samme* anker: nivået inntil ankeret, og de
+ * to grensene som ett intervall i vinduet rundt det. Et anker som oppfyller
+ * begge, bekrefter; ellers sier rapporten hvilken del som manglet.
+ */
+export function confidenceIntervalCheck(
+  projections: readonly string[],
+  interval: ConfidenceInterval,
+): ConfidenceIntervalReport {
+  let anchors = 0
+  let levelSeen = false
+  let boundsSeen = false
+
+  for (const projection of projections) {
+    // Regexen er deklarert utenfor og bærer `lastIndex`, så den kan ikke
+    // gjenbrukes rått mellom kall.
+    for (const anchor of projection.matchAll(new RegExp(CI_ANCHOR.source, 'gi'))) {
+      const start = anchor.index
+      const end = start + anchor[0].length
+      anchors += 1
+
+      const level = numberOccursIn(
+        [windowAround(projection, start, end, CI_LEVEL_ADJACENCY)],
+        interval.levelPercent,
+      )
+      const bounds = boundsPairOccursIn(
+        windowAround(projection, start, end, CI_BOUNDS_WINDOW),
+        interval.lower,
+        interval.upper,
+      )
+      if (level && bounds) {
+        return { confirmed: true, unmatched: [], noAnchor: false }
+      }
+      levelSeen ||= level
+      boundsSeen ||= bounds
     }
   }
-  return claims
+
+  const unmatched: string[] = []
+  if (!boundsSeen) {
+    unmatched.push(`konfidensgrensene (${interval.lower} til ${interval.upper})`)
+  }
+  if (!levelSeen) {
+    unmatched.push(`konfidensnivå (${interval.levelPercent})`)
+  }
+  return { confirmed: false, unmatched, noAnchor: anchors === 0 }
+}
+
+/** Det registrerte intervallet, eller `null` når raden ikke oppgir noe. */
+function reportedConfidenceInterval(item: VerificationItem): ConfidenceInterval | null {
+  const e = item.extraction
+  // Databasen parer de tre: `ci_lower` er ikke null nøyaktig når intervallet er
+  // oppgitt, og `ci_upper` og `ci_level_percent` følger den
+  // (evidence_items_confidence_interval_pairing_check,
+  // evidence_items_confidence_level_pairing_check). Kontrollen krever likevel
+  // alle tre her framfor å stole på at de finnes.
+  if (
+    !isReported(e.confidenceIntervalAvailability) ||
+    e.ciLower === null ||
+    e.ciUpper === null ||
+    e.ciLevelPercent === null
+  ) {
+    return null
+  }
+  return { lower: e.ciLower, upper: e.ciUpper, levelPercent: e.ciLevelPercent }
 }
 
 function termClaims(item: VerificationItem): readonly TermClaim[] {
@@ -469,6 +619,35 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
       unmatchedNumbers.push(`${claim.label} (${claim.value})`)
     }
   }
+  // Konfidensintervallet kontrolleres som ett uttrykk, ikke som tre tall — se
+  // hodekommentaren over `confidenceIntervalCheck`.
+  const reportedInterval = reportedConfidenceInterval(item)
+  let confidenceIntervalUnresolved = false
+  if (reportedInterval !== null) {
+    numericFields.add('confidence_interval')
+    const ci = confidenceIntervalCheck(projections, reportedInterval)
+    if (!ci.confirmed) {
+      unresolvedFields.add('confidence_interval')
+      confidenceIntervalUnresolved = true
+      if (ci.noAnchor) {
+        notes.push(
+          'Representasjonen navngir ikke noe konfidensintervall, så det registrerte ' +
+            'intervallet kunne ikke kontrolleres som ett uttrykk og er ikke ført opp som ' +
+            'kontrollert. Grensene kan stå i en tabell eller uten at intervallet er navngitt.',
+        )
+      } else {
+        unmatchedNumbers.push(...ci.unmatched)
+        if (ci.unmatched.length === 0) {
+          notes.push(
+            'Nivået og grensene i det registrerte konfidensintervallet ble funnet hver for ' +
+              'seg, men ikke i samme intervalluttrykk i kilden. Intervallet er derfor ikke ' +
+              'ført opp som kontrollert: tre tall fra tre steder er ikke ett intervall.',
+          )
+        }
+      }
+    }
+  }
+
   for (const field of numericFields) {
     if (!unresolvedFields.has(field)) {
       checked.push(field)
@@ -515,9 +694,13 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
       'Representasjonen som ble hentet, har ikke samme fingeravtrykk som den registrerte ' +
         'kildeversjonen, så kontrollen gjelder ikke den utgaven ekstraksjonen ble gjort fra.',
     )
-  } else if (!quotesFound || unmatchedNumbers.length > 0) {
+  } else if (!quotesFound || unmatchedNumbers.length > 0 || confidenceIntervalUnresolved) {
     // Et oppgitt tall som ikke lot seg gjenfinne, er ikke et avvik — men det er
     // heller ikke en bekreftelse av raden som helhet. Utfallet sier nettopp det.
+    //
+    // Konfidensintervallet står her selv om hvert av tallene fantes et sted i
+    // teksten: fant kontrollen dem ikke i samme intervalluttrykk, er intervallet
+    // ikke kontrollert, og en rad med et ukontrollert intervall er ikke bekreftet.
     outcome = 'uncertain'
   } else {
     outcome = 'verified'

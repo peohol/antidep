@@ -4588,6 +4588,35 @@ denne PR-en som kunne gitt en falsk `verified`:
 Begge er mutasjonstestet, og ingen av dem endrer utfallet for de to seedede funnene: de rapporterer
 ikke konfidensintervall, og estimatet `0.8` har ingen presisjon å miste.
 
+**Den femte runden fant at nivåkontrollen over var halv.** Rettelsen la nivået til som et *tredje
+uavhengig tallsøk*, og tre tall søkt hver for seg i hele teksten kan komme fra tre forskjellige
+steder:
+
+```text
+90 participants were enrolled. The effect was 1.5 kg (95% CI 0.4 to 2.6).
+```
+
+Et funn registrert med 0,4–2,6 og nivå **90 %** fant alle tre tallene her: `90` fra utvalget, og
+grensene fra et intervall kilden oppgir med *et annet* nivå. Kilden sier 95 %, raden sier 90 %, og
+kontrollen sa `verified`. Reprodusert før rettelsen.
+
+Intervallet kontrolleres nå som **én påstand rundt et anker**: stedet der kilden selv navngir et
+konfidensintervall. Nivået må stå inntil ankeret, slik kilder faktisk skriver det («95% CI»,
+«CI 95%», «95 % konfidensintervall»), og de to grensene må stå som *ett intervalluttrykk* i vinduet
+rundt det samme ankeret — ikke som to tall som tilfeldigvis begge finnes der. Den andre halvdelen er
+like nødvendig som den første: «0,4 til 1,9 … 1,1 til 2,6» inneholder både 0,4 og 2,6, men ingen av
+intervallene er 0,4–2,6.
+
+Inne i et navngitt intervall leses en bindestrek som intervallets strek og ikke som et minustegn, så
+«95% CI 0.4-2.6» — den vanligste skrivemåten i MEDLINE-sammendrag — kjennes igjen. Utenfor et slikt
+anker gjelder fortsatt den strengere regelen fra fjerde runde, der en bindestrek ikke kan skilles
+fra et fortegn. Navngir kilden ikke noe intervall, er utfallet `uncertain` og ikke et avvik:
+grensene kan stå i en tabell som ikke er med i representasjonen.
+
+Mutasjonstestet: settes kontrollen tilbake til tre uavhengige globale tallsøk, feller de tre nye
+testene den. De to seedede funnene er kjørt på nytt mot sine reelle NCBI-poster og er fortsatt
+`verified` — ingen av dem rapporterer konfidensintervall.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

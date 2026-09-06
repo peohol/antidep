@@ -115,7 +115,9 @@ describe('checkExtraction — tallene', () => {
     const report = check({ extraction: { ciUpper: '9.9' } })
     expect(report.outcome).toBe('uncertain')
     expect(report.checkedFields).not.toContain('confidence_interval')
-    expect(report.rationale).toContain('øvre konfidensgrense (9.9)')
+    // Paret er det som mangler, ikke ett tall: kilden har et intervall, men
+    // ikke dette. Begrunnelsen navngir derfor grensene som ett uttrykk.
+    expect(report.rationale).toContain('konfidensgrensene (0.4 til 9.9)')
   })
 
   // Nivået hører til intervallet: «0,4 til 2,6» er en annen påstand med 90 %
@@ -134,6 +136,81 @@ describe('checkExtraction — tallene', () => {
     const report = check()
 
     expect(report.checkedFields).toContain('confidence_interval')
+  })
+
+  // Nøyaktig eksempelet fra gjennomgangen. Alle tre tallene finnes i teksten —
+  // `90` som utvalgsstørrelse, `0.4` og `2.6` fra et intervall som er oppgitt
+  // med *et annet* nivå. Tre uavhengige tallsøk fant dem og sa `verified`.
+  // Intervallet er én påstand, og et tall et annet sted kan ikke tre inn i den.
+  it('lar ikke et tilfeldig 90 et annet sted bekrefte et 90 %-intervall mot en 95 %-kilde', () => {
+    const kilde =
+      'Among 284 adults with depression, 90 participants were enrolled at site B. ' +
+      'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6) over the study period.'
+    const report = check(
+      {
+        extraction: {
+          ciLevelPercent: '90',
+          rawExtraction: { sitat: 'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6)' },
+        },
+      },
+      kilde,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+    // Grensene ble funnet i intervalluttrykket; det er nivået som ikke hører til.
+    expect(report.rationale).toContain('konfidensnivå (90)')
+  })
+
+  // Samme feilklasse den andre veien: grensene finnes, men fra to forskjellige
+  // intervaller. Ingen av dem er det registrerte.
+  it('bekrefter ikke et intervall satt sammen av grenser fra to forskjellige uttrykk', () => {
+    const kilde =
+      'Weight change was 1.5 kg (95% CI 0.4 to 1.9). ' +
+      'Quality of life improved (95% CI 1.1 to 2.6).'
+    const report = check(
+      {
+        extraction: {
+          rawExtraction: { sitat: 'Weight change was 1.5 kg (95% CI 0.4 to 1.9)' },
+        },
+      },
+      kilde,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
+  it.each([
+    ['95% CI 0.4 to 2.6', 'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6).'],
+    ['CI etter nivået med kolon', 'Mean weight change was 1.5 kg (CI 95%: 0.4 to 2.6).'],
+    ['nivået skrevet ut', 'Mean weight change was 1.5 kg, 95% confidence interval 0.4 to 2.6.'],
+    ['grensene før ankeret', 'Mean weight change was 1.5 kg, 0.4 to 2.6 (95% CI).'],
+    ['norsk kilde', 'Vektendringen var 1,5 kg (95 % konfidensintervall 0,4 til 2,6).'],
+    // Den vanligste skrivemåten i MEDLINE-sammendrag. Utenfor et navngitt
+    // intervall leses en bindestrek fortsatt ikke som intervallstrek.
+    ['bindestrek som intervallstrek', 'Mean weight change was 1.5 kg (95% CI 0.4-2.6).'],
+  ])('kjenner igjen intervallet skrevet som «%s»', (_navn, kilde) => {
+    const report = check(
+      { extraction: { rawExtraction: { sitat: 'Mean weight change' } } },
+      `Mean weight change. ${kilde}`,
+    )
+
+    expect(report.checkedFields).toContain('confidence_interval')
+  })
+
+  // Navngir ikke kilden intervallet, er utfallet uavklart og ikke et avvik:
+  // grensene kan stå i en tabell som ikke er med i representasjonen.
+  it('melder ikke avvik når kilden ikke navngir noe konfidensintervall', () => {
+    const report = check(
+      { extraction: { rawExtraction: { sitat: 'Mean weight change was 1.5 kg' } } },
+      'Mean weight change was 1.5 kg, from 0.4 to 2.6, among 284 adults.',
+    )
+
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toBeNull()
+    expect(report.checkedFields).not.toContain('confidence_interval')
+    expect(report.rationale).toContain('navngir ikke noe konfidensintervall')
   })
 
   // Presisjonsfellen, sett fra kontrollen: den avrundede verdien står i
