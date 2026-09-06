@@ -407,7 +407,7 @@ interface NumericClaim {
    * 5.0 kg in paroxetine patients» navngir både sertralin og endepunktet, og
    * verdien er paroksetinets.
    */
-  readonly contextTerms: readonly string[]
+  readonly contextElements: readonly string[]
   /**
    * Om et av begrepene selv navngir det tallet er en verdi *av*.
    *
@@ -502,7 +502,7 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       anchorsBefore: SAMPLE_SIZE_ANCHORS_BEFORE,
       anchorsAfter: SAMPLE_SIZE_ANCHORS_AFTER,
       // Et utvalg er et antall personer i én arm, og bindes til armen.
-      contextTerms: [e.interventionDrugName],
+      contextElements: [termAnchor(e.interventionDrugName)],
       // «Sertraline: 48 tablets were dispensed» navngir armen og står inntil
       // et tall, men sier ingenting om at tallet er et antall personer. Kilden
       // må selv si det — «N = 48», «48 patients» — ellers står feltet
@@ -514,7 +514,10 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       // En utvalgsstørrelse er et antall personer og bærer aldri en måleenhet.
       forbiddenAfter: [...MEASURE_UNITS, ...TIME_UNITS],
       forbiddenBefore: [],
-      glueExtra: estimateExpressions(e, isReported(e.estimateAvailability) ? e.estimate : null),
+      glueExtra: [
+        ...populationExpressions(e),
+        ...estimateExpressions(e, isReported(e.estimateAvailability) ? e.estimate : null),
+      ],
     })
   }
   if (isReported(e.estimateAvailability) && e.estimate !== null) {
@@ -527,7 +530,15 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       // Et estimat er verdien av ett endepunkt hos én arm. Begge må stå i
       // samme treff som tallet: at setningen nevner armen et sted, er ikke det
       // samme som at det er den armen verdien gjelder.
-      contextTerms: [e.interventionDrugName, e.outcomeLabel],
+      contextElements: [
+        termAnchor(e.interventionDrugName),
+        termAnchor(e.outcomeLabel),
+        // Et effektestimat er verdien av *en kontrast*. Er kontrasten
+        // registrert, må kilden si den i samme påstand som verdien: ellers kan
+        // et tall fra en placebokontrast bekrefte en rad registrert mot et
+        // aktivt virkestoff.
+        ...comparatorElements(e),
+      ],
       contextIsAnchor: true,
       valueSuffix: unitSuffix(e.estimateUnit),
       // Et effektestimat er verken et tidspunkt eller et antall personer.
@@ -535,7 +546,7 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       // Et tall rett etter «N =» er en utvalgsstørrelse, uansett hva som
       // kommer etter det.
       forbiddenBefore: ['\\bn\\s*[=:]'],
-      glueExtra: sampleSizeExpressions(e),
+      glueExtra: [...sampleSizeExpressions(e), ...populationExpressions(e)],
     })
   }
   // Konfidensintervallet står ikke her: det er én påstand med tre deler, og de
@@ -670,6 +681,24 @@ const CI_GLUE_WORDS = [
 const GLUE_PUNCTUATION = '[\\s:;,=()\\[\\]/-]'
 
 /**
+ * En limbit som ikke får stumpe av et lengre ord.
+ *
+ * Limlisten inneholder både `g` og `gjennomsnittlig`. Uten en ordgrense bak
+ * treffer `g` den første bokstaven i det lange ordet, og resten — «jennomsnittlig»
+ * — er ikke lim: kjeden brytes midt inne i et ord som skulle vært lim.
+ *
+ * Et mønster med nøstede kvantorer kom seg rundt dette ved å bakspore. Én
+ * gjennomgang venstre til høyre gjør ikke det, og skal ikke gjøre det: en
+ * limbit som slutter midt i et ord, er ikke den limbiten.
+ *
+ * Skilletegn og former som slutter på et skilletegn (`\bn\s*[=:]` foran et
+ * tall) unntas — der ville en ordgrense vært feil.
+ */
+function endsInPunctuation(source: string): boolean {
+  return source.endsWith(']')
+}
+
+/**
  * Hvor langt limet rekker.
  *
  * Inne i ett uttrykk — mellom ankeret og tallet, eller mellom delene i et
@@ -689,7 +718,25 @@ const BINDING_REACH = 24
 
 /** Lim, eventuelt med ekstra former som er nøytrale for nettopp dette uttrykket. */
 function glue(extra: readonly string[] = [], reach: number = GLUE_REACH): string {
-  return `(?:${[GLUE_PUNCTUATION, ...extra, ...CI_GLUE_WORDS].join('|')}){0,${String(reach)}}`
+  return `(?:${glueAlternatives(extra).join('|')}){0,${String(reach)}}`
+}
+
+/**
+ * Limbitene, i den formen både mønstrene og skanneren bruker.
+ *
+ * Ordgrensen deles av alle de ordlignende formene framfor å stå på hver av dem.
+ * Det er ikke bare kortere: én alternasjon med ett blikk framover er vesentlig
+ * billigere enn seksti grupper med hvert sitt, og dette mønsteret kjøres i en
+ * kvantor på hver posisjon i teksten.
+ */
+function glueAlternatives(extra: readonly string[]): readonly string[] {
+  const all = [...extra, ...CI_GLUE_WORDS]
+  const wordLike = all.filter((source) => !endsInPunctuation(source))
+  return [
+    GLUE_PUNCTUATION,
+    ...all.filter(endsInPunctuation),
+    ...(wordLike.length === 0 ? [] : [`(?:${wordLike.join('|')})(?![\\p{L}\\p{N}])`]),
+  ]
 }
 
 const CI_GLUE = glue([CI_ANCHOR_SOURCE])
@@ -892,16 +939,25 @@ export type AnchoredNumberMatch =
  * formen flerarmsstudier oftest bruker — «N = 44; N = 48» og flere
  * intervalluttrykk — og ikke enhver språklig variant.
  */
-function collectNumbers(projections: readonly string[], patterns: readonly string[]): Set<string> {
+function collectNumbers(
+  projections: readonly string[],
+  contextElements: readonly string[],
+  valueForms: readonly string[],
+  glueExtra: readonly string[],
+): Set<string> {
   const candidates = new Set<string>()
-  for (const pattern of patterns) {
+  for (const form of valueForms) {
+    const elements = [...contextElements, form]
+    // `u` er nødvendig: uten den er `\p{L}` i et begrepsanker bokstavene «p{L}»
+    // og ikke en bokstavklasse.
+    const digits = new RegExp(form, 'iu')
     for (const projection of projections) {
-      // `u` er nødvendig: uten den er `\p{L}` i et begrepsanker bokstavene
-      // «p{L}» og ikke en bokstavklasse.
-      for (const hit of projection.matchAll(new RegExp(pattern, 'giu'))) {
-        const found = hit[1]
-        if (found !== undefined) {
-          candidates.add(sameNumber(found))
+      for (const span of spansWithAllElements(projection, elements, glueExtra)) {
+        for (const text of span[contextElements.length] ?? []) {
+          const found = digits.exec(text)?.[1]
+          if (found !== undefined) {
+            candidates.add(sameNumber(found))
+          }
         }
       }
     }
@@ -947,21 +1003,84 @@ function unitSuffix(unit: string | null): string {
 }
 
 /**
- * Alle rekkefølgene delene kan stå i.
+ * Hvert sammenhengende treff som inneholder **alle** delene, med det som hver
+ * del traff.
  *
- * Kilder skriver dem i alle: «sertraline … weight change … 1.5» og «a weight
- * change of 1.5 in sertraline patients» sier det samme. Rekkefølgen er derfor
- * åpen, mens kravet om at delene står i *samme* treff, ikke er det.
+ * Rekkefølgen er åpen: kilder skriver «sertraline … weight change … 1.5» og «a
+ * weight change of 1.5 in sertraline patients», og begge sier det samme. Kravet
+ * om at delene står i *samme* treff er derimot ikke åpent.
+ *
+ * ----------------------------------------------------------------------------
+ * Ett gjennomløp, ikke alle rekkefølger
+ *
+ * Den opplagte skrivemåten er ett regexmønster per rekkefølge, med lim imellom.
+ * Med fem deler er det 120 mønstre, hvert med nøstede kvantorer — og på en tekst
+ * som *ikke* passer, prøver motoren alle måter å dele limet på. Målt: over 20
+ * sekunder på ett enkelt funn. Kildeteksten er utrygg ekstern data
+ * (ANTIDEP_CONSTITUTION §3.8 / EVIDENCE_PIPELINE §3.8), så kjøretiden kan ikke
+ * avhenge av at den er snill.
+ *
+ * I stedet skannes teksten én gang venstre til høyre etter deler *og* lim. Et
+ * sammenhengende treff er en ubrutt rekke av slike: første tegn som verken er en
+ * del eller lim, bryter rekken — og det er nettopp det tillatelseslisten skal
+ * gjøre. Rekkevidden håndheves som før, som en øvre grense på hvor mange
+ * limbiter som får stå mellom to deler.
  */
-function permutations<T>(items: readonly T[]): T[][] {
-  if (items.length <= 1) {
-    return [[...items]]
+function spansWithAllElements(
+  projection: string,
+  elements: readonly string[],
+  glueExtra: readonly string[],
+): readonly (readonly string[][])[] {
+  const glueSource = glueAlternatives(glueExtra).join('|')
+  // Delene står først i alternasjonen: der en del og en limbit begynner på samme
+  // sted, er det delen som gjelder.
+  const scanner = new RegExp(
+    `${elements.map((element, index) => `(?<x${String(index)}>${element})`).join('|')}|(?:${glueSource})`,
+    'giu',
+  )
+
+  const spans: (readonly string[][])[] = []
+  let found = new Map<number, string[]>()
+  let glueRun = 0
+  let end = -1
+
+  const close = () => {
+    if (found.size === elements.length) {
+      spans.push(elements.map((_, index) => found.get(index) ?? []))
+    }
+    found = new Map()
+    glueRun = 0
   }
-  return items.flatMap((item, index) =>
-    permutations([...items.slice(0, index), ...items.slice(index + 1)]).map((rest) => [
-      item,
-      ...rest,
-    ]),
+
+  for (const match of projection.matchAll(scanner)) {
+    if (match.index !== end) {
+      close()
+    }
+    end = match.index + match[0].length
+    const hit = Object.entries(match.groups ?? {}).find(([, value]) => value !== undefined)
+    if (hit === undefined) {
+      glueRun += 1
+      if (glueRun > BINDING_REACH) {
+        close()
+      }
+      continue
+    }
+    glueRun = 0
+    const index = Number(hit[0].slice(1))
+    found.set(index, [...(found.get(index) ?? []), hit[1] ?? ''])
+  }
+  close()
+  return spans
+}
+
+/** Om alle delene står i ett sammenhengende treff et sted i projeksjonene. */
+function boundTogether(
+  projections: readonly string[],
+  elements: readonly string[],
+  glueExtra: readonly string[],
+): boolean {
+  return projections.some(
+    (projection) => spansWithAllElements(projection, elements, glueExtra).length > 0,
   )
 }
 
@@ -987,10 +1106,7 @@ function anchoredNumberMatch(
   // Limet mellom begrepene og verdien rekker lenger enn limet inne i uttrykket,
   // og slipper i tillegg igjennom radens egne andre tallpåstander. Se
   // `BINDING_REACH` og `sampleSizeExpressions`.
-  const binding = glue(
-    [...claim.anchorsBefore, ...claim.anchorsAfter, ...claim.glueExtra],
-    BINDING_REACH,
-  )
+  const bindingGlue = [...claim.anchorsBefore, ...claim.anchorsAfter, ...claim.glueExtra]
 
   // Formene tallet kan ha inne i treffet: navngitt av feltets eget anker, eller
   // — når et av begrepene selv navngir feltet — av begrepet ved siden av.
@@ -1005,12 +1121,7 @@ function anchoredNumberMatch(
     valueForms.push(`${number}${g}(?:${claim.anchorsAfter.join('|')})`)
   }
 
-  const terms = claim.contextTerms.map(termAnchor)
-  const patterns = valueForms.flatMap((form) =>
-    permutations([...terms, form]).map((parts) => parts.join(binding)),
-  )
-
-  const candidates = collectNumbers(projections, patterns)
+  const candidates = collectNumbers(projections, claim.contextElements, valueForms, bindingGlue)
   if (candidates.size === 0) {
     return { kind: 'missing' }
   }
@@ -1112,12 +1223,12 @@ export interface ConfidenceIntervalReport {
  * limt et intervall til en rad registrert i kilogram.
  */
 function withTerms(
+  projections: readonly string[],
   order: string,
-  contextTerms: readonly string[],
+  contextElements: readonly string[],
   glueExtra: readonly string[],
-): string[] {
-  const binding = glue([CI_ANCHOR_SOURCE, ...glueExtra], BINDING_REACH)
-  return permutations([...contextTerms.map(termAnchor), order]).map((parts) => parts.join(binding))
+): boolean {
+  return boundTogether(projections, [...contextElements, order], [CI_ANCHOR_SOURCE, ...glueExtra])
 }
 
 function intervalOrders(level: string, bounds: string): readonly string[] {
@@ -1155,38 +1266,21 @@ function intervalOrders(level: string, bounds: string): readonly string[] {
  * sammenhengende treff, med bare kjent lim imellom. `not`, `and` og et fremmed
  * legemiddelnavn er alle ord limet ikke kjenner, og bryter kjeden.
  */
-function termsBoundTogether(
+
+function confidenceIntervalBound(
   projections: readonly string[],
-  terms: readonly string[],
-  /**
-   * Uttrykk som navngir *relasjonen*, når det er den som binder framfor et
-   * annet begrep. «Fluoxetine» ved siden av et tall sier ingenting; «fluoxetine
-   * was the comparator» sier det raden påstår.
-   */
-  anchors: readonly string[],
+  interval: ConfidenceInterval,
+  contextElements: readonly string[],
   glueExtra: readonly string[],
 ): boolean {
-  const binding = glue(glueExtra, BINDING_REACH)
-  const elements = [
-    ...terms.map(termAnchor),
-    ...(anchors.length === 0 ? [] : [`(?:${anchors.join('|')})`]),
-  ]
-  return permutations(elements)
-    .map((parts) => parts.join(binding))
-    .some((pattern) => projections.some((projection) => new RegExp(pattern, 'iu').test(projection)))
-}
-
-function confidenceIntervalPatterns(
-  interval: ConfidenceInterval,
-  contextTerms: readonly string[],
-  glueExtra: readonly string[],
-): readonly string[] {
   const level = levelPattern(interval.levelPercent)
   const bounds = boundsPattern(interval.lower, interval.upper)
   if (level === null || bounds === null) {
-    return []
+    return false
   }
-  return intervalOrders(level, bounds).flatMap((order) => withTerms(order, contextTerms, glueExtra))
+  return intervalOrders(level, bounds).some((order) =>
+    withTerms(projections, order, contextElements, glueExtra),
+  )
 }
 
 /**
@@ -1234,7 +1328,7 @@ export function confidenceIntervalCheck(
   projections: readonly string[],
   interval: ConfidenceInterval,
   /** Armen og endepunktet uttrykket må stå i samme treff som. */
-  contextTerms: readonly string[],
+  contextElements: readonly string[],
   /**
    * Radens egne øvrige tallpåstander, som lim — utvalgsstørrelsen, og estimatet
    * når det er bekreftet. De er radens eget, ikke fremmedlegemer.
@@ -1246,12 +1340,7 @@ export function confidenceIntervalCheck(
     return { confirmed: false, unmatched: [], noAnchor: false, ambiguous: candidates }
   }
 
-  const patterns = confidenceIntervalPatterns(interval, contextTerms, glueExtra)
-  if (
-    patterns.some((pattern) =>
-      projections.some((projection) => new RegExp(pattern, 'iu').test(projection)),
-    )
-  ) {
+  if (confidenceIntervalBound(projections, interval, contextElements, glueExtra)) {
     return { confirmed: true, unmatched: [], noAnchor: false, ambiguous: [] }
   }
 
@@ -1365,38 +1454,60 @@ function termClaims(item: VerificationItem): readonly TermClaim[] {
  * avgrenset, ikke om kildens tekst, og det finnes ingenting i teksten å
  * kontrollere den mot.
  */
-interface TermBinding {
-  readonly terms: readonly string[]
-  readonly anchors: readonly string[]
-  /** Hva utdragene måtte ha sagt, skrevet for en leser. */
-  readonly missing: string
+/**
+ * Komparatoren som mønsterdeler: navnet, og uttrykket som sier at det *var*
+ * komparatoren. Tom når funnet er armspesifikt.
+ */
+function comparatorElements(e: VerificationExtraction): readonly string[] {
+  const comparator = comparatorTerm(e)
+  return comparator === null ? [] : [termAnchor(comparator), `(?:${COMPARATOR_ANCHORS.join('|')})`]
 }
 
-function termBindings(item: VerificationItem): readonly TermBinding[] {
+/**
+ * Delene raden består av, som **én** binding.
+ *
+ * Ikke flere bindinger som holder hver for seg: da kan én rad sys sammen av
+ * påstander om forskjellige funn, og hver enkelt binding er sann.
+ *
+ *   «Sertraline-treated patients had a mean weight change over the trial.»
+ *   «Fluoxetine was compared with paroxetine for remission.»
+ *
+ * Arm og endepunkt er bundet i den første, komparatoren er navngitt som
+ * komparator i den andre — og ingen påstand sier at paroksetin er komparator
+ * for *dette* funnet. Populasjonen har samme form: «Sertraline-treated adults
+ * with major depressive disorder discontinued treatment because of nausea»
+ * binder populasjonen til armen, men til et annet utfall.
+ *
+ * Alle radens aktive deler må derfor stå i **samme sammenhengende treff**.
+ * Prisen er skrevet ut andre steder og gjelder her også: et sammendrag som
+ * fordeler populasjon, komparator og resultat på hver sin setning, gir
+ * `uncertain`. Det er den riktige enden å ta feil i — alternativet er en
+ * bekreftelse som bygger på at delene tilfeldigvis stod i samme artikkel.
+ */
+function rowBindingElements(item: VerificationItem): readonly string[] {
   const e = item.extraction
-  const bindings: TermBinding[] = [
-    {
-      terms: [e.interventionDrugName, e.outcomeLabel],
-      anchors: [],
-      missing: `binder «${e.interventionDrugName}» til «${e.outcomeLabel}» i samme påstand`,
-    },
+  return [
+    termAnchor(e.interventionDrugName),
+    termAnchor(e.outcomeLabel),
+    ...comparatorElements(e),
+    ...(e.populationLabel !== null && isReported(e.populationAvailability)
+      ? [termAnchor(e.populationLabel)]
+      : []),
   ]
+}
+
+/** Hva utdragene måtte ha sagt, skrevet for en leser. */
+function rowBindingDescription(item: VerificationItem): string {
+  const e = item.extraction
+  const parts = [`«${e.interventionDrugName}»`, `«${e.outcomeLabel}»`]
   const comparator = comparatorTerm(e)
   if (comparator !== null) {
-    bindings.push({
-      terms: [comparator],
-      anchors: COMPARATOR_ANCHORS,
-      missing: `sier at «${comparator}» var komparatoren`,
-    })
+    parts.push(`«${comparator}» som komparator`)
   }
   if (e.populationLabel !== null && isReported(e.populationAvailability)) {
-    bindings.push({
-      terms: [e.interventionDrugName, e.populationLabel],
-      anchors: [],
-      missing: `knytter «${e.populationLabel}» til «${e.interventionDrugName}» i samme påstand`,
-    })
+    parts.push(`«${e.populationLabel}»`)
   }
-  return bindings
+  return parts.join(', ')
 }
 
 function unique(fields: readonly EvidenceCheckField[]): readonly EvidenceCheckField[] {
@@ -1601,9 +1712,16 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     const ci = confidenceIntervalCheck(
       claimProjections,
       reportedInterval,
-      [item.extraction.interventionDrugName, item.extraction.outcomeLabel],
+      [
+        termAnchor(item.extraction.interventionDrugName),
+        termAnchor(item.extraction.outcomeLabel),
+        // Intervallet hører til samme kontrast som estimatet. Se
+        // `contextElements` for estimatet.
+        ...comparatorElements(item.extraction),
+      ],
       [
         ...sampleSizeExpressions(item.extraction),
+        ...populationExpressions(item.extraction),
         ...estimateExpressions(item.extraction, confirmedEstimate),
       ],
     )
@@ -1693,21 +1811,16 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
       isReported(item.extraction.estimateAvailability) ? item.extraction.estimate : null,
     ),
   ]
-  const unboundTerms =
-    unmatchedTerms.length > 0
-      ? []
-      : termBindings(item)
-          .filter(
-            (binding) =>
-              !termsBoundTogether(quoteFragments, binding.terms, binding.anchors, bindingGlue),
-          )
-          .map((binding) => binding.missing)
-  if (unboundTerms.length > 0) {
+  const rowBound =
+    unmatchedTerms.length > 0 ||
+    boundTogether(quoteFragments, rowBindingElements(item), bindingGlue)
+  if (!rowBound) {
     noteUnresolved(
-      'Begrepene ble gjenfunnet, men ingen av funnets ordrette utdrag ' +
-        `${unboundTerms.join(', og ingen ')}. Et utdrag som nevner begrepene hver for seg — ` +
-        'eller som benekter forholdet, eller tilskriver det en annen arm — er ikke støtte for ' +
-        'at nettopp denne raden stemmer. Raden er derfor ikke ført opp som bekreftet.',
+      'Begrepene ble gjenfunnet, men ingen av funnets ordrette utdrag sier ' +
+        `${rowBindingDescription(item)} i samme påstand. Et utdrag som nevner delene hver for ` +
+        'seg — eller som benekter forholdet, eller tilskriver det en annen arm eller et annet ' +
+        'utfall — er ikke støtte for at nettopp denne raden stemmer. Raden er derfor ikke ført ' +
+        'opp som bekreftet.',
     )
   }
 
@@ -1732,7 +1845,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     ambiguousNumbers.length > 0 ||
     confidenceIntervalUnresolved ||
     unmatchedTerms.length > 0 ||
-    unboundTerms.length > 0
+    !rowBound
   ) {
     // Et oppgitt tall som ikke lot seg gjenfinne, er ikke et avvik — men det er
     // heller ikke en bekreftelse av raden som helhet. Utfallet sier nettopp det.

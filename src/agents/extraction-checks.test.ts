@@ -852,15 +852,26 @@ describe('checkExtraction — tallene', () => {
   // JSON-tall, hadde de to vært samme verdi her — og kontrollen ville
   // bekreftet et estimat som ikke står i kilden.
   it('bekrefter ikke et estimat der bare den avrundede verdien står i kilden', () => {
+    // Utdraget oppgir nøyaktig ett tall for feltet, så kontrollen kan svare på
+    // det testen spør om: er den registrerte verdien den som står i kilden?
+    const kilde = 'Sertraline weight change: the estimate was 9007199254740992'
     const report = check(
       {
         extraction: {
           estimate: '9007199254740993',
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          confidenceIntervalAvailability: 'not_reported',
+          populationAvailability: 'not_reported',
+          rawExtraction: { sitat: kilde },
         },
       },
-      `${FIXTURE_SOURCE_TEXT} Estimatet var 9007199254740992.`,
+      `Forord. ${kilde}`,
     )
 
     expect(report.outcome).not.toBe('verified')
@@ -1425,36 +1436,35 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
     expect(report.findings).toContain('Kontrollen konkluderte ikke')
   })
 
-  // Positive kontroller for de samme to: står støtten i den relevante
-  // påstanden, er raden bekreftet.
+  // Positive kontroller for de samme to: står støtten i den *samme* påstanden
+  // som armen og endepunktet, er raden bekreftet. Et eget «Fluoxetine was the
+  // comparator»-utdrag ved siden av holder ikke — det er nettopp åpningen.
   it.each([
     [
-      'komparatoren er navngitt som komparator',
+      'komparatoren er navngitt som komparator i samme påstand',
       { comparatorKind: 'drug', comparatorDrugName: 'fluoxetine' },
-      'Fluoxetine was the comparator',
-      'comparator_arm',
+      'Sertraline-treated patients had a mean weight change compared with fluoxetine',
     ],
     [
-      'placebo er navngitt som komparator',
+      'placebo er navngitt som komparator i samme påstand',
       { comparatorKind: 'placebo', comparatorDrugName: null },
-      'Placebo was the comparator',
-      'comparator_arm',
+      'Sertraline-treated patients had a mean weight change compared with placebo',
     ],
-  ] as const)('bekrefter en rad der %s', (_navn, extraction, støtte, felt) => {
+  ] as const)('bekrefter en rad der %s', (_navn, extraction, støtte) => {
     const report = check(
       {
         extraction: {
           ...utenTall,
           ...extraction,
           populationAvailability: 'not_reported',
-          rawExtraction: { arm: BEGGE, komparator: støtte },
+          rawExtraction: { støtte },
         },
       },
-      `${FIXTURE_SOURCE_TEXT}\n<p>${BEGGE}</p>\n<p>${støtte}</p>`,
+      `${FIXTURE_SOURCE_TEXT}\n<p>${støtte}</p>`,
     )
 
     expect(report.outcome).toBe('verified')
-    expect(report.checkedFields).toContain(felt)
+    expect(report.checkedFields).toContain('comparator_arm')
   })
 
   // Forskjellen på en presisering og en kontrast: populasjonsetiketten er lim
@@ -1498,6 +1508,144 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
 
     expect(report.outcome).toBe('verified')
     expect(report.checkedFields).toContain('population')
+  })
+
+  // ..og bindingene er én binding, ikke flere som holder hver for seg. Ellers
+  // kan én rad sys sammen av påstander om forskjellige funn.
+  it('bekrefter ikke en rad der komparatoren hører til et annet utfall', () => {
+    const annet = 'Fluoxetine was compared with paroxetine for remission'
+    const report = check(
+      {
+        extraction: {
+          ...utenTall,
+          populationAvailability: 'not_reported',
+          comparatorKind: 'drug',
+          comparatorDrugName: 'paroxetine',
+          rawExtraction: { arm: BEGGE, annet },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${BEGGE}</p>\n<p>${annet}</p>`,
+    )
+
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  it('bekrefter ikke en rad der populasjonen hører til et annet utfall', () => {
+    const populasjon =
+      'Sertraline-treated adults with major depressive disorder discontinued treatment ' +
+      'because of nausea'
+    const utfall = 'Sertraline-treated patients had a mean weight change over the trial'
+    const report = check(
+      {
+        extraction: {
+          ...utenTall,
+          populationLabel: 'major depressive disorder',
+          populationAvailability: 'reported_value',
+          rawExtraction: { populasjon, utfall },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${populasjon}</p>\n<p>${utfall}</p>`,
+    )
+
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  it('bekrefter ikke tall som hører til en annen kontrast enn radens komparator', () => {
+    const tall =
+      'For sertraline, the mean difference in weight change was 1.5 kg ' +
+      '(95% CI 0.4 to 2.6), with placebo as comparator'
+    const komparator = 'Sertraline was compared with paroxetine for remission'
+    const report = check(
+      {
+        extraction: {
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          populationAvailability: 'not_reported',
+          comparatorKind: 'drug',
+          comparatorDrugName: 'paroxetine',
+          effectMeasure: 'mean_difference',
+          rawExtraction: { tall, komparator },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${tall}</p>\n<p>${komparator}</p>`,
+    )
+
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  // Intervallet hører til samme kontrast som estimatet. Her er estimatet
+  // bekreftet mot riktig kontrast, mens intervallet står i en påstand som ikke
+  // sier hvilken kontrast det gjelder.
+  it('bekrefter ikke et intervall som ikke sier hvilken kontrast det gjelder', () => {
+    const medKomparator =
+      'Sertraline-treated patients had a mean weight change of 1.5 kg compared with paroxetine'
+    const utenKomparator =
+      'Sertraline-treated patients had a mean weight change of 1.5 kg (95% CI 0.4 to 2.6)'
+    const report = check(
+      {
+        extraction: {
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          populationAvailability: 'not_reported',
+          comparatorKind: 'drug',
+          comparatorDrugName: 'paroxetine',
+          effectMeasure: 'mean_difference',
+          rawExtraction: { medKomparator, utenKomparator },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${medKomparator}</p>\n<p>${utenKomparator}</p>`,
+    )
+
+    expect(report.checkedFields).toContain('estimate')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
+  // Positive kontroller: alt raden oppgir står i samme påstand.
+  it('bekrefter en rad der arm, endepunkt og komparator står i samme påstand', () => {
+    const støtte = 'Sertraline-treated patients had a mean weight change compared with paroxetine'
+    const report = check(
+      {
+        extraction: {
+          ...utenTall,
+          populationAvailability: 'not_reported',
+          comparatorKind: 'drug',
+          comparatorDrugName: 'paroxetine',
+          rawExtraction: { støtte },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${støtte}</p>`,
+    )
+
+    expect(report.outcome).toBe('verified')
+    expect(report.checkedFields).toContain('comparator_arm')
+  })
+
+  it('bekrefter et tall som står i samme påstand som arm, endepunkt og komparator', () => {
+    const støtte =
+      'Sertraline-treated patients had a mean weight change of 1.5 kg compared with paroxetine'
+    const report = check(
+      {
+        extraction: {
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          populationAvailability: 'not_reported',
+          comparatorKind: 'drug',
+          comparatorDrugName: 'paroxetine',
+          effectMeasure: 'mean_difference',
+          rawExtraction: { støtte },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${støtte}</p>`,
+    )
+
+    expect(report.checkedFields).toContain('estimate')
+    expect(report.outcome).toBe('verified')
   })
 
   // Den positive kontrollen: står begrepene faktisk i utdraget, er raden

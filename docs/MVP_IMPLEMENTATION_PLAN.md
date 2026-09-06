@@ -5028,6 +5028,35 @@ ingenting i teksten å kontrollere den mot.
 Fem mutasjoner faller: komparatoren uten relasjonsanker, populasjonen uten binding til armen, placebo
 som ukontrollerbart, bindingene uten virkning på utfallet, og komparatornavnet som lim.
 
+**Den tjueførste runden gjorde bindingene til én binding — og byttet ut hvordan de matches.**
+
+*Flere bindinger som holder hver for seg, er ikke én binding.* Runde 20 kontrollerte arm↔endepunkt,
+komparator og populasjon som hver sin binding. Hver av dem kunne da komme fra sin egen påstand:
+«`Sertraline-treated patients had a mean weight change over the trial.`» sammen med «`Fluoxetine was
+compared with paroxetine for remission.`» ga en bekreftet rad der ingen påstand sier at paroksetin er
+komparator for *dette* funnet. Populasjonen hadde samme form, og radens tall var ikke bundet til
+kontrasten i det hele tatt. Alle radens aktive deler må nå stå i **ett** sammenhengende treff, og for
+estimatet og konfidensintervallet inngår kontrasten i det samme treffet.
+
+*Fiksturen var selv et tilfelle av feilen.* Den bandt populasjonen til armen i metodeutdraget og
+endepunktet til armen i resultatutdraget. Resultatutdraget navngir nå alle tre.
+
+*Matchingen er skrevet om, og det var nødvendig.* Ett mønster per rekkefølge betyr 120 mønstre med
+fem deler, hvert med nøstede kvantorer — og på en tekst som *ikke* passer, prøver motoren alle måter
+å dele limet på. Målt: over 20 sekunder på ett funn. Kildeteksten er utrygg ekstern data (§3.8), så
+kjøretiden kan ikke avhenge av at den er snill. Teksten skannes nå én gang venstre til høyre etter
+deler og lim; et sammenhengende treff er en ubrutt rekke av slike. Samme regel, uten baksporing:
+testfilen gikk fra 44 til 3,5 sekunder.
+
+*Én ekte feil kom ut av omskrivingen.* Limlisten inneholder både `g` og `gjennomsnittlig`. Med
+baksporing kom mønsteret seg rundt at `g` stumper av det lange ordet; én gjennomgang gjør ikke det.
+Limbitene har derfor en ordgrense bak seg — delt av alle de ordlignende formene, som også er det som
+gjør skanningen rask.
+
+Sju mutasjoner faller: radbindingen uten komparatoren, uten populasjonen, estimatet og intervallet
+uten kontrasten, limbitene uten ordgrense, rekkevidden uten håndheving, og sammenhengen uten
+håndheving.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

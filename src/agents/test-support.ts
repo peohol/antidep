@@ -18,8 +18,9 @@ export const FIXTURE_SOURCE_TEXT = [
   '  <ArticleTitle>Weight gain during long-term treatment</ArticleTitle>',
   '  <AbstractText Label="METHODS">Sertraline patients (N = 284) with major',
   '  depressive disorder were randomised. Fluoxetine was the comparator.</AbstractText>',
-  '  <AbstractText Label="RESULTS">Sertraline-treated patients had a mean weight',
-  '  change of 1.5 kg (95% CI 0.4 to 2.6) &amp; the difference was significant.</AbstractText>',
+  '  <AbstractText Label="RESULTS">Sertraline-treated patients with major depressive',
+  '  disorder had a mean weight change of 1.5 kg (95% CI 0.4 to 2.6) &amp; the',
+  '  difference was significant.</AbstractText>',
   '</PubmedArticle>',
 ].join('\n')
 
@@ -80,8 +81,11 @@ export function extractionFixture(
         'Fluoxetine was the comparator.',
       // Utdraget navngir armen selv: et tall kan bare kontrolleres mot et
       // utdrag som sier hvilken arm det gjelder.
+      // Utdraget navngir armen, populasjonen og endepunktet i samme påstand:
+      // alle radens deler må stå i ett sammenhengende treff.
       resultat:
-        'Sertraline-treated patients had a mean weight change of 1.5 kg (95% CI 0.4 to 2.6)',
+        'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+        'change of 1.5 kg (95% CI 0.4 to 2.6)',
     },
     ...overrides,
   }
