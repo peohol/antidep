@@ -1479,7 +1479,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1429 pgTAP-assertions over 44 testfiler.
+Databaselaget teller nå 1430 pgTAP-assertions over 44 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -4572,13 +4572,15 @@ samme tabell, og separasjonskravet gjelder likt for begge.
 
 ---
 
-### 74.32 Skriveveien for ekstraksjonsverifikasjon — bygget, uten å avgjøre punkt 1 og 2
+### 74.32 Skriveveien for ekstraksjonsverifikasjon — bygget, med punkt 2 avgjort under review
 
 §74.30 listet fire ting én PR skulle avgjøre før skriveveien inn i
 `workflow.evidence_verifications` var bygget. Denne PR-en bygger nøyaktig den skriveveien —
-`api.register_extraction_verification(...)` — og prøver den fullt ut i test, men avgjør
-bevisst bare punkt 3 og 4 (rollen og hvem som kan verifisere hvem); punkt 1 og 2 står fortsatt
-åpne, og det er en eksplisitt avgrensning av denne PR-en og ikke en forglemmelse.
+`api.register_extraction_verification(...)` — og prøver den fullt ut i test. Punkt 3 og 4
+(rollen og hvem som kan verifisere hvem) var avgjort da PR-en åpnet; punkt 2 («adresse pluss
+hash» som verifikasjonsgrunnlag) ble avgjort i teknisk review før merge, i samme PR. Punkt 1
+(kildeversjoner, issue 44) står fortsatt åpen — det er en eksplisitt avgrensning av denne PR-en,
+ikke en forglemmelse.
 
 **Hva som er bygget.** Ett inngangspunkt, i samme form som `api.create_source(...)` og
 `api.create_evidence_item(...)`: en autentisert `extraction_verification`-agent, inne i en
@@ -4590,17 +4592,28 @@ mot `provenance.agent_runs (id, actor_id)` og `(id, agent_role)` fra migrasjon 0
 slik den migrasjonens hodekommentar forutså. De tre lagene som hindrer selvverifikasjon —
 rollen, aktøren og nå kjøringen — er alle prøvd, hver for seg og sammen.
 
-**Hva som bevisst ikke er avgjort.** §74.30 punkt 1 sa at kildeversjoner (issue 44) skal bygges
-i samme PR som ekstraksjonsverifikasjonen. Denne PR-en gjør ikke det: den bygger skriveveien
-inn i `workflow.evidence_verifications` alene, fordi oppgaven som ble gitt for denne PR-en
-avgrenset den eksplisitt til det ene leddet. Konsekvensen er den samme som §74.30 alt beskrev:
-en `verified`-rad kan registreres og prøves fullt ut i test, men et reelt evidensfunn uten
-lagret kildeversjon (som Efexor-funnet, §74.30) har fortsatt ingenting å kontrolleres mot i
-produksjon utover adresse og hash. Databasen håndhever fortsatt bare at `verified` ikke kan
-hvile på `derived_summary` alene; den skiller ikke en lagret `verifiable_representation` fra en
-adresse som bare kan hentes på nytt. Issue 44 står derfor fortsatt åpen, og punkt 2 i §74.30 —
-om «adresse pluss hash» er et tilstrekkelig grunnlag — er fortsatt ikke avgjort. Det er et
-produkt-/governance-spørsmål og ikke noe denne PR-en kunne avgjort på egen hånd.
+**Punkt 2 er avgjort: adresse pluss hash er et tilstrekkelig verifikasjonsgrunnlag.**
+`knowledge.source_versions` sin egen hodekommentar sier hvorfor `retrieved_from` er `NOT NULL`:
+«en `content_hash` uten en adresse å hente på nytt fra kan ikke etterprøves». Med begge til
+stede kan en tredjepart hente kilden på nytt og kontrollere den mot hashen, uavhengig av om
+Antidep har lagret fulltekst i `storage_reference` — det er selve mekanismen
+`verifiable_representation` beskriver. `api.register_extraction_verification(...)` håndhever nå
+dette: `p_source_access = 'verifiable_representation'` avvises både når evidensfunnets
+`source_version_id` er NULL og når kildeversjonen den peker på selv mangler `content_hash`. En
+kildeversjon med bare `retrieved_from` (et sporet besøk, uten fingeravtrykk) kvalifiserer altså
+ikke. Et reelt evidensfunn uten lagret kildeversjon (som Efexor-funnet, §74.30) har fortsatt
+ingenting å kontrollere `verifiable_representation` mot i produksjon, men det er nå fordi
+grunnlaget mangler, ikke fordi databasen ikke kan se forskjellen. Issue 44 (selve
+kildeversjonsskriveveien) står fortsatt åpen — det er punkt 1, ikke punkt 2.
+
+**Migrasjonsdisiplin: en race-fiks skrevet fremover, ikke inn i en merget fil.**
+Migrasjon 20260905092000 (fra PR #48) er allerede merget. En teknisk gjennomgang fanget at en
+tidlig versjon av denne PR-en rettet en race condition i `provenance.assert_agent_run_open(...)`
+(manglende radlås mellom «kjøringen er åpen»-sjekken og innsettingen) ved å redigere den
+migrasjonen direkte — en endring som aldri ville nådd et miljø som allerede har kjørt den, fordi
+Supabase aldri kjører en registrert migrasjonsversjon på nytt. Rettelsen ligger nå der den
+faktisk virker: en `CREATE OR REPLACE FUNCTION` i denne PR-ens egen migrasjon, som legger
+`FOR UPDATE` på radlåsen uten å endre signatur eller rettigheter.
 
 **Hva dette betyr i praksis akkurat nå.** Skriveveien er reviewbar og fullt prøvd, men ingen
 legitimasjon er utstedt til `agent-identity:extraction-verification-01` i produksjon (§74.31
@@ -4609,10 +4622,10 @@ verifikasjon er derfor registrert i det hostede prosjektet av denne PR-en, og ku
 vært det: identiteten er fortsatt inert. Milepæl B mangler fortsatt de samme tre tingene som
 §74.4 lister; denne PR-en fjerner en teknisk hindring til, men lukker ingen av dem.
 
-**Neste steg.** Kildeversjonssnapshot (issue 44) og avgjørelsen i §74.30 punkt 2, deretter
-utstedelse av legitimasjon til verifikatoren i det miljøet en faktisk agentkjører leser
-hemmeligheten fra, og til slutt claim-verifikasjon (`workflow.claim_verifications`,
-`citation_support_verification`) som egen, senere PR.
+**Neste steg.** Kildeversjonssnapshot (issue 44), deretter utstedelse av legitimasjon til
+verifikatoren i det miljøet en faktisk agentkjører leser hemmeligheten fra, og til slutt
+claim-verifikasjon (`workflow.claim_verifications`, `citation_support_verification`) som egen,
+senere PR.
 
 ---
 

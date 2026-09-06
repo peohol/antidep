@@ -1212,20 +1212,6 @@ revoke execute on function provenance.authenticate_agent_identity(text, text, pr
 -- objektet de produserer kan spores til premissene det ble produsert under
 -- (DATABASE_ARCHITECTURE.md §34). Kontrollen ligger her framfor i hver skrivevei,
 -- slik at neste ledd i pipelinen arver den framfor å skrive den om igjen.
---
--- FOR UPDATE (§74.32): en vanlig SELECT uten radlås ville latt sjekken og en
--- senere INSERT i den kallende skriveveien løpe mot en kjøring som en samtidig
--- api.complete_agent_run(...) rekker å lukke i mellomtiden — funnet er registrert
--- mot en kjøring som i praksis allerede er lukket. FOR UPDATE her tar radlåsen
--- på provenance.agent_runs-raden i den kallende funksjonens transaksjon, før
--- status leses; UPDATE-en i api.complete_agent_run(...) er en vanlig UPDATE og
--- konkurrerer derfor automatisk om nøyaktig den samme radlåsen (ingen egen
--- FOR UPDATE trengs der), slik at de to blir atomiske mot hverandre uten at
--- noen av dem endrer oppførsel. Trygt for begge kallerne
--- (api.complete_agent_run(...) og api.register_extraction_verification(...)):
--- funksjonen returnerer fortsatt bare aktøren eller avviser, den holder aldri
--- selv en lås etter at den returnerer — det gjør bare den omsluttende
--- transaksjonen, som allerede eier andre rader den skriver i samme kall.
 -- ----------------------------------------------------------------------------
 create function provenance.assert_agent_run_open(
   p_agent_run_id uuid,
@@ -1242,8 +1228,7 @@ begin
   from provenance.agent_runs ar
   where ar.id = p_agent_run_id
     and ar.agent_identity_id = p_agent_identity_id
-    and ar.status = 'running'
-  for update;
+    and ar.status = 'running';
 
   if v_actor_id is null then
     raise exception using
@@ -1257,7 +1242,7 @@ end;
 $$;
 
 comment on function provenance.assert_agent_run_open(uuid, uuid) is
-  'Kontrollerer at kjøringen finnes, tilhører den autentiserte identiteten og fortsatt er åpen, og returnerer aktøren kjøringen skal attribueres til. Den gjenbrukbare bindingen mellom en agentoperasjon og premissene den kjøres under; skriveveiene i senere pipelineledd kaller den framfor å skrive kontrollen om igjen. SELECT-en tar FOR UPDATE på provenance.agent_runs-raden (§74.32): en agentoperasjon som skriver et objekt i samme transaksjon som dette kallet, gjør dermed sjekken og skrivingen atomisk mot en samtidig api.complete_agent_run(text, text, uuid, text, jsonb, text) som ellers kunne lukket kjøringen mellom sjekk og skriving.';
+  'Kontrollerer at kjøringen finnes, tilhører den autentiserte identiteten og fortsatt er åpen, og returnerer aktøren kjøringen skal attribueres til. Den gjenbrukbare bindingen mellom en agentoperasjon og premissene den kjøres under; skriveveiene i senere pipelineledd kaller den framfor å skrive kontrollen om igjen.';
 
 revoke execute on function provenance.assert_agent_run_open(uuid, uuid) from public;
 

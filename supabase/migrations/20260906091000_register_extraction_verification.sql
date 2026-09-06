@@ -54,25 +54,30 @@
 -- ikke ClaimRevision, claim-evidenslenker, claim-verifikasjon, review eller
 -- publisering — de er hver sin senere PR (§51).
 --
--- Spørsmålet §74.30 punkt 2 reiste — om «adresse pluss hash» er et
--- tilstrekkelig verifikasjonsgrunnlag for `verifiable_representation` — er
--- fortsatt ikke avgjort, og avgjøres ikke her. Databasen håndhever i dag bare
--- at `verified` ikke kan hvile på `derived_summary` alene
--- (evidence_verifications_source_access_check, uendret). Det spørsmålet er
--- likevel forskjellig fra spørsmålet denne migrasjonen faktisk lukker: at
--- funksjonen ikke skal godta `p_source_access = 'verifiable_representation'`
--- når det ikke finnes noe lagret grunnlag i det hele tatt å kalle en
--- «etterprøvbar representasjon». Se avsnitt 4 for hvor det håndheves.
+-- §74.30 punkt 2 reiste spørsmålet om «adresse pluss hash» er et tilstrekkelig
+-- verifikasjonsgrunnlag for `verifiable_representation`, og denne migrasjonen
+-- avgjør det: ja. knowledge.source_versions sin egen hodekommentar (migrasjon
+-- 20260819064500, avsnitt 5) sier hvorfor — retrieved_from er NOT NULL nettopp
+-- fordi «en content_hash uten en adresse å hente på nytt fra kan ikke
+-- etterprøves». Med begge til stede kan enhver tredjepart hente kilden på nytt
+-- fra retrieved_from og kontrollere den mot content_hash, uavhengig av om
+-- Antidep selv har lagret fulltekst i storage_reference. Det er selve
+-- mekanismen `verifiable_representation` beskriver. storage_reference er noe
+-- annet: en lagret kopi, «når lagring er tillatt og nødvendig», og ikke en
+-- forutsetning for at adressen og hashen sammen kan etterprøves.
+--
+-- Funksjonen krever derfor at evidensfunnet peker på en knowledge.source_
+-- versions-rad (source_version_id, migrasjon 20260819064500) som selv har
+-- content_hash satt — ikke bare at raden finnes. En kildeversjon uten
+-- content_hash (retrieved_from alene, uten hash) er et sporet besøk, ikke en
+-- etterprøvbar representasjon, og kvalifiserer ikke. Se avsnitt 5 for hvor
+-- dette håndheves, og den negative testen som prøver akkurat denne grensen.
 --
 -- Skriveveien for å registrere selve kildeversjonen (issue #44) bygges ikke
 -- her — den hører til sin egen PR. knowledge.source_versions og
--- knowledge.evidence_items.source_version_id finnes derimot allerede
--- (migrasjon 20260819064500), og api.create_evidence_item(...) kan allerede
--- ta imot en p_source_version_id. Funksjonen bruker derfor det som allerede
--- finnes av grunnlag i skjemaet — er source_version_id NULL på evidensfunnet,
--- finnes det ingen lagret, etterprøvbar representasjon å vise til, og
--- `verifiable_representation` er da en påstand uten grunnlag, ikke en
--- innsnevring av vokabularet.
+-- knowledge.evidence_items.source_version_id finnes derimot allerede, og
+-- api.create_evidence_item(...) kan allerede ta imot en p_source_version_id.
+-- Funksjonen bruker derfor det som allerede finnes av grunnlag i skjemaet.
 --
 -- ----------------------------------------------------------------------------
 -- Hvorfor bindingen til agentkjøringen er deklarativ og ikke bare funksjonskode
@@ -326,7 +331,70 @@ create trigger evidence_verifications_record_creation_audit_event
   for each row execute function audit.record_evidence_verification_event();
 
 -- ----------------------------------------------------------------------------
--- 4. api.register_extraction_verification(...) — den eneste skriveveien
+-- 4. provenance.assert_agent_run_open(...) tar radlås (§74.32)
+--
+-- Migrasjon 20260905092000 er allerede merget (PR #48): en database som har
+-- registrert den migrasjonsversjonen kjører den aldri på nytt, så en endring i
+-- selve den filen ville aldri nådd et allerede migrert miljø — bare et miljø
+-- som starter helt fra bunnen, som `db reset` i CI gjør. Fremover-skrivende
+-- migrasjoner er regelen (CLAUDE.md, DATABASE_ARCHITECTURE.md), og fiksen hører
+-- derfor hjemme her, i den første migrasjonen etter 005e som faktisk bruker
+-- funksjonen til noe nytt — ikke som en retusjert linje i filen fra §48.
+--
+-- Feilen den retter: en vanlig SELECT uten radlås lar sjekken i denne
+-- migrasjonens egen api.register_extraction_verification(...) (avsnitt 5) løpe
+-- mot en kjøring som en samtidig api.complete_agent_run(...) rekker å lukke
+-- mellom sjekk og den påfølgende INSERT-en — verifikasjonen registreres da mot
+-- en kjøring som i praksis allerede er lukket, selv om begge kontrollene for
+-- seg så riktige ut i det øyeblikket de kjørte.
+--
+-- FOR UPDATE tar radlåsen på provenance.agent_runs-raden i den kallende
+-- funksjonens transaksjon, før status leses. UPDATE-en i
+-- api.complete_agent_run(...) er en vanlig UPDATE og konkurrerer derfor
+-- automatisk om nøyaktig den samme radlåsen (ingen egen FOR UPDATE trengs
+-- der), slik at de to blir atomiske mot hverandre uten at noen av dem endrer
+-- oppførsel. Trygt for begge kallerne: funksjonen returnerer fortsatt bare
+-- aktøren eller avviser, og holder aldri selv en lås etter at den returnerer —
+-- det gjør bare den omsluttende transaksjonen, som allerede eier andre rader
+-- den skriver i samme kall. CREATE OR REPLACE FUNCTION bytter bare kroppen;
+-- signatur, eiere og grants fra 005e er uendret og gjentas ikke her.
+-- ----------------------------------------------------------------------------
+create or replace function provenance.assert_agent_run_open(
+  p_agent_run_id uuid,
+  p_agent_identity_id uuid
+)
+  returns uuid
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+begin
+  select ar.actor_id into v_actor_id
+  from provenance.agent_runs ar
+  where ar.id = p_agent_run_id
+    and ar.agent_identity_id = p_agent_identity_id
+    and ar.status = 'running'
+  for update;
+
+  if v_actor_id is null then
+    raise exception using
+      errcode = 'insufficient_privilege',
+      message = 'Det finnes ingen åpen agentkjøring med denne identiteten.',
+      hint = 'En agentoperasjon skal skje inne i en kjøring som er åpnet med api.begin_agent_run(...) av samme identitet, og som ikke er avsluttet. En avsluttet kjøring kan ikke gjenåpnes.';
+  end if;
+
+  return v_actor_id;
+end;
+$$;
+
+comment on function provenance.assert_agent_run_open(uuid, uuid) is
+  'Kontrollerer at kjøringen finnes, tilhører den autentiserte identiteten og fortsatt er åpen, og returnerer aktøren kjøringen skal attribueres til. Den gjenbrukbare bindingen mellom en agentoperasjon og premissene den kjøres under; skriveveiene i senere pipelineledd kaller den framfor å skrive kontrollen om igjen. SELECT-en tar FOR UPDATE på provenance.agent_runs-raden (§74.32, migrasjon 20260906091000): en agentoperasjon som skriver et objekt i samme transaksjon som dette kallet, gjør dermed sjekken og skrivingen atomisk mot en samtidig api.complete_agent_run(text, text, uuid, text, jsonb, text) som ellers kunne lukket kjøringen mellom sjekk og skriving.';
+
+revoke execute on function provenance.assert_agent_run_open(uuid, uuid) from public;
+
+-- ----------------------------------------------------------------------------
+-- 5. api.register_extraction_verification(...) — den eneste skriveveien
 --
 -- SECURITY DEFINER, tomt search_path, schemakvalifiserte navn, EXECUTE
 -- revokert fra PUBLIC og gitt til anon og authenticated — samme form og samme
@@ -361,6 +429,7 @@ declare
   v_verifier_actor_id uuid;
   v_creator_actor_id uuid;
   v_source_version_id uuid;
+  v_source_version_content_hash text;
   v_verification_id uuid;
 begin
   -- Vokabularparametrene castes først og for seg, slik at en ukjent verdi gir
@@ -432,20 +501,31 @@ begin
       hint = 'Kontroller id-en. Et evidensfunn registreres av api.create_evidence_item(...) og er append-only, så det forsvinner aldri i ettertid.';
   end if;
 
-  -- §74.30 punkt 1: `verifiable_representation` er en påstand om at det finnes
-  -- et lagret, etterprøvbart øyeblikksbilde av kilden verifikatoren kontrollerte
-  -- mot — ikke bare et løfte om at ett fantes. knowledge.evidence_items.source_
-  -- version_id er akkurat den koblingen (evidence_items_source_version_fkey,
-  -- migrasjon 20260819064500); er den NULL, finnes det ingen slik representasjon
-  -- å vise til for dette evidensfunnet, og raden ville vært semantisk usann.
-  -- Skriveveien for å registrere selve kildeversjonen (issue #44) bygges ikke
-  -- her: funksjonen krever bare at grunnlaget som allerede kan uttrykkes i
-  -- skjemaet, faktisk er der.
-  if v_source_access = 'verifiable_representation' and v_source_version_id is null then
-    raise exception using
-      errcode = 'invalid_parameter_value',
-      message = 'Evidensfunnet har ingen lagret kildeversjon å vise til.',
-      hint = 'verifiable_representation forutsetter at evidensfunnet peker på en knowledge.source_versions-rad (source_version_id). Uten det er original_source eller derived_summary det eneste kildegrunnlaget som faktisk kan dokumenteres for dette funnet (issue #44 dekker skriveveien for å registrere kildeversjonen selv).';
+  -- §74.30 punkt 1/2: `verifiable_representation` er en påstand om at det
+  -- finnes et grunnlag en tredjepart faktisk kan etterprøve mot — ikke bare et
+  -- løfte om at kilden ble besøkt. Bare det at evidensfunnet peker på en
+  -- knowledge.source_versions-rad er ikke nok: retrieved_from alene er et
+  -- sporet besøk, ikke en etterprøvbar representasjon. content_hash er
+  -- mekanismen som gjør representasjonen etterprøvbar (se hodekommentaren), så
+  -- den må også være satt på den kildeversjonen.
+  if v_source_access = 'verifiable_representation' then
+    if v_source_version_id is null then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Evidensfunnet har ingen lagret kildeversjon å vise til.',
+        hint = 'verifiable_representation forutsetter at evidensfunnet peker på en knowledge.source_versions-rad (source_version_id). Uten det er original_source eller derived_summary det eneste kildegrunnlaget som faktisk kan dokumenteres for dette funnet (issue #44 dekker skriveveien for å registrere kildeversjonen selv).';
+    end if;
+
+    select content_hash into v_source_version_content_hash
+    from knowledge.source_versions
+    where id = v_source_version_id;
+
+    if v_source_version_content_hash is null then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Kildeversjonen evidensfunnet peker på har ingen lagret fingeravtrykk (content_hash).',
+        hint = 'verifiable_representation krever at kildeversjonen har content_hash satt, slik at retrieved_from og content_hash sammen lar en tredjepart hente kilden på nytt og etterprøve den, uavhengig av om fulltekst er lagret i storage_reference. Uten content_hash er raden bare et sporet besøk (original_source eller derived_summary er da det som faktisk kan dokumenteres).';
+    end if;
   end if;
 
   insert into workflow.evidence_verifications (
@@ -467,7 +547,7 @@ $$;
 comment on function api.register_extraction_verification(
   text, text, uuid, uuid, text, text, text[], text, text
 ) is
-  'Den kontrollerte skriveveien for at en autentisert ekstraksjonsverifikator registrerer en kontroll av ett EvidenceItem mot kildematerialet (ANTIDEP_CONSTITUTION.md §11, DATABASE_ARCHITECTURE.md §29, §43). Autentiserer identiteten eksplisitt for rollen extraction_verification (avviser enhver annen rolle), krever en åpen agentkjøring i samme rolle som tilhører samme identitet (provenance.assert_agent_run_open(uuid, uuid), som tar radlås på kjøringen — se den funksjonens kommentar), og attribuerer raden til den aktøren kjøringen faktisk tilhører — verken aktør, rolle eller kjøring er parametre kalleren kan oppgi fritt. verified_item_creator_actor_id leses fra evidensfunnet selv, ikke fra kalleren. verified_at settes til now(): denne veien registrerer alltid kontrollen i det den konkluderes. p_source_access = ''verifiable_representation'' avvises eksplisitt når evidensfunnets source_version_id er NULL (§74.30 punkt 1): uten en lagret kildeversjon finnes det ingen etterprøvbar representasjon å vise til, og raden ville ellers vært semantisk usann. Auditraden skrives av triggeren på tabellen, i samme transaksjon. SECURITY DEFINER fordi workflow.evidence_verifications, provenance.agent_runs og provenance.agent_identities har RLS med default deny; tomt search_path, og kalleren autentiseres på funksjonens eget kall (§50). EXECUTE går til anon og authenticated av samme grunn som api.begin_agent_run(text, text, text, text, text, text, text, text, jsonb) og api.complete_agent_run(text, text, uuid, text, jsonb, text) (migrasjon 005e): en agent har ingen brukerkonto, og det er legitimasjonen og ikke Data API-rollen som er kontrollen. Utover vokabularcastene og source_version-sjekken er ingen feltvalidering duplisert her: evidence_verifications_separate_actor_check, evidence_verifications_source_access_check og de øvrige constraintene på tabellen (migrasjon 005) er fasiten, og deres avvisninger propageres uendret — inkludert at en agent aldri kan verifisere sitt eget arbeid.';
+  'Den kontrollerte skriveveien for at en autentisert ekstraksjonsverifikator registrerer en kontroll av ett EvidenceItem mot kildematerialet (ANTIDEP_CONSTITUTION.md §11, DATABASE_ARCHITECTURE.md §29, §43). Autentiserer identiteten eksplisitt for rollen extraction_verification (avviser enhver annen rolle), krever en åpen agentkjøring i samme rolle som tilhører samme identitet (provenance.assert_agent_run_open(uuid, uuid), som tar radlås på kjøringen — se den funksjonens kommentar), og attribuerer raden til den aktøren kjøringen faktisk tilhører — verken aktør, rolle eller kjøring er parametre kalleren kan oppgi fritt. verified_item_creator_actor_id leses fra evidensfunnet selv, ikke fra kalleren. verified_at settes til now(): denne veien registrerer alltid kontrollen i det den konkluderes. p_source_access = ''verifiable_representation'' avvises eksplisitt når evidensfunnets source_version_id er NULL, eller når kildeversjonen den peker på ikke selv har content_hash satt (§74.30 punkt 1/2): retrieved_from og content_hash sammen er det som gjør en kildeversjon etterprøvbar for en tredjepart, og uten begge ville raden vært en påstand uten grunnlag. Auditraden skrives av triggeren på tabellen, i samme transaksjon. SECURITY DEFINER fordi workflow.evidence_verifications, provenance.agent_runs og provenance.agent_identities har RLS med default deny; tomt search_path, og kalleren autentiseres på funksjonens eget kall (§50). EXECUTE går til anon og authenticated av samme grunn som api.begin_agent_run(text, text, text, text, text, text, text, text, jsonb) og api.complete_agent_run(text, text, uuid, text, jsonb, text) (migrasjon 005e): en agent har ingen brukerkonto, og det er legitimasjonen og ikke Data API-rollen som er kontrollen. Utover vokabularcastene og source_version-sjekken er ingen feltvalidering duplisert her: evidence_verifications_separate_actor_check, evidence_verifications_source_access_check og de øvrige constraintene på tabellen (migrasjon 005) er fasiten, og deres avvisninger propageres uendret — inkludert at en agent aldri kan verifisere sitt eget arbeid.';
 
 revoke execute on function api.register_extraction_verification(
   text, text, uuid, uuid, text, text, text[], text, text

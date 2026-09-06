@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(23);
+select plan(24);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -126,6 +126,18 @@ values (
   'sha256:' || repeat('a', 64)
 );
 
+-- Et sporet besøk uten fingeravtrykk: retrieved_from er satt, content_hash er
+-- det bevisst ikke. Brukes i avsnitt 8 til å prøve grensen §74.30 punkt 2
+-- trekker opp — at source_version_id alene ikke er nok, kildeversjonen må
+-- selv ha content_hash for å telle som en etterprøvbar representasjon.
+insert into knowledge.source_versions (
+  id, source_id, retrieved_at, retrieved_from
+)
+values (
+  '44000000-0000-4000-8000-000000000022', '44000000-0000-4000-8000-000000000001',
+  now(), 'https://example.test/440-kilde-uten-hash'
+);
+
 insert into knowledge.evidence_items (
   id, source_id, source_version_id, design_code, population_availability, population_detail,
   sample_size_availability, intervention_drug_id, comparator_kind,
@@ -175,6 +187,19 @@ values (
   'Funn laget av ekstraksjonsagenten, uten lagret kildeversjon, for 440.',
   'not_reported', 'not_stated', 'not_reported', 'not_reported',
   'Avsnitt 4', 'ai_assisted', (select id from fixture where name = 'extractor')
+),
+(
+  -- Kildeversjon uten content_hash (000022). Brukes i avsnitt 8 til å prøve at
+  -- verifiable_representation avvises selv når source_version_id er satt, når
+  -- kildeversjonen selv ikke har noe fingeravtrykk å etterprøve mot.
+  '44000000-0000-4000-8000-000000000015', '44000000-0000-4000-8000-000000000001',
+  '44000000-0000-4000-8000-000000000022',
+  'randomized_controlled_trial', 'not_reported', 'Prøve i 440.',
+  'not_reported', (select id from fixture where name = 'sertralin'), 'none',
+  (select id from fixture where name = 'weight'),
+  'Funn laget av ekstraksjonsagenten, med kildeversjon uten content_hash, for 440.',
+  'not_reported', 'not_stated', 'not_reported', 'not_reported',
+  'Avsnitt 5', 'ai_assisted', (select id from fixture where name = 'extractor')
 );
 
 -- En andre agentidentitet, i rollen evidence_extraction, registrert bare for
@@ -457,6 +482,25 @@ select throws_ok(
   $$,
   '22023', 'Evidensfunnet har ingen lagret kildeversjon å vise til.',
   'verifiable_representation avvises når evidensfunnet ikke har noen lagret, etterprøvbar kildeversjon å vise til'
+);
+
+-- §74.30 punkt 2: source_version_id alene er ikke nok — kildeversjonen må selv
+-- ha content_hash. 000015 peker på 000022, en kildeversjon med retrieved_from
+-- men uten content_hash, i motsetning til 000011 sin 000021 som har begge.
+select throws_ok(
+  $$
+    select api.register_extraction_verification(
+      p_identity_key := 'agent-identity:extraction-verification-01',
+      p_secret := (select secret from cred where label = 'verifier'),
+      p_agent_run_id := (select id from run where label = 'verifier-open'),
+      p_evidence_item_id := '44000000-0000-4000-8000-000000000015',
+      p_outcome := 'verified', p_source_access := 'verifiable_representation',
+      p_checked_fields := array['source_locator'],
+      p_rationale := 'Prøve i 440: forsøk på å registrere verifiable_representation mot en kildeversjon uten content_hash.'
+    )
+  $$,
+  '22023', 'Kildeversjonen evidensfunnet peker på har ingen lagret fingeravtrykk (content_hash).',
+  'verifiable_representation avvises når kildeversjonen mangler content_hash, selv om source_version_id er satt'
 );
 reset role;
 
