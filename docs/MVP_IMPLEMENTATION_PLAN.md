@@ -5561,11 +5561,29 @@ men om hvor hemmeligheten kunne bli liggende.
    veien inn i historikken ett `git add`. `git check-ignore` er nå et vilkår, og det feiler
    lukket: svarer ikke git, skrives ingenting.
 
+**Og et tredje funn, på rettelsen av det første: tempfilen var ikke ignorert.** Tempfilen
+punkt 1 innførte, bærer den samme hemmeligheten fram til `rename`. Den het
+`.${basename}.<tilfeldig>.tmp`, som for `.env.agent.local` gir
+`..env.agent.local.<tilfeldig>.tmp` — med to innledende punktum, som verken `.env.*` eller
+`*.local` matcher. Blir prosessen drept i vinduet mellom skriving og `rename` — SIGKILL,
+krasj, strømbrudd — rydder ingen `catch` opp, og da lå hemmeligheten i en **sporbar** fil i
+arbeidstreet. Rettelsen på punkt 1 hadde altså flyttet nøyaktig den risikoen punkt 2 stengte,
+over i et vindu ingen så på. Avlest med `git check-ignore`: `.env.agent.local` er ignorert,
+`..env.agent.local.123abc.tmp` er ikke, `.env.agent.local.123abc.tmp` er.
+
+Tempfilen heter derfor det samme som målet med et suffiks, uten det ekstra punktumet — og,
+viktigere, den *konkrete* tempbanen kontrolleres med samme fail-closed regel som målfilen,
+før hemmeligheten skrives. Navnet alene er ikke argumentet; kontrollen er. Er tempbanen ikke
+ignorert, skrives ingenting.
+
 Logikken ligger i `src/agents/agent-env-file.ts` framfor i skallet, fordi den fortjener
-tester. Begge er mutasjonstestet: uten tempfilveien feller testen rettelsen med
-«expected '644' to be '600'», og uten gitignore-vilkåret feller de to andre den. Den ekte
-veien er prøvd like reelt — et forsøk på å skrive til `.env.example` ble avvist, filen sto
-urørt, og kjøreren autentiserte etterpå med en ny legitimasjon skrevet på den rettede veien.
+tester. Alle tre er mutasjonstestet: uten tempfilveien feller testen rettelsen med
+«expected '644' to be '600'», uten gitignore-vilkåret på målet feller to andre den, og med
+det innledende punktumet tilbake feller tempfil-testen den — den siste mot repoets faktiske
+ignore-regler, ikke mot en gjengivelse av dem. Den ekte veien er prøvd like reelt: et forsøk
+på å skrive til `.env.example` ble avvist med filen urørt, og etter hver runde autentiserte
+kjøreren mot produksjon med en ny legitimasjon skrevet på den rettede veien, uten at noen
+tempfil ble liggende igjen.
 
 **Hva denne leveransen bevisst ikke gjør.** Den bygger ikke claim-verifikasjon
 (`workflow.claim_verifications`, `citation_support_verification`), utvider ikke til andre

@@ -6,8 +6,10 @@
 // transkripsjon. Hemmeligheten går derfor rett fra utstedelsen og inn i en fil,
 // uten å vises noe sted.
 //
-// En fil er bare et trygt sted for en hemmelighet hvis to ting holder, og
-// begge må håndheves her framfor å loves i en kommentar:
+// En fil er bare et trygt sted for en hemmelighet hvis tre ting holder, og alle
+// tre må håndheves her framfor å loves i en kommentar. Alle tre kom fra teknisk
+// review — de to første som funn på første utgave, den tredje som et funn på
+// rettelsen av den første:
 //
 // ----------------------------------------------------------------------------
 // 1. Filen skal være lesbar bare for eieren — også når den fantes fra før
@@ -38,6 +40,26 @@
 // kommandoen mangler, eller fordi filen ikke er ignorert — skrives ingenting.
 // Å skrive en hemmelighet fordi kontrollen ikke lot seg utføre, er den motsatte
 // avveiningen av den denne filen er til for.
+//
+// ----------------------------------------------------------------------------
+// 3. Tempfilen er også en fil hemmeligheten ligger i
+//
+// Vilkåret over gjelder målfilen, og det er ikke nok: tempfilen fra punkt 1
+// bærer den samme hemmeligheten fram til `rename`. Blir prosessen drept i det
+// vinduet — SIGKILL, krasj, strømbrudd — rydder ingen `catch` opp, og filen
+// blir liggende i arbeidstreet.
+//
+// Første utgave het `.${basename}.<tilfeldig>.tmp`, som for `.env.agent.local`
+// ga `..env.agent.local.<tilfeldig>.tmp` med to innledende punktum. Verken
+// `.env.*` eller `*.local` matcher det, så nettopp den filen var *ikke*
+// ignorert — og et `git add -A` etter en krasj kunne tatt hemmeligheten med seg
+// inn i historikken. Avlest med `git check-ignore`, ikke resonnert.
+//
+// Tempfilen heter derfor `${basename}.<tilfeldig>.tmp` uten det ekstra
+// punktumet, slik at `.env.agent.local.<tilfeldig>.tmp` fanges av `.env.*` — og
+// den *konkrete* banen kontrolleres med samme fail-closed regel som målfilen,
+// før hemmeligheten skrives. Er tempbanen ikke ignorert, skrives ingenting.
+// Navnet er ikke et argument for at det er trygt; kontrollen er.
 // ============================================================================
 
 import { execFileSync } from 'node:child_process'
@@ -121,18 +143,39 @@ export function writeAgentEnvFile(
   )
   while (kept.length > 0 && kept.at(-1)?.trim() === '') kept.pop()
 
+  // Tempfilen bærer den samme hemmeligheten fram til `rename`, og en krasj i
+  // det vinduet etterlater den. Den må derfor være like ignorert som målet, og
+  // kontrolleres før noe skrives.
+  const temporary = temporaryEnvPath(file, randomBytes(8).toString('hex'))
+  if (!ignores(temporary)) {
+    throw new EnvFileRefused(
+      `Tempfilen ${temporary}, som ${file} skrives gjennom, er ikke ignorert av ` +
+        'git. En krasj før den flyttes på plass ville etterlatt hemmeligheten i ' +
+        'en fil som kan bli med i en commit. Ingenting er skrevet.',
+    )
+  }
+
   const lines = [...kept, ...Object.entries(values).map(([name, value]) => `${name}=${value}`)]
-  writeOwnerOnly(file, lines.join('\n') + '\n')
+  writeOwnerOnly(file, temporary, lines.join('\n') + '\n')
+}
+
+/**
+ * Banen tempfilen får ved siden av målet.
+ *
+ * Uten det innledende punktumet med vilje: `.env.agent.local` gir
+ * `.env.agent.local.<token>.tmp`, som repoets `.env.*` fanger. Med punktumet
+ * ble navnet `..env.agent.local.<token>.tmp`, som ingen regel matcher.
+ * Eksportert fordi den er verdt å teste mot repoets faktiske ignore-regler.
+ */
+export function temporaryEnvPath(file: string, token: string): string {
+  return join(dirname(file) || '.', `${basename(file)}.${token}.tmp`)
 }
 
 /**
  * Skriver `content` til `file` slik at filen er `0600` også når den fantes fra
  * før: fersk tempfil ved siden av målet, `fchmod`, fyll, `rename` over målet.
  */
-function writeOwnerOnly(file: string, content: string): void {
-  const directory = dirname(file) || '.'
-  const temporary = join(directory, `.${basename(file)}.${randomBytes(8).toString('hex')}.tmp`)
-
+function writeOwnerOnly(file: string, temporary: string, content: string): void {
   // `wx` nekter å åpne en fil som allerede finnes, så tempfilen er alltid
   // vår egen — aldri en andre har lagt der på forhånd.
   const handle = openSync(temporary, 'wx', 0o600)
