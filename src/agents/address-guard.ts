@@ -235,6 +235,22 @@ const BLOCKED_IPV6: readonly Prefix[] = [
   { bytes: [0xff, 0x00], length: 8, why: 'multicast' },
 ]
 
+/**
+ * Det eneste IPv6-rommet som er delt ut til vanlig bruk på internett.
+ *
+ * IANA deler ut global unicast fra `2000::/3`; resten av IPv6-rommet er
+ * reservert for framtidig bruk. En avvisningsliste over
+ * special-purpose-registeret er derfor ikke nok som SSRF-grense: et reservert
+ * prefiks som `4000::1` sto ikke på noen liste, men kan godt ha en intern rute.
+ *
+ * Vanlige IPv6-adresser må derfor ligge *innenfor* dette rommet. De innpakkede
+ * formene (IPv4-mapped, NAT64) håndteres før denne regelen, siden de ikke er
+ * IPv6-destinasjoner i egen rett. Avvisningslisten står fortsatt først, fordi
+ * den gir en presis grunn for de vanlige tilfellene — loopback, link-local — i
+ * stedet for den generiske «utenfor det tildelte rommet».
+ */
+const GLOBAL_UNICAST: Prefix = { bytes: [0x20], length: 3, why: 'global unicast' }
+
 export type AddressVerdict =
   { readonly allowed: true } | { readonly allowed: false; readonly reason: string }
 
@@ -276,6 +292,10 @@ export function judgeAddress(value: string): AddressVerdict {
     if (matchesPrefix(address.bytes, prefix)) {
       return { allowed: false, reason: prefix.why }
     }
+  }
+
+  if (!matchesPrefix(address.bytes, GLOBAL_UNICAST)) {
+    return { allowed: false, reason: 'utenfor det tildelte adresserommet (2000::/3)' }
   }
   return { allowed: true }
 }

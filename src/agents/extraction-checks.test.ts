@@ -73,8 +73,8 @@ describe('checkExtraction — feilsitering', () => {
         rawExtraction: { metode: 'A total of 284 adults with major depressive disorder' },
       },
     })
-    expect(report.findings).toBeNull()
     expect(report.checkedFields).toContain('raw_extraction')
+    expect(report.findings).not.toContain('finnes ikke ordrett')
   })
 
   it('finner et sitat med en avkodet entitet', () => {
@@ -83,8 +83,8 @@ describe('checkExtraction — feilsitering', () => {
         rawExtraction: { sitat: '(95% CI 0.4 to 2.6) & the difference was significant' },
       },
     })
-    expect(report.findings).toBeNull()
     expect(report.checkedFields).toContain('raw_extraction')
+    expect(report.findings).not.toContain('finnes ikke ordrett')
   })
 
   it('finner et sitat med typografiske anførselstegn i den ene enden', () => {
@@ -92,8 +92,40 @@ describe('checkExtraction — feilsitering', () => {
       { extraction: { rawExtraction: { sitat: '"Mean weight change over the trial"' } } },
       `${FIXTURE_SOURCE_TEXT}\n“Mean weight change over the trial”`,
     )
-    expect(report.findings).toBeNull()
     expect(report.checkedFields).toContain('raw_extraction')
+    expect(report.findings).not.toContain('finnes ikke ordrett')
+  })
+})
+
+// `workflow.evidence_verifications` krever en ikke-tom `findings` for alt som
+// ikke er `verified` (evidence_verifications_findings_required_check). Uten
+// dette ble en helt normal uavklart kontroll avvist av basen, og hele
+// agentkjøringen falt — prøvd ende-til-ende mot databasen.
+describe('checkExtraction — kontrakten mot databasen', () => {
+  it.each([
+    ['tall som ikke ble gjenfunnet', { extraction: { estimate: '2.7' } }],
+    [
+      'sitat som ikke står i kilden',
+      { extraction: { rawExtraction: { sitat: 'står ikke der i det hele tatt' } } },
+    ],
+    ['representasjonen er en annen utgave', {}],
+  ])('gir en ikke-tom findings for et uavklart utfall (%s)', (navn, overrides) => {
+    const report =
+      navn === 'representasjonen er en annen utgave'
+        ? check({}, FIXTURE_SOURCE_TEXT, false)
+        : check(overrides)
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.findings).not.toBeNull()
+    expect(report.findings?.trim()).not.toBe('')
+    expect((report.findings ?? '').length).toBeLessThanOrEqual(4000)
+  })
+
+  it('lar findings være tom bare når kontrollen faktisk bekreftet raden', () => {
+    const report = check()
+
+    expect(report.outcome).toBe('verified')
+    expect(report.findings).toBeNull()
   })
 })
 
@@ -108,9 +140,13 @@ describe('checkExtraction — tallene', () => {
   it('gjør et tall som ikke ble gjenfunnet til en uavklart kontroll, ikke til et avvik', () => {
     const report = check({ extraction: { estimate: '2.7' } })
     expect(report.outcome).toBe('uncertain')
-    expect(report.findings).toBeNull()
     expect(report.checkedFields).not.toContain('estimate')
     expect(report.rationale).toContain('estimat (2.7)')
+    // Basen krever en begrunnelse for alt som ikke er `verified`
+    // (evidence_verifications_findings_required_check). Den skal si at
+    // kontrollen ikke konkluderte, ikke at noe er galt.
+    expect(report.findings).toContain('Kontrollen konkluderte ikke')
+    expect(report.findings).toContain('estimat (2.7)')
   })
 
   it('sier i begrunnelsen hvorfor et manglende talltreff ikke er et avvik', () => {
@@ -240,6 +276,53 @@ describe('checkExtraction — tallene', () => {
     expect(report.rationale).toContain('ingen tekst som tilhører nettopp dette funnet')
   })
 
+  // Et helt vanlig utdrag beskriver flere armer i én setning. Da står den
+  // registrerte verdien der — men det gjør de andre armenes verdier også, og
+  // ingenting binder maskinelt en av dem til nettopp denne raden.
+  it.each([48, 44, 47])(
+    'bekrefter ikke utvalgsstørrelse %s fra et utdrag som oppgir flere armer',
+    (størrelse) => {
+      const utdrag =
+        'Patients (fluoxetine, N = 44; sertraline, N = 48; paroxetine, N = 47) who ' +
+        'completed the trial were included in these analyses.'
+      const report = check(
+        { extraction: { sampleSize: størrelse, rawExtraction: { resultat: utdrag } } },
+        `Forord. ${utdrag}`,
+      )
+
+      expect(report.outcome).not.toBe('verified')
+      expect(report.checkedFields).not.toContain('sample_size')
+      expect(report.rationale).toContain('flere verdier for de samme feltene')
+    },
+  )
+
+  it('bekrefter ikke et estimat fra et utdrag som oppgir to armer i samme setning', () => {
+    const utdrag =
+      'The mean difference was 0.8 kg for mirtazapine and the mean difference was 0.4 kg ' +
+      'for fluoxetine.'
+    const report = check(
+      { extraction: { estimate: '0.8', rawExtraction: { resultat: utdrag } } },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+  })
+
+  it('bekrefter ikke et konfidensintervall fra et utdrag som oppgir to intervaller', () => {
+    const utdrag =
+      'Weight change was 1.5 kg (95% CI 0.4 to 2.6) and quality of life improved ' +
+      '(95% CI 1.1 to 3.2) over the study period.'
+    const report = check(
+      { extraction: { rawExtraction: { resultat: utdrag } } },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+    expect(report.rationale).toContain('flere verdier for de samme feltene')
+  })
+
   // Et nakent tall ved ankeret er ikke et nivå. Her er `90` en utvalgsstørrelse,
   // og kilden sier aldri prosent — den sier ikke hvilket nivå intervallet har.
   it('bekrefter ikke et nivå kilden aldri oppgir som prosent', () => {
@@ -313,9 +396,9 @@ describe('checkExtraction — tallene', () => {
     )
 
     expect(report.outcome).toBe('uncertain')
-    expect(report.findings).toBeNull()
     expect(report.checkedFields).not.toContain('confidence_interval')
     expect(report.rationale).toContain('navngir ikke noe konfidensintervall')
+    expect(report.findings).toContain('Kontrollen konkluderte ikke')
   })
 
   // Presisjonsfellen, sett fra kontrollen: den avrundede verdien står i

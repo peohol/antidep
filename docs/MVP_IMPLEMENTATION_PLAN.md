@@ -4743,6 +4743,45 @@ oppgir utvalgsstørrelse må ha et utdrag som sier den. **Begge de reelle NCBI-f
 egne utdrag, mens `48` i den samme artikkelens referanseliste og i paroksetin-armen nå er utenfor.
 Begge rettelsene er mutasjonstestet hver for seg.
 
+**Den ellevte runden fant tre ting, og den første gjorde at hele kjøringen falt.**
+
+*`uncertain` kunne ikke registreres.* `workflow.evidence_verifications` krever en ikke-tom
+`findings` for alt som ikke er `verified` (migrasjon 005), mens kontrollen med vilje ga
+`findings: null` for et uavklart utfall. En helt normal uavklart kontroll ble derfor avvist av
+databasen, og `runExtractionVerification` felte hele kjøringen. Feilen var usynlig i alle tidligere
+kjøringer, fordi begge de reelle funnene endte som `verified` — reprodusert ende-til-ende først da
+innstrammingen under gjorde dem uavklarte:
+
+```
+api.register_extraction_verification ble avvist:
+new row … violates check constraint "evidence_verifications_findings_required_check"
+```
+
+Databasens regel er den riktige: en rad som ikke er bekreftet, skal si hvorfor der en leser ser
+etter det. Kontrollen skriver derfor en begrunnelse, og den begynner med «Kontrollen konkluderte
+ikke, og dette er ikke et avvik», slik at den ikke kan leses som en anklage. Bare de merknadene som
+faktisk sier hva som *ikke* ble avgjort går inn; `rationale` beholder alle.
+
+*IPv6-vakten var en avvisningsliste der den måtte være en tillatelsesliste.* IANA deler ut global
+unicast fra `2000::/3`; resten av rommet er reservert. `4000::1` og `6000::1` sto ikke i noe
+special-purpose-register og slapp derfor gjennom — men et reservert prefiks kan godt ha en intern
+rute. Vanlige IPv6-adresser må nå ligge innenfor `2000::/3`, med de innpakkede formene håndtert før
+regelen og avvisningslisten beholdt foran den, fordi den gir presise grunner for loopback og
+link-local framfor den generiske.
+
+*Et tall må tilhøre armen, ikke bare utdraget.* Å søke i funnets egne utdrag var ikke nok: et helt
+vanlig utdrag beskriver flere armer i én setning, og da står den registrerte verdien der — men det
+gjør de andre armenes verdier også. Kontrollen teller nå opp **alle** verdiene utdraget oppgir for
+feltet. Er det nøyaktig én, og den er den registrerte, er raden bekreftet; er det flere, står feltet
+uavklart. Samme regel gjelder konfidensintervallet, der flere intervalluttrykk i ett utdrag gir
+samme utfall.
+
+Grensen er skrevet ut framfor pyntet på: opptellingen ser det samme mønsteret bekreftelsen ser, så
+en andre arm skrevet på en form ankerlisten ikke dekker, blir ikke oppdaget. Å telle med en løsere
+regel enn den som bekrefter ble prøvd og forkastet — den fant tall langt unna og gjorde nesten
+enhver rad uavklart, altså en verifikator som ikke lenger sier noe. Alle tre rettelsene er
+mutasjonstestet hver for seg.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen
@@ -4900,7 +4939,7 @@ kroppsvekt, hentet fra NCBI eutils.
 | 3. EvidenceItem | Registrert med `source_version_id` satt, `extraction_method = manual` |
 | 4. Agentkjøring | Åpnet av `agent-identity:extraction-verification-01` som `anon`, med legitimasjon utstedt av redaktøren |
 | 5. Kontroll | Adressen hentet på nytt; fingeravtrykket reprodusert; sitatet gjenfunnet ordrett i representasjonen |
-| 6. Verifikasjon | `verified`, `verifiable_representation`, `checked_fields = {raw_extraction, source_locator, intervention_arm}` |
+| 6. Verifikasjon | `verified`, `verifiable_representation`, `checked_fields = {raw_extraction, source_locator, intervention_arm}` (kjørt før innstrammingene under; se avsnittet om de seedede funnene) |
 | 7. Proveniens | Verifikasjonen peker på kjøringen, kjøringen på identiteten, identiteten på agentaktøren — og auditsporet viser `source_created → source_version_registered → evidence_item_created → evidence_verification_registered`, med menneskelig aktør på de tre første og agentaktøren på den siste |
 
 **Den negative veien er kjørt like reelt.** En kildeversjon registrert med et innhold adressen
@@ -4910,9 +4949,14 @@ faktisk betyr noe.
 
 **De to seedede evidensfunnene er også kontrollert, mot sine egne reelle MEDLINE-poster.**
 Begge kildeversjonene fra migrasjon 003 reproduserer fortsatt sine registrerte
-fingeravtrykk fra NCBI i dag — seks uker etter at de ble registrert — og begge funnene fikk
-`verified`. At «adresse pluss hash» er et etterprøvbart grunnlag (§74.32), er dermed ikke
-lenger bare et resonnement: det er en avlesning.
+fingeravtrykk fra NCBI i dag — seks uker etter at de ble registrert. At «adresse pluss hash» er et
+etterprøvbart grunnlag (§74.32), er dermed ikke lenger bare et resonnement: det er en avlesning.
+
+Etter innstrammingene under får begge funnene **`uncertain`**, og det er riktig svar. Utdragene
+deres er flerarms: «Patients (fluoxetine, N = 44; sertraline, N = 48; paroxetine, N = 47) …». En
+deterministisk kontroll kan ikke avgjøre hvilken av dem som er sertralinradens, og sier det, med
+kandidatene oppgitt i `findings`. Sitatene, kildepekeren og intervensjonsarmen står fortsatt som
+kontrollert. Et `verified` her ville vært en gjetning som så ut som en kontroll.
 
 ---
 

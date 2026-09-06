@@ -76,10 +76,24 @@ describe('judgeAddress — IPv6', () => {
     ['2a00:1450:4001:80f::200e', 'Google'],
     ['2001:4860:4860::8888', 'like utenfor IETF-blokken'],
     ['2001:200::1', 'første adresse etter IETF-blokken'],
-    ['4000::1', 'like etter dokumentasjonsnettet'],
-    ['6000::1', 'like etter SRv6-blokken'],
+    ['2000::1', 'første adressen i global unicast'],
+    ['3fff:ffff::1', 'siste adressen i global unicast'],
   ])('godtar %s (%s)', (address) => {
     expect(isPublicAddress(address)).toBe(true)
+  })
+
+  // IANA deler ut global unicast fra 2000::/3. Resten av IPv6-rommet er
+  // reservert for framtidig bruk, står ikke i special-purpose-registeret, og
+  // kan likevel ha en intern rute. En avvisningsliste alene er derfor ikke en
+  // SSRF-grense for IPv6.
+  it.each([
+    ['1000::1', 'før global unicast'],
+    ['4000::1', 'etter global unicast'],
+    ['6000::1', 'reservert'],
+    ['8000::1', 'reservert'],
+    ['e000::1', 'reservert'],
+  ])('avviser %s (%s), som er utenfor 2000::/3', (address) => {
+    expect(isPublicAddress(address)).toBe(false)
   })
 
   // Den innpakkede formen er den farligste: en vakt som bare leste den som

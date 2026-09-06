@@ -578,34 +578,91 @@ const ESTIMATE_ANCHORS = [
   'estimat\\w*',
 ]
 
+/** Et hvilket som helst tall, til å telle opp kandidater med. */
+const ANY_NUMBER = `(?<![\\d.,])(-?\\d+(?:[.,]\\d+)?)${TRAILING_BOUNDARY}`
+
+/** «1,50» og «1.5» er samme tall. Sammenlignes på én form. */
+function sameNumber(value: string): string {
+  return trimNumericText(value.replace(',', '.')).replace(/^\+/, '')
+}
+
+export type AnchoredNumberMatch =
+  | { readonly kind: 'confirmed' }
+  | { readonly kind: 'missing' }
+  /** Flere forskjellige tall er oppgitt for samme felt i utdraget. */
+  | { readonly kind: 'ambiguous'; readonly candidates: readonly string[] }
+
 /**
- * Om tallet står i teksten der kilden navngir feltet — foran eller bak.
+ * Hva utdraget sier om dette feltet: den registrerte verdien, ingenting, eller
+ * flere verdier.
  *
  * Rekkefølgen er åpen fordi kilder skriver begge veier: «N = 48» og
  * «284 adults» sier det samme om utvalget.
+ *
+ * ----------------------------------------------------------------------------
+ * Hvorfor flere kandidater ikke er en bekreftelse
+ *
+ * Et helt vanlig utdrag beskriver flere armer i én setning:
+ *
+ *   «Patients (fluoxetine, N = 44; sertraline, N = 48; paroxetine, N = 47) …»
+ *
+ * Å søke etter *den registrerte* verdien her ville bekreftet både en riktig og
+ * en feilregistrert rad: `48` står der, men det gjør `44` og `47` også, og
+ * ingenting i teksten binder maskinelt et av dem til nettopp denne raden.
+ * Legemiddelnavnet står riktignok inntil tallet, men det gjør de andre
+ * legemidlenes navn også, og en avstandsregel mellom dem ville vært en
+ * gjetning forkledd som en kontroll.
+ *
+ * Kontrollen teller derfor opp *alle* tallene utdraget oppgir for feltet. Er
+ * det nøyaktig ett, og det er det registrerte, er raden bekreftet. Er det
+ * flere, kan ikke kontrollen avgjøre hvilket som er radens, og feltet står
+ * uavklart — ikke som et avvik. Det er samme asymmetri som ellers: en kontroll
+ * som ikke kan konkludere, skal ikke leses som en bekreftelse
+ * (ANTIDEP_CONSTITUTION.md §6, §11).
+ *
+ * **Grensen, skrevet ut:** opptellingen ser det samme mønsteret bekreftelsen
+ * ser. Skriver kilden den andre armen på en form ankerlisten ikke dekker («a
+ * mean decrease *in weight of* 0.4 kg»), ser kontrollen bare én kandidat og
+ * bekrefter den. Å telle kandidater med en løsere regel enn den som bekrefter,
+ * ble prøvd og forkastet: den fant tall langt unna og gjorde nesten enhver rad
+ * uavklart, altså en verifikator som ikke lenger sier noe. Regelen fanger den
+ * formen flerarmsstudier oftest bruker — «N = 44; N = 48» og flere
+ * intervalluttrykk — og ikke enhver språklig variant.
  */
-function anchoredNumberOccursIn(
+function anchoredNumberMatch(
   projections: readonly string[],
   value: string,
   anchorsBefore: readonly string[],
   anchorsAfter: readonly string[],
-): boolean {
-  const number = numberPattern(value)
-  if (number === null) {
-    return false
-  }
-  const body = `${leadingBoundary(number.isNegative)}${number.body}${TRAILING_BOUNDARY}`
+): AnchoredNumberMatch {
   const g = glue()
   const patterns: string[] = []
   if (anchorsBefore.length > 0) {
-    patterns.push(`(?:${anchorsBefore.join('|')})${g}${body}`)
+    patterns.push(`(?:${anchorsBefore.join('|')})${g}${ANY_NUMBER}`)
   }
   if (anchorsAfter.length > 0) {
-    patterns.push(`${body}${g}(?:${anchorsAfter.join('|')})`)
+    patterns.push(`${ANY_NUMBER}${g}(?:${anchorsAfter.join('|')})`)
   }
-  return patterns.some((pattern) =>
-    projections.some((projection) => new RegExp(pattern, 'i').test(projection)),
-  )
+
+  const candidates = new Set<string>()
+  for (const pattern of patterns) {
+    for (const projection of projections) {
+      for (const hit of projection.matchAll(new RegExp(pattern, 'gi'))) {
+        const found = hit[1]
+        if (found !== undefined) {
+          candidates.add(sameNumber(found))
+        }
+      }
+    }
+  }
+
+  if (candidates.size === 0) {
+    return { kind: 'missing' }
+  }
+  if (candidates.size > 1) {
+    return { kind: 'ambiguous', candidates: [...candidates].sort() }
+  }
+  return candidates.has(sameNumber(value)) ? { kind: 'confirmed' } : { kind: 'missing' }
 }
 
 /**
@@ -672,6 +729,8 @@ export interface ConfidenceIntervalReport {
   readonly unmatched: readonly string[]
   /** Sant når kilden ikke navngir et konfidensintervall i det hele tatt. */
   readonly noAnchor: boolean
+  /** Utdraget oppgir flere intervaller, og ingen av dem er entydig radens. */
+  readonly ambiguous: readonly string[]
 }
 
 /**
@@ -681,24 +740,60 @@ export interface ConfidenceIntervalReport {
  * bak begge. Alt annet er ikke en skrivemåte, det er tre deler som tilfeldigvis
  * står i nærheten av hverandre.
  */
+function intervalOrders(level: string, bounds: string): readonly string[] {
+  const anchor = `(?:${CI_ANCHOR_SOURCE})`
+  const g = CI_GLUE
+  return [
+    // «95% CI 0.4 to 2.6», «95 % konfidensintervall 0,4 til 2,6»
+    `${level}${g}${anchor}${g}${bounds}`,
+    // «CI 95%: 0.4 to 2.6»
+    `${anchor}${g}${level}${g}${bounds}`,
+    // «0.4 to 2.6 (95% CI)»
+    `${bounds}${g}${level}${g}${anchor}`,
+    // «0.4 to 2.6 (CI 95%)»
+    `${bounds}${g}${anchor}${g}${level}`,
+  ]
+}
+
 function confidenceIntervalPatterns(interval: ConfidenceInterval): readonly string[] {
   const level = levelPattern(interval.levelPercent)
   const bounds = boundsPattern(interval.lower, interval.upper)
   if (level === null || bounds === null) {
     return []
   }
-  const anchor = `(?:${CI_ANCHOR_SOURCE})`
-  const glue = CI_GLUE
-  return [
-    // «95% CI 0.4 to 2.6», «95 % konfidensintervall 0,4 til 2,6»
-    `${level}${glue}${anchor}${glue}${bounds}`,
-    // «CI 95%: 0.4 to 2.6»
-    `${anchor}${glue}${level}${glue}${bounds}`,
-    // «0.4 to 2.6 (95% CI)»
-    `${bounds}${glue}${level}${glue}${anchor}`,
-    // «0.4 to 2.6 (CI 95%)»
-    `${bounds}${glue}${anchor}${glue}${level}`,
-  ]
+  return intervalOrders(level, bounds)
+}
+
+/**
+ * Alle konfidensintervallene utdraget faktisk oppgir, som «0.4|2.6|95».
+ *
+ * Samme grunn som for skalarene: et utdrag kan oppgi intervaller for flere
+ * utfall eller flere armer, og da binder ingenting maskinelt ett av dem til
+ * denne raden. Kandidatene telles derfor opp, framfor å lete etter den ene
+ * verdien raden oppgir.
+ */
+function confidenceIntervalCandidates(projections: readonly string[]): readonly string[] {
+  const anyLevel = `${ANY_NUMBER}\\s*(?:%|percent|pct|prosent)`
+  const anyBounds = `${ANY_NUMBER}${CI_RANGE_SEPARATOR}${ANY_NUMBER}`
+  const found = new Set<string>()
+
+  for (const order of intervalOrders(anyLevel, anyBounds)) {
+    // Gruppene kommer i den rekkefølgen delene står i mønsteret, så hvilken
+    // som er nivå og hvilke som er grenser, avhenger av rekkefølgen. De sorteres
+    // ikke: et intervall er nivå + nedre + øvre uansett hvor de står skrevet.
+    const levelFirst = order.indexOf(anyLevel) < order.indexOf(anyBounds)
+    for (const projection of projections) {
+      for (const hit of projection.matchAll(new RegExp(order, 'gi'))) {
+        const [, a, b, c] = hit
+        if (a === undefined || b === undefined || c === undefined) {
+          continue
+        }
+        const [level, lower, upper] = levelFirst ? [a, b, c] : [c, a, b]
+        found.add(`${sameNumber(lower)}|${sameNumber(upper)}|${sameNumber(level)}`)
+      }
+    }
+  }
+  return [...found].sort()
 }
 
 /**
@@ -714,13 +809,18 @@ export function confidenceIntervalCheck(
   projections: readonly string[],
   interval: ConfidenceInterval,
 ): ConfidenceIntervalReport {
+  const candidates = confidenceIntervalCandidates(projections)
+  if (candidates.length > 1) {
+    return { confirmed: false, unmatched: [], noAnchor: false, ambiguous: candidates }
+  }
+
   const patterns = confidenceIntervalPatterns(interval)
   if (
     patterns.some((pattern) =>
       projections.some((projection) => new RegExp(pattern, 'i').test(projection)),
     )
   ) {
-    return { confirmed: true, unmatched: [], noAnchor: false }
+    return { confirmed: true, unmatched: [], noAnchor: false, ambiguous: [] }
   }
 
   const level = levelPattern(interval.levelPercent)
@@ -740,7 +840,7 @@ export function confidenceIntervalCheck(
   if (!levelSeen) {
     unmatched.push(`konfidensnivå (${interval.levelPercent})`)
   }
-  return { confirmed: false, unmatched, noAnchor: !anchorSeen }
+  return { confirmed: false, unmatched, noAnchor: !anchorSeen, ambiguous: [] }
 }
 
 /** Det registrerte intervallet, eller `null` når raden ikke oppgir noe. */
@@ -781,6 +881,16 @@ function unique(fields: readonly EvidenceCheckField[]): readonly EvidenceCheckFi
   return [...new Set(fields)]
 }
 
+/**
+ * `findings` er begrenset til 4000 tegn i basen. En begrunnelse som sprenger
+ * grensen, skal kortes ned framfor å felle registreringen av en kontroll som
+ * faktisk ble gjennomført.
+ */
+function truncateFindings(text: string): string {
+  const trimmed = text.trim()
+  return trimmed.length <= 4000 ? trimmed : `${trimmed.slice(0, 3997).trimEnd()}…`
+}
+
 function joinSentences(parts: readonly string[]): string {
   return parts.join(' ')
 }
@@ -800,6 +910,14 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   const checked: EvidenceCheckField[] = []
   const findings: string[] = []
   const notes: string[] = []
+  // Merknadene som forklarer hva kontrollen *ikke* fikk avgjort. `rationale`
+  // får alle merknadene; `findings` får bare disse, slik at en uavklart rad
+  // ikke åpner med hva som gikk bra.
+  const unresolvedNotes: string[] = []
+  const noteUnresolved = (text: string) => {
+    notes.push(text)
+    unresolvedNotes.push(text)
+  }
 
   // 1. Sitatene. Den ene kontrollen som kan avkrefte en ekstraksjon alene.
   const quotes = verbatimQuotes(item.extraction.rawExtraction)
@@ -808,7 +926,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   const quotesFound = quotesChecked && missingQuotes.length === 0
 
   if (!quotesChecked) {
-    notes.push(
+    noteUnresolved(
       'Funnet har ingen ordrett gjengivelse fra kilden (raw_extraction), så ' +
         'sitatkontrollen kunne ikke gjennomføres.',
     )
@@ -832,7 +950,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   if (representationReproduced && quotesFound) {
     checked.push('source_locator')
   } else if (!quotesFound) {
-    notes.push(
+    noteUnresolved(
       `Kildepekeren «${item.extraction.sourceLocator}» kunne ikke korroboreres uten et ` +
         'sitat å finne igjen i representasjonen, og er derfor ikke ført opp som kontrollert.',
     )
@@ -869,16 +987,19 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   const unmatchedNumbers: string[] = []
   const numericFields = new Set<EvidenceCheckField>()
   const unresolvedFields = new Set<EvidenceCheckField>()
+  const ambiguousNumbers: string[] = []
   for (const claim of numericClaims(item)) {
     numericFields.add(claim.field)
-    if (
-      !anchoredNumberOccursIn(
-        claimProjections,
-        claim.value,
-        claim.anchorsBefore,
-        claim.anchorsAfter,
-      )
-    ) {
+    const match = anchoredNumberMatch(
+      claimProjections,
+      claim.value,
+      claim.anchorsBefore,
+      claim.anchorsAfter,
+    )
+    if (match.kind === 'ambiguous') {
+      unresolvedFields.add(claim.field)
+      ambiguousNumbers.push(`${claim.label} (${match.candidates.join(', ')})`)
+    } else if (match.kind === 'missing') {
       unresolvedFields.add(claim.field)
       unmatchedNumbers.push(`${claim.label} (${claim.value})`)
     }
@@ -893,8 +1014,10 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     if (!ci.confirmed) {
       unresolvedFields.add('confidence_interval')
       confidenceIntervalUnresolved = true
-      if (ci.noAnchor) {
-        notes.push(
+      if (ci.ambiguous.length > 0) {
+        ambiguousNumbers.push(`konfidensintervall (${ci.ambiguous.join('; ')})`)
+      } else if (ci.noAnchor) {
+        noteUnresolved(
           'Representasjonen navngir ikke noe konfidensintervall, så det registrerte ' +
             'intervallet kunne ikke kontrolleres som ett uttrykk og er ikke ført opp som ' +
             'kontrollert. Grensene kan stå i en tabell eller uten at intervallet er navngitt.',
@@ -902,7 +1025,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
       } else {
         unmatchedNumbers.push(...ci.unmatched)
         if (ci.unmatched.length === 0) {
-          notes.push(
+          noteUnresolved(
             'Nivået og grensene i det registrerte konfidensintervallet ble funnet hver for ' +
               'seg, men ikke i samme intervalluttrykk i kilden. Intervallet er derfor ikke ' +
               'ført opp som kontrollert: tre tall fra tre steder er ikke ett intervall.',
@@ -918,15 +1041,23 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     }
   }
   if (numericFields.size > 0 && claimProjections.length === 0) {
-    notes.push(
+    noteUnresolved(
       'Ingen av funnets ordrette utdrag ble gjenfunnet i representasjonen, så tallene hadde ' +
         'ingen tekst som tilhører nettopp dette funnet å kontrolleres mot. En artikkel kan ' +
         'beskrive flere armer og flere utfall, og et treff et annet sted i den ville tilhørt ' +
         'et annet funn.',
     )
   }
+  if (ambiguousNumbers.length > 0) {
+    noteUnresolved(
+      'Utdraget oppgir flere verdier for de samme feltene, og kontrollen kan ikke avgjøre ' +
+        `hvilken som er denne radens: ${ambiguousNumbers.join(', ')}. Et utdrag som beskriver ` +
+        'flere armer eller flere utfall, binder ikke maskinelt ett av tallene til nettopp dette ' +
+        'funnet, og feltene står derfor uavklart framfor bekreftet.',
+    )
+  }
   if (unmatchedNumbers.length > 0) {
-    notes.push(
+    noteUnresolved(
       `Følgende oppgitte tall ble ikke gjenfunnet som tall i funnets egne utdrag, og er derfor ` +
         `ikke ført opp som kontrollert: ${unmatchedNumbers.join(', ')}. Et tall kan stå ` +
         'skrevet med bokstaver, i en annen enhet eller i en tabell som ikke er med i denne ' +
@@ -944,7 +1075,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     }
   }
   if (unmatchedTerms.length > 0) {
-    notes.push(
+    noteUnresolved(
       `Følgende begreper ble ikke gjenfunnet ordrett i kilden og er derfor ikke ført opp ` +
         `som kontrollert: ${unmatchedTerms.join(', ')}. Kilden er som regel på engelsk mens ` +
         'katalogen er på norsk, så et manglende treff er ikke i seg selv et avvik.',
@@ -962,11 +1093,16 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     outcome = 'needs_correction'
   } else if (!representationReproduced) {
     outcome = 'uncertain'
-    notes.push(
+    noteUnresolved(
       'Representasjonen som ble hentet, har ikke samme fingeravtrykk som den registrerte ' +
         'kildeversjonen, så kontrollen gjelder ikke den utgaven ekstraksjonen ble gjort fra.',
     )
-  } else if (!quotesFound || unmatchedNumbers.length > 0 || confidenceIntervalUnresolved) {
+  } else if (
+    !quotesFound ||
+    unmatchedNumbers.length > 0 ||
+    ambiguousNumbers.length > 0 ||
+    confidenceIntervalUnresolved
+  ) {
     // Et oppgitt tall som ikke lot seg gjenfinne, er ikke et avvik — men det er
     // heller ikke en bekreftelse av raden som helhet. Utfallet sier nettopp det.
     //
@@ -988,10 +1124,30 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     'søkt som selvstendig tall, i både råsvaret og en taggfri projeksjon av det. Ingen ' +
     'språkmodell er brukt.'
 
+  // `findings` er påkrevd for alt annet enn `verified`
+  // (`evidence_verifications_findings_required_check`, migrasjon 005), og
+  // regelen er riktig: en rad som ikke er bekreftet, skal si hvorfor der en
+  // leser ser etter det. For `uncertain` er svaret ikke et avvik, men at
+  // kontrollen ikke konkluderte — og setningen begynner med nettopp de ordene,
+  // slik at den ikke kan leses som en anklage. Hva som er hva, står uansett i
+  // `outcome`.
+  //
+  // Uten dette ble en helt normal uavklart kontroll avvist av databasen, og
+  // hele agentkjøringen falt (§74.33).
+  const unresolved = joinSentences([
+    'Kontrollen konkluderte ikke, og dette er ikke et avvik:',
+    ...unresolvedNotes,
+  ])
+
   return {
     outcome,
     checkedFields: unique(checked),
-    findings: findings.length > 0 ? joinSentences(findings) : null,
+    findings:
+      findings.length > 0
+        ? joinSentences(findings)
+        : outcome === 'verified'
+          ? null
+          : truncateFindings(unresolved),
     rationale: joinSentences([method, ...notes]),
   }
 }
