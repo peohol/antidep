@@ -5537,6 +5537,36 @@ legitimasjon i det miljøet som skal lese den — og den utstedelsen ugyldiggjø
 tilsiktet og uten konsekvens for radene som allerede er registrert: de peker på identiteten,
 ikke på hemmeligheten.
 
+**Rettet under teknisk review: `--write-env` holdt ikke sitt eget løfte.** Gjennomgangen fant
+to feil i den nye skriveveien, og begge var reelle. De handler ikke om hva som ble skrevet,
+men om hvor hemmeligheten kunne bli liggende.
+
+1. **Filen fikk ikke `0600` når den fantes fra før.** `fs.writeFileSync(fil, tekst,
+   { mode: 0o600 })` setter modus **bare** når filen opprettes — og standardtilfellet her er
+   nettopp at `.env.agent.local` finnes fra før, med URL og publishable key i seg. En fil som
+   sto som `0644`, ville fått agenthemmeligheten skrevet inn i seg mens koden så ut til å
+   love noe annet, og ingenting ville feilet. Avlest framfor resonnert: `writeFileSync` med
+   `mode: 0o600` på en eksisterende `0644`-fil gir `0644`. (Filen i den kjøringen som faktisk
+   ble gjort, var `0600` — den ble opprettet fersk under `umask 077` — så ingen hemmelighet
+   lå noen gang for åpent. Men det var flaks i rekkefølgen, ikke noe koden garanterte.)
+
+   Skrivingen går nå gjennom en fersk tempfil som `fchmod`-es til `0600` og deretter flyttes
+   på plass med `rename`. Rettighetene som gjelder til slutt er tempfilens, `fchmod` lar seg
+   ikke utvide av umask, og det finnes ikke noe øyeblikk der filen er halvskrevet eller for
+   vidt åpen.
+
+2. **`--write-env <fil>` tok imot en hvilken som helst bane**, mens både skriptet og
+   dokumentasjonen lovet at målet var gitignorert. Ingenting hindret at hemmeligheten ble
+   skrevet rett i en sporet fil — `.env.example` er det nærliggende eksempelet — og derfra er
+   veien inn i historikken ett `git add`. `git check-ignore` er nå et vilkår, og det feiler
+   lukket: svarer ikke git, skrives ingenting.
+
+Logikken ligger i `src/agents/agent-env-file.ts` framfor i skallet, fordi den fortjener
+tester. Begge er mutasjonstestet: uten tempfilveien feller testen rettelsen med
+«expected '644' to be '600'», og uten gitignore-vilkåret feller de to andre den. Den ekte
+veien er prøvd like reelt — et forsøk på å skrive til `.env.example` ble avvist, filen sto
+urørt, og kjøreren autentiserte etterpå med en ny legitimasjon skrevet på den rettede veien.
+
 **Hva denne leveransen bevisst ikke gjør.** Den bygger ikke claim-verifikasjon
 (`workflow.claim_verifications`, `citation_support_verification`), utvider ikke til andre
 agentroller, og endrer ikke noe klinisk innhold for å få en verifikasjon til å passere. Ingen

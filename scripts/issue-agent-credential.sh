@@ -176,29 +176,24 @@ if [ -z "$SECRET" ]; then
 fi
 
 if [ -n "$ENV_FIL" ]; then
-  # Verdien går fra variabelen rett i filen. Den sendes ikke gjennom argv (som
-  # er lesbar i `ps`), og skrives ikke til stdout. Filen opprettes med
-  # rettigheter bare for eieren *før* den får innhold.
-  umask 077
-  SECRET="$SECRET" IDENTITY="$IDENTITY" node -e '
-    const fs = require("fs");
-    const fil = process.argv[1];
-    const settes = {
-      ANTIDEP_AGENT_IDENTITY_KEY: process.env.IDENTITY,
-      ANTIDEP_AGENT_SECRET: process.env.SECRET,
-    };
-    // Behold alt annet som allerede står i filen — URL og publishable key
-    // hører til samme fil, og skal ikke gå tapt av en ny utstedelse.
-    const linjer = fs.existsSync(fil)
-      ? fs.readFileSync(fil, "utf8").split("\n")
-      : [];
-    const ut = linjer.filter(
-      (l) => !Object.keys(settes).some((n) => l.startsWith(`${n}=`)),
-    );
-    while (ut.length && ut[ut.length - 1].trim() === "") ut.pop();
-    for (const [navn, verdi] of Object.entries(settes)) ut.push(`${navn}=${verdi}`);
-    fs.writeFileSync(fil, ut.join("\n") + "\n", { mode: 0o600 });
-  ' "$ENV_FIL"
+  # Selve skrivingen ligger i `src/agents/agent-env-file.ts`, som har tester:
+  # den nekter å skrive til en fil git ikke ignorerer, og gir filen `0600` også
+  # når den fantes fra før. Begge deler var funn i teknisk review — se
+  # hodekommentaren der.
+  #
+  # Verdien går gjennom miljøet og ikke gjennom argumentlisten, som er lesbar
+  # for alle på maskinen gjennom `ps`.
+  if ! ANTIDEP_AGENT_IDENTITY_KEY="$IDENTITY" ANTIDEP_AGENT_SECRET="$SECRET" \
+       node src/agents/write-agent-env-cli.ts "$ENV_FIL"; then
+    cat >&2 <<'STOPP'
+
+Legitimasjonen ble utstedt, men kunne ikke skrives til miljøfilen.
+
+Den forrige legitimasjonen er dermed ugyldig, og denne er ingen steder. Rett
+det som står over, og kjør skriptet på nytt for å utstede en ny.
+STOPP
+    exit 1
+  fi
 
   cat <<SLUTT
 

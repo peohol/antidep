@@ -562,6 +562,14 @@ npm run db:start
 ./scripts/issue-agent-credential.sh --management-api --write-env
 ```
 
+`--write-env` håndhever to ting framfor å love dem, begge funn fra teknisk review:
+målfilen må være ignorert av git — kontrollert med `git check-ignore`, og kontrollen feiler
+lukket, så en fil som `.env.example` avvises uten at noe skrives — og filen ender som `0600`
+**også når den fantes fra før**. Det siste er ikke gratis: `writeFileSync(..., { mode })`
+setter bare rettigheter på en ny fil, så skrivingen går gjennom en fersk tempfil som
+`fchmod`-es og deretter flyttes på plass. Logikken ligger i `src/agents/agent-env-file.ts`
+med tester, ikke i skallet.
+
 **Identiteten er aktivert i det hostede prosjektet, 6. september 2026.**
 `secret_version` er `1` og `secret_issued_by_actor_id` peker på `human:peder-holman`;
 utstedelsen står i auditloggen som `agent_identity_credential_issued`. Legitimasjonen ble
