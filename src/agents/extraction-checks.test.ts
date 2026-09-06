@@ -21,6 +21,11 @@ function check(
   })
 }
 
+// Fiksturen oppgir en populasjon, og utdragene dens navngir den. En test som
+// bytter ut utdraget, forteller en annen historie: da er populasjonen støy og
+// slås av, slik at testen måler det den sier den måler.
+const UTEN_POPULASJON = { populationAvailability: 'not_reported' } as const
+
 describe('checkExtraction — den lykkede stien', () => {
   it('bekrefter et funn der sitatet og alle tallene står i kilden', () => {
     const report = check()
@@ -48,7 +53,10 @@ describe('checkExtraction — den lykkede stien', () => {
 describe('checkExtraction — feilsitering', () => {
   it('avviser et sitat som ikke står ordrett i kilden', () => {
     const report = check({
-      extraction: { rawExtraction: { sitat: 'Mean weight change was 4.9 kg' } },
+      extraction: {
+        ...UTEN_POPULASJON,
+        rawExtraction: { sitat: 'Mean weight change was 4.9 kg' },
+      },
     })
     expect(report.outcome).toBe('needs_correction')
     expect(report.findings).toContain('finnes ikke ordrett')
@@ -58,7 +66,10 @@ describe('checkExtraction — feilsitering', () => {
     // Et avvik er et resultat av en kontroll, ikke et fravær av en: uten dette
     // ville en avvist rad sett ut som om sitatet aldri var sett på.
     const report = check({
-      extraction: { rawExtraction: { sitat: 'noe som ikke står der, i det hele tatt' } },
+      extraction: {
+        ...UTEN_POPULASJON,
+        rawExtraction: { sitat: 'noe som ikke står der, i det hele tatt' },
+      },
     })
     expect(report.checkedFields).toContain('raw_extraction')
   })
@@ -71,6 +82,7 @@ describe('checkExtraction — feilsitering', () => {
     // Sitatet spenner over to linjer og et element i fiksturen.
     const report = check({
       extraction: {
+        ...UTEN_POPULASJON,
         rawExtraction: { metode: 'Sertraline patients (N = 284) with major depressive' },
       },
     })
@@ -81,6 +93,7 @@ describe('checkExtraction — feilsitering', () => {
   it('finner et sitat med en avkodet entitet', () => {
     const report = check({
       extraction: {
+        ...UTEN_POPULASJON,
         rawExtraction: { sitat: '(95% CI 0.4 to 2.6) & the difference was significant' },
       },
     })
@@ -90,7 +103,12 @@ describe('checkExtraction — feilsitering', () => {
 
   it('finner et sitat med typografiske anførselstegn i den ene enden', () => {
     const report = check(
-      { extraction: { rawExtraction: { sitat: '"Mean weight change over the trial"' } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { sitat: '"Mean weight change over the trial"' },
+        },
+      },
       `${FIXTURE_SOURCE_TEXT}\n“Mean weight change over the trial”`,
     )
     expect(report.checkedFields).toContain('raw_extraction')
@@ -104,10 +122,23 @@ describe('checkExtraction — feilsitering', () => {
 // agentkjøringen falt — prøvd ende-til-ende mot databasen.
 describe('checkExtraction — kontrakten mot databasen', () => {
   it.each([
-    ['tall som ikke ble gjenfunnet', { extraction: { estimate: '2.7' } }],
+    [
+      'tall som ikke ble gjenfunnet',
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          estimate: '2.7',
+        },
+      },
+    ],
     [
       'sitat som ikke står i kilden',
-      { extraction: { rawExtraction: { sitat: 'står ikke der i det hele tatt' } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { sitat: 'står ikke der i det hele tatt' },
+        },
+      },
     ],
     ['representasjonen er en annen utgave', {}],
   ])('gir en ikke-tom findings for et uavklart utfall (%s)', (navn, overrides) => {
@@ -134,7 +165,12 @@ describe('checkExtraction — kontrakten mot databasen', () => {
       rawExtraction[`utdrag_${String(i)}_${'x'.repeat(nøkkellengde)}`] =
         'Sertraline-treated patients had a mean weight change of 1.5 kg (95% CI 0.4 to 2.6)'
     }
-    const report = check({ extraction: { rawExtraction } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        rawExtraction,
+      },
+    })
 
     expect(report.rationale.length).toBeLessThanOrEqual(4000)
     expect((report.findings ?? '').length).toBeLessThanOrEqual(4000)
@@ -148,7 +184,12 @@ describe('checkExtraction — kontrakten mot databasen', () => {
       rawExtraction[`utdrag_${String(i)}_${'x'.repeat(300)}`] =
         `noe som ikke står i kilden ${String(i)}`
     }
-    const report = check({ extraction: { rawExtraction } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        rawExtraction,
+      },
+    })
 
     expect(report.outcome).toBe('needs_correction')
     expect((report.findings ?? '').length).toBeLessThanOrEqual(4000)
@@ -172,7 +213,12 @@ describe('checkExtraction — tallene', () => {
   // som ikke er med i representasjonen. Å kalle det et avvik ville produsert
   // falske anklager mot riktige ekstraksjoner.
   it('gjør et tall som ikke ble gjenfunnet til en uavklart kontroll, ikke til et avvik', () => {
-    const report = check({ extraction: { estimate: '2.7' } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        estimate: '2.7',
+      },
+    })
     expect(report.outcome).toBe('uncertain')
     expect(report.checkedFields).not.toContain('estimate')
     expect(report.rationale).toContain('estimat (2.7)')
@@ -184,12 +230,22 @@ describe('checkExtraction — tallene', () => {
   })
 
   it('sier i begrunnelsen hvorfor et manglende talltreff ikke er et avvik', () => {
-    const report = check({ extraction: { estimate: '2.7' } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        estimate: '2.7',
+      },
+    })
     expect(report.rationale).toContain('skrevet med bokstaver')
   })
 
   it('behandler en konfidensgrense som ikke ble gjenfunnet på samme måte', () => {
-    const report = check({ extraction: { ciUpper: '9.9' } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        ciUpper: '9.9',
+      },
+    })
     expect(report.outcome).toBe('uncertain')
     expect(report.checkedFields).not.toContain('confidence_interval')
     // Paret er det som mangler, ikke ett tall: kilden har et intervall, men
@@ -202,7 +258,12 @@ describe('checkExtraction — tallene', () => {
   // kontrollert — ellers ville auditsporet sagt at intervallet var etterprøvd
   // mot en kilde som oppgir noe annet.
   it('fører ikke konfidensintervallet som kontrollert når nivået ikke stemmer', () => {
-    const report = check({ extraction: { ciLevelPercent: '90' } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        ciLevelPercent: '90',
+      },
+    })
 
     expect(report.outcome).not.toBe('verified')
     expect(report.checkedFields).not.toContain('confidence_interval')
@@ -227,6 +288,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           ciLevelPercent: '90',
           rawExtraction: {
             sitat: 'Sertraline patients had a mean weight change of 1.5 kg (95% CI 0.4 to 2.6)',
@@ -251,6 +313,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           rawExtraction: { sitat: 'Weight change was 1.5 kg (95% CI 0.4 to 1.9)' },
         },
       },
@@ -270,6 +333,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           sampleSize: 48,
           rawExtraction: { sitat: 'Sertraline-treated patients had a modest weight increase.' },
         },
@@ -289,6 +353,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '0.8',
           rawExtraction: { sitat: 'Weight did not change appreciably in either group.' },
         },
@@ -303,7 +368,10 @@ describe('checkExtraction — tallene', () => {
   it('sier i begrunnelsen hvorfor tallene ikke kunne kontrolleres uten et gjenfunnet utdrag', () => {
     const report = check(
       {
-        extraction: { rawExtraction: { sitat: 'et sitat som ikke står i kilden i det hele tatt' } },
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { sitat: 'et sitat som ikke står i kilden i det hele tatt' },
+        },
       },
       'A total of 284 adults. Mean weight change was 1.5 kg (95% CI 0.4 to 2.6).',
     )
@@ -327,7 +395,13 @@ describe('checkExtraction — tallene', () => {
     'bekrefter ikke utvalgsstørrelse %s fra et flerarmsutdrag der tallet tilhører en annen arm',
     (størrelse) => {
       const report = check(
-        { extraction: { sampleSize: størrelse, rawExtraction: { resultat: FLERARMS } } },
+        {
+          extraction: {
+            ...UTEN_POPULASJON,
+            sampleSize: størrelse,
+            rawExtraction: { resultat: FLERARMS },
+          },
+        },
         `Forord. ${FLERARMS}`,
       )
 
@@ -338,7 +412,13 @@ describe('checkExtraction — tallene', () => {
 
   it('bekrefter utvalgsstørrelsen som står inntil radens egen arm', () => {
     const report = check(
-      { extraction: { sampleSize: 48, rawExtraction: { resultat: FLERARMS } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          sampleSize: 48,
+          rawExtraction: { resultat: FLERARMS },
+        },
+      },
       `Forord. ${FLERARMS}`,
     )
 
@@ -350,7 +430,13 @@ describe('checkExtraction — tallene', () => {
       'The mean difference was 0.8 kg for sertraline and the mean difference was 0.4 kg ' +
       'for fluoxetine.'
     const report = check(
-      { extraction: { estimate: '0.8', rawExtraction: { resultat: utdrag } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          estimate: '0.8',
+          rawExtraction: { resultat: utdrag },
+        },
+      },
       `Forord. ${utdrag}`,
     )
 
@@ -363,7 +449,12 @@ describe('checkExtraction — tallene', () => {
       'Sertraline: weight change was 1.5 kg (95% CI 0.4 to 2.6) and quality of life ' +
       'improved (95% CI 1.1 to 3.2) over the study period.'
     const report = check(
-      { extraction: { rawExtraction: { resultat: utdrag } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { resultat: utdrag },
+        },
+      },
       `Forord. ${utdrag}`,
     )
 
@@ -379,7 +470,13 @@ describe('checkExtraction — tallene', () => {
     const arm = 'Sertraline-treated patients were included in the trial.'
     const tall = 'Paroxetine patients (N = 48) had mean weight change 1.5 kg (95% CI 0.4 to 2.6).'
     const report = check(
-      { extraction: { sampleSize: 48, rawExtraction: { arm, resultat: tall } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          sampleSize: 48,
+          rawExtraction: { arm, resultat: tall },
+        },
+      },
       `Forord. ${arm} ${tall}`,
     )
 
@@ -396,7 +493,13 @@ describe('checkExtraction — tallene', () => {
   it('sier fra når ingen av utdragene navngir armen i det hele tatt', () => {
     const tall = 'Paroxetine patients (N = 48) had mean weight change 1.5 kg (95% CI 0.4 to 2.6).'
     const report = check(
-      { extraction: { sampleSize: 48, rawExtraction: { resultat: tall } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          sampleSize: 48,
+          rawExtraction: { resultat: tall },
+        },
+      },
       `Forord. ${tall}`,
     )
 
@@ -411,6 +514,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           sampleSize: 48,
           confidenceIntervalAvailability: 'not_reported',
           ciLower: null,
@@ -437,6 +541,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           interventionDrugName: virkestoff,
           sampleSize: 48,
           rawExtraction: { sitat: utdrag },
@@ -455,6 +560,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           interventionDrugName: 'sertralin',
           sampleSize: 48,
           rawExtraction: { sitat: utdrag },
@@ -475,6 +581,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '5.0',
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
@@ -501,6 +608,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '5.0',
           outcomeLabel: 'body weight change',
           sampleSizeAvailability: 'not_reported',
@@ -525,7 +633,13 @@ describe('checkExtraction — tallene', () => {
       'Weight change was assessed. Sertraline and paroxetine were compared; ' +
       'paroxetine patients (N = 48) completed the trial.'
     const report = check(
-      { extraction: { sampleSize: 48, rawExtraction: { sitat: utdrag } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          sampleSize: 48,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
       `Forord. ${utdrag}`,
     )
 
@@ -542,6 +656,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '5.0',
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
@@ -569,6 +684,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimateAvailability: 'not_reported',
           estimate: null,
           estimateUnit: null,
@@ -593,6 +709,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '5.0',
           outcomeLabel: 'body weight change',
           sampleSize: null,
@@ -619,6 +736,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '5.0',
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
@@ -644,7 +762,13 @@ describe('checkExtraction — tallene', () => {
   it('bekrefter ikke en utvalgsstørrelse fra setningen foran, når den slutter på et tall', () => {
     const utdrag = 'Paroxetine patients had N = 48. Sertraline was also studied.'
     const report = check(
-      { extraction: { sampleSize: 48, rawExtraction: { sitat: utdrag } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          sampleSize: 48,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
       `Forord. ${utdrag}`,
     )
 
@@ -674,6 +798,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimateAvailability: 'not_reported',
           estimate: null,
           estimateUnit: null,
@@ -702,6 +827,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           interventionDrugName: 'citalopram',
           sampleSize: 48,
           rawExtraction: { sitat: utdrag },
@@ -720,7 +846,13 @@ describe('checkExtraction — tallene', () => {
     const dose = 'Sertraline 48 mg daily was used.'
     const annen = 'Sertraline was compared with paroxetine patients (N = 48).'
     const report = check(
-      { extraction: { sampleSize: 48, rawExtraction: { dose, annen } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          sampleSize: 48,
+          rawExtraction: { dose, annen },
+        },
+      },
       `Forord. ${dose} ${annen}`,
     )
 
@@ -734,6 +866,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '5.0',
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
@@ -757,7 +890,13 @@ describe('checkExtraction — tallene', () => {
   it('bekrefter ikke en utvalgsstørrelse der tallet er en dose', () => {
     const utdrag = 'Sertraline 48 mg daily was given to the group.'
     const report = check(
-      { extraction: { sampleSize: 48, rawExtraction: { sitat: utdrag } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          sampleSize: 48,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
       `Forord. ${utdrag}`,
     )
 
@@ -769,7 +908,13 @@ describe('checkExtraction — tallene', () => {
   // og kilden sier aldri prosent — den sier ikke hvilket nivå intervallet har.
   it('bekrefter ikke et nivå kilden aldri oppgir som prosent', () => {
     const report = check(
-      { extraction: { ciLevelPercent: '90', rawExtraction: { sitat: 'Mean weight change' } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          ciLevelPercent: '90',
+          rawExtraction: { sitat: 'Mean weight change' },
+        },
+      },
       'Mean weight change. n=90; CI 0.4 to 2.6',
     )
 
@@ -781,7 +926,12 @@ describe('checkExtraction — tallene', () => {
   // ankeret og grenseparet finnes i teksten, men de er ikke det samme uttrykket.
   it('bekrefter ikke et intervall kilden sier den ikke har rapportert', () => {
     const report = check(
-      { extraction: { rawExtraction: { sitat: 'Mean weight change' } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { sitat: 'Mean weight change' },
+        },
+      },
       'Mean weight change. 95% CI was not reported; observed values ranged from 0.4 to 2.6.',
     )
 
@@ -797,7 +947,15 @@ describe('checkExtraction — tallene', () => {
     ['except', 'Mean weight change. 95% CI except 0.4 to 2.6'],
     ['ikke', 'Vektendring. 95 % konfidensintervall ikke 0,4 til 2,6'],
   ])('bekrefter ikke et intervall en benektelse står foran (%s)', (_navn, kilde) => {
-    const report = check({ extraction: { rawExtraction: { sitat: 'Mean weight change' } } }, kilde)
+    const report = check(
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { sitat: 'Mean weight change' },
+        },
+      },
+      kilde,
+    )
 
     expect(report.outcome).not.toBe('verified')
     expect(report.checkedFields).not.toContain('confidence_interval')
@@ -828,7 +986,15 @@ describe('checkExtraction — tallene', () => {
     // ett endepunkt hos én arm.
     // Arm, endepunkt og verdi i samme setning: bindingen er på setningen.
     const utdrag = `Sertraline, ${kilde}`
-    const report = check({ extraction: { rawExtraction: { sitat: utdrag } } }, `Forord. ${utdrag}`)
+    const report = check(
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
 
     expect(report.checkedFields).toContain('confidence_interval')
   })
@@ -837,7 +1003,12 @@ describe('checkExtraction — tallene', () => {
   // grensene kan stå i en tabell som ikke er med i representasjonen.
   it('melder ikke avvik når kilden ikke navngir noe konfidensintervall', () => {
     const report = check(
-      { extraction: { rawExtraction: { sitat: 'Mean weight change was 1.5 kg' } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { sitat: 'Mean weight change was 1.5 kg' },
+        },
+      },
       'Mean weight change was 1.5 kg, from 0.4 to 2.6, among 284 adults.',
     )
 
@@ -883,7 +1054,13 @@ describe('checkExtraction — tallene', () => {
   // men kilden oppgir aldri verdien for *dette* feltet.
   it('fører ikke utvalgsstørrelsen som kontrollert når 90 bare er en prosentandel', () => {
     const report = check(
-      { extraction: { sampleSize: 90, rawExtraction: { sitat: 'Mean weight change' } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          sampleSize: 90,
+          rawExtraction: { sitat: 'Mean weight change' },
+        },
+      },
       'Mean weight change. In this trial 90% improved during follow-up.',
     )
 
@@ -896,6 +1073,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '15',
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
@@ -918,7 +1096,13 @@ describe('checkExtraction — tallene', () => {
     ['enrolled over 12 months', 'Vekt. Patients were enrolled at 12 sites.'],
   ])('fører ikke utvalgsstørrelsen som kontrollert på «%s»', (_navn, kilde) => {
     const report = check(
-      { extraction: { sampleSize: 12, rawExtraction: { sitat: 'Vekt' } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          sampleSize: 12,
+          rawExtraction: { sitat: 'Vekt' },
+        },
+      },
       kilde,
     )
 
@@ -937,6 +1121,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '12',
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
@@ -961,6 +1146,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           sampleSize: størrelse,
           rawExtraction: { sitat: kilde },
         },
@@ -979,6 +1165,7 @@ describe('checkExtraction — tallene', () => {
     const report = check(
       {
         extraction: {
+          ...UTEN_POPULASJON,
           estimate: '0.8',
           rawExtraction: { sitat: `Sertraline, weight change. ${kilde}` },
         },
@@ -999,7 +1186,12 @@ describe('checkExtraction — tallene', () => {
 
   it('bekrefter ikke en øvre konfidensgrense som står i eksponentnotasjon', () => {
     const report = check(
-      { extraction: { rawExtraction: { sitat: 'Mean weight change' } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { sitat: 'Mean weight change' },
+        },
+      },
       'Mean weight change. Result (95% CI 0.4 to 2.6e-3).',
     )
 
@@ -1008,7 +1200,12 @@ describe('checkExtraction — tallene', () => {
   })
 
   it('behandler en utvalgsstørrelse som ikke ble gjenfunnet på samme måte', () => {
-    const report = check({ extraction: { sampleSize: 285 } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        sampleSize: 285,
+      },
+    })
     expect(report.outcome).toBe('uncertain')
     expect(report.checkedFields).not.toContain('sample_size')
     expect(report.rationale).toContain('utvalgsstørrelse (285)')
@@ -1019,6 +1216,7 @@ describe('checkExtraction — tallene', () => {
   it('lar et manglende sitat veie tyngre enn et manglende talltreff', () => {
     const report = check({
       extraction: {
+        ...UTEN_POPULASJON,
         estimate: '2.7',
         rawExtraction: { sitat: 'står ikke i kilden i det hele tatt' },
       },
@@ -1031,7 +1229,11 @@ describe('checkExtraction — tallene', () => {
     // med statusen not_reported har ingen verdi å lete etter, og feltet skal
     // da ikke stå som kontrollert.
     const report = check({
-      extraction: { estimate: null, estimateAvailability: 'not_reported' },
+      extraction: {
+        ...UTEN_POPULASJON,
+        estimate: null,
+        estimateAvailability: 'not_reported',
+      },
     })
     expect(report.checkedFields).not.toContain('estimate')
     // Ikke et avvik. Intervallet står uavklart fordi radens eget estimat er
@@ -1043,7 +1245,12 @@ describe('checkExtraction — tallene', () => {
   // ende i `verified`.
   it('bekrefter ikke et estimat der fortegnet er snudd', () => {
     const report = check(
-      { extraction: { estimate: '-1.5' } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          estimate: '-1.5',
+        },
+      },
       'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6)',
     )
     expect(report.outcome).not.toBe('verified')
@@ -1055,7 +1262,15 @@ describe('checkExtraction — tallene', () => {
     // Norske og engelske kilder skriver desimalskilletegnet ulikt, og tallet er
     // det samme. Bare estimatet er i spill her; den øvrige teksten er byttet
     // ut, så de andre kontrollene slår ut som de skal.
-    const report = check({ extraction: { estimate: '1.5' } }, 'Vektendringen var 1,5 kg.')
+    const report = check(
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          estimate: '1.5',
+        },
+      },
+      'Vektendringen var 1,5 kg.',
+    )
     expect(report.findings).not.toContain('estimat')
   })
 })
@@ -1069,7 +1284,13 @@ describe('checkExtraction — tallene', () => {
 describe('checkExtraction — tallet må tilhøre denne raden', () => {
   function withQuote(quote: string, extraction: Partial<VerificationExtraction>) {
     return check(
-      { extraction: { ...extraction, rawExtraction: { utdrag: quote } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          ...extraction,
+          rawExtraction: { utdrag: quote },
+        },
+      },
       `${FIXTURE_SOURCE_TEXT}\n<p>${quote}</p>`,
     )
   }
@@ -1233,12 +1454,22 @@ describe('checkExtraction — tallet må tilhøre denne raden', () => {
 
 describe('checkExtraction — begreper som ikke lar seg kontrollere', () => {
   it('fører ikke opp et begrep som ikke ble gjenfunnet', () => {
-    const report = check({ extraction: { outcomeLabel: 'vektendring' } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        outcomeLabel: 'vektendring',
+      },
+    })
     expect(report.checkedFields).not.toContain('outcome')
   })
 
   it('behandler et manglende begrepstreff som en merknad, ikke som et avvik', () => {
-    const report = check({ extraction: { outcomeLabel: 'vektendring' } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        outcomeLabel: 'vektendring',
+      },
+    })
     // Ikke et avvik: utfallet er uavklart, ikke `needs_correction`, og
     // begrunnelsen sier at feltet ikke ble kontrollert. Et endepunkt på norsk
     // som ikke står i en engelsk kilde, binder heller ikke effektmålene — se
@@ -1250,7 +1481,11 @@ describe('checkExtraction — begreper som ikke lar seg kontrollere', () => {
 
   it('fører opp komparatoren når den er et virkestoff som finnes i kilden', () => {
     const report = check({
-      extraction: { comparatorKind: 'drug', comparatorDrugName: 'fluoxetine' },
+      extraction: {
+        ...UTEN_POPULASJON,
+        comparatorKind: 'drug',
+        comparatorDrugName: 'fluoxetine',
+      },
     })
     expect(report.checkedFields).toContain('comparator_arm')
   })
@@ -1280,7 +1515,14 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
 
   function utenTallMedUtdrag(quote: string, extraction: Partial<VerificationExtraction> = {}) {
     return check(
-      { extraction: { ...utenTall, ...extraction, rawExtraction: { utdrag: quote } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          ...utenTall,
+          ...extraction,
+          rawExtraction: { utdrag: quote },
+        },
+      },
       `${FIXTURE_SOURCE_TEXT}\n<p>${quote}</p>`,
     )
   }
@@ -1312,7 +1554,12 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       },
       'comparator_arm',
     ],
-    ['populasjonen', BEGGE, { populationLabel: 'voksne med depressiv lidelse' }, 'population'],
+    [
+      'populasjonen',
+      BEGGE,
+      { populationLabel: 'voksne med depressiv lidelse', populationAvailability: 'reported_value' },
+      'population',
+    ],
   ] as const)(
     'bekrefter ikke en rad der %s ikke ble gjenfunnet i funnets utdrag',
     (_navn, quote, extraction, felt) => {
@@ -1602,6 +1849,118 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
     expect(report.checkedFields).not.toContain('confidence_interval')
   })
 
+  // Populasjonen er en del av tallets påstand, ikke bare av radens. Ellers kan
+  // radbindingen og tallbindingen komme fra hver sin populasjon.
+  const MED_POPULASJON =
+    'Sertraline-treated patients with major depressive disorder had weight change ' +
+    'compared with paroxetine'
+
+  const medPopulasjon = {
+    populationLabel: 'major depressive disorder',
+    populationAvailability: 'reported_value',
+    comparatorKind: 'drug',
+    comparatorDrugName: 'paroxetine',
+    effectMeasure: 'mean_difference',
+  } as const satisfies Partial<VerificationExtraction>
+
+  it('bekrefter ikke et estimat som gjelder en annen populasjon', () => {
+    const annenPopulasjon =
+      'Sertraline-treated patients had weight change of 5.0 kg compared with paroxetine ' +
+      'in adolescents'
+    const report = check(
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          ...medPopulasjon,
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          estimate: '5.0',
+          estimateUnit: 'kg',
+          confidenceIntervalAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          rawExtraction: { rad: MED_POPULASJON, tall: annenPopulasjon },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${MED_POPULASJON}</p>\n<p>${annenPopulasjon}</p>`,
+    )
+
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  // Intervallet for seg: her er komparatoren `none`, så populasjonen er det
+  // eneste som skiller radens påstand fra tallets.
+  it('bekrefter ikke et intervall som gjelder en annen populasjon', () => {
+    const rad = 'Sertraline-treated patients with major depressive disorder had weight change'
+    const annenPopulasjon =
+      'Sertraline-treated patients had weight change of 5.0 kg (95% CI 4.0 to 6.0) in adolescents'
+    const report = check(
+      {
+        extraction: {
+          populationLabel: 'major depressive disorder',
+          populationAvailability: 'reported_value',
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          estimate: '5.0',
+          estimateUnit: 'kg',
+          ciLower: '4.0',
+          ciUpper: '6.0',
+          ciLevelPercent: '95',
+          rawExtraction: { rad, tall: annenPopulasjon },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${rad}</p>\n<p>${annenPopulasjon}</p>`,
+    )
+
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  it('bekrefter ikke en utvalgsstørrelse som gjelder en annen populasjon', () => {
+    const annenPopulasjon = 'Sertraline patients (N = 48) in the adolescent subgroup'
+    const report = check(
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          ...medPopulasjon,
+          ...utenTall,
+          sampleSize: 48,
+          sampleSizeAvailability: 'reported_value',
+          rawExtraction: { rad: MED_POPULASJON, tall: annenPopulasjon },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${MED_POPULASJON}</p>\n<p>${annenPopulasjon}</p>`,
+    )
+
+    expect(report.checkedFields).not.toContain('sample_size')
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  it('bekrefter et tall som står i samme påstand som riktig populasjon', () => {
+    const støtte =
+      'Sertraline-treated patients with major depressive disorder (N = 48) had weight ' +
+      'change compared with paroxetine'
+    const report = check(
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          ...medPopulasjon,
+          ...utenTall,
+          sampleSize: 48,
+          sampleSizeAvailability: 'reported_value',
+          rawExtraction: { støtte },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${støtte}</p>`,
+    )
+
+    expect(report.checkedFields).toContain('sample_size')
+    expect(report.outcome).toBe('verified')
+  })
+
   // Positive kontroller: alt raden oppgir står i samme påstand.
   it('bekrefter en rad der arm, endepunkt og komparator står i samme påstand', () => {
     const støtte = 'Sertraline-treated patients had a mean weight change compared with paroxetine'
@@ -1662,14 +2021,24 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
 
 describe('checkExtraction — når kontrollen ikke kan konkludere', () => {
   it('gir uncertain når funnet ikke har noe sitat å kontrollere', () => {
-    const report = check({ extraction: { rawExtraction: null } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        rawExtraction: null,
+      },
+    })
     expect(report.outcome).toBe('uncertain')
   })
 
   it('fører ikke kildepekeren opp som kontrollert uten et sitat', () => {
     // evidence_verifications_locator_checked_check gjør da `verified` umulig i
     // basen også. De to reglene peker samme vei uten å stole på hverandre.
-    const report = check({ extraction: { rawExtraction: null } })
+    const report = check({
+      extraction: {
+        ...UTEN_POPULASJON,
+        rawExtraction: null,
+      },
+    })
     expect(report.checkedFields).not.toContain('source_locator')
   })
 
@@ -1681,7 +2050,12 @@ describe('checkExtraction — når kontrollen ikke kan konkludere', () => {
 
   it('lar et avvik veie tyngre enn en manglende reproduksjon', () => {
     const report = check(
-      { extraction: { rawExtraction: { sitat: 'står ikke her, og har aldri gjort det' } } },
+      {
+        extraction: {
+          ...UTEN_POPULASJON,
+          rawExtraction: { sitat: 'står ikke her, og har aldri gjort det' },
+        },
+      },
       FIXTURE_SOURCE_TEXT,
       false,
     )

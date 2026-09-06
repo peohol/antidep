@@ -460,19 +460,24 @@ function sampleSizeExpressions(e: VerificationExtraction): readonly string[] {
 }
 
 /**
- * Radens egen populasjonsetikett som lim.
+ * Radens egen populasjonsetikett som **påkrevd del**, ikke som lim.
  *
- * Populasjonen er en presisering av armen og står nesten alltid mellom armen og
- * verdien: «Sertraline-treated patients **with major depressive disorder** had a
- * mean weight change». Uten den som lim ville en helt vanlig og korrekt setning
- * ikke lenger bundet endepunktet til armen.
+ * Den var lim først, fordi populasjonen presiserer armen og står nesten alltid
+ * mellom armen og verdien: «Sertraline-treated patients **with major depressive
+ * disorder** had a mean weight change». Som lim var den bare noe som *fikk* stå
+ * der — og da kunne radens påstand og tallets påstand komme fra hver sin
+ * populasjon:
  *
- * Komparatoren står bevisst *ikke* i limet, og forskjellen er ikke tilfeldig: en
- * populasjon presiserer armen, mens en komparator er en **kontrast** til den.
- * Et kontrastord mellom armen og verdien er nettopp signalet om at verdien kan
- * tilhøre den andre armen.
+ *   «Sertraline-treated patients with major depressive disorder had weight change …»
+ *   «Sertraline-treated patients had weight change of 5.0 kg … in adolescents.»
+ *
+ * Den første binder raden, den andre bekreftet tallet, og tallet gjelder
+ * uttrykkelig ungdom. En verdi hører til én arm, ett endepunkt, én kontrast og
+ * **én populasjon**, så populasjonen er nå en del av tallets egen binding.
+ * Kravet gjelder også utvalgsstørrelsen: et «N = 48» fra en undergruppe er ikke
+ * radens utvalg.
  */
-function populationExpressions(e: VerificationExtraction): readonly string[] {
+function populationElements(e: VerificationExtraction): readonly string[] {
   if (e.populationLabel === null || !isReported(e.populationAvailability)) {
     return []
   }
@@ -502,7 +507,7 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       anchorsBefore: SAMPLE_SIZE_ANCHORS_BEFORE,
       anchorsAfter: SAMPLE_SIZE_ANCHORS_AFTER,
       // Et utvalg er et antall personer i én arm, og bindes til armen.
-      contextElements: [termAnchor(e.interventionDrugName)],
+      contextElements: [termAnchor(e.interventionDrugName), ...populationElements(e)],
       // «Sertraline: 48 tablets were dispensed» navngir armen og står inntil
       // et tall, men sier ingenting om at tallet er et antall personer. Kilden
       // må selv si det — «N = 48», «48 patients» — ellers står feltet
@@ -514,10 +519,7 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       // En utvalgsstørrelse er et antall personer og bærer aldri en måleenhet.
       forbiddenAfter: [...MEASURE_UNITS, ...TIME_UNITS],
       forbiddenBefore: [],
-      glueExtra: [
-        ...populationExpressions(e),
-        ...estimateExpressions(e, isReported(e.estimateAvailability) ? e.estimate : null),
-      ],
+      glueExtra: estimateExpressions(e, isReported(e.estimateAvailability) ? e.estimate : null),
     })
   }
   if (isReported(e.estimateAvailability) && e.estimate !== null) {
@@ -538,6 +540,7 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
         // et tall fra en placebokontrast bekrefte en rad registrert mot et
         // aktivt virkestoff.
         ...comparatorElements(e),
+        ...populationElements(e),
       ],
       contextIsAnchor: true,
       valueSuffix: unitSuffix(e.estimateUnit),
@@ -546,7 +549,7 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       // Et tall rett etter «N =» er en utvalgsstørrelse, uansett hva som
       // kommer etter det.
       forbiddenBefore: ['\\bn\\s*[=:]'],
-      glueExtra: [...sampleSizeExpressions(e), ...populationExpressions(e)],
+      glueExtra: sampleSizeExpressions(e),
     })
   }
   // Konfidensintervallet står ikke her: det er én påstand med tre deler, og de
@@ -1490,9 +1493,7 @@ function rowBindingElements(item: VerificationItem): readonly string[] {
     termAnchor(e.interventionDrugName),
     termAnchor(e.outcomeLabel),
     ...comparatorElements(e),
-    ...(e.populationLabel !== null && isReported(e.populationAvailability)
-      ? [termAnchor(e.populationLabel)]
-      : []),
+    ...populationElements(e),
   ]
 }
 
@@ -1715,13 +1716,13 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
       [
         termAnchor(item.extraction.interventionDrugName),
         termAnchor(item.extraction.outcomeLabel),
-        // Intervallet hører til samme kontrast som estimatet. Se
-        // `contextElements` for estimatet.
+        // Intervallet hører til samme kontrast og samme populasjon som
+        // estimatet. Se `contextElements` for estimatet.
         ...comparatorElements(item.extraction),
+        ...populationElements(item.extraction),
       ],
       [
         ...sampleSizeExpressions(item.extraction),
-        ...populationExpressions(item.extraction),
         ...estimateExpressions(item.extraction, confirmedEstimate),
       ],
     )
@@ -1805,7 +1806,6 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // hodekommentaren over `termsBoundTogether` og `termBindings`.
   const bindingGlue = [
     ...sampleSizeExpressions(item.extraction),
-    ...populationExpressions(item.extraction),
     ...estimateExpressions(
       item.extraction,
       isReported(item.extraction.estimateAvailability) ? item.extraction.estimate : null,

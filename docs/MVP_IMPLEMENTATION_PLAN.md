@@ -5057,6 +5057,27 @@ Sju mutasjoner faller: radbindingen uten komparatoren, uten populasjonen, estima
 uten kontrasten, limbitene uten ordgrense, rekkevidden uten håndheving, og sammenhengen uten
 håndheving.
 
+**Den tjueandre runden lukket det siste stedet der to påstander kunne bli én.** Runde 21 gjorde
+radens deler til én binding, men *tallets* binding krevde bare arm, endepunkt og kontrast.
+Populasjonen lå i limet — altså som noe som *fikk* stå mellom delene, ikke som noe som *måtte*
+finnes. Radbindingen og tallbindingen kunne dermed komme fra hver sin populasjon:
+
+> «`Sertraline-treated patients with major depressive disorder had weight change …`»
+> «`Sertraline-treated patients had weight change of 5.0 kg … in adolescents.`»
+
+Den første binder raden, den andre bekreftet tallet, og tallet gjelder uttrykkelig ungdom. En verdi
+hører til én arm, ett endepunkt, én kontrast og **én populasjon**, så rapportert populasjon er nå en
+påkrevd del av tallets egen binding — også for utvalgsstørrelsen, der et «N = 48» fra en undergruppe
+ikke er radens utvalg. Kravet motsa dessuten dokumentasjonen fra forrige runde, som allerede sa at
+alle aktive deler *og verdien* skulle stå i samme treff.
+
+Tre mutasjoner faller: utvalgsstørrelsen, estimatet og intervallet uten populasjonen som påkrevd del.
+
+Innstrammingen traff 27 eksisterende tester som bytter ut fiksturens utdrag med sitt eget: de
+forteller en annen historie enn fiksturen, og populasjonen er støy i dem. De slår den derfor av
+eksplisitt (`UTEN_POPULASJON`) framfor at kravet mykes opp. Fiksturen selv oppgir fortsatt en
+populasjon, og utdraget navngir den.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen
