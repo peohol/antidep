@@ -184,9 +184,31 @@ begin
   -- Kravet er derfor at unionen av `checked_fields` over funnets bekreftede
   -- kontroller dekker feltene raden påstår noe om. Unionen, ikke den siste
   -- raden: en kontroll kan dekke en delmengde, og flere verifikatorledd kan
-  -- til sammen dekke resten. G5 står ved siden av og krever fortsatt at den
-  -- *siste* kontrollen er en bekreftelse, slik at et senere avvik ikke kan
-  -- overstyres av en tidligere delkontroll.
+  -- til sammen dekke resten.
+  --
+  -- **Dekning har en gjeldende-semantikk, akkurat som utfallet.** En dekning
+  -- som gjaldt for alltid ville gitt et senere avvik en vei ut som G5 er ment
+  -- å stenge:
+  --
+  --   t1  full bekreftelse, dekker alt
+  --   t2  ny kontroll: tidspunktet er uavklart      → G5 blokkerer, riktig
+  --   t3  delkontroll bekrefter sitat og begreper   → G5 slipper (siste er
+  --                                                    verified), og dekningen
+  --                                                    for tidspunkt hentes fra
+  --                                                    t1 — som t2 nettopp
+  --                                                    underkjente
+  --
+  -- Det åpne funnet fra t2 ville dermed vært borte uten at noen så på
+  -- tidspunktet igjen. En bekreftelse teller derfor bare mot dekningen når
+  -- ingen ikke-bekreftende kontroll er *nyere* enn den: et avvik nullstiller
+  -- dekningen, og den må bygges opp igjen etterpå.
+  --
+  -- Nullstillingen gjelder alle felter, ikke bare det omstridte. Det er ikke
+  -- strengere enn nødvendig: en uavklart kontroll fører opp i `checked_fields`
+  -- det den *bekreftet*, så feltet den ikke fikk avklart, er nettopp det som
+  -- ikke står der — hvilket felt som er omstridt, er ikke avlesbart. Da er den
+  -- trygge lesningen at hele ekstraksjonen står åpen til den er kontrollert på
+  -- nytt, hvilket også er den arbeidsflyten G5s egen hint beskriver.
   select string_agg(distinct l.evidence_item_id::text, ', ' order by l.evidence_item_id::text)
     into v_offenders
   from knowledge.claim_evidence_links l
@@ -200,6 +222,16 @@ begin
         cross join unnest(ev.checked_fields) as f(field)
         where ev.evidence_item_id = l.evidence_item_id
           and ev.outcome = 'verified'
+          -- Samme rekkefølge som G5 bruker for «den siste», slik at de to
+          -- vilkårene ikke kan bli uenige om hva som er nyere.
+          and not exists (
+            select 1
+            from workflow.evidence_verifications later
+            where later.evidence_item_id = l.evidence_item_id
+              and later.outcome <> 'verified'
+              and (later.verified_at, later.created_at, later.id)
+                  > (ev.verified_at, ev.created_at, ev.id)
+          )
       )
     );
 
@@ -209,7 +241,7 @@ begin
       message = format(
         'Evidensfunn uten fullstendig kontrollert ekstraksjon: %s.', v_offenders
       ),
-      hint = 'De registrerte kontrollene dekker ikke alle feltene funnet påstår noe om. workflow.required_check_fields(evidence_item_id) viser hva som kreves; en delkontroll kan ikke alene tilfredsstille publiseringsgaten (ANTIDEP_CONSTITUTION.md §11, DATABASE_ARCHITECTURE.md §29).';
+      hint = 'De registrerte kontrollene dekker ikke alle feltene funnet påstår noe om. workflow.required_check_fields(evidence_item_id) viser hva som kreves; en delkontroll kan ikke alene tilfredsstille publiseringsgaten (ANTIDEP_CONSTITUTION.md §11, DATABASE_ARCHITECTURE.md §29). Merk at en ikke-bekreftende kontroll nullstiller dekningen: bekreftelser som ligger foran den, teller ikke lenger.';
   end if;
 
   -- G6: ingen lenket ekstraksjon er trukket tilbake.
@@ -374,4 +406,4 @@ end;
 $$;
 
 comment on function knowledge.assert_claim_revision_publishable(uuid) is
-  'Publiseringsgaten. Uendret fra migrasjon 20260819210000 bortsett fra G5b, som krever at unionen av checked_fields over funnets bekreftede ekstraksjonsverifikasjoner dekker feltene raden påstår noe om (workflow.required_check_fields). Uten det kunne en kontroll som med vilje lar felter stå ukontrollert, alene tilfredsstille en gate som er ment å bety at ekstraksjonen er kontrollert.';
+  'Publiseringsgaten. Uendret fra migrasjon 20260819210000 bortsett fra G5b, som krever at unionen av checked_fields over funnets bekreftede ekstraksjonsverifikasjoner dekker feltene raden påstår noe om (workflow.required_check_fields). Uten det kunne en kontroll som med vilje lar felter stå ukontrollert, alene tilfredsstille en gate som er ment å bety at ekstraksjonen er kontrollert. Dekningen har samme gjeldende-semantikk som utfallet: en ikke-bekreftende kontroll nullstiller den, slik at et senere avvik ikke kan omgås av en enda senere delkontroll som aldri så på det omstridte feltet.';

@@ -1486,7 +1486,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1507 pgTAP-assertions over 46 testfiler.
+Databaselaget teller nå 1510 pgTAP-assertions over 46 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -5111,6 +5111,29 @@ fjernet, og `availability_semantics` tatt ut av kravet.
 Sju eksisterende testrader måtte oppgi full dekning framfor `array['source_locator', 'estimate']`.
 De bruker nå `workflow.required_check_fields(e.id)`, altså den samme utledningen gaten bruker, slik
 at de holder seg selv oppdatert.
+
+**Den tjuefjerde runden fant en feil i G5b selv, i måten den møter G5 på.** Dekningen ble regnet som
+unionen over *alle* historiske bekreftelser. Da fikk et senere avvik en vei ut som G5 er ment å
+stenge:
+
+> t1 full bekreftelse, dekker alt · t2 ny kontroll, tidspunktet er uavklart (G5 blokkerer, riktig) ·
+> t3 delkontroll bekrefter sitat og begreper → G5 slipper, fordi siste utfall er `verified`, og G5b
+> slipper, fordi dekningen for tidspunkt hentes fra t1 — som t2 nettopp underkjente.
+
+Det åpne funnet fra t2 ville dermed vært borte uten at noen så på tidspunktet igjen. Dekningen har nå
+**samme gjeldende-semantikk som utfallet**: en bekreftelse teller bare når ingen ikke-bekreftende
+kontroll er nyere enn den, med samme rekkefølge G5 bruker for «den siste», slik at de to vilkårene
+ikke kan bli uenige om hva som er nyere.
+
+Nullstillingen gjelder alle felter, ikke bare det omstridte, og det er ikke strengere enn nødvendig:
+en uavklart kontroll fører opp i `checked_fields` det den *bekreftet*, så feltet den ikke fikk
+avklart, er nettopp det som ikke står der. Hvilket felt som er omstridt, er altså ikke avlesbart, og
+da er den trygge lesningen at hele ekstraksjonen står åpen til den er kontrollert på nytt.
+
+Regresjonen er reviewerens egen sekvens, i publiseringsgaten: full bekreftelse → uavklart kontroll →
+delkontroll som ikke dekker det omstridte feltet (blokkeres) → kontroll som faktisk re-kontrollerer
+alt (slipper gjennom). To mutasjoner faller: gjeldende-semantikken fjernet, og bare
+`needs_correction` — ikke `uncertain` — som nullstiller.
 
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
