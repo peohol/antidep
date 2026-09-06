@@ -4897,6 +4897,29 @@ Den siste er verdt å merke seg: den gjorde at et helt korrekt tall aldri kunne 
 feil i den trygge retningen — men like fullt en feil, og den ble bare synlig fordi kontrollen ble
 prøvd mot et intervall skrevet med nuller. Alle fire rettelsene er mutasjonstestet hver for seg.
 
+**Den sekstende runden lukket tre huller i nærhetsbindingen.**
+
+*Begrepsankeret hadde ikke grensene kommentaren lovet.* `termAnchor` var igjen en delstrengsjekk, så
+i «`Citalopram was compared with escitalopram-treated patients (N = 48).`» slapp setningen gjennom
+det ytre filteret på ekte «Citalopram», mens nærhetsmønsteret bandt tallet til delstrengen inne i
+«escitalopram». Ankeret har nå de samme ordgrensene som filteret.
+
+*Et snitt av tallverdier er ikke en binding.* To forskjellige forekomster kunne dekke hver sin
+halvdel: «`Sertraline 48 mg daily was used`» ga 48 fra armnærheten, «`Sertraline was compared with
+paroxetine patients (N = 48)`» ga 48 fra feltankeret, og snittet ble `{48}` uten at noen ett sted sa
+at sertralinarmen hadde 48 deltakere. Mønsteret krever nå at det bindende begrepet, feltets anker og
+tallet står i **samme treff**.
+
+*Enheten bak tallet forteller hvilken rolle det har.* «`body weight change at 5.0 weeks`» oppgir et
+tidspunkt, «`Sertraline 48 mg daily`» en dose — og et generelt nærhetsmønster ser ingen forskjell.
+En utvalgsstørrelse er et antall personer og står aldri med en måleenhet etter seg; et effektestimat
+er verken et tidspunkt eller et antall personer. Et tall som står rett etter «N =» er dessuten et
+utvalg uansett hva som kommer etter det. Samme runde tok `and`/`og` ut av limet, av samme grunn som
+`while` og `not`: de føyer til en ny påstand, og et intervall fra ett endepunkt skal ikke kunne
+kobles til det neste gjennom dem.
+
+Alle tre er mutasjonstestet hver for seg.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

@@ -549,14 +549,15 @@ const CI_GLUE_WORDS = [
   'are',
   'at',
   'for',
-  'and',
+  // `and`/`og` står ikke her, av samme grunn som `while` og `not`: de føyer en
+  // ny påstand til, og et intervall fra forrige endepunkt skal ikke kunne
+  // kobles til det neste gjennom dem.
   'the',
   'with',
   'var',
   'er',
   'med',
   'fra',
-  'og',
   'på',
 ] as const
 
@@ -674,6 +675,52 @@ const ESTIMATE_ANCHORS = [
 /** Et hvilket som helst tall, til å telle opp kandidater med. */
 const ANY_NUMBER = `(?<![\\d.,])(-?\\d+(?:[.,]\\d+)?)${TRAILING_BOUNDARY}`
 
+// ----------------------------------------------------------------------------
+// Enheten bak tallet forteller hvilken rolle det har
+//
+// «body weight change at 5.0 weeks» oppgir et tidspunkt, ikke en effekt.
+// «Sertraline 48 mg daily» oppgir en dose, ikke et utvalg. Et generelt
+// nærhetsmønster ser ingen forskjell: begge står inntil det bindende begrepet,
+// med lim imellom som i seg selv er nøytralt.
+//
+// Enheten gjør forskjellen, og den er avlesbar. En utvalgsstørrelse er et
+// antall personer og står aldri med en måleenhet etter seg; et effektestimat
+// er ikke et tidspunkt og ikke et antall personer. Tall med feil enhet bak seg
+// er derfor ikke kandidater for feltet.
+// ----------------------------------------------------------------------------
+
+const TIME_UNITS = ['weeks?', 'days?', 'months?', 'years?', 'uker?', 'dager?', 'måneder?', 'år']
+const MEASURE_UNITS = ['mg', 'kg', 'g', 'ml', 'l', 'mmol', 'mol', 'points?', 'poeng', '%']
+const PERSON_NOUNS = [
+  'patients?',
+  'participants?',
+  'subjects?',
+  'adults?',
+  'pasienter',
+  'deltakere',
+  'personer',
+]
+
+function withoutUnits(units: readonly string[]): string {
+  return `(?!\\s*(?:${units.join('|')})(?![\\p{L}\\p{N}]))`
+}
+
+/**
+ * Et tall i riktig rolle: uten en enhet feltet aldri kan ha, og uten et merke
+ * foran seg som gir det en annen rolle.
+ *
+ * «(N = 48) had a mean weight change of …» er den vanlige formen der begge
+ * gjelder: 48 står inntil endepunktet, men `N =` foran sier at det er et
+ * utvalg og ikke en effekt.
+ */
+function numberInRole(
+  forbiddenAfter: readonly string[],
+  forbiddenBefore: readonly string[],
+): string {
+  const before = forbiddenBefore.length === 0 ? '' : `(?<!(?:${forbiddenBefore.join('|')})\\s*)`
+  return `${before}${ANY_NUMBER}${withoutUnits(forbiddenAfter)}`
+}
+
 /** «1,50» og «1.5» er samme tall. Sammenlignes på én form. */
 function sameNumber(value: string): string {
   return trimNumericText(value.replace(',', '.')).replace(/^\+/, '')
@@ -722,21 +769,7 @@ export type AnchoredNumberMatch =
  * formen flerarmsstudier oftest bruker — «N = 44; N = 48» og flere
  * intervalluttrykk — og ikke enhver språklig variant.
  */
-function candidatesNear(
-  projections: readonly string[],
-  anchorsBefore: readonly string[],
-  anchorsAfter: readonly string[],
-  extraGlue: readonly string[] = [],
-): Set<string> {
-  const g = glue(extraGlue)
-  const patterns: string[] = []
-  if (anchorsBefore.length > 0) {
-    patterns.push(`(?:${anchorsBefore.join('|')})${g}${ANY_NUMBER}`)
-  }
-  if (anchorsAfter.length > 0) {
-    patterns.push(`${ANY_NUMBER}${g}(?:${anchorsAfter.join('|')})`)
-  }
-
+function collectNumbers(projections: readonly string[], patterns: readonly string[]): Set<string> {
   const candidates = new Set<string>()
   for (const pattern of patterns) {
     for (const projection of projections) {
@@ -753,9 +786,16 @@ function candidatesNear(
   return candidates
 }
 
-/** Begrepet som mønster, med samme ordgrense som `termOccursIn`. */
+/**
+ * Begrepet som mønster, med de *samme* grensene som `termOccursIn`.
+ *
+ * Uten grensene var dette igjen en delstrengsjekk: «Citalopram was compared
+ * with escitalopram-treated patients (N = 48)» slapp gjennom det ytre filteret
+ * på ekte «Citalopram», og nærhetsmønsteret bandt så tallet til delstrengen
+ * inne i «escitalopram».
+ */
 function termAnchor(term: string): string {
-  return `${escapeRegExp(normalize(term))}\\p{L}{0,2}`
+  return `(?<![\\p{L}\\p{N}])${escapeRegExp(normalize(term))}\\p{L}{0,2}(?![\\p{L}\\p{N}])`
 }
 
 function anchoredNumberMatch(
@@ -764,29 +804,45 @@ function anchoredNumberMatch(
   anchorsBefore: readonly string[],
   anchorsAfter: readonly string[],
   contextTerms: readonly string[],
+  forbiddenAfter: readonly string[],
+  forbiddenBefore: readonly string[],
 ): AnchoredNumberMatch {
-  // Tallet må stå inntil *alle* kravene: feltets eget anker («N =»,
-  // «difference»), og hvert bindende begrep — armen, og for effektmål
-  // endepunktet.
+  // **Ett sammenhengende treff**, ikke to som tilfeldigvis gir samme tall.
   //
-  // At begrepet står et sted i samme setning er ikke nok. «Sertraline was
-  // compared with paroxetine patients (N = 48)» er én setning som navngir
-  // sertralin, men 48 står inntil paroksetin. Og «a mean HAM-D change of 5.0
-  // points, while body weight change was also recorded» navngir både armen og
-  // endepunktet, mens 5,0 hører til HAM-D. Bare nærheten skiller dem.
-  // Feltets eget anker er nøytralt lim for begrepskontrollen: i «sertraline
-  // patients (N = 284)» står «N =» mellom armen og tallet, og det er nettopp
-  // det ankeret som gjør tallet til en utvalgsstørrelse.
-  const anchorGlue = [...anchorsBefore, ...anchorsAfter]
-  const sets = [
-    candidatesNear(projections, anchorsBefore, anchorsAfter),
-    ...contextTerms.map((term) =>
-      candidatesNear(projections, [termAnchor(term)], [termAnchor(term)], anchorGlue),
-    ),
-  ]
-  const [first = new Set<string>(), ...rest] = sets
-  const candidates = new Set([...first].filter((n) => rest.every((set) => set.has(n))))
+  // Å skjære sammen mengder av tallverdier var ikke en binding: to forskjellige
+  // forekomster kunne dekke hver sin halvdel. «Sertraline 48 mg daily was
+  // used» ga 48 fra armnærheten, «Sertraline was compared with paroxetine
+  // patients (N = 48)» ga 48 fra feltankeret, og snittet ble {48} — uten at
+  // noen ett sted sa at sertralinarmen hadde 48 deltakere.
+  //
+  // Mønsteret krever derfor at det bindende begrepet, feltets anker og tallet
+  // står i *samme* treff. Feltets egne ankere er lim inne i det treffet, siden
+  // det er de som gjør tallet til nettopp dette feltet.
+  const number = numberInRole(forbiddenAfter, forbiddenBefore)
+  const g = glue([...anchorsBefore, ...anchorsAfter])
+  const anchored: string[] = []
+  if (anchorsBefore.length > 0) {
+    anchored.push(`(?:${anchorsBefore.join('|')})${g}${number}`)
+  }
+  if (anchorsAfter.length > 0) {
+    anchored.push(`${number}${g}(?:${anchorsAfter.join('|')})`)
+  }
 
+  const patterns =
+    contextTerms.length === 0
+      ? anchored
+      : contextTerms.flatMap((term) => {
+          const context = termAnchor(term)
+          return [
+            // Begrepet kan stå på begge sider, og selv være ankeret: i «weight
+            // change of 1.5» er endepunktet det som gjør 1,5 til en verdi.
+            `${context}${g}${number}`,
+            `${number}${g}${context}`,
+            ...anchored.flatMap((one) => [`${context}${g}${one}`, `${one}${g}${context}`]),
+          ]
+        })
+
+  const candidates = collectNumbers(projections, patterns)
   if (candidates.size === 0) {
     return { kind: 'missing' }
   }
@@ -1230,6 +1286,14 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
       claim.field === 'sample_size'
         ? [item.extraction.interventionDrugName]
         : [item.extraction.outcomeLabel],
+      // En utvalgsstørrelse er et antall personer og bærer aldri en måleenhet;
+      // et effektestimat er verken et tidspunkt eller et antall personer.
+      claim.field === 'sample_size'
+        ? [...MEASURE_UNITS, ...TIME_UNITS]
+        : [...TIME_UNITS, ...PERSON_NOUNS],
+      // Et tall som står rett etter «N =» er en utvalgsstørrelse, uansett hva
+      // som kommer etter det.
+      claim.field === 'sample_size' ? [] : ['\\bn\\s*[=:]'],
     )
     if (match.kind === 'ambiguous') {
       unresolvedFields.add(claim.field)

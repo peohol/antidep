@@ -693,6 +693,77 @@ describe('checkExtraction — tallene', () => {
     expect(report.checkedFields).not.toContain('confidence_interval')
   })
 
+  // (a) Setningen navngir ekte «Citalopram», så den slipper gjennom det ytre
+  // filteret — og nærhetsmønsteret må da ikke kunne bruke delstrengen inne i
+  // «escitalopram».
+  it('binder ikke et tall til delstrengen inne i et lengre virkestoffnavn', () => {
+    const utdrag = 'Citalopram was compared with escitalopram-treated patients (N = 48).'
+    const report = check(
+      {
+        extraction: {
+          interventionDrugName: 'citalopram',
+          sampleSize: 48,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+  })
+
+  // (b) Samme tall i to roller, i hvert sitt utdrag. Et snitt av tallverdier
+  // ville sagt «48 finnes begge steder»; ett sammenhengende treff sier det ikke.
+  it('bekrefter ikke et tall satt sammen av en dose i ett utdrag og en annen arms N i et annet', () => {
+    const dose = 'Sertraline 48 mg daily was used.'
+    const annen = 'Sertraline was compared with paroxetine patients (N = 48).'
+    const report = check(
+      { extraction: { sampleSize: 48, rawExtraction: { dose, annen } } },
+      `Forord. ${dose} ${annen}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+  })
+
+  // (c) Enheten bak tallet gir rollen: 5,0 uker er et tidspunkt, ikke en effekt.
+  it('bekrefter ikke et estimat der tallet er et tidspunkt', () => {
+    const utdrag = 'Sertraline-treated patients had body weight change at 5.0 weeks.'
+    const report = check(
+      {
+        extraction: {
+          estimate: '5.0',
+          estimateUnit: null,
+          effectMeasure: 'risk_ratio',
+          outcomeLabel: 'body weight change',
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+  })
+
+  it('bekrefter ikke en utvalgsstørrelse der tallet er en dose', () => {
+    const utdrag = 'Sertraline 48 mg daily was given to the group.'
+    const report = check(
+      { extraction: { sampleSize: 48, rawExtraction: { sitat: utdrag } } },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+  })
+
   // Et nakent tall ved ankeret er ikke et nivå. Her er `90` en utvalgsstørrelse,
   // og kilden sier aldri prosent — den sier ikke hvilket nivå intervallet har.
   it('bekrefter ikke et nivå kilden aldri oppgir som prosent', () => {
