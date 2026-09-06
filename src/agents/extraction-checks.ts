@@ -313,9 +313,11 @@ function leadingBoundary(isNegative: boolean): string {
   return isNegative ? '(?<![\\d.,])-' : '(?<![\\d.,-])'
 }
 
-// Bak: verken et siffer til, eller et desimalskilletegn med et siffer etter.
-// Uten det siste ville «12» blitt funnet inne i «12.5».
-const TRAILING_BOUNDARY = '(?![\\d]|[.,]\\d)'
+// Bak: verken et siffer til, et desimalskilletegn med et siffer etter, eller en
+// eksponent. Uten det andre ville «12» blitt funnet inne i «12.5»; uten det
+// tredje ville «1.5» blitt funnet inne i «1.5e-3», som er 0,0015 og altså et
+// helt annet tall. En eksponent hører til tallet, den er ikke tekst etter det.
+const TRAILING_BOUNDARY = '(?![\\d]|[.,]\\d|[eE][+-]?\\d)'
 
 /** Om tallet står i teksten som et selvstendig tall, med riktig fortegn. */
 export function numberOccursIn(projections: readonly string[], value: string): boolean {
@@ -337,6 +339,9 @@ interface NumericClaim {
   readonly field: EvidenceCheckField
   readonly label: string
   readonly value: string
+  /** Uttrykk som navngir feltet, og som tallet må stå inntil. */
+  readonly anchorsBefore: readonly string[]
+  readonly anchorsAfter: readonly string[]
 }
 
 interface TermClaim {
@@ -359,10 +364,18 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       field: 'sample_size',
       label: 'utvalgsstørrelse',
       value: String(e.sampleSize),
+      anchorsBefore: SAMPLE_SIZE_ANCHORS_BEFORE,
+      anchorsAfter: SAMPLE_SIZE_ANCHORS_AFTER,
     })
   }
   if (isReported(e.estimateAvailability) && e.estimate !== null) {
-    claims.push({ field: 'estimate', label: 'estimat', value: e.estimate })
+    claims.push({
+      field: 'estimate',
+      label: 'estimat',
+      value: e.estimate,
+      anchorsBefore: ESTIMATE_ANCHORS,
+      anchorsAfter: ESTIMATE_ANCHORS,
+    })
   }
   // Konfidensintervallet står ikke her: det er én påstand med tre deler, og de
   // tre kan ikke søkes hver for seg. Se `confidenceIntervalCheck`.
@@ -454,7 +467,140 @@ const CI_GLUE_WORDS = [
   'på',
 ] as const
 
-const CI_GLUE = `(?:[\\s:;,=()\\[\\]/-]|${CI_ANCHOR_SOURCE}|${CI_GLUE_WORDS.join('|')}){0,12}`
+/** Skilletegnene som får være lim. Ingen bokstaver, og ikke punktum. */
+const GLUE_PUNCTUATION = '[\\s:;,=()\\[\\]/-]'
+
+/** Lim, eventuelt med ekstra former som er nøytrale for nettopp dette uttrykket. */
+function glue(extra: readonly string[] = []): string {
+  return `(?:${[GLUE_PUNCTUATION, ...extra, ...CI_GLUE_WORDS].join('|')}){0,12}`
+}
+
+const CI_GLUE = glue([CI_ANCHOR_SOURCE])
+
+// ----------------------------------------------------------------------------
+// Skalarene: et tall må stå der kilden snakker om det feltet
+//
+// Samme lærdom som for konfidensintervallet, én gang til. `numberOccursIn` sier
+// bare at *sifferrekken* finnes et sted i representasjonen, og det er ikke det
+// samme som at kilden oppgir den verdien for det feltet:
+//
+//   registrert `sample_size = 90`, kilden sier «90% improved»
+//   registrert `estimate = 15`,    kilden sier «15 mg once daily»
+//
+// I begge tilfellene fantes tallet, og i ingen av dem oppga kilden verdien.
+// Feltet ble likevel ført opp som kontrollert, og raden kunne bli `verified`.
+// `checked_fields` skal si hva kontrollen faktisk gikk gjennom
+// (DATABASE_ARCHITECTURE.md §29), og «samme siffer et annet sted» er ikke det.
+//
+// Tallet må derfor stå inntil et uttrykk som navngir feltet — «N = 48»,
+// «284 adults», «mean weight gain of 0.8» — med det samme nøytrale limet som
+// ellers. Ordlistene under er korte med vilje, og retningen på feilen er valgt:
+// en formulering listen ikke kjenner igjen gir `uncertain`, altså en uavklart
+// kontroll, ikke en falsk bekreftelse. Å utvide en liste er trygt; å la et
+// nakent tall telle er det ikke.
+//
+// Enheten alene er ikke et anker for estimatet. «15 mg» navngir en dose, ikke
+// et effektestimat, og et felt som ble kontrollert mot en dose ville vært
+// nøyaktig den feilen dette skal hindre.
+// ----------------------------------------------------------------------------
+
+/** Uttrykk som kan stå foran eller bak tallet og navngi utvalgsstørrelsen. */
+const SAMPLE_SIZE_ANCHORS_BEFORE = [
+  '\\bn\\b',
+  'sample sizes?',
+  'total of',
+  'totalt',
+  'included',
+  'enrolled',
+  'recruited',
+  'completed',
+  'randomi[sz]ed',
+  'utvalgsstørrelse\\w*',
+  'inkluderte',
+  'randomiserte?',
+]
+
+const SAMPLE_SIZE_ANCHORS_AFTER = [
+  'patients?',
+  'participants?',
+  'subjects?',
+  'adults?',
+  'individuals?',
+  'volunteers?',
+  'women',
+  'men',
+  'cases?',
+  'controls?',
+  'pasienter',
+  'deltakere',
+  'personer',
+  'forsøkspersoner',
+  'kvinner',
+  'menn',
+]
+
+/** Uttrykk som navngir et effektestimat. Enheten alene teller ikke. */
+const ESTIMATE_ANCHORS = [
+  'mean',
+  'median',
+  'average',
+  'difference',
+  'differences',
+  'change',
+  'changes',
+  'gain',
+  'loss',
+  'increase',
+  'decrease',
+  'reduction',
+  'estimates?',
+  '\\bOR\\b',
+  '\\bRR\\b',
+  '\\bHR\\b',
+  '\\bMD\\b',
+  '\\bSMD\\b',
+  '\\bWMD\\b',
+  'odds ratios?',
+  'risk ratios?',
+  'hazard ratios?',
+  'gjennomsnitt\\w*',
+  'forskjell\\w*',
+  'endring\\w*',
+  'økning\\w*',
+  'reduksjon\\w*',
+  'nedgang\\w*',
+  'estimat\\w*',
+]
+
+/**
+ * Om tallet står i teksten der kilden navngir feltet — foran eller bak.
+ *
+ * Rekkefølgen er åpen fordi kilder skriver begge veier: «N = 48» og
+ * «284 adults» sier det samme om utvalget.
+ */
+function anchoredNumberOccursIn(
+  projections: readonly string[],
+  value: string,
+  anchorsBefore: readonly string[],
+  anchorsAfter: readonly string[],
+): boolean {
+  const number = numberPattern(value)
+  if (number === null) {
+    return false
+  }
+  const body = `${leadingBoundary(number.isNegative)}${number.body}${TRAILING_BOUNDARY}`
+  const g = glue()
+  const patterns: string[] = []
+  if (anchorsBefore.length > 0) {
+    patterns.push(`(?:${anchorsBefore.join('|')})${g}${body}`)
+  }
+  if (anchorsAfter.length > 0) {
+    patterns.push(`${body}${g}(?:${anchorsAfter.join('|')})`)
+  }
+  return patterns.some((pattern) =>
+    projections.some((projection) => new RegExp(pattern, 'i').test(projection)),
+  )
+}
 
 /**
  * Nivået må være en eksplisitt prosentangivelse.
@@ -697,7 +843,9 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   const unresolvedFields = new Set<EvidenceCheckField>()
   for (const claim of numericClaims(item)) {
     numericFields.add(claim.field)
-    if (!numberOccursIn(projections, claim.value)) {
+    if (
+      !anchoredNumberOccursIn(projections, claim.value, claim.anchorsBefore, claim.anchorsAfter)
+    ) {
       unresolvedFields.add(claim.field)
       unmatchedNumbers.push(`${claim.label} (${claim.value})`)
     }

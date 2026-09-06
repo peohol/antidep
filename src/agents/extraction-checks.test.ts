@@ -281,6 +281,82 @@ describe('checkExtraction — tallene', () => {
     expect(report.rationale).toContain('estimat (9007199254740993)')
   })
 
+  // Samme lærdom som for konfidensintervallet, på skalarene: sifferrekken finnes,
+  // men kilden oppgir aldri verdien for *dette* feltet.
+  it('fører ikke utvalgsstørrelsen som kontrollert når 90 bare er en prosentandel', () => {
+    const report = check(
+      { extraction: { sampleSize: 90, rawExtraction: { sitat: 'Mean weight change' } } },
+      'Mean weight change. In this trial 90% improved during follow-up.',
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+    expect(report.rationale).toContain('utvalgsstørrelse (90)')
+  })
+
+  it('fører ikke estimatet som kontrollert når tallet bare er en dose', () => {
+    const report = check(
+      {
+        extraction: {
+          estimate: '15',
+          estimateUnit: null,
+          effectMeasure: 'risk_ratio',
+          rawExtraction: { sitat: 'Mean weight change' },
+        },
+      },
+      'Mean weight change. Participants received 15 mg once daily.',
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.rationale).toContain('estimat (15)')
+  })
+
+  it.each([
+    ['N = 48', 'Patients (sertraline, N = 48) completed the trial.', 48],
+    ['284 adults', 'A total of 284 adults were randomised.', 284],
+    ['48 patients', 'We enrolled 48 patients at two sites.', 48],
+    ['norsk form', 'Studien inkluderte 48 pasienter.', 48],
+  ])('kjenner igjen utvalgsstørrelsen skrevet som «%s»', (_navn, kilde, størrelse) => {
+    const report = check(
+      { extraction: { sampleSize: størrelse, rawExtraction: { sitat: 'Vekt' } } },
+      `Vekt. ${kilde}`,
+    )
+
+    expect(report.checkedFields).toContain('sample_size')
+  })
+
+  it.each([
+    ['mean weight gain of', 'Vekt. Patients had a mean weight gain of 0.8 kg.'],
+    ['mean difference', 'Vekt. The mean difference was 0.8 kg.'],
+    ['norsk form', 'Vekt. Gjennomsnittlig endring var 0,8 kg.'],
+  ])('kjenner igjen estimatet skrevet som «%s»', (_navn, kilde) => {
+    const report = check(
+      { extraction: { estimate: '0.8', rawExtraction: { sitat: 'Vekt' } } },
+      kilde,
+    )
+
+    expect(report.checkedFields).toContain('estimate')
+  })
+
+  // En eksponent hører til tallet. «1.5e-3» er 0,0015, ikke 1,5.
+  it.each(['p = 1.5e-3', 'x = 1.5E+3', 'y = 1.5e3'])(
+    'leser ikke koeffisienten i «%s» som et selvstendig 1.5',
+    (kilde) => {
+      expect(numberOccursIn(searchProjections(kilde), '1.5')).toBe(false)
+    },
+  )
+
+  it('bekrefter ikke en øvre konfidensgrense som står i eksponentnotasjon', () => {
+    const report = check(
+      { extraction: { rawExtraction: { sitat: 'Mean weight change' } } },
+      'Mean weight change. Result (95% CI 0.4 to 2.6e-3).',
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
   it('behandler en utvalgsstørrelse som ikke ble gjenfunnet på samme måte', () => {
     const report = check({ extraction: { sampleSize: 285 } })
     expect(report.outcome).toBe('uncertain')

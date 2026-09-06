@@ -4665,6 +4665,32 @@ gir `uncertain`, altså en uavklart kontroll — ikke en falsk bekreftelse. Muta
 limet tilbake til den sifferfrie lengdegrensen, feller fire tester det, mens den positive formen
 «95% CI was 0.4 to 2.6» fortsatt må bekreftes.
 
+**Den åttende runden tok den samme lærdommen til skalarene.** Konfidensintervallet var kontrollert
+mot sin egen kontekst, men `sample_size` og `estimate` ble fortsatt søkt som nakne sifferrekker i
+hele representasjonen:
+
+```text
+registrert sample_size = 90   kilden sier «90% improved»
+registrert estimate = 15      kilden sier «15 mg once daily»
+```
+
+Tallet fantes; verdien var aldri oppgitt for det feltet. Feltet ble likevel ført opp i
+`checked_fields`, og raden kunne bli `verified`. Reprodusert før rettelsen.
+
+Tallet må nå stå inntil et uttrykk som navngir feltet — «N = 48», «284 adults», «mean weight gain
+of 0.8» — med det samme nøytrale limet som konfidensintervallet bruker. Ordlistene er korte med
+vilje, og **enheten alene er ikke et anker for estimatet**: «15 mg» navngir en dose, ikke et
+effektestimat, og et felt kontrollert mot en dose ville vært nøyaktig feilen dette skal hindre.
+
+Samme runde lukket en grense til: `1.5` ble funnet inne i `1.5e-3`, som er 0,0015 og altså et helt
+annet tall. En eksponent hører til tallet og er ikke tekst etter det, så tallgrensen avviser den nå
+— også på øvre konfidensgrense, der `2.6` ikke lenger finnes i `2.6e-3`.
+
+**Prøven som betyr noe:** begge de reelle NCBI-funnene er fortsatt `verified` under den strengere
+regelen. «sertraline, N = 48» og «a mean weight gain of 0.8 +/- 2.7 kg» er begge former listene
+kjenner igjen — og i den første kilden står `48` dessuten i et titalls referanser, som den gamle
+regelen ville akseptert som treff. Begge rettelsene er mutasjonstestet hver for seg.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen
