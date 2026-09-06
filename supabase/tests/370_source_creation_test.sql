@@ -36,9 +36,9 @@ select enum_has_labels(
     'claim_publication_rolled_back', 'role_granted', 'role_ended', 'source_created',
     'evidence_item_created', 'agent_identity_registered',
     'agent_identity_credential_issued', 'agent_identity_revoked',
-    'evidence_verification_registered'
+    'evidence_verification_registered', 'source_version_registered'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus og ekstraksjonsverifikasjon'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjonsverifikasjon og kildeversjoner'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -82,10 +82,19 @@ select is_empty(
         -- før autentiseringen og den åpne kjøringen er kontrollert. Hvilke
         -- roller som faktisk har EXECUTE, kontrolleres i
         -- 440_extraction_verification_registration_test.sql.
-        'api.register_extraction_verification(text,text,uuid,uuid,text,text,text[],text,text)'
+        'api.register_extraction_verification(text,text,uuid,uuid,text,text,text[],text,text)',
+        -- Migrasjon 007f. En editorhandling, som de to første: bare
+        -- authenticated, og autorisasjonen tas på funksjonens eget kall.
+        'api.create_source_version(uuid,timestamp with time zone,text,text,text,text)',
+        -- Migrasjon 005h. Lesegrunnlaget verifikatoren arbeider fra. Kalles av
+        -- anon av samme grunn som de tre agentfunksjonene over, og gir
+        -- ingenting før legitimasjonen og den åpne kjøringen er kontrollert;
+        -- hvilke roller som har EXECUTE kontrolleres i
+        -- 460_extraction_verification_input_test.sql.
+        'api.extraction_verification_input(text,text,uuid,uuid)'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de fem kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de sju kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$

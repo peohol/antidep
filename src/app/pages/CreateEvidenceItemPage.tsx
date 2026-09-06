@@ -53,7 +53,6 @@ import {
   EXTRACTION_METHOD_LABELS,
   MEASURE_LABELS,
   REPORTED_DIRECTION_LABELS,
-  SOURCE_STATUS_LABELS,
   STUDY_DESIGN_LABELS,
   UNIT_LABELS,
   VALUE_AVAILABILITY_LABELS,
@@ -62,6 +61,7 @@ import {
 } from '../../components/vocabulary-labels'
 import { describeClaimComparator } from '../../lib/claim-effect'
 import { createEvidenceItem } from '../../lib/create-evidence-item'
+import { sourceChoice, withStatus, type Choice } from '../../lib/source-choice'
 import {
   fetchEditorDrugs,
   fetchEditorEvidenceItems,
@@ -91,7 +91,6 @@ import {
   readDrugStatus,
   readExtractionMethod,
   readReportedDirection,
-  readSourceStatus,
   readStudyDesign,
   readVocabularyStatus,
 } from '../../lib/evidence-item'
@@ -161,11 +160,6 @@ function Field({
       )}
     </div>
   )
-}
-
-interface Choice {
-  readonly value: string
-  readonly label: string
 }
 
 function SelectField({
@@ -412,10 +406,6 @@ function sourceVersionChoices(rows: readonly EditorSourceVersionRow[]): readonly
   )
 }
 
-function withStatus(name: string, status: string): string {
-  return status === 'active' ? name : `${name} (${status})`
-}
-
 function drugChoice(drug: EditorDrugRow): Choice {
   const status = readDrugStatus(drug.status)
   return {
@@ -435,30 +425,6 @@ function vocabularyChoice(id: string, label: string, status: string): Choice {
       read.kind === 'known' && read.value === 'active'
         ? label
         : withStatus(label, termText(read, VOCABULARY_STATUS_LABELS, 'status')),
-  }
-}
-
-/**
- * Én kilde i nedtrekkslisten.
- *
- * Året står med fordi to publikasjoner fra samme forfattergruppe ellers er
- * vanskelige å skille. Kildestatusen står med av en annen grunn: en kilde som er
- * trukket tilbake skal ikke kunne velges uten at det er synlig
- * (ANTIDEP_CONSTITUTION.md §14).
- */
-function sourceChoice(source: EditorSourceRow): Choice {
-  const year = source.publication_date?.slice(0, 4)
-  const parts = [source.title, source.authors_or_issuer, year].filter(
-    (part): part is string => part !== undefined && part.length > 0,
-  )
-  const status = readSourceStatus(source.source_status)
-  const label = parts.join(' — ')
-  return {
-    value: source.source_id,
-    label:
-      status.kind === 'known' && status.value === 'active'
-        ? label
-        : withStatus(label, termText(status, SOURCE_STATUS_LABELS, 'kildestatus')),
   }
 }
 

@@ -1383,7 +1383,8 @@ PR G  db: add publication events and gate                                   (#15
       docs: record the evidence registration deployed to the hosted project (#46)  merget   ingen migrasjon
       docs: record the first real evidence registration in production       (#47)  merget   ingen migrasjon
       db: add technical agent identity and agent runs                        (#48)  merget   migrasjon 005d, 008c, 005e, 005f
-      db: add the extraction verification registration write path            (#50)  åpen     migrasjon 008d, 005g
+      db: add the extraction verification registration write path            (#50)  merget   migrasjon 008d, 005g
+      feat: run the extraction verifier from source version to verification (#51)  åpen     migrasjon 008e, 007f, 005h
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1466,20 +1467,25 @@ De fire neste hører til agentidentiteten (§74.31): 005d utvider agentrollevoka
 `extraction_verification`, 008c utvider auditvokabularet med agentidentitetenes tre
 livssyklushendelser, 005e bygger identitets- og kjøringsmodellen med sine to
 api-inngangspunkter, og 005f registrerer den første agentidentiteten.
-De to siste hører til det neste leddet i pipelinen (§74.30, §74.31, §74.32): 008d utvider
+De to neste hører til skriveveien for verifikasjonen (§74.30, §74.31, §74.32): 008d utvider
 auditvokabularet en sjette gang, med `evidence_verification_registered`, og 005g bygger den
 kontrollerte skriveveien som lar den registrerte ekstraksjonsverifikatoren registrere en
 verifikasjon i `workflow.evidence_verifications` — bundet deklarativt til riktig aktør og
 riktig agentrolle med to sammensatte fremmednøkler mot `provenance.agent_runs`.
+De tre siste lukker kjeden fra kildeversjon til kjørt verifikasjon (§74.33): 008e utvider
+auditvokabularet en sjuende gang med `source_version_registered`, 007f gir api-lesemodellen
+sitt tredje skrivbare medlem — skriveveien for å registrere en kildeversjon, med
+fingeravtrykket beregnet av databasen — og 005h gir verifikatoren leseveien inn til
+grunnlaget den kontrollerer mot.
 Filrekkefølgen er dermed 001, 002, 003, 004, 005, 006, 006a, 007, 008, 007a, 005a, 005b,
-007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c, 005e, 005f, 008d, 005g — sortert
-på tidsstempel, ikke på migrasjonsnummer, og de seksten siste filene bærer alle et
-bokstavnummer, altså et nummer utenfor den planlagte rekken. (Setningen sa tidligere at «de
+007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c, 005e, 005f, 008d, 005g, 008e,
+007f, 005h — sortert på tidsstempel, ikke på migrasjonsnummer, og de nitten siste filene
+bærer alle et bokstavnummer, altså et nummer utenfor den planlagte rekken. (Setningen sa tidligere at «de
 seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot listen over —
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1430 pgTAP-assertions over 44 testfiler.
+Databaselaget teller nå 1498 pgTAP-assertions over 46 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1628,12 +1634,13 @@ bak G4/G5, er planlagt i §74.30.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   39 enum-typer, fordelt på de tjueseks migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   39 enum-typer, fordelt på de tjueni migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
-   005e, 005f, 008d og 005g — i filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
-   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 og 0.
+   005e, 005f, 008d, 005g, 008e, 007f og 005h — i filrekkefølge, ikke i nummerrekkefølge —
+   med henholdsvis 1, 6,
+   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle tjueseks ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle tjueni ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -4628,6 +4635,115 @@ claim-verifikasjon (`workflow.claim_verifications`, `citation_support_verificati
 senere PR.
 
 ---
+
+### 74.33 Kjeden er kjørt: fra kildeversjon til registrert verifikasjon
+
+§74.32 endte med en skrivevei som var reviewbar og fullt prøvd, men som ingen hadde kjørt:
+`agent-identity:extraction-verification-01` var registrert uten legitimasjon, det fantes ingen
+skrivevei for kildeversjoner (punkt 1, issue #44), ingen lesevei inn til grunnlaget, og ingen
+kjører. **Denne PR-en lukker alle fire, og kjører kjeden hele veien gjennom mot en reell
+kilde.**
+
+**Tre migrasjoner, ingen av dem med en ny enum-type.**
+
+| Migrasjon | Hva den gjør |
+| --- | --- |
+| 008e | `audit.event_operation` får `source_version_registered`. Alene i sin egen fil, fordi `ALTER TYPE ... ADD VALUE` ikke kan brukes i samme transaksjon som verdien |
+| 007f | Skriveveien for kildeversjoner: attribusjon på `knowledge.source_versions`, hashen som databasens eiendom, auditskriveren og `api.create_source_version(...)` |
+| 005h | `api.extraction_verification_input(...)` — grunnlaget verifikatoren arbeider fra |
+
+**Punkt 1 er lukket, og tillitsmodellen for `content_hash` er avgjort.** Issue #44 spurte
+etter en skrivevei; kommentaren på issuen la til det som var det egentlige spørsmålet: en hash
+klienten oppgir, er en påstand ingen kan etterprøve. Svaret er at **hashen aldri er en
+parameter**. `api.create_source_version(...)` tar imot representasjonen, og databasen beregner
+`knowledge.source_version_content_hash(text)` i samme transaksjon som raden skrives — samme
+resonnement som gjorde `content_hash` på et evidensfunn til databasens eiendom (§74.27). De
+tre spørsmålene har dermed hvert sitt entydige svar: PostgreSQL beregner den, den beregnes av
+nøyaktig den teksten som ble oppgitt uten normalisering, og den etterprøves med
+`curl <retrieved_from> | sha256sum`.
+
+**Grensen for hva basen kan garantere er skrevet ut framfor pyntet på.** PostgreSQL kan ikke
+hente en URL, så basen kan ikke vite at teksten faktisk kom fra adressen — bare at hashen er
+hashen *av den teksten*. Den siste koblingen er verifikatorens, og den er reell: kjøreren
+henter adressen på nytt og sammenligner. En registrering der teksten ikke kom fra adressen,
+overlever derfor ikke første verifikasjon.
+
+**Attribusjonen som manglet.** `knowledge.source_versions` var den ene kunnskapstabellen uten
+`created_by_actor_id` — migrasjon 005 la den på fem tabeller, men ikke på denne, fordi det
+ikke fantes noen skrivevei å attribuere. Nå finnes det en. Kolonnen heter
+`retrieved_by_actor_id`, fordi raden er en observasjon og ikke et kunnskapsobjekt, og de to
+seedede radene er backfilt til ekstraksjonsagenten — samme aktør migrasjon 005 attribuerte
+evidensfunnene fra samme seed til, og samme arbeid.
+
+**Kjøreren er deterministisk, og det er et valg og ikke en mangel.** Kontrollen sammenligner
+hver ordrett gjengivelse i `raw_extraction` mot representasjonen, og hvert oppgitt tall mot
+den samme. ANTIDEP_CONSTITUTION.md §17 sier at kliniske kontroller skal være deterministiske
+«der det er mulig», og for sitat- og tallkontroll er det mulig — og strengere enn et
+språkmodellkall. §20 er samtidig oppfylt: kjøringen registrerer leverandør (`antidep`), modell
+(`deterministic-extraction-check`) og modellversjon som ethvert annet agentledd, så et senere
+ledd med språkmodell er et adapterbytte og ikke en datamodellendring.
+
+**Asymmetrien mellom å bekrefte og å avkrefte er kontrollens viktigste regel.** Et sitat er en
+påstand om ordrett gjengivelse fra nøyaktig den representasjonen raden peker på, og den
+påstanden er falsifiserbar: mangler teksten, er utfallet `needs_correction`. Et *tall* er noe
+annet — det kan stå skrevet med bokstaver («Thirty-one HV»), i en annen enhet eller i en
+tabell som ikke er med i representasjonen — så et manglende talltreff gir `uncertain` og ikke
+et avvik, og feltet føres ikke opp i `checked_fields`. En verifikator som roper ulv, er verre
+enn ingen verifikator. Regelen ble ikke funnet på: den ble oppdaget da kjeden ble kjørt mot en
+reell kilde som skriver utvalgsstørrelsen med bokstaver.
+
+**Kjøringen registrerer ingen verifikasjon i tre tilfeller**, og det strengeste er det tredje:
+funnet mangler kildeversjon eller fingeravtrykk; kilden lot seg ikke hente; eller
+fingeravtrykket stemmer ikke med det registrerte. I det siste tilfellet har verifikatoren sett
+*en* utgave, men ikke den ekstraksjonen ble gjort fra — og ingen av de tre verdiene i
+`workflow.verification_source_access` beskriver det sant. Å oppgi en usann verdi for å få
+registrert at kontrollen mislyktes, ville byttet en manglende opplysning mot en usann. Avviket
+står i kjøringens `output_manifest`, som er proveniensen for KI-operasjoner.
+
+---
+
+**Kjeden er kjørt mot en reell kilde, i en lokal stack, og dette er avlesningen.** Kilden er
+Carbone, Vanuytsel og Tack (2017), *The effect of mirtazapine on gastric accommodation,
+gastric sensitivity to distention, and nutrient tolerance in healthy subjects*,
+Neurogastroenterology and motility 29(12) — en reell randomisert studie om mirtazapin og
+kroppsvekt, hentet fra NCBI eutils.
+
+| Ledd | Avlesning |
+| --- | --- |
+| 1. Kilde | Opprettet av den navngitte redaktøren gjennom `api.create_source(...)` |
+| 2. Kildeversjon | Representasjonen hentet over nett (8 000 byte). Lokal `sha256sum` og databasens egen `content_hash` er identiske: `sha256:73d7f5d6…` |
+| 3. EvidenceItem | Registrert med `source_version_id` satt, `extraction_method = manual` |
+| 4. Agentkjøring | Åpnet av `agent-identity:extraction-verification-01` som `anon`, med legitimasjon utstedt av redaktøren |
+| 5. Kontroll | Adressen hentet på nytt; fingeravtrykket reprodusert; sitatet gjenfunnet ordrett i representasjonen |
+| 6. Verifikasjon | `verified`, `verifiable_representation`, `checked_fields = {raw_extraction, source_locator, intervention_arm}` |
+| 7. Proveniens | Verifikasjonen peker på kjøringen, kjøringen på identiteten, identiteten på agentaktøren — og auditsporet viser `source_created → source_version_registered → evidence_item_created → evidence_verification_registered`, med menneskelig aktør på de tre første og agentaktøren på den siste |
+
+**Den negative veien er kjørt like reelt.** En kildeversjon registrert med et innhold adressen
+ikke lenger gir, ble avvist av kjøreren med «Kilden har endret seg», begge fingeravtrykk
+oppgitt, og ingen rad ble registrert. Det er den kontrollen som gjør at en `verified`-rad
+faktisk betyr noe.
+
+**De to seedede evidensfunnene er også kontrollert, mot sine egne reelle MEDLINE-poster.**
+Begge kildeversjonene fra migrasjon 003 reproduserer fortsatt sine registrerte
+fingeravtrykk fra NCBI i dag — seks uker etter at de ble registrert — og begge funnene fikk
+`verified`. At «adresse pluss hash» er et etterprøvbart grunnlag (§74.32), er dermed ikke
+lenger bare et resonnement: det er en avlesning.
+
+---
+
+**Hva denne PR-en bevisst ikke gjør.** Den registrerer ingenting i det hostede prosjektet:
+migrasjonene er ikke deployet dit, ingen legitimasjon er utstedt der, og ingen verifikasjon er
+registrert der. Alt over er kjørt mot en lokal stack. Den bygger heller ikke
+claim-verifikasjon, reviewbeslutning eller publisering, og den svekker ingen eksisterende
+kontroll: ingen CHECK, ingen policy, ingen grant og ingen gate er fjernet eller myknet opp.
+
+**Hva som gjenstår for Milepæl B.** Ekstraksjonsverifikasjonene er nå *kjørbare*, og G4/G5 kan
+lukkes for et funn ved å kjøre kjøreren mot det. De to andre står urørt: claim-verifikasjonene
+(G8/G9) og den menneskelige godkjenningen (G11/G12/G13).
+
+**Neste steg.** Deploy av de tre migrasjonene til det hostede prosjektet og utstedelse av
+legitimasjon der, slik at kjeden kan kjøres i produksjon — og deretter claim-verifikasjon
+(`workflow.claim_verifications`, `citation_support_verification`) som egen, senere PR.
 
 ---
 

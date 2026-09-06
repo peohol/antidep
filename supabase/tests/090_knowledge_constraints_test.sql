@@ -15,7 +15,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(58);
+select plan(60);
 
 -- ---------------------------------------------------------------------------
 -- Testdata som bare finnes inne i denne transaksjonen
@@ -32,8 +32,9 @@ $$;
 insert into knowledge.sources (source_type, title, authors_or_issuer, created_by_actor_id)
 values ('journal_article', 'Testkilde om vektendring', 'Testforfatter T', pg_temp.extraction_actor());
 
-insert into knowledge.source_versions (source_id, retrieved_at, retrieved_from)
-select id, now(), 'https://example.invalid/testkilde'
+insert into knowledge.source_versions
+  (source_id, retrieved_at, retrieved_from, retrieved_by_actor_id)
+select id, now(), 'https://example.invalid/testkilde', pg_temp.extraction_actor()
 from knowledge.sources where title = 'Testkilde om vektendring';
 
 insert into knowledge.sources (source_type, title, authors_or_issuer, created_by_actor_id)
@@ -319,8 +320,10 @@ select throws_ok(
 -- ---------------------------------------------------------------------------
 select throws_ok(
   $$
-    insert into knowledge.source_versions (source_id, retrieved_at, retrieved_from, content_hash)
-    select id, now(), 'https://example.invalid/annen', 'ikke-en-hash'
+    insert into knowledge.source_versions
+      (source_id, retrieved_at, retrieved_from, content_hash, retrieved_by_actor_id)
+    select id, now(), 'https://example.invalid/annen', 'ikke-en-hash',
+           pg_temp.extraction_actor()
     from knowledge.sources where title = 'Annen testkilde'
   $$,
   '23514', null,
@@ -328,8 +331,9 @@ select throws_ok(
 );
 select throws_ok(
   $$
-    insert into knowledge.source_versions (source_id, retrieved_at, retrieved_from)
-    select id, now(), '   '
+    insert into knowledge.source_versions
+      (source_id, retrieved_at, retrieved_from, retrieved_by_actor_id)
+    select id, now(), '   ', pg_temp.extraction_actor()
     from knowledge.sources where title = 'Annen testkilde'
   $$,
   '23514', null,
@@ -337,22 +341,46 @@ select throws_ok(
 );
 select lives_ok(
   $$
-    insert into knowledge.source_versions (source_id, retrieved_at, retrieved_from, content_hash)
+    insert into knowledge.source_versions
+      (source_id, retrieved_at, retrieved_from, content_hash, retrieved_by_actor_id)
     select id, now(), 'https://example.invalid/testkilde/2',
-           'sha256:' || repeat('a', 64)
+           'sha256:' || repeat('a', 64), pg_temp.extraction_actor()
     from knowledge.sources where title = 'Testkilde om vektendring'
   $$,
   'et nytt øyeblikksbilde med ny hash kan registreres'
 );
 select throws_ok(
   $$
-    insert into knowledge.source_versions (source_id, retrieved_at, retrieved_from, content_hash)
+    insert into knowledge.source_versions
+      (source_id, retrieved_at, retrieved_from, content_hash, retrieved_by_actor_id)
     select id, now(), 'https://example.invalid/testkilde/3',
-           'sha256:' || repeat('a', 64)
+           'sha256:' || repeat('a', 64), pg_temp.extraction_actor()
     from knowledge.sources where title = 'Testkilde om vektendring'
   $$,
   '23505', null,
   'samme innhold av samme kilde kan ikke registreres to ganger'
+);
+
+-- Attribusjon og tidsretning på observasjonen (migrasjon 20260907091000).
+select throws_ok(
+  $$
+    insert into knowledge.source_versions (source_id, retrieved_at, retrieved_from)
+    select id, now(), 'https://example.invalid/uten-aktor'
+    from knowledge.sources where title = 'Annen testkilde'
+  $$,
+  '23502', null,
+  'en kildeversjon uten aktør som hentet den avvises'
+);
+select throws_ok(
+  $$
+    insert into knowledge.source_versions
+      (source_id, retrieved_at, retrieved_from, retrieved_by_actor_id)
+    select id, now() + interval '1 day', 'https://example.invalid/framtiden',
+           pg_temp.extraction_actor()
+    from knowledge.sources where title = 'Annen testkilde'
+  $$,
+  '23514', null,
+  'en kildeversjon hentet fram i tid avvises'
 );
 
 -- RESTRICT: en referert kilde kan ikke slettes bort

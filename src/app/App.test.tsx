@@ -57,11 +57,15 @@ describe('skallet', () => {
     )
   })
 
-  it('har en lenke til Registrer evidensfunn i toppen, etter Opprett kilde', () => {
-    // Steg 3 av adminflyten (§29). Rekkefølgen er kjedens: en kilde må finnes
-    // før evidens kan knyttes til den.
+  it('har adminlenkene i toppen, i kjedens egen rekkefølge', () => {
+    // Rekkefølgen er kjedens (§15): en kilde må finnes før en versjon av den kan
+    // registreres, og en versjon før et evidensfunn kan peke på den.
     renderRoute('/')
     const admin = screen.getByRole('navigation', { name: 'Admin' })
+    expect(within(admin).getByRole('link', { name: 'Registrer kildeversjon' })).toHaveAttribute(
+      'href',
+      '/source-versions/new',
+    )
     expect(within(admin).getByRole('link', { name: 'Registrer evidensfunn' })).toHaveAttribute(
       'href',
       '/evidence/new',
@@ -69,7 +73,7 @@ describe('skallet', () => {
     const links = within(admin)
       .getAllByRole('link')
       .map((link) => link.textContent)
-    expect(links).toEqual(['Opprett kilde', 'Registrer evidensfunn'])
+    expect(links).toEqual(['Opprett kilde', 'Registrer kildeversjon', 'Registrer evidensfunn'])
   })
 })
 

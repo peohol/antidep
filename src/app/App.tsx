@@ -36,12 +36,20 @@ import { AccessPage } from './pages/AccessPage'
 import { ClaimEvidencePage } from './pages/ClaimEvidencePage'
 import { CreateEvidenceItemPage } from './pages/CreateEvidenceItemPage'
 import { CreateSourcePage } from './pages/CreateSourcePage'
+import { CreateSourceVersionPage } from './pages/CreateSourceVersionPage'
 import { DrugPage } from './pages/DrugPage'
 import { HomePage } from './pages/HomePage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { SourcePage } from './pages/SourcePage'
 import { TopicPage } from './pages/TopicPage'
-import { ROUTE_PATTERNS, accessPath, homePath, newEvidenceItemPath, newSourcePath } from './routes'
+import {
+  ROUTE_PATTERNS,
+  accessPath,
+  homePath,
+  newEvidenceItemPath,
+  newSourcePath,
+  newSourceVersionPath,
+} from './routes'
 
 const MAIN_ID = 'hovedinnhold'
 
@@ -96,10 +104,12 @@ export function AppLayout() {
         {/* Steg 2 og 3 av adminflyten (§29, §74.24): begge sidene viser
             skjemaet sitt til enhver innlogget bruker og lar retten kontrolleres
             på serveren, på sitt eget tidspunkt — ingen rollegate i lenkene
-            heller (se sidenes egne doc-kommentarer). Rekkefølgen er kjedens:
-            en kilde må finnes før evidens kan knyttes til den. */}
+            heller (se sidenes egne doc-kommentarer). Rekkefølgen er kjedens: en
+            kilde må finnes før en versjon av den kan registreres, og en versjon
+            før et evidensfunn kan peke på den. */}
         <nav aria-label="Admin">
           <Link to={newSourcePath()}>Opprett kilde</Link>
+          <Link to={newSourceVersionPath()}>Registrer kildeversjon</Link>
           <Link to={newEvidenceItemPath()}>Registrer evidensfunn</Link>
         </nav>
       </header>
@@ -111,6 +121,7 @@ export function AppLayout() {
           <Route element={<TopicPage />} path={ROUTE_PATTERNS.topic} />
           <Route element={<ClaimEvidencePage />} path={ROUTE_PATTERNS.claimEvidence} />
           <Route element={<CreateSourcePage />} path={ROUTE_PATTERNS.sourceNew} />
+          <Route element={<CreateSourceVersionPage />} path={ROUTE_PATTERNS.sourceVersionNew} />
           <Route element={<CreateEvidenceItemPage />} path={ROUTE_PATTERNS.evidenceNew} />
           <Route element={<SourcePage />} path={ROUTE_PATTERNS.source} />
           <Route element={<AccessPage />} path={ROUTE_PATTERNS.access} />

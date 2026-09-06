@@ -1,0 +1,98 @@
+# Kjører ekstraksjonsverifikatoren mot et Antidep-miljø.
+#
+# Bare `workflow_dispatch`: kjøringen skriver til `workflow.evidence_verifications`,
+# som er append-only, og en verifikasjon skal ikke registreres fordi noen dyttet en
+# commit. Standardvalget er tørrkjøring, som kontrollerer og rapporterer uten å
+# registrere noe.
+#
+# ----------------------------------------------------------------------------
+# Hemmeligheten
+#
+# `ANTIDEP_AGENT_SECRET` er legitimasjonen til
+# `agent-identity:extraction-verification-01` og skal aldri i repoet. Den ligger som
+# en kryptert GitHub-secret, og arbeidsflyten er inert til noen legger den inn:
+# uten secrets stopper den på kontrollen under, med en setning som sier hva som
+# mangler, framfor på en anonym «kunne ikke autentiseres».
+#
+# Nøkkelen er prosjektets publishable key og ikke `service_role`
+# (docs/DATABASE_ARCHITECTURE.md §49): agenten autentiseres av legitimasjonen inne i
+# api-funksjonene, ikke av Data API-rollen.
+#
+# Kjøringen når internett — den henter hver kildeversjons adresse på nytt for å
+# kontrollere fingeravtrykket. Det er hele poenget: en kontroll mot et sammendrag
+# ville ikke vært en kontroll (ANTIDEP_CONSTITUTION.md §11).
+
+name: Ekstraksjonsverifikasjon
+
+on:
+  workflow_dispatch:
+    inputs:
+      evidence_item_id:
+        description: 'Ett bestemt evidensfunn (uuid). Tomt betyr hele arbeidskøen.'
+        required: false
+        type: string
+      limit:
+        description: 'Høyst så mange funn i denne kjøringen. Tomt betyr alle.'
+        required: false
+        type: string
+      dry_run:
+        description: 'Kontroller og rapporter, men registrer ingenting.'
+        required: false
+        default: true
+        type: boolean
+
+# Ingen skrivetilgang til repoet: kjøringen skriver til databasen, ikke hit.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Kontroller ekstraksjoner mot kildene
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Installer avhengigheter
+        run: npm ci
+
+      # Feil høyt og tidlig, med en setning som sier hva som mangler. Uten dette
+      # ville et manglende oppsett blitt til den anonyme avvisningen enhver
+      # mislykket agentautentisering gir, og den er med vilje uinformativ.
+      - name: Kontroller at miljøet er satt opp
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_AGENT_IDENTITY_KEY }}
+          ANTIDEP_AGENT_SECRET: ${{ secrets.ANTIDEP_AGENT_SECRET }}
+        run: |
+          mangler=""
+          for navn in ANTIDEP_SUPABASE_URL ANTIDEP_SUPABASE_PUBLISHABLE_KEY \
+                      ANTIDEP_AGENT_IDENTITY_KEY ANTIDEP_AGENT_SECRET; do
+            if [ -z "${!navn:-}" ]; then mangler="$mangler $navn"; fi
+          done
+          if [ -n "$mangler" ]; then
+            echo "Mangler secrets:$mangler" >&2
+            echo "Se supabase/README.md, avsnittet «Legitimasjon til agentidentiteten»." >&2
+            exit 1
+          fi
+
+      - name: Kjør ekstraksjonsverifikatoren
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_AGENT_IDENTITY_KEY }}
+          ANTIDEP_AGENT_SECRET: ${{ secrets.ANTIDEP_AGENT_SECRET }}
+          EVIDENCE_ITEM_ID: ${{ inputs.evidence_item_id }}
+          LIMIT: ${{ inputs.limit }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          argumenter=()
+          if [ "$DRY_RUN" = "true" ]; then argumenter+=(--dry-run); fi
+          if [ -n "$EVIDENCE_ITEM_ID" ]; then argumenter+=(--evidence-item "$EVIDENCE_ITEM_ID"); fi
+          if [ -n "$LIMIT" ]; then argumenter+=(--limit "$LIMIT"); fi
+          npm run agent:verify-extraction -- "${argumenter[@]}" | tee "$GITHUB_STEP_SUMMARY"

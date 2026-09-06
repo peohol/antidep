@@ -132,9 +132,11 @@ values ('54000000-0000-4000-8000-000000000001', 'journal_article',
         'Upublisert testkilde for 400', 'Testforfatter 400',
         (select id from fixture where name = 'actor_f'));
 
-insert into knowledge.source_versions (source_id, retrieved_at, retrieved_from)
+insert into knowledge.source_versions
+  (source_id, retrieved_at, retrieved_from, retrieved_by_actor_id)
 values ('54000000-0000-4000-8000-000000000001', now() - interval '1 day',
-        'https://eksempel.invalid/400');
+        'https://eksempel.invalid/400',
+        (select id from provenance.actors where actor_key = 'agent:evidence-extraction'));
 
 insert into knowledge.evidence_items (
   source_id, design_code, population_availability, population_detail,

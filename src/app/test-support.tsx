@@ -62,6 +62,8 @@ export interface FakeApi {
   readonly create_source?: FakeRpcOutcome<string>
   /** Steg 3 av adminflyten (§29): `api.create_evidence_item(...)`. */
   readonly create_evidence_item?: FakeRpcOutcome<string>
+  /** Kildeversjoner (migrasjon 007f, issue #44): `api.create_source_version(...)`. */
+  readonly create_source_version?: FakeRpcOutcome<string>
 }
 
 interface RecordedQuery {
@@ -84,6 +86,8 @@ function fakeRpcOutcome(api: FakeApi, name: string): FakeRpcOutcome<string> {
       return api.create_source ?? { data: DEFAULT_RPC_ID }
     case 'create_evidence_item':
       return api.create_evidence_item ?? { data: DEFAULT_RPC_ID }
+    case 'create_source_version':
+      return api.create_source_version ?? { data: DEFAULT_RPC_ID }
     default:
       throw new Error(`fakeClient.rpc(): ukjent funksjon «${name}».`)
   }

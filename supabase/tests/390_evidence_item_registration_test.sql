@@ -201,12 +201,15 @@ values
   ('50390000-0000-4000-8000-000000000002', 'journal_article', 'Annen testkilde for 390',
    'Testforfatter 390', (select id from fixture where name = 'actor_f'));
 
-insert into knowledge.source_versions (id, source_id, retrieved_at, retrieved_from)
+insert into knowledge.source_versions
+  (id, source_id, retrieved_at, retrieved_from, retrieved_by_actor_id)
 values
   ('51390000-0000-4000-8000-000000000001', '50390000-0000-4000-8000-000000000001',
-   now() - interval '2 days', 'https://eksempel.invalid/390'),
+   now() - interval '2 days', 'https://eksempel.invalid/390',
+   (select id from provenance.actors where actor_key = 'agent:evidence-extraction')),
   ('51390000-0000-4000-8000-000000000002', '50390000-0000-4000-8000-000000000002',
-   now() - interval '2 days', 'https://eksempel.invalid/390-annen');
+   now() - interval '2 days', 'https://eksempel.invalid/390-annen',
+   (select id from provenance.actors where actor_key = 'agent:evidence-extraction'));
 
 -- Et minimalt, gyldig kall. Testene under overstyrer nøyaktig det de handler om.
 create function pg_temp.register(

@@ -443,12 +443,31 @@ For slike kilder bør Antidep kunne lagre versjon/snapshot-metadata:
 source_version_id PK
 source_id FK
 retrieved_at
+retrieved_from
+retrieved_by_actor_id FK
 external_version
 content_hash
 storage_reference NULL
 ```
 
 Fulltekst skal bare lagres når det er tillatt og nødvendig. Ellers skal metadata, hash og presis kildepeker brukes.
+
+`retrieved_from` og `content_hash` er sammen det etterprøvbare grunnlaget en
+ekstraksjonsverifikasjon kan vise til: en tredjepart kan hente adressen på nytt og
+kontrollere svaret mot hashen, uavhengig av om Antidep har lagret en kopi. Det er dette
+`workflow.verification_source_access` kaller `verifiable_representation`
+(MVP_IMPLEMENTATION_PLAN.md §74.32). En rad med adresse, men uten hash, er et sporet besøk og
+kvalifiserer ikke.
+
+**Hashen skal eies av databasen, ikke av kalleren.** Skriveveien
+`api.create_source_version(...)` tar imot representasjonen og beregner hashen selv, av samme
+grunn som `content_hash` på et evidensfunn beregnes av basen (§20): en hash kalleren kunne
+oppgi, ville sett ut som en garanti uten å være det. Basen kan ikke hente en URL og kan derfor
+ikke vite at teksten kom fra adressen — bare at hashen er hashen av den teksten. Den siste
+koblingen kontrolleres av verifikatoren, som henter adressen på nytt.
+
+Observasjonen er uforanderlig, attribusjonen inkludert: hvem som hentet representasjonen kan
+ikke skrives om i ettertid (§7.1).
 
 ## 19. `knowledge.evidence_items`
 

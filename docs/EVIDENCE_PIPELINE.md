@@ -548,6 +548,24 @@ Kontrollen BØR minst dekke:
 
 `ExtractionVerifier` (§61) registrerer resultatet gjennom `api.register_extraction_verification(...)`, som krever at kalleren er autentisert nøyaktig for agentrollen `extraction_verification` og handler inne i en åpen kjøring i samme rolle (DATABASE_ARCHITECTURE.md §29, §33). Skriveveien håndhever ikke selv om kontrollen faktisk dekket punktene over — det er verifikatorens ansvar — men den kan ikke registrere en kontroll av et evidensfunn den selv produserte, uansett agentkjøring.
 
+**Grunnlaget verifikatoren arbeider fra, leses gjennom `api.extraction_verification_input(...)`**, som gir ekstraksjonen ordrett sammen med kildeversjonens adresse og fingeravtrykk. Uten den ville §11 i `ANTIDEP_CONSTITUTION.md` vært umulig å oppfylle i praksis: en agent har ingen brukerkonto og ser ingenting i kunnskapsschemaene, så den ville hatt bare et annet ledds sammendrag å kontrollere mot.
+
+### 25.1 Den kjørende verifikatoren i dag
+
+Den implementerte verifikatoren er **deterministisk**, ikke et språkmodellkall, og dekker to av punktene over: **riktige numeriske verdier** og **riktig gjengivelse fra kilden**. Den henter kildeversjonens adresse på nytt, sammenligner fingeravtrykket, og søker deretter hver ordrett gjengivelse i `raw_extraction` og hvert oppgitt tall i den hentede representasjonen. `ANTIDEP_CONSTITUTION.md` §17 ber om determinisme «der det er mulig», og for sitat- og tallkontroll er det både mulig og strengere enn en modellvurdering.
+
+Kontrollen skiller skarpt mellom å bekrefte og å avkrefte, og skillet er en klinisk sikkerhetsregel og ikke en implementasjonsdetalj:
+
+| Funn | Utfall | Hvorfor |
+| --- | --- | --- |
+| Sitat mangler i representasjonen | `needs_correction` | Et sitat er en påstand om ordrett gjengivelse fra nøyaktig den representasjonen, og den er falsifiserbar |
+| Oppgitt tall ikke gjenfunnet | `uncertain`, feltet føres ikke som kontrollert | Tallet kan stå skrevet med bokstaver, i en annen enhet eller i en tabell som ikke er med i representasjonen |
+| Begrep ikke gjenfunnet | Ingen virkning på utfallet, feltet føres ikke som kontrollert | Kildene er på engelsk og katalogen på norsk |
+
+De øvrige punktene i §25 — riktig populasjon, riktig tidspunkt, overtolkning, manglende forbehold — krever språkforståelse og dekkes ikke av dagens kontroll. `checked_fields` sier derfor alltid nøyaktig hvilke felter kontrollen faktisk gikk gjennom, slik at en bekreftelse aldri dekker mer enn den gir inntrykk av (DATABASE_ARCHITECTURE.md §29). Et senere ledd med språkmodell er et nytt adapter i samme modell: kjøringen registrerer leverandør, modell og modellversjon som ethvert annet agentledd (§65), så de to kan stå ved siden av hverandre.
+
+**Verifikatoren registrerer ingenting når den ikke har sett grunnlaget.** Mangler funnet en kildeversjon eller et fingeravtrykk, lot kilden seg ikke hente, eller stemmer ikke fingeravtrykket med det registrerte, skrives ingen rad — ingen av verdiene i `workflow.verification_source_access` ville beskrevet situasjonen sant, og en usann verdi er verre enn en manglende rad. Avviket står i kjøringens `output_manifest`.
+
 ## 26. Verifikasjonsstatus
 
 Et evidensfunn skal minst kunne ha status:
@@ -1232,7 +1250,7 @@ En første produksjonsdyktig evidenspipeline BØR prioritere robusthet fremfor m
 2. Agent foreslår kandidatkilder
 3. SourceAssessor godkjenner kilder
 4. Agent ekstraherer strukturerte EvidenceItem
-5. Separat agent verifiserer ekstraksjonen mot kildene
+5. Separat agent verifiserer ekstraksjonen mot kildene   ← bygget og kjørt (§25.1)
 6. Claim-agent foreslår atomiske påstander
 7. Adversarial-agent søker etter svakheter/motbevis
 8. EvidenceAssessor foreslår sikkerhetsvurdering
