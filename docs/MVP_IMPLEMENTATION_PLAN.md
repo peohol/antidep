@@ -4867,6 +4867,36 @@ fordi et komma sjelden skiller to påstander om forskjellige armer. Et punktum m
 desimalskilletegn og deler ingenting. Mutasjonstestet: settes bindingen tilbake til utdragsnivå,
 feller de tre nye testene den.
 
+**Den femtende runden viste at setning heller ikke er det samme som påstand.** To endepunkt kan stå
+i én grammatisk setning:
+
+```text
+«Sertraline-treated patients had a mean HAM-D change of 5.0 points
+ (95% CI 4.0 to 6.0), while body weight change was also recorded.»
+```
+
+Setningen navngir både armen og radens endepunkt, mens estimatet og intervallet tilhører HAM-D — og
+den nådde `verified`. Reprodusert.
+
+Rettelsen er **nærhet**, ikke enda et skilletegn i delingen: et tall må stå *inntil* det som binder
+det. Utvalgsstørrelsen bindes til armen («sertraline patients (N = 284)»), og effektmålene til
+endepunktet («weight change of 1.5 kg»); armen er allerede bundet på setningen. Å kreve armen inntil
+et effektmål ville krevd at den sto klistret til verdien, og det gjør den nesten aldri — armen er
+setningens subjekt og endepunktet står imellom. Konfidensintervallet må stå inntil endepunktet, med
+radens *eget* estimat som lim, fordi intervallet hører til nettopp det tallet: er estimatet ikke
+bekreftet, er intervallet det heller ikke.
+
+Samme runde lukket to mindre feil som ble synlige underveis:
+
+| Feil | Hva den gjorde |
+| --- | --- |
+| Setningsdeleren delte ikke et punktum rett etter et tall | «… N = 48. Sertraline …» ble én setning. Regelen skulle verne desimaltall, men et punktum er bare et desimalskilletegn når det står *mellom* to sifre |
+| Et registrert tall med etterfølgende nuller kunne aldri gjenfinnes | `4,0` ble trimmet til `4`, og grensen bak mønsteret avviste så «4.0» i kilden. Et registrert `4,0` kunne dermed ikke matche en kilde som skriver `4.0` |
+
+Den siste er verdt å merke seg: den gjorde at et helt korrekt tall aldri kunne bekreftes, altså en
+feil i den trygge retningen — men like fullt en feil, og den ble bare synlig fordi kontrollen ble
+prøvd mot et intervall skrevet med nuller. Alle fire rettelsene er mutasjonstestet hver for seg.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

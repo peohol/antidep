@@ -195,10 +195,16 @@ function stripTags(text: string): string {
  * deler ingenting.
  */
 function sentences(text: string): readonly string[] {
-  return text
-    .split(/(?<!\d)[.;!?](?!\d)/u)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
+  return (
+    text
+      // Semikolon, utrops- og spørsmålstegn deler alltid. Et punktum deler også,
+      // med ett unntak: står det mellom to sifre, er det et desimalskilletegn.
+      // Den forrige regelen krevde at *ingen* av sidene var et siffer, og lot
+      // derfor «… N = 48. Sertraline …» bli én setning.
+      .split(/[;!?]|(?<!\d)\.|\.(?!\d)/u)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)
+  )
 }
 
 /** De to høystakkene et søk gjøres mot. */
@@ -340,9 +346,14 @@ function numberPattern(value: string): NumberPattern | null {
   const digits = normalized.replace('-', '')
   const [integerPart = '', decimalPart] = digits.split('.')
   return {
+    // Etterfølgende nuller er samme tall. `trimNumericText` fjerner dem fra den
+    // *registrerte* verdien, så «4,0» blir «4» — og uten den valgfrie halen
+    // under ville mønsteret `4` blitt avvist av grensen bak seg i en kilde som
+    // skriver «4.0». Et registrert tall kunne da aldri gjenfinnes i en kilde
+    // som tok med nullene.
     body:
       decimalPart === undefined
-        ? escapeRegExp(integerPart)
+        ? `${escapeRegExp(integerPart)}(?:[.,]0+)?`
         : `${escapeRegExp(integerPart)}[.,]${escapeRegExp(decimalPart)}0*`,
     isNegative: normalized.startsWith('-'),
   }
@@ -494,6 +505,43 @@ const CI_ANCHOR_SOURCE = '\\bCI\\b|\\bC\\.I\\.|confidence intervals?|konfidensin
  * kontroll — ikke en falsk bekreftelse. Den veien er den trygge.
  */
 const CI_GLUE_WORDS = [
+  // Nøytrale substantiv og enheter. De bærer ingen betydning som kan snu et
+  // tall, men står nesten alltid mellom armen og verdien: «sertraline
+  // patients (N = 284)», «a change of 1.5 kg (95% CI …)».
+  'patients?',
+  'participants?',
+  'subjects?',
+  'adults?',
+  'individuals?',
+  'treated',
+  'arms?',
+  'groups?',
+  'pasienter',
+  'deltakere',
+  'personer',
+  'gruppen?',
+  'kg',
+  'mg',
+  'g',
+  'points?',
+  'poeng',
+  // Artikler, hjelpeverb og statistikkord. Nøytrale i seg selv, og de står
+  // nesten alltid mellom begrepet og verdien: «a mean gain of 0.8 kg».
+  'an?',
+  'en',
+  'et',
+  'had',
+  'have',
+  'has',
+  'hadde',
+  'har',
+  'mean',
+  'median',
+  'average',
+  'gjennomsnittlig',
+  'in',
+  'i',
+  'til',
   'of',
   'was',
   'were',
@@ -674,13 +722,13 @@ export type AnchoredNumberMatch =
  * formen flerarmsstudier oftest bruker — «N = 44; N = 48» og flere
  * intervalluttrykk — og ikke enhver språklig variant.
  */
-function anchoredNumberMatch(
+function candidatesNear(
   projections: readonly string[],
-  value: string,
   anchorsBefore: readonly string[],
   anchorsAfter: readonly string[],
-): AnchoredNumberMatch {
-  const g = glue()
+  extraGlue: readonly string[] = [],
+): Set<string> {
+  const g = glue(extraGlue)
   const patterns: string[] = []
   if (anchorsBefore.length > 0) {
     patterns.push(`(?:${anchorsBefore.join('|')})${g}${ANY_NUMBER}`)
@@ -692,7 +740,9 @@ function anchoredNumberMatch(
   const candidates = new Set<string>()
   for (const pattern of patterns) {
     for (const projection of projections) {
-      for (const hit of projection.matchAll(new RegExp(pattern, 'gi'))) {
+      // `u` er nødvendig: uten den er `\p{L}` i et begrepsanker bokstavene
+      // «p{L}» og ikke en bokstavklasse.
+      for (const hit of projection.matchAll(new RegExp(pattern, 'giu'))) {
         const found = hit[1]
         if (found !== undefined) {
           candidates.add(sameNumber(found))
@@ -700,6 +750,42 @@ function anchoredNumberMatch(
       }
     }
   }
+  return candidates
+}
+
+/** Begrepet som mønster, med samme ordgrense som `termOccursIn`. */
+function termAnchor(term: string): string {
+  return `${escapeRegExp(normalize(term))}\\p{L}{0,2}`
+}
+
+function anchoredNumberMatch(
+  projections: readonly string[],
+  value: string,
+  anchorsBefore: readonly string[],
+  anchorsAfter: readonly string[],
+  contextTerms: readonly string[],
+): AnchoredNumberMatch {
+  // Tallet må stå inntil *alle* kravene: feltets eget anker («N =»,
+  // «difference»), og hvert bindende begrep — armen, og for effektmål
+  // endepunktet.
+  //
+  // At begrepet står et sted i samme setning er ikke nok. «Sertraline was
+  // compared with paroxetine patients (N = 48)» er én setning som navngir
+  // sertralin, men 48 står inntil paroksetin. Og «a mean HAM-D change of 5.0
+  // points, while body weight change was also recorded» navngir både armen og
+  // endepunktet, mens 5,0 hører til HAM-D. Bare nærheten skiller dem.
+  // Feltets eget anker er nøytralt lim for begrepskontrollen: i «sertraline
+  // patients (N = 284)» står «N =» mellom armen og tallet, og det er nettopp
+  // det ankeret som gjør tallet til en utvalgsstørrelse.
+  const anchorGlue = [...anchorsBefore, ...anchorsAfter]
+  const sets = [
+    candidatesNear(projections, anchorsBefore, anchorsAfter),
+    ...contextTerms.map((term) =>
+      candidatesNear(projections, [termAnchor(term)], [termAnchor(term)], anchorGlue),
+    ),
+  ]
+  const [first = new Set<string>(), ...rest] = sets
+  const candidates = new Set([...first].filter((n) => rest.every((set) => set.has(n))))
 
   if (candidates.size === 0) {
     return { kind: 'missing' }
@@ -785,6 +871,22 @@ export interface ConfidenceIntervalReport {
  * bak begge. Alt annet er ikke en skrivemåte, det er tre deler som tilfeldigvis
  * står i nærheten av hverandre.
  */
+/**
+ * Uttrykket med endepunktet foran eller bak.
+ *
+ * Uten dette kunne et intervall som tilhører et annet endepunkt i samme setning
+ * bekrefte raden: «a mean HAM-D change of 5.0 points (95% CI 4.0 to 6.0), while
+ * body weight change was also recorded» navngir endepunktet, men intervallet er
+ * HAM-D-ens. Limet slipper igjennom radens eget estimat — intervallet hører til
+ * det — og ellers ingen tall.
+ */
+function withOutcome(order: string, outcomeTerm: string, estimate: string | null): string[] {
+  const estimateNumber = estimate === null ? null : numberPattern(estimate)
+  const g = glue([CI_ANCHOR_SOURCE, ...(estimateNumber === null ? [] : [estimateNumber.body])])
+  const outcome = termAnchor(outcomeTerm)
+  return [`${outcome}${g}${order}`, `${order}${g}${outcome}`]
+}
+
 function intervalOrders(level: string, bounds: string): readonly string[] {
   const anchor = `(?:${CI_ANCHOR_SOURCE})`
   const g = CI_GLUE
@@ -800,13 +902,17 @@ function intervalOrders(level: string, bounds: string): readonly string[] {
   ]
 }
 
-function confidenceIntervalPatterns(interval: ConfidenceInterval): readonly string[] {
+function confidenceIntervalPatterns(
+  interval: ConfidenceInterval,
+  outcomeTerm: string,
+  estimate: string | null,
+): readonly string[] {
   const level = levelPattern(interval.levelPercent)
   const bounds = boundsPattern(interval.lower, interval.upper)
   if (level === null || bounds === null) {
     return []
   }
-  return intervalOrders(level, bounds)
+  return intervalOrders(level, bounds).flatMap((order) => withOutcome(order, outcomeTerm, estimate))
 }
 
 /**
@@ -828,7 +934,7 @@ function confidenceIntervalCandidates(projections: readonly string[]): readonly 
     // ikke: et intervall er nivå + nedre + øvre uansett hvor de står skrevet.
     const levelFirst = order.indexOf(anyLevel) < order.indexOf(anyBounds)
     for (const projection of projections) {
-      for (const hit of projection.matchAll(new RegExp(order, 'gi'))) {
+      for (const hit of projection.matchAll(new RegExp(order, 'giu'))) {
         const [, a, b, c] = hit
         if (a === undefined || b === undefined || c === undefined) {
           continue
@@ -853,16 +959,20 @@ function confidenceIntervalCandidates(projections: readonly string[]): readonly 
 export function confidenceIntervalCheck(
   projections: readonly string[],
   interval: ConfidenceInterval,
+  /** Endepunktet uttrykket må stå inntil. */
+  outcomeTerm: string,
+  /** Radens eget estimat, når det er bekreftet. Det er lim, ikke et fremmedlegeme. */
+  confirmedEstimate: string | null,
 ): ConfidenceIntervalReport {
   const candidates = confidenceIntervalCandidates(projections)
   if (candidates.length > 1) {
     return { confirmed: false, unmatched: [], noAnchor: false, ambiguous: candidates }
   }
 
-  const patterns = confidenceIntervalPatterns(interval)
+  const patterns = confidenceIntervalPatterns(interval, outcomeTerm, confirmedEstimate)
   if (
     patterns.some((pattern) =>
-      projections.some((projection) => new RegExp(pattern, 'i').test(projection)),
+      projections.some((projection) => new RegExp(pattern, 'iu').test(projection)),
     )
   ) {
     return { confirmed: true, unmatched: [], noAnchor: false, ambiguous: [] }
@@ -1104,6 +1214,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   const numericFields = new Set<EvidenceCheckField>()
   const unresolvedFields = new Set<EvidenceCheckField>()
   const ambiguousNumbers: string[] = []
+  let confirmedEstimate: string | null = null
   for (const claim of numericClaims(item)) {
     numericFields.add(claim.field)
     const match = anchoredNumberMatch(
@@ -1111,6 +1222,14 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
       claim.value,
       claim.anchorsBefore,
       claim.anchorsAfter,
+      // Et utvalg er et antall personer i en arm, og bindes til armen. Et
+      // estimat er verdien av et endepunkt, og bindes til endepunktet — armen
+      // er allerede bundet på setningen. Å kreve begge inntil samme tall ville
+      // krevd at armen sto klistret til verdien, og det gjør den nesten aldri:
+      // armen er setningens subjekt og endepunktet står imellom.
+      claim.field === 'sample_size'
+        ? [item.extraction.interventionDrugName]
+        : [item.extraction.outcomeLabel],
     )
     if (match.kind === 'ambiguous') {
       unresolvedFields.add(claim.field)
@@ -1118,6 +1237,8 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     } else if (match.kind === 'missing') {
       unresolvedFields.add(claim.field)
       unmatchedNumbers.push(`${claim.label} (${claim.value})`)
+    } else if (claim.field === 'estimate') {
+      confirmedEstimate = claim.value
     }
   }
   // Konfidensintervallet kontrolleres som ett uttrykk, ikke som tre tall — se
@@ -1126,7 +1247,12 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   let confidenceIntervalUnresolved = false
   if (reportedInterval !== null) {
     numericFields.add('confidence_interval')
-    const ci = confidenceIntervalCheck(outcomeBoundProjections, reportedInterval)
+    const ci = confidenceIntervalCheck(
+      outcomeBoundProjections,
+      reportedInterval,
+      item.extraction.outcomeLabel,
+      confirmedEstimate,
+    )
     if (!ci.confirmed) {
       unresolvedFields.add('confidence_interval')
       confidenceIntervalUnresolved = true

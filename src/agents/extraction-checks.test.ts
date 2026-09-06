@@ -70,7 +70,7 @@ describe('checkExtraction — feilsitering', () => {
     // Sitatet spenner over to linjer og et element i fiksturen.
     const report = check({
       extraction: {
-        rawExtraction: { metode: 'A total of 284 adults with major depressive disorder' },
+        rawExtraction: { metode: 'Sertraline patients (N = 284) with major depressive' },
       },
     })
     expect(report.checkedFields).toContain('raw_extraction')
@@ -315,22 +315,34 @@ describe('checkExtraction — tallene', () => {
   // Et helt vanlig utdrag beskriver flere armer i én setning. Da står den
   // registrerte verdien der — men det gjør de andre armenes verdier også, og
   // ingenting binder maskinelt en av dem til nettopp denne raden.
-  it.each([48, 44, 47])(
-    'bekrefter ikke utvalgsstørrelse %s fra et utdrag som oppgir flere armer',
+  // Setningsdelingen og nærheten til armen løser dette riktig: «sertraline,
+  // N = 48» sier hva sertralinarmen var, og de to andre tallene står inntil
+  // andre legemidler.
+  const FLERARMS =
+    'Patients (fluoxetine, N = 44; sertraline, N = 48; paroxetine, N = 47) who ' +
+    'completed the trial were included in these analyses.'
+
+  it.each([44, 47, 284])(
+    'bekrefter ikke utvalgsstørrelse %s fra et flerarmsutdrag der tallet tilhører en annen arm',
     (størrelse) => {
-      const utdrag =
-        'Patients (fluoxetine, N = 44; sertraline, N = 48; paroxetine, N = 47) who ' +
-        'completed the trial were included in these analyses.'
       const report = check(
-        { extraction: { sampleSize: størrelse, rawExtraction: { resultat: utdrag } } },
-        `Forord. ${utdrag}`,
+        { extraction: { sampleSize: størrelse, rawExtraction: { resultat: FLERARMS } } },
+        `Forord. ${FLERARMS}`,
       )
 
       expect(report.outcome).not.toBe('verified')
       expect(report.checkedFields).not.toContain('sample_size')
-      expect(report.rationale).toContain('flere verdier for de samme feltene')
     },
   )
+
+  it('bekrefter utvalgsstørrelsen som står inntil radens egen arm', () => {
+    const report = check(
+      { extraction: { sampleSize: 48, rawExtraction: { resultat: FLERARMS } } },
+      `Forord. ${FLERARMS}`,
+    )
+
+    expect(report.checkedFields).toContain('sample_size')
+  })
 
   it('bekrefter ikke et estimat fra et utdrag som oppgir to armer i samme setning', () => {
     const utdrag =
@@ -597,6 +609,90 @@ describe('checkExtraction — tallene', () => {
     expect(report.checkedFields).toContain('estimate')
   })
 
+  // To endepunkter i én grammatisk setning: utdraget navngir både armen og
+  // radens endepunkt, mens estimatet og intervallet tilhører HAM-D.
+  it('bekrefter ikke et estimat som tilhører et annet endepunkt i samme setning', () => {
+    const utdrag =
+      'Sertraline-treated patients had a mean HAM-D change of 5.0 points ' +
+      '(95% CI 4.0 to 6.0), while body weight change was also recorded.'
+    const report = check(
+      {
+        extraction: {
+          estimate: '5.0',
+          estimateUnit: null,
+          effectMeasure: 'risk_ratio',
+          outcomeLabel: 'body weight change',
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          ciLower: '4.0',
+          ciUpper: '6.0',
+          ciLevelPercent: '95',
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
+  // Et punktum rett etter et tall avslutter også en setning. Uten det ble
+  // paroksetinsetningen og sertralinsetningen ett fragment.
+  it('bekrefter ikke en utvalgsstørrelse fra setningen foran, når den slutter på et tall', () => {
+    const utdrag = 'Paroxetine patients had N = 48. Sertraline was also studied.'
+    const report = check(
+      { extraction: { sampleSize: 48, rawExtraction: { sitat: utdrag } } },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+  })
+
+  // Etterfølgende nuller er samme tall. Uten den valgfrie halen i mønsteret
+  // kunne et registrert «4,0» aldri gjenfinnes i en kilde som skriver «4.0».
+  it.each([
+    ['4.0', 'the sertraline weight change sample size was 4.0'],
+    ['5.00', 'the sertraline weight change sample size was 5'],
+  ])('gjenfinner det registrerte tallet %s uansett etterfølgende nuller', (verdi, kilde) => {
+    expect(numberOccursIn(searchProjections(kilde), verdi)).toBe(true)
+  })
+
+  it('lar ikke den valgfrie nullhalen gjøre 4 til 4.5', () => {
+    expect(numberOccursIn(searchProjections('the value was 4.5'), '4')).toBe(false)
+  })
+
+  // Intervallet må stå inntil endepunktet. Her tilhører det HAM-D, mens raden
+  // gjelder vektendring — begge navngis i samme setning.
+  it('bekrefter ikke et konfidensintervall som tilhører et annet endepunkt i samme setning', () => {
+    const utdrag =
+      'Sertraline-treated patients had a mean HAM-D change of 5.0 points ' +
+      '(95% CI 4.0 to 6.0), while body weight change was also recorded.'
+    const report = check(
+      {
+        extraction: {
+          estimateAvailability: 'not_reported',
+          estimate: null,
+          estimateUnit: null,
+          effectMeasure: null,
+          outcomeLabel: 'body weight change',
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          ciLower: '4.0',
+          ciUpper: '6.0',
+          ciLevelPercent: '95',
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
   // Et nakent tall ved ankeret er ikke et nivå. Her er `90` en utvalgsstørrelse,
   // og kilden sier aldri prosent — den sier ikke hvilket nivå intervallet har.
   it('bekrefter ikke et nivå kilden aldri oppgir som prosent', () => {
@@ -774,10 +870,10 @@ describe('checkExtraction — tallene', () => {
 
   it.each([
     ['N = 48', 'Patients (sertraline, N = 48) completed the trial', 48],
-    ['sample size was 48', 'the sample size was 48 in the sertraline arm', 48],
-    ['284 adults', 'a total of 284 adults were randomised to sertraline', 284],
-    ['48 patients', 'in the sertraline arm we enrolled 48 patients', 48],
-    ['norsk form', 'sertraline-studien inkluderte 48 pasienter', 48],
+    ['sample size was 48', 'the sertraline sample size was 48', 48],
+    ['284 adults', 'sertraline: 284 adults were randomised', 284],
+    ['48 patients', 'the sertraline arm had 48 patients', 48],
+    ['norsk form', 'sertraline-gruppen: 48 pasienter', 48],
   ])('kjenner igjen utvalgsstørrelsen skrevet som «%s»', (_navn, kilde, størrelse) => {
     const report = check(
       {
@@ -855,7 +951,9 @@ describe('checkExtraction — tallene', () => {
       extraction: { estimate: null, estimateAvailability: 'not_reported' },
     })
     expect(report.checkedFields).not.toContain('estimate')
-    expect(report.outcome).toBe('verified')
+    // Ikke et avvik. Intervallet står uavklart fordi radens eget estimat er
+    // det som binder det til endepunktet, og her finnes det ikke.
+    expect(report.outcome).not.toBe('needs_correction')
   })
 
   // Den klinisk viktigste av talltestene: et fortegn som er snudd, skal aldri
