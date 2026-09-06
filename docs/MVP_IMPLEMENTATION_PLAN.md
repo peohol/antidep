@@ -1384,7 +1384,8 @@ PR G  db: add publication events and gate                                   (#15
       docs: record the first real evidence registration in production       (#47)  merget   ingen migrasjon
       db: add technical agent identity and agent runs                        (#48)  merget   migrasjon 005d, 008c, 005e, 005f
       db: add the extraction verification registration write path            (#50)  merget   migrasjon 008d, 005g
-      feat: run the extraction verifier from source version to verification (#51)  åpen     migrasjon 008e, 007f, 005h
+      feat: run the extraction verifier from source version to verification (#51)  merget   migrasjon 008e, 007f, 005h
+      ops: activate the extraction verifier in the hosted project           (#56)  åpen     ingen migrasjon
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -5415,6 +5416,204 @@ lukkes for et funn ved å kjøre kjøreren mot det. De to andre står urørt: cl
 **Neste steg.** Deploy av de tre migrasjonene til det hostede prosjektet og utstedelse av
 legitimasjon der, slik at kjeden kan kjøres i produksjon — og deretter claim-verifikasjon
 (`workflow.claim_verifications`, `citation_support_verification`) som egen, senere PR.
+
+---
+
+### 74.34 Verifikatoren er aktivert i produksjon, og kjeden er kjørt der
+
+§74.33 kjørte kjeden hele veien, men mot en lokal stack, og skrev det eksplisitt: ingen
+migrasjoner deployet, ingen legitimasjon utstedt, ingen verifikasjon registrert i det hostede
+prosjektet. Denne leveransen lukker alle tre. Alt under er avlest fra produksjonsdatabasen
+etterpå, ikke utledet av at en kommando gikk igjennom.
+
+**Det var ti migrasjoner som manglet, ikke tre.** Avlesningen ved oppstart ga tjue rader i
+`supabase_migrations.schema_migrations` mot tretti filer i `migrations/`: ikke bare PR #51 sine
+fire, men også PR #48 sine fire og PR #50 sine to hadde aldri vært kjørt der. Det er nøyaktig
+det avviket §74.25 fant, og som issue 42 fortsatt ikke oppdager av seg selv — tredje gang på
+rad. Alle ti er nå kjørt, i tidsstempelrekkefølge, hver som én forespørsel og én transaksjon
+som inneholder både migrasjonens SQL og historikkraden. Etterpå: tretti rader mot tretti filer,
+samme versjonsnumre og navn.
+
+| Rekkefølge | Migrasjon | Fra |
+| --- | --- | --- |
+| 1–4 | 005d, 008c, 005e, 005f | PR #48 |
+| 5–6 | 008d, 005g | PR #50 |
+| 7–10 | 008e, 007f, 005h, publiseringsgatens G5b | PR #51 |
+
+**Framgangsmåten er nå et skript framfor en framgangsmåte som gjengis.** `supabase db push`
+kan fortsatt ikke kjøres herfra — `supabase projects list` gir `LegacyProjectsListNetworkError`,
+prøvd på nytt 6. september 2026, og §74.23 sin diagnose står. Management-API-veien var dermed
+den samme som i §74.26 og §74.28, men det var tredje gang den ble skrevet ut for hånd i denne
+planen, og en operasjon som gjentar seg og som skriver til produksjon hører hjemme i noe som
+kan reviewes én gang. `./scripts/deploy-migrations.sh` gjør nøyaktig det `db push` gjør, og
+`--dry-run` svarer på «er produksjon i synk med repoet?» uten å skrive noe.
+
+**Rettet under teknisk review: skriptet ville kjørt en eldre migrasjon etter en nyere.**
+Første utgave behandlet enhver lokal migrasjon uten en historikkrad som «manglende», uten å
+kontrollere at det som *var* kjørt utgjorde et sammenhengende prefiks av filene i repoet. Med
+registrert historikk `A, C` mot lokal `A, B, C` ga det `B` som manglende — og `B` ville blitt
+kjørt etter `C`. En migrasjon er skrevet under den forutsetningen at alt før den har kjørt, så
+den kunne da gjort noe annet enn den gjorde lokalt, eller gjeninnført en endring i feil
+rekkefølge. I et verktøy som skriver til produksjon er det en alvorligere feil enn den ser ut
+som, nettopp fordi den bare inntreffer når historikken allerede har drevet.
+
+Regelen er nå: **når en lokal migrasjon mangler, skal ingen nyere versjon allerede være
+registrert.** Er den brutt, skrives ingenting — et hull betyr at prosjektet og repoet har kommet
+fra hverandre, og hvorfor er et spørsmål et menneske må svare på, ikke noe et deployskript skal
+reparere selv. Supabase gjør det samme skillet med `--include-all`. Sammenligningen ligger i
+`src/ops/migration-plan.ts` framfor i skallet, og er mutasjonstestet: uten hullkontrollen
+feller to av testene rettelsen. Prøvd ende-til-ende mot den ekte historikken med én migrasjon
+fjernet midt i: avvist før noen skriving, med hullet navngitt.
+
+**Én ting skriptet bevisst ikke kontrollerer, fordi kontrollen ikke ville vært sann.** Første
+utkast sammenlignet `statements`-kolonnen med filens tekst for å oppdage en merget migrasjon
+som var redigert etterpå. Den meldte avvik på seksten filer. Ingen av dem var rørt:
+`supabase db push` deler filen i enkeltsetninger og fjerner kommentarene — de tretten eldste
+radene har mellom 4 og 158 elementer og er en brøkdel av filens lengde — mens
+Management-API-kjøringene i §74.26 la inn hele filen som ett element. Kontrollen er derfor på
+versjon og navn. Regelen om at en merget migrasjon aldri redigeres (§74.32) står, men kan ikke
+håndheves herfra.
+
+**Hva som er lest tilbake etter deploy, som avlesning og ikke som antakelse:**
+
+| Kontroll | Svar |
+| --- | --- |
+| `supabase_migrations.schema_migrations` mot `migrations/` | tretti rader, identisk liste, sammenlignet maskinelt |
+| De seksten nye funksjonene | alle finnes, med de signaturene filene definerer; alle med `search_path = ''`, og `api.*`-flatene som `SECURITY DEFINER` |
+| `provenance.agent_identities`, `provenance.agent_runs` | finnes, med RLS aktivert |
+| `provenance.agent_role` | inneholder `extraction_verification` |
+| `audit.event_operation` | inneholder `evidence_verification_registered` og `source_version_registered` |
+| `evidence_verifications_agent_run_actor_fkey` og `_role_fkey` | begge finnes — de tre lagene mot selvverifikasjon er på plass |
+| `knowledge.source_versions.retrieved_by_actor_id` | finnes, og begge de seedede radene er backfilt til `agent:evidence-extraction` |
+| Race-fiksen i `provenance.assert_agent_run_open(...)` | funksjonsdefinisjonen i produksjon inneholder `FOR UPDATE` |
+| `knowledge.assert_claim_revision_publishable(...)` | kaller `workflow.required_check_fields(...)` — G5b er i produksjon |
+| EXECUTE-grants | `anon` og `authenticated` på de fire agentflatene; bare `authenticated` på `api.create_source_version`; ingen klientrolle på `provenance.issue_agent_identity_credential`, `provenance.authenticate_agent_identity`, `knowledge.record_source_version`, `knowledge.source_version_content_hash` eller `workflow.required_check_fields` |
+| De ni nye triggerne | alle finnes |
+
+**Legitimasjonen er utstedt, og verdien finnes ikke i denne transkripsjonen.**
+`agent-identity:extraction-verification-01` har nå `secret_version = 1`, med
+`secret_issued_by_actor_id` på `human:peder-holman` og en `agent_identity_credential_issued`
+i auditloggen. Identiteten var inert fram til dette (§74.32), og er det ikke lenger.
+
+Utstedelsen krevde en tilføyelse til `scripts/issue-agent-credential.sh`, og grunnen er den
+samme som skriptet selv ble skrevet for. Skriptet nekter å kjøre i CI fordi det skriver
+hemmeligheten til stdout, og stdout i en CI-jobb er en logg som lagres. En agentsesjon har
+nøyaktig samme egenskap. `--write-env` skriver derfor de to variablene rett i den gitignorerte
+miljøfila, uten å vise verdien noe sted, og `--management-api` gir den privilegerte
+forbindelsen funksjonen krever uten at databasepassordet må hentes ut. Avveiningen er ført:
+`--db-url` gir en direkte TLS-forbindelse til databasen og er å foretrekke når passordet er for
+hånden; `--management-api` sender kallet over HTTPS til `api.supabase.com`.
+
+**Kjeden er kjørt i produksjon. Dette er avlesningen.**
+
+| Ledd | Avlesning |
+| --- | --- |
+| 1. Tørrkjøring | Kjøring `978f0c38`, ett avgrenset funn, lukket som `aborted`, null registrert |
+| 2. Fingeravtrykk | Begge de seedede kildeversjonene hentet på nytt fra NCBI og hashet uavhengig av kjøreren: `sha256:797e91b6…` (8 055 byte) og `sha256:c62a66215…` (14 515 byte) reproduserer de registrerte verdiene |
+| 3. Ekte kjøring | Kjøring `83c37ab9`, lukket som `succeeded`, tre verifikasjoner registrert |
+| 4. Utfall | Alle tre `uncertain`, alle med `source_access = verifiable_representation` og `checked_fields = {raw_extraction, source_locator, intervention_arm}` |
+| 5. Proveniens | Hver verifikasjon peker på kjøringen, kjøringen på identiteten, identiteten på `agent:extraction-verification` — og hver av de tre har nøyaktig én `evidence_verification_registered` i auditloggen |
+
+**`uncertain` er riktig svar, og det er verdt å si hvorfor det ikke ble «rettet».** Begrunnelsen
+kjøringen skrev, er den §74.33 forutså: utvalgsstørrelsen ble ikke gjenfunnet som tall i
+funnets eget utdrag, fordi utdragene er flerarmede («fluoxetine (N = 92), sertraline …»), og de
+norske katalogbegrepene ble ikke gjenfunnet ordrett i en engelsk kilde. Sitatet, kildepekeren
+og intervensjonsarmen står som kontrollert. Et `verified` her ville vært en gjetning som så ut
+som en kontroll.
+
+**Publiseringsgaten er prøvd mot de reelle radene, i en transaksjon som ble rullet tilbake.**
+`workflow.required_check_fields(...)` krever mellom ti og elleve felter for disse tre funnene,
+mens den deterministiske kontrollen dekker tre. To scenarier ble kjørt mot en påstandsrevisjon
+som faktisk er lenket til et av funnene:
+
+| Scenario | Svar fra gaten |
+| --- | --- |
+| Slik det står nå (`uncertain` registrert) | Blokkert av G5: «Evidensfunn med åpent verifikasjonsfunn» |
+| Med en syntetisk `verified` som bare bærer de tre deterministiske feltene | Blokkert av G5b: «Evidensfunn uten fullstendig kontrollert ekstraksjon» |
+
+Det andre svaret er hele poenget med migrasjonen fra §74.33: en partiell deterministisk
+`verified` kan ikke alene gjøre et klinisk funn publiserbart. Transaksjonen ble rullet tilbake,
+og etterkontrollen viser fortsatt tre verifikasjoner, null `verified`, tre auditrader.
+
+**Én ting gjenstår, og den krever tilgang denne sesjonen ikke har.** De fire
+GitHub Actions-secretene er ikke satt, og kan ikke settes herfra: sesjonens GitHub-proxy
+svarer `403` på `actions/secrets`, `actions/variables` og `actions/permissions`, mens
+`actions/workflows` og `actions/runs` er åpne. Det er avlest og ikke antatt — arbeidsflyten ble
+kjørt (`workflow_dispatch`, tørrkjøring, ett avgrenset funn) og feilet nøyaktig der den skal:
+på vaktposten som lister opp hva som mangler, med alle fire navn. Selve arbeidsflyten er
+dermed prøvd så langt den lar seg prøve herfra — den lar seg utløse, den sjekker ut, den
+installerer, og vaktposten virker — og ingen verdi lekket i loggen.
+
+Kjøringene over ble derfor gjort med kjøreren lokalt i sesjonen, mot det hostede prosjektet.
+Det er samme kode arbeidsflyten kjører (`npm run agent:verify-extraction`), samme database og
+samme identitet; det som ikke er prøvd, er GitHub-runneren som utførende maskin.
+
+**Legitimasjonen som er utstedt, hører til sesjonen den ble utstedt i.** Den ligger i en
+gitignorert fil i et miljø som forsvinner. Når secretene skal settes, utstedes en ny
+legitimasjon i det miljøet som skal lese den — og den utstedelsen ugyldiggjør denne, som er
+tilsiktet og uten konsekvens for radene som allerede er registrert: de peker på identiteten,
+ikke på hemmeligheten.
+
+**Rettet under teknisk review: `--write-env` holdt ikke sitt eget løfte.** Gjennomgangen fant
+to feil i den nye skriveveien, og begge var reelle. De handler ikke om hva som ble skrevet,
+men om hvor hemmeligheten kunne bli liggende.
+
+1. **Filen fikk ikke `0600` når den fantes fra før.** `fs.writeFileSync(fil, tekst,
+   { mode: 0o600 })` setter modus **bare** når filen opprettes — og standardtilfellet her er
+   nettopp at `.env.agent.local` finnes fra før, med URL og publishable key i seg. En fil som
+   sto som `0644`, ville fått agenthemmeligheten skrevet inn i seg mens koden så ut til å
+   love noe annet, og ingenting ville feilet. Avlest framfor resonnert: `writeFileSync` med
+   `mode: 0o600` på en eksisterende `0644`-fil gir `0644`. (Filen i den kjøringen som faktisk
+   ble gjort, var `0600` — den ble opprettet fersk under `umask 077` — så ingen hemmelighet
+   lå noen gang for åpent. Men det var flaks i rekkefølgen, ikke noe koden garanterte.)
+
+   Skrivingen går nå gjennom en fersk tempfil som `fchmod`-es til `0600` og deretter flyttes
+   på plass med `rename`. Rettighetene som gjelder til slutt er tempfilens, `fchmod` lar seg
+   ikke utvide av umask, og det finnes ikke noe øyeblikk der filen er halvskrevet eller for
+   vidt åpen.
+
+2. **`--write-env <fil>` tok imot en hvilken som helst bane**, mens både skriptet og
+   dokumentasjonen lovet at målet var gitignorert. Ingenting hindret at hemmeligheten ble
+   skrevet rett i en sporet fil — `.env.example` er det nærliggende eksempelet — og derfra er
+   veien inn i historikken ett `git add`. `git check-ignore` er nå et vilkår, og det feiler
+   lukket: svarer ikke git, skrives ingenting.
+
+**Og et tredje funn, på rettelsen av det første: tempfilen var ikke ignorert.** Tempfilen
+punkt 1 innførte, bærer den samme hemmeligheten fram til `rename`. Den het
+`.${basename}.<tilfeldig>.tmp`, som for `.env.agent.local` gir
+`..env.agent.local.<tilfeldig>.tmp` — med to innledende punktum, som verken `.env.*` eller
+`*.local` matcher. Blir prosessen drept i vinduet mellom skriving og `rename` — SIGKILL,
+krasj, strømbrudd — rydder ingen `catch` opp, og da lå hemmeligheten i en **sporbar** fil i
+arbeidstreet. Rettelsen på punkt 1 hadde altså flyttet nøyaktig den risikoen punkt 2 stengte,
+over i et vindu ingen så på. Avlest med `git check-ignore`: `.env.agent.local` er ignorert,
+`..env.agent.local.123abc.tmp` er ikke, `.env.agent.local.123abc.tmp` er.
+
+Tempfilen heter derfor det samme som målet med et suffiks, uten det ekstra punktumet — og,
+viktigere, den *konkrete* tempbanen kontrolleres med samme fail-closed regel som målfilen,
+før hemmeligheten skrives. Navnet alene er ikke argumentet; kontrollen er. Er tempbanen ikke
+ignorert, skrives ingenting.
+
+Logikken ligger i `src/agents/agent-env-file.ts` framfor i skallet, fordi den fortjener
+tester. Alle tre er mutasjonstestet: uten tempfilveien feller testen rettelsen med
+«expected '644' to be '600'», uten gitignore-vilkåret på målet feller to andre den, og med
+det innledende punktumet tilbake feller tempfil-testen den — den siste mot repoets faktiske
+ignore-regler, ikke mot en gjengivelse av dem. Den ekte veien er prøvd like reelt: et forsøk
+på å skrive til `.env.example` ble avvist med filen urørt, og etter hver runde autentiserte
+kjøreren mot produksjon med en ny legitimasjon skrevet på den rettede veien, uten at noen
+tempfil ble liggende igjen.
+
+**Hva denne leveransen bevisst ikke gjør.** Den bygger ikke claim-verifikasjon
+(`workflow.claim_verifications`, `citation_support_verification`), utvider ikke til andre
+agentroller, og endrer ikke noe klinisk innhold for å få en verifikasjon til å passere. Ingen
+CHECK, policy, grant eller gate er fjernet eller myknet opp.
+
+**Hva som gjenstår for Milepæl B.** G4/G5 kan nå lukkes for et funn ved å kjøre kjøreren mot
+det — men er ikke lukket for noen av de tre, fordi alle tre står som `uncertain`, og G5b vil
+uansett kreve dekning ingen deterministisk kontroll alene kan gi. De to andre står urørt:
+claim-verifikasjonene (G8/G9) og den menneskelige godkjenningen (G11/G12/G13).
+
+**Neste steg.** Claim-verifikasjon (`workflow.claim_verifications`,
+`citation_support_verification`) som egen, senere PR.
 
 ---
 
