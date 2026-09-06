@@ -41,7 +41,10 @@
 //   Størrelse        lesingen avbrytes idet grensen passeres, og forbindelsen
 //                    rives. Kroppen samles aldri opp ubegrenset.
 //   Tid              ett samlet tidsavbrudd for hele hentingen, redirect
-//                    inkludert.
+//                    inkludert. Tidsavbruddet river forbindelsen; et
+//                    tidsavbrudd som bare sluttet å vente, ville latt kilden
+//                    fortsette å strømme i bakgrunnen, og en kø med mange
+//                    kilder ville samlet opp åpne socketer.
 //
 // ----------------------------------------------------------------------------
 // Miljøer med utgående proxy
@@ -54,7 +57,7 @@
 // ============================================================================
 
 import { lookup as systemLookup, type LookupAddress } from 'node:dns'
-import { request as httpRequest, type IncomingMessage } from 'node:http'
+import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 
 import { judgeAddress, parseIpAddress } from './address-guard.ts'
@@ -231,23 +234,45 @@ interface Hop {
   readonly response: IncomingMessage
 }
 
-function sendRequest(url: URL, options: GuardedGetOptions, policy: AddressPolicy): Promise<Hop> {
-  return new Promise((resolve, reject) => {
-    const send = url.protocol === 'https:' ? httpsRequest : httpRequest
-    const request = send(
-      url,
-      {
-        method: 'GET',
-        headers: { accept: '*/*', 'user-agent': options.userAgent },
-        lookup: guardedLookup(policy),
-      },
-      (response) => {
-        resolve({ status: response.statusCode ?? 0, headers: response.headers, response })
-      },
-    )
-    request.on('error', reject)
-    request.end()
+/**
+ * Sender forespørselen, og gir kalleren både svaret og selve forespørselen.
+ *
+ * `ClientRequest` returneres synkront og ikke gjennom promisen, fordi den
+ * trengs nettopp når promisen *ikke* løser seg: et tidsavbrudd må kunne rive
+ * forbindelsen, og det kan den bare gjøre hvis den har noe å rive.
+ */
+function sendRequest(
+  url: URL,
+  options: GuardedGetOptions,
+  policy: AddressPolicy,
+): { readonly request: ClientRequest; readonly hop: Promise<Hop> } {
+  const send = url.protocol === 'https:' ? httpsRequest : httpRequest
+  let settle: (hop: Hop) => void = () => {}
+  let fail: (error: unknown) => void = () => {}
+  const hop = new Promise<Hop>((resolve, reject) => {
+    settle = resolve
+    fail = reject
   })
+
+  const request = send(
+    url,
+    {
+      method: 'GET',
+      headers: { accept: '*/*', 'user-agent': options.userAgent },
+      lookup: guardedLookup(policy),
+    },
+    (response) => {
+      settle({ status: response.statusCode ?? 0, headers: response.headers, response })
+    },
+  )
+  // Alltid en lytter: en `destroy()` etter at promisen er avgjort, gir et
+  // error-event som ellers ville blitt en uhåndtert feil i prosessen.
+  request.on('error', (error) => {
+    fail(error)
+  })
+  request.end()
+
+  return { request, hop }
 }
 
 /**
@@ -275,6 +300,12 @@ export async function guardedGet(
   // kjede av trege redirect bruke vilkårlig lang tid til sammen.
   const expiry = Date.now() + options.timeoutMs
 
+  // Forespørselen som er i luften akkurat nå. Den rives i `finally`, uansett
+  // hvilken vei funksjonen forlates: tidsavbrudd, avvist redirect, for stort
+  // svar eller et vellykket svar. Uten det ville en avbrutt henting etterlatt
+  // en åpen socket, og en kø med mange kilder ville samlet dem opp.
+  let active: ClientRequest | null = null
+
   try {
     for (let hop = 0; hop <= options.maxRedirects; hop += 1) {
       if (current.protocol !== 'https:' && current.protocol !== 'http:') {
@@ -291,17 +322,19 @@ export async function guardedGet(
         return { status: 'error', message: `Hentingen av ${url} brukte for lang tid.` }
       }
 
-      const hopResult = await withTimeout(
-        sendRequest(current, options, policy),
-        Math.max(1, expiry - Date.now()),
-      )
+      const attempt = sendRequest(current, options, policy)
+      active = attempt.request
+      const hopResult = await withTimeout(attempt.hop, Math.max(1, expiry - Date.now()))
       if (hopResult.status === 'timeout') {
         return { status: 'error', message: `Hentingen av ${url} brukte for lang tid.` }
       }
       const { status, headers, response } = hopResult.value
 
       if (status >= 300 && status < 400) {
-        response.resume()
+        // `destroy()` og ikke `resume()`: en redirect-kropp skal ikke leses, og
+        // en server som strømmer i det uendelige skal ikke få lov til å gjøre
+        // det i bakgrunnen mens vi henter neste hopp.
+        response.destroy()
         const location = headers['location']
         const target = Array.isArray(location) ? location[0] : location
         if (target === undefined || target.trim().length === 0) {
@@ -324,7 +357,8 @@ export async function guardedGet(
       }
 
       if (status < 200 || status >= 300) {
-        response.resume()
+        // Samme grunn som over: kroppen til et feilsvar skal ikke leses ferdig.
+        response.destroy()
         return { status: 'error', message: `Kilden svarte ${String(status)} på ${current.href}.` }
       }
 
@@ -333,7 +367,6 @@ export async function guardedGet(
         Math.max(1, expiry - Date.now()),
       )
       if (body.status === 'timeout') {
-        response.destroy()
         return { status: 'error', message: `Hentingen av ${url} brukte for lang tid.` }
       }
       if ('tooLarge' in body.value) {
@@ -362,6 +395,8 @@ export async function guardedGet(
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
     return { status: 'error', message: `Klarte ikke å hente ${url}: ${reason}` }
+  } finally {
+    active?.destroy()
   }
 }
 

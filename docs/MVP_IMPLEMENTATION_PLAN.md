@@ -4759,6 +4759,30 @@ uleselige framfor å bli tolket. En vakt som leser en adresse annerledes enn soc
 til, er ingen vakt. De innkapslede formene som *er* kanoniske — `::ffff:127.0.0.1` og NAT64 —
 pakkes ut og kontrolleres som den IPv4-adressen de bærer.
 
+**Tre ting til, fanget i den andre gjennomgangsrunden.** Alle tre var reelle, og den midterste
+er den eneste av alle funnene i denne PR-en som kunne påvirket klinisk innhold:
+
+1. **Tidsavbruddet sluttet å vente uten å rive forbindelsen.** Kilden fortsatte å strømme i
+   bakgrunnen, og en kø med mange kilder ville samlet opp åpne socketer. Det samme gjaldt en
+   redirect-kropp og et feilsvar, som ble tømt med `resume()` framfor revet. Forespørselen
+   rives nå i et `finally` som gjelder hver vei ut av funksjonen, og både redirect og feilsvar
+   destrueres framfor å leses ferdig. Prøvd ved å telle socketer på en ekte server — og
+   mutasjonstestet: uten rettelsen feller de nye testene den.
+
+2. **Tallkontrollen mistet fortegnet.** `-1,5` ble søkt som `1.5`, så et registrert `-1,5` ble
+   bekreftet av en kilde som oppgir `1,5` — og omvendt. En vektendring på −1,5 kg og en på
+   1,5 kg peker motsatt vei, så dette kunne gitt `verified` på et funn som snur
+   effektretningen. Fortegnet er nå en del av mønsteret: et negativt tall krever et minustegn
+   rett foran seg, og et positivt tall avvises når det står med minustegn foran. Skriver kilden
+   retningen med ord framfor med fortegn, finner kontrollen ingenting — og da er utfallet
+   `uncertain`, som er den riktige enden av asymmetrien. Samme runde tettet at «12» ble funnet
+   inne i «12.5».
+
+3. **CI kunne maskert en mislykket kjøring.** Siste linje i arbeidsflyten rørte kjøreren
+   gjennom `tee`, og uten `pipefail` er det `tee` sin exit-kode som gjelder — alltid 0. En
+   feilet verifikasjonskjøring ville sett grønn ut. `shell: bash` og `set -euo pipefail` er nå
+   eksplisitte, og forskjellen er prøvd i et skall før den ble skrevet inn.
+
 **Hva denne PR-en bevisst ikke gjør.** Den registrerer ingenting i det hostede prosjektet:
 migrasjonene er ikke deployet dit, ingen legitimasjon er utstedt der, og ingen verifikasjon er
 registrert der. Alt over er kjørt mot en lokal stack. Den bygger heller ikke

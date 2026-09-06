@@ -13,7 +13,8 @@
 // @vitest-environment node
 
 import { createServer, type Server } from 'node:http'
-import { afterEach, describe, expect, it } from 'vitest'
+import type { Socket } from 'node:net'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { guardedGet, judgeResolvedAddresses } from './guarded-http'
 import { judgeAddress } from './address-guard'
@@ -26,8 +27,9 @@ afterEach(async () => {
   if (running !== null) {
     const server = running
     running = null
-    // En forespørsel som ble avbrutt av tidsavbruddet, holder fortsatt socketen
-    // åpen; uten dette ville `close()` vente på den for alltid.
+    // Rydding, ikke en forutsetning: koden river forbindelsene sine selv, og
+    // testene over krever nettopp det. Dette finnes for at en test som feiler
+    // midt i, ikke skal henge på `close()`.
     server.closeAllConnections()
     await new Promise<void>((resolve) => {
       server.close(() => {
@@ -37,11 +39,26 @@ afterEach(async () => {
   }
 })
 
-async function startServer(
-  handler: Parameters<typeof createServer>[1],
-): Promise<{ origin: string }> {
+interface StartedServer {
+  readonly origin: string
+  /** Hvor mange socketer serveren har sett lukket. */
+  readonly closedConnections: () => number
+  readonly openConnections: () => number
+}
+
+async function startServer(handler: Parameters<typeof createServer>[1]): Promise<StartedServer> {
   const server = createServer(handler)
   running = server
+
+  let opened = 0
+  let closed = 0
+  server.on('connection', (socket: Socket) => {
+    opened += 1
+    socket.on('close', () => {
+      closed += 1
+    })
+  })
+
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       resolve()
@@ -51,7 +68,11 @@ async function startServer(
   if (address === null || typeof address === 'string') {
     throw new Error('serveren fikk ingen port')
   }
-  return { origin: `http://127.0.0.1:${String(address.port)}` }
+  return {
+    origin: `http://127.0.0.1:${String(address.port)}`,
+    closedConnections: () => closed,
+    openConnections: () => opened - closed,
+  }
 }
 
 describe('guardedGet — adressevakten er på som standard', () => {
@@ -289,6 +310,59 @@ describe('guardedGet — svarkoder og tid', () => {
     expect(result).toMatchObject({
       status: 'error',
       message: expect.stringContaining('for lang tid') as unknown as string,
+    })
+  })
+
+  // Et tidsavbrudd som bare slutter å vente, er ikke et tidsavbrudd: kilden
+  // fortsetter å strømme i bakgrunnen, og en kø med mange kilder samler opp
+  // åpne socketer. Forbindelsen skal faktisk rives.
+  it('river forbindelsen når hentingen tidsavbrytes', async () => {
+    const server = await startServer(() => {
+      // Svarer aldri.
+    })
+    await guardedGet(server.origin, { addressPolicy: ALLOW_ALL, timeoutMs: 150 })
+    await vi.waitFor(() => {
+      expect(server.openConnections()).toBe(0)
+    })
+  })
+
+  // Samme regel for en kropp vi aldri skal lese: et feilsvar som strømmer i det
+  // uendelige, skal ikke få lov til å gjøre det etter at vi har konkludert.
+  it('river forbindelsen når svaret ikke er 2xx, uten å lese kroppen ferdig', async () => {
+    const server = await startServer((_request, response) => {
+      response.writeHead(500, { 'content-type': 'text/plain' })
+      const pump = setInterval(() => {
+        response.write('x'.repeat(4096))
+      }, 5)
+      response.on('close', () => {
+        clearInterval(pump)
+      })
+    })
+
+    const result = await guardedGet(server.origin, { addressPolicy: ALLOW_ALL })
+
+    expect(result.status).toBe('error')
+    await vi.waitFor(() => {
+      expect(server.openConnections()).toBe(0)
+    })
+  })
+
+  it('river forbindelsen når svaret er større enn grensen', async () => {
+    const server = await startServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/plain' })
+      const pump = setInterval(() => {
+        response.write('x'.repeat(4096))
+      }, 5)
+      response.on('close', () => {
+        clearInterval(pump)
+      })
+    })
+
+    const result = await guardedGet(server.origin, { addressPolicy: ALLOW_ALL, maxBytes: 1024 })
+
+    expect(result.status).toBe('error')
+    await vi.waitFor(() => {
+      expect(server.openConnections()).toBe(0)
     })
   })
 

@@ -148,6 +148,18 @@ describe('checkExtraction — tallene', () => {
     expect(report.outcome).toBe('verified')
   })
 
+  // Den klinisk viktigste av talltestene: et fortegn som er snudd, skal aldri
+  // ende i `verified`.
+  it('bekrefter ikke et estimat der fortegnet er snudd', () => {
+    const report = check(
+      { extraction: { estimate: '-1.5' } },
+      'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6)',
+    )
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.rationale).toContain('estimat (-1.5)')
+  })
+
   it('godtar et tall skrevet med komma i kilden', () => {
     // Norske og engelske kilder skriver desimalskilletegnet ulikt, og tallet er
     // det samme. Bare estimatet er i spill her; den øvrige teksten er byttet
@@ -229,6 +241,44 @@ describe('numberOccursIn', () => {
 
   it('avviser en verdi som ikke er et tall', () => {
     expect(numberOccursIn(projections, 'ikke et tall')).toBe(false)
+  })
+
+  it('finner ikke et tall som bare er heltallsdelen av et desimaltall', () => {
+    expect(numberOccursIn(searchProjections('verdien var 12.5 kg'), '12')).toBe(false)
+  })
+})
+
+// Fortegnet er en del av tallet. En vektendring på −1,5 kg og en på 1,5 kg
+// peker motsatt vei, så en kontroll som blandet dem ville kunnet bekrefte et
+// funn som snur effektretningen.
+describe('numberOccursIn — fortegn', () => {
+  const positive = searchProjections('gjennomsnittlig endring var 1.5 kg')
+  const negative = searchProjections('gjennomsnittlig endring var -1.5 kg')
+
+  it('finner ikke et negativt tall i en kilde som oppgir det positive', () => {
+    expect(numberOccursIn(positive, '-1.5')).toBe(false)
+  })
+
+  it('finner ikke et positivt tall i en kilde som oppgir det negative', () => {
+    expect(numberOccursIn(negative, '1.5')).toBe(false)
+  })
+
+  it('finner et negativt tall når kilden faktisk oppgir det', () => {
+    expect(numberOccursIn(negative, '-1.5')).toBe(true)
+  })
+
+  it('finner et negativt tall skrevet med typografisk minustegn', () => {
+    expect(numberOccursIn(searchProjections('endringen var −1,5 kg'), '-1.5')).toBe(true)
+  })
+
+  it('leser ikke en bindestrek i et intervall som et minustegn', () => {
+    expect(numberOccursIn(searchProjections('mirtazapin 15-60 mg/døgn'), '-60')).toBe(false)
+  })
+
+  // Følgen av regelen over, og den er bevisst: et tvilstilfelle skal bli
+  // uavklart, ikke en bekreftelse.
+  it('finner heller ikke det positive tallet i et bindestrek-intervall', () => {
+    expect(numberOccursIn(searchProjections('mirtazapin 15-60 mg/døgn'), '60')).toBe(false)
   })
 })
 

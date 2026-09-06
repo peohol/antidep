@@ -235,7 +235,20 @@ export function verbatimQuotes(raw: unknown, path = ''): readonly VerbatimQuote[
 // betyr det samme, og desimalskilletegnet kan være både punktum og komma —
 // norske og engelske kilder skriver ulikt, og tallet er det samme.
 //
-// Grensene rundt treffet hindrer at «7» matcher inne i «17» eller «0.7».
+// **Fortegnet er en del av tallet, og det er en klinisk regel og ikke en
+// formalitet.** En vektendring på −1,5 kg og en på 1,5 kg peker motsatt vei, og
+// en kontroll som fant «1.5» i kilden og godtok et registrert «-1,5», ville
+// bekreftet et funn som snur effektretningen. Et negativt tall krever derfor et
+// minustegn rett foran seg, og et positivt tall avvises hvis det står med et
+// minustegn foran. Skriver kilden retningen med ord framfor med fortegn («a
+// decrease of 1.5 kg»), finner kontrollen ingenting — og da er utfallet
+// `uncertain`, ikke en bekreftelse. Det er den samme asymmetrien som gjelder
+// ellers: bekreftelse teller, fravær konkluderer ikke.
+//
+// Grensene rundt treffet hindrer tre ting: at «7» matcher inne i «17», at
+// «0.7» leses som «7», og at «12» leses ut av «12.5». Et bindestrek-intervall
+// («15-60 mg») gir heller ingen treff på «60»: bindestreken kan ikke skilles
+// fra et minustegn, og et tvilstilfelle skal ikke bli til en bekreftelse.
 // ----------------------------------------------------------------------------
 
 /** «1.50» → «1.5», «12.0» → «12», «120» → «120». Ingen avrunding. */
@@ -251,18 +264,33 @@ function escapeRegExp(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** Om tallet står i teksten som et selvstendig tall, ikke som del av et annet. */
+/** Om tallet står i teksten som et selvstendig tall, med riktig fortegn. */
 export function numberOccursIn(projections: readonly string[], value: string): boolean {
   const normalized = trimNumericText(value).replace(/^\+/, '')
   if (!/^-?\d+(\.\d+)?$/.test(normalized)) {
     return false
   }
-  const [integerPart = '', decimalPart] = normalized.replace('-', '').split('.')
+
+  const isNegative = normalized.startsWith('-')
+  const digits = normalized.replace('-', '')
+  const [integerPart = '', decimalPart] = digits.split('.')
   const body =
     decimalPart === undefined
       ? escapeRegExp(integerPart)
       : `${escapeRegExp(integerPart)}[.,]${escapeRegExp(decimalPart)}0*`
-  const pattern = new RegExp(`(?<![\\d.,])${body}(?![\\d])`)
+
+  // Foran: et negativt tall krever minustegnet, og minustegnet må selv ikke
+  // stå rett etter et tall — ellers ville «8-12» blitt lest som «-12». Et
+  // positivt tall avvises når det står med minustegn foran.
+  //
+  // `normalize()` har allerede gjort typografiske minus- og bindestreker om til
+  // ASCII, så det er nok å se etter ett tegn her.
+  const before = isNegative ? '(?<![\\d.,])-' : '(?<![\\d.,-])'
+  // Bak: verken et siffer til, eller et desimalskilletegn med et siffer etter.
+  // Uten det siste ville «12» blitt funnet inne i «12.5».
+  const after = '(?![\\d]|[.,]\\d)'
+
+  const pattern = new RegExp(`${before}${body}${after}`)
   return projections.some((haystack) => pattern.test(haystack))
 }
 

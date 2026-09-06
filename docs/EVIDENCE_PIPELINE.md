@@ -560,6 +560,7 @@ Kontrollen skiller skarpt mellom å bekrefte og å avkrefte, og skillet er en kl
 | --- | --- | --- |
 | Sitat mangler i representasjonen | `needs_correction` | Et sitat er en påstand om ordrett gjengivelse fra nøyaktig den representasjonen, og den er falsifiserbar |
 | Oppgitt tall ikke gjenfunnet | `uncertain`, feltet føres ikke som kontrollert | Tallet kan stå skrevet med bokstaver, i en annen enhet eller i en tabell som ikke er med i representasjonen |
+| Tall gjenfunnet, men med motsatt fortegn | `uncertain`, feltet føres ikke som kontrollert | Fortegnet er en del av tallet: −1,5 kg og 1,5 kg peker motsatt vei, og en bekreftelse på tvers av dem ville godkjent et funn som snur effektretningen |
 | Begrep ikke gjenfunnet | Ingen virkning på utfallet, feltet føres ikke som kontrollert | Kildene er på engelsk og katalogen på norsk |
 
 De øvrige punktene i §25 — riktig populasjon, riktig tidspunkt, overtolkning, manglende forbehold — krever språkforståelse og dekkes ikke av dagens kontroll. `checked_fields` sier derfor alltid nøyaktig hvilke felter kontrollen faktisk gikk gjennom, slik at en bekreftelse aldri dekker mer enn den gir inntrykk av (DATABASE_ARCHITECTURE.md §29). Et senere ledd med språkmodell er et nytt adapter i samme modell: kjøringen registrerer leverandør, modell og modellversjon som ethvert annet agentledd (§65), så de to kan stå ved siden av hverandre.
