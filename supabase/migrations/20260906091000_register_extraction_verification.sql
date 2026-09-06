@@ -70,7 +70,7 @@
 -- versions-rad (source_version_id, migrasjon 20260819064500) som selv har
 -- content_hash satt — ikke bare at raden finnes. En kildeversjon uten
 -- content_hash (retrieved_from alene, uten hash) er et sporet besøk, ikke en
--- etterprøvbar representasjon, og kvalifiserer ikke. Se avsnitt 5 for hvor
+-- etterprøvbar representasjon, og kvalifiserer ikke. Se avsnitt 6 for hvor
 -- dette håndheves, og den negative testen som prøver akkurat denne grensen.
 --
 -- Skriveveien for å registrere selve kildeversjonen (issue #44) bygges ikke
@@ -113,8 +113,9 @@
 -- er *åpen* i det verifikasjonen registreres — «åpen» er en egenskap ved
 -- tidspunktet handlingen skjer, ikke ved raden i ettertid, og kan derfor ikke
 -- håndheves av en fremmednøkkel mot en tabell hvis rader endrer status over
--- tid. Den kontrollen gjør provenance.assert_agent_run_open(uuid, uuid), kalt
--- fra funksjonen (avsnitt 4), som den allerede gjør for api.complete_agent_run.
+-- tid. Den kontrollen gjør provenance.assert_agent_run_open(uuid, uuid)
+-- (avsnitt 5), kalt fra funksjonen (avsnitt 6), som den allerede gjør for
+-- api.complete_agent_run.
 --
 -- ----------------------------------------------------------------------------
 -- Hvorfor aktør, rolle og kjøring ikke er parametre kalleren oppgir
@@ -161,7 +162,27 @@
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
--- 1. audit.events utvides til å kunne peke på workflow.evidence_verifications
+-- 1. workflow.verification_source_access — definisjonen oppdateres, ikke bare
+--    håndhevingen
+--
+-- §74.30 punkt 2 sin avgjørelse (se hodekommentaren) er en endring av hva
+-- `verifiable_representation` faktisk betyr, ikke bare av hva funksjonen
+-- håndhever. Den kanoniske definisjonen ligger i typekommentaren (migrasjon
+-- 20260819180000), og den sa «et lagret og etterprøvbart øyeblikksbilde» — et
+-- krav om en faktisk lagret kopi som avgjørelsen nettopp forkaster. Å la
+-- håndhevingen avgjøre noe kommentaren fortsatt beskriver annerledes, ville
+-- gjort typen sin egen dokumentasjon til den ene kilden en verifikator eller
+-- en senere utvikler ikke kan stole på (DATABASE_ARCHITECTURE.md §57 om
+-- vokabular som dokumentert kontrakt). `COMMENT ON TYPE` er en ren metadata-
+-- operasjon og kan skrives om i en senere migrasjon uten `ALTER TYPE`s
+-- begrensninger; den oppdateres derfor her, i samme migrasjon som endrer hva
+-- ordet faktisk betyr.
+-- ----------------------------------------------------------------------------
+comment on type workflow.verification_source_access is
+  'Hva verifikatoren faktisk hadde tilgang til (ANTIDEP_CONSTITUTION.md §11): original_source (originalkilden selv), verifiable_representation (en etterprøvbar representasjon av kildeversjonen — en tredjepart kan hente den på nytt fra retrieved_from og kontrollere den mot content_hash, uavhengig av om fulltekst i tillegg er lagret i storage_reference; §74.30 punkt 2 i MVP_IMPLEMENTATION_PLAN.md avgjør dette eksplisitt) eller derived_summary (bare et sammendrag laget av et annet ledd). §11 forbyr å godkjenne på grunnlag av andre agenters sammendrag alene, og kombinasjonen verified + derived_summary er derfor avvist av en CHECK i begge verifikasjonstabellene. api.register_extraction_verification(text, text, uuid, uuid, text, text, text[], text, text) håndhever grunnlaget for verifiable_representation: kildeversjonen må ha content_hash satt, ikke bare finnes.';
+
+-- ----------------------------------------------------------------------------
+-- 2. audit.events utvides til å kunne peke på workflow.evidence_verifications
 --
 -- Samme ombygging som 007c, 007e og 005e måtte gjøre, og av samme grunn:
 -- PostgreSQL har ingen ALTER COLUMN som endrer uttrykket til en generert
@@ -252,7 +273,7 @@ alter table audit.events add constraint events_snapshot_shape_check
   );
 
 -- ----------------------------------------------------------------------------
--- 2. workflow.evidence_verifications får agentkjøringsbinding
+-- 3. workflow.evidence_verifications får agentkjøringsbinding
 --
 -- Se hodekommentaren for hvorfor de to kolonnene og de to fremmednøklene finnes.
 -- Kolonnene er lagt til før fremmednøklene, slik at ADD CONSTRAINT kan referere
@@ -289,7 +310,7 @@ create index evidence_verifications_agent_run_id_idx
   on workflow.evidence_verifications (agent_run_id);
 
 -- ----------------------------------------------------------------------------
--- 3. audit.record_evidence_verification_event() — produsenten for INSERT
+-- 4. audit.record_evidence_verification_event() — produsenten for INSERT
 --
 -- Samme mønster som audit.record_evidence_item_event() (migrasjon 007e) og
 -- audit.record_source_event() (migrasjon 007c): ikke SECURITY DEFINER, slik at
@@ -331,7 +352,7 @@ create trigger evidence_verifications_record_creation_audit_event
   for each row execute function audit.record_evidence_verification_event();
 
 -- ----------------------------------------------------------------------------
--- 4. provenance.assert_agent_run_open(...) tar radlås (§74.32)
+-- 5. provenance.assert_agent_run_open(...) tar radlås (§74.32)
 --
 -- Migrasjon 20260905092000 er allerede merget (PR #48): en database som har
 -- registrert den migrasjonsversjonen kjører den aldri på nytt, så en endring i
@@ -394,7 +415,7 @@ comment on function provenance.assert_agent_run_open(uuid, uuid) is
 revoke execute on function provenance.assert_agent_run_open(uuid, uuid) from public;
 
 -- ----------------------------------------------------------------------------
--- 5. api.register_extraction_verification(...) — den eneste skriveveien
+-- 6. api.register_extraction_verification(...) — den eneste skriveveien
 --
 -- SECURITY DEFINER, tomt search_path, schemakvalifiserte navn, EXECUTE
 -- revokert fra PUBLIC og gitt til anon og authenticated — samme form og samme

@@ -110,13 +110,16 @@ values (
   'Testforfatter 440', (select id from fixture where name = 'editor')
 );
 
--- Et lagret øyeblikksbilde av kilden (knowledge.source_versions,
--- migrasjon 20260819064500). Finnes for at det første evidensfunnet skal ha et
--- reelt grunnlag å registrere `verifiable_representation` mot: uten denne
--- raden, og uten evidensfunnets source_version_id koblet til den, ville
+-- En etterprøvbar kildeversjon (knowledge.source_versions, migrasjon
+-- 20260819064500): retrieved_from og content_hash er begge satt,
+-- storage_reference er bevisst NULL. §74.30 punkt 2 avgjør at dette er
+-- tilstrekkelig grunnlag for verifiable_representation — en tredjepart kan
+-- hente kilden på nytt fra retrieved_from og kontrollere den mot content_hash,
+-- uten at Antidep har lagret en kopi. Finnes for at det første evidensfunnet
+-- skal ha et reelt grunnlag å registrere `verifiable_representation` mot: uten
+-- denne raden, og uten evidensfunnets source_version_id koblet til den, ville
 -- outcome := 'verified' + source_access := 'verifiable_representation' vært en
--- påstand uten grunnlag, som §74.30 punkt 1 krever at funksjonen avviser (se
--- avsnitt 8).
+-- påstand uten grunnlag, som funksjonen avviser (se avsnitt 8).
 insert into knowledge.source_versions (
   id, source_id, retrieved_at, retrieved_from, content_hash
 )
@@ -288,7 +291,7 @@ select 'ok', api.register_extraction_verification(
   p_outcome := 'verified',
   p_source_access := 'verifiable_representation',
   p_checked_fields := array['source_locator', 'outcome', 'reported_direction'],
-  p_rationale := 'Prøve i 440: kontrollert mot et lagret øyeblikksbilde av kilden.'
+  p_rationale := 'Prøve i 440: kontrollert mot kildeversjonens adresse og fingeravtrykk.'
 );
 reset role;
 
