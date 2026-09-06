@@ -4998,6 +4998,36 @@ men skiller to påstander. Den positive kontrollen er beholdt.
 Tre mutasjoner faller: at bindingen ikke påvirker utfallet, at den søkes i hele utdraget framfor i
 påstanden, og at den bare er samforekomst.
 
+**Den tjuende runden tok bindingen ut til resten av raden — og avviste ett av tre punkter.**
+
+*Komparatoren og populasjonen var fortsatt bare ordtreff.* «`Paroxetine was not used as a comparator
+in this analysis`» førte `comparator_arm` opp som kontrollert, og «`Patients with major depressive
+disorder were excluded from this analysis`» gjorde det samme for populasjonen — begge mens
+arm-til-endepunkt-bindingen kom fra et helt annet utdrag. Begge deler er nå bundet lokalt:
+komparatoren må stå navngitt **som** komparator (`compared with`, `versus`, `kontrollgruppen`, …), og
+populasjonen må stå knyttet til armen. Benektelser stoppes av det samme limet som ellers — `not` er
+ikke lim. `placebo` er samtidig gjort til et kontrollerbart begrep på linje med et virkestoffnavn;
+det var ikke kontrollert i det hele tatt før.
+
+*Forskjellen på en presisering og en kontrast er skrevet inn.* Radens egen populasjonsetikett er lim
+mellom armen og verdien — «`Sertraline-treated patients with major depressive disorder had a mean
+weight change`» er én påstand — mens komparatornavnet ikke er det. Et kontrastord mellom armen og
+verdien er nettopp signalet om at verdien kan tilhøre den andre armen, og forskjellen er
+mutasjonstestet.
+
+*Det tredje punktet er ikke en feil.* Reviewer leste `comparator_kind = none` som «det finnes ingen
+komparator», og pekte på at fiksturen har `none` mens kilden sier «`Fluoxetine was the comparator.`».
+Vokabularet sier noe annet: `none` betyr at **funnet** er armspesifikt, ikke at studien manglet en
+komparator — «et enarmet gjennomsnitt hentet fra en sammenlignende studie har komparator none»
+(migrasjon `20260819064500`). Fiksturen er nettopp det dokumenterte tilfellet: et `mean_change` for
+sertralinarmen, hentet fra en sammenlignende studie. Å gjøre `none` til noe som blokkerer `verified`
+ville gjort hvert eneste armspesifikke funn permanent uavklart, av en grunn som ikke er et avvik.
+`none` er en påstand om hvordan ekstraksjonen er avgrenset, ikke om kildens tekst, og det finnes
+ingenting i teksten å kontrollere den mot.
+
+Fem mutasjoner faller: komparatoren uten relasjonsanker, populasjonen uten binding til armen, placebo
+som ukontrollerbart, bindingene uten virkning på utfallet, og komparatornavnet som lim.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

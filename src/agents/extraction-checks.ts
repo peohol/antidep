@@ -459,6 +459,26 @@ function sampleSizeExpressions(e: VerificationExtraction): readonly string[] {
   return number === null ? [] : [...SAMPLE_SIZE_ANCHORS_BEFORE, number.body]
 }
 
+/**
+ * Radens egen populasjonsetikett som lim.
+ *
+ * Populasjonen er en presisering av armen og står nesten alltid mellom armen og
+ * verdien: «Sertraline-treated patients **with major depressive disorder** had a
+ * mean weight change». Uten den som lim ville en helt vanlig og korrekt setning
+ * ikke lenger bundet endepunktet til armen.
+ *
+ * Komparatoren står bevisst *ikke* i limet, og forskjellen er ikke tilfeldig: en
+ * populasjon presiserer armen, mens en komparator er en **kontrast** til den.
+ * Et kontrastord mellom armen og verdien er nettopp signalet om at verdien kan
+ * tilhøre den andre armen.
+ */
+function populationExpressions(e: VerificationExtraction): readonly string[] {
+  if (e.populationLabel === null || !isReported(e.populationAvailability)) {
+    return []
+  }
+  return [termAnchor(e.populationLabel)]
+}
+
 function estimateExpressions(
   e: VerificationExtraction,
   estimate: string | null,
@@ -1138,10 +1158,20 @@ function intervalOrders(level: string, bounds: string): readonly string[] {
 function termsBoundTogether(
   projections: readonly string[],
   terms: readonly string[],
+  /**
+   * Uttrykk som navngir *relasjonen*, når det er den som binder framfor et
+   * annet begrep. «Fluoxetine» ved siden av et tall sier ingenting; «fluoxetine
+   * was the comparator» sier det raden påstår.
+   */
+  anchors: readonly string[],
   glueExtra: readonly string[],
 ): boolean {
   const binding = glue(glueExtra, BINDING_REACH)
-  return permutations(terms.map(termAnchor))
+  const elements = [
+    ...terms.map(termAnchor),
+    ...(anchors.length === 0 ? [] : [`(?:${anchors.join('|')})`]),
+  ]
+  return permutations(elements)
     .map((parts) => parts.join(binding))
     .some((pattern) => projections.some((projection) => new RegExp(pattern, 'iu').test(projection)))
 }
@@ -1264,19 +1294,109 @@ function reportedConfidenceInterval(item: VerificationItem): ConfidenceInterval 
   return { lower: e.ciLower, upper: e.ciUpper, levelPercent: e.ciLevelPercent }
 }
 
+/**
+ * Uttrykk der kilden navngir en komparator.
+ *
+ * Et legemiddelnavn i seg selv sier ingenting om at det *var* komparatoren:
+ * «Paroxetine-treated patients discontinued treatment because of nausea» nevner
+ * paroksetin uten å si noe om kontrasten i dette funnet. Kilden må selv si det.
+ *
+ * Listen er kort med vilje, som de andre: en form den ikke kjenner, gir
+ * `uncertain` og ikke et avvik.
+ */
+const COMPARATOR_ANCHORS = [
+  'comparators?',
+  'compared (?:with|to|against)',
+  'comparison',
+  'controls?',
+  'control (?:group|arm)',
+  'versus',
+  '\\bvs\\.?',
+  'komparator\\w*',
+  'kontrollgruppen?',
+  'sammenlign\\w*',
+]
+
+/**
+ * Begrepet kilden må navngi som komparator, eller `null` når funnet er
+ * armspesifikt.
+ *
+ * `placebo` er et begrep på linje med et virkestoffnavn: det står i kilden når
+ * kontrasten er placebo, og kan kontrolleres som et hvilket som helst annet
+ * begrep. `none` er noe annet — se `termBindings`.
+ */
+function comparatorTerm(e: VerificationExtraction): string | null {
+  if (e.comparatorKind === 'drug') {
+    return e.comparatorDrugName
+  }
+  return e.comparatorKind === 'placebo' ? 'placebo' : null
+}
+
 function termClaims(item: VerificationItem): readonly TermClaim[] {
   const e = item.extraction
   const claims: TermClaim[] = [
     { field: 'intervention_arm', label: 'intervensjon', term: e.interventionDrugName },
     { field: 'outcome', label: 'endepunkt', term: e.outcomeLabel },
   ]
-  if (e.comparatorKind === 'drug' && e.comparatorDrugName !== null) {
-    claims.push({ field: 'comparator_arm', label: 'komparator', term: e.comparatorDrugName })
+  const comparator = comparatorTerm(e)
+  if (comparator !== null) {
+    claims.push({ field: 'comparator_arm', label: 'komparator', term: comparator })
   }
   if (e.populationLabel !== null && isReported(e.populationAvailability)) {
     claims.push({ field: 'population', label: 'populasjon', term: e.populationLabel })
   }
   return claims
+}
+
+/**
+ * Bindingene raden må ha i kilden for å være bekreftet.
+ *
+ * Et ordtreff er ikke støtte for at *denne* raden stemmer. Hver binding krever
+ * derfor at delene står i **samme påstand**, med bare kjent lim imellom — og
+ * limet er det som tåler benektelser: `not`, `and` og et fremmed legemiddelnavn
+ * er alle ord det ikke kjenner.
+ *
+ * `comparator_kind = none` står bevisst *ikke* her. `none` betyr at **funnet**
+ * er armspesifikt, ikke at studien manglet en komparator: vokabularet sier
+ * uttrykkelig at «et enarmet gjennomsnitt hentet fra en sammenlignende studie
+ * har komparator none» (migrasjon 20260819064500). At kilden sier «Fluoxetine
+ * was the comparator» motsier derfor ikke en `none`-rad — det er nettopp den
+ * dokumenterte situasjonen. `none` er en påstand om hvordan ekstraksjonen er
+ * avgrenset, ikke om kildens tekst, og det finnes ingenting i teksten å
+ * kontrollere den mot.
+ */
+interface TermBinding {
+  readonly terms: readonly string[]
+  readonly anchors: readonly string[]
+  /** Hva utdragene måtte ha sagt, skrevet for en leser. */
+  readonly missing: string
+}
+
+function termBindings(item: VerificationItem): readonly TermBinding[] {
+  const e = item.extraction
+  const bindings: TermBinding[] = [
+    {
+      terms: [e.interventionDrugName, e.outcomeLabel],
+      anchors: [],
+      missing: `binder «${e.interventionDrugName}» til «${e.outcomeLabel}» i samme påstand`,
+    },
+  ]
+  const comparator = comparatorTerm(e)
+  if (comparator !== null) {
+    bindings.push({
+      terms: [comparator],
+      anchors: COMPARATOR_ANCHORS,
+      missing: `sier at «${comparator}» var komparatoren`,
+    })
+  }
+  if (e.populationLabel !== null && isReported(e.populationAvailability)) {
+    bindings.push({
+      terms: [e.interventionDrugName, e.populationLabel],
+      anchors: [],
+      missing: `knytter «${e.populationLabel}» til «${e.interventionDrugName}» i samme påstand`,
+    })
+  }
+  return bindings
 }
 
 function unique(fields: readonly EvidenceCheckField[]): readonly EvidenceCheckField[] {
@@ -1563,28 +1683,31 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     )
   }
 
-  // At begge begrepene finnes, er ikke det samme som at raden finnes. Se
-  // hodekommentaren over `termsBoundTogether`.
-  const armBoundToOutcome =
-    unmatchedTerms.length === 0 &&
-    termsBoundTogether(
-      claimProjections,
-      [item.extraction.interventionDrugName, item.extraction.outcomeLabel],
-      [
-        ...sampleSizeExpressions(item.extraction),
-        ...estimateExpressions(
-          item.extraction,
-          isReported(item.extraction.estimateAvailability) ? item.extraction.estimate : null,
-        ),
-      ],
-    )
-  if (!armBoundToOutcome && unmatchedTerms.length === 0) {
+  // At begrepene finnes, er ikke det samme som at raden finnes. Se
+  // hodekommentaren over `termsBoundTogether` og `termBindings`.
+  const bindingGlue = [
+    ...sampleSizeExpressions(item.extraction),
+    ...populationExpressions(item.extraction),
+    ...estimateExpressions(
+      item.extraction,
+      isReported(item.extraction.estimateAvailability) ? item.extraction.estimate : null,
+    ),
+  ]
+  const unboundTerms =
+    unmatchedTerms.length > 0
+      ? []
+      : termBindings(item)
+          .filter(
+            (binding) =>
+              !termsBoundTogether(quoteFragments, binding.terms, binding.anchors, bindingGlue),
+          )
+          .map((binding) => binding.missing)
+  if (unboundTerms.length > 0) {
     noteUnresolved(
-      `Ingen av funnets ordrette utdrag binder «${item.extraction.interventionDrugName}» til ` +
-        `«${item.extraction.outcomeLabel}» i samme påstand. Begge begrepene finnes, men et ` +
-        'utdrag som nevner dem hver for seg — eller som tilskriver endepunktet en annen arm — ' +
-        'sier ikke at dette endepunktet gjelder denne armen. Raden er derfor ikke ført opp som ' +
-        'bekreftet.',
+      'Begrepene ble gjenfunnet, men ingen av funnets ordrette utdrag ' +
+        `${unboundTerms.join(', og ingen ')}. Et utdrag som nevner begrepene hver for seg — ` +
+        'eller som benekter forholdet, eller tilskriver det en annen arm — er ikke støtte for ' +
+        'at nettopp denne raden stemmer. Raden er derfor ikke ført opp som bekreftet.',
     )
   }
 
@@ -1609,7 +1732,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     ambiguousNumbers.length > 0 ||
     confidenceIntervalUnresolved ||
     unmatchedTerms.length > 0 ||
-    !armBoundToOutcome
+    unboundTerms.length > 0
   ) {
     // Et oppgitt tall som ikke lot seg gjenfinne, er ikke et avvik — men det er
     // heller ikke en bekreftelse av raden som helhet. Utfallet sier nettopp det.

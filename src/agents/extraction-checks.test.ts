@@ -1371,6 +1371,135 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
     expect(report.findings).toContain('Kontrollen konkluderte ikke')
   })
 
+  // Komparator og populasjon er del av den samme kliniske raden, og har samme
+  // krav: et ordtreff i en benektelse eller i en helt annen påstand er ikke
+  // støtte for at *denne* raden stemmer.
+  it.each([
+    [
+      'komparatoren bare forekommer i en benektelse',
+      'Paroxetine was not used as a comparator in this analysis',
+      { comparatorKind: 'drug', comparatorDrugName: 'paroxetine' },
+    ],
+    [
+      'komparatoren bare forekommer i en annen påstand',
+      'Paroxetine-treated patients discontinued treatment because of nausea',
+      { comparatorKind: 'drug', comparatorDrugName: 'paroxetine' },
+    ],
+    [
+      'placebo ikke er navngitt som komparator',
+      'Placebo tablets were prepared by the hospital pharmacy',
+      { comparatorKind: 'placebo', comparatorDrugName: null },
+    ],
+  ] as const)('bekrefter ikke en rad der %s', (_navn, komparatorutdrag, extraction) => {
+    const report = check(
+      {
+        extraction: {
+          ...utenTall,
+          ...extraction,
+          populationAvailability: 'not_reported',
+          rawExtraction: { arm: BEGGE, komparator: komparatorutdrag },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${BEGGE}</p>\n<p>${komparatorutdrag}</p>`,
+    )
+
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toContain('Kontrollen konkluderte ikke')
+  })
+
+  it('bekrefter ikke en rad der populasjonen bare forekommer i en eksklusjonspåstand', () => {
+    const eksklusjon = 'Patients with major depressive disorder were excluded from this analysis'
+    const report = check(
+      {
+        extraction: {
+          ...utenTall,
+          populationLabel: 'major depressive disorder',
+          populationAvailability: 'reported_value',
+          rawExtraction: { arm: BEGGE, populasjon: eksklusjon },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${BEGGE}</p>\n<p>${eksklusjon}</p>`,
+    )
+
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toContain('Kontrollen konkluderte ikke')
+  })
+
+  // Positive kontroller for de samme to: står støtten i den relevante
+  // påstanden, er raden bekreftet.
+  it.each([
+    [
+      'komparatoren er navngitt som komparator',
+      { comparatorKind: 'drug', comparatorDrugName: 'fluoxetine' },
+      'Fluoxetine was the comparator',
+      'comparator_arm',
+    ],
+    [
+      'placebo er navngitt som komparator',
+      { comparatorKind: 'placebo', comparatorDrugName: null },
+      'Placebo was the comparator',
+      'comparator_arm',
+    ],
+  ] as const)('bekrefter en rad der %s', (_navn, extraction, støtte, felt) => {
+    const report = check(
+      {
+        extraction: {
+          ...utenTall,
+          ...extraction,
+          populationAvailability: 'not_reported',
+          rawExtraction: { arm: BEGGE, komparator: støtte },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${BEGGE}</p>\n<p>${støtte}</p>`,
+    )
+
+    expect(report.outcome).toBe('verified')
+    expect(report.checkedFields).toContain(felt)
+  })
+
+  // Forskjellen på en presisering og en kontrast: populasjonsetiketten er lim
+  // mellom armen og verdien, komparatornavnet er det ikke. Et kontrastord der
+  // er nettopp signalet om at verdien kan tilhøre den andre armen.
+  it('bekrefter ikke en rad der komparatornavnet står mellom armen og endepunktet', () => {
+    const arm = 'Sertraline patients, paroxetine patients had a mean weight change over the trial'
+    const komparator = 'Paroxetine was the comparator'
+    const report = check(
+      {
+        extraction: {
+          ...utenTall,
+          populationAvailability: 'not_reported',
+          comparatorKind: 'drug',
+          comparatorDrugName: 'paroxetine',
+          rawExtraction: { arm, komparator },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${arm}</p>\n<p>${komparator}</p>`,
+    )
+
+    // Komparatorbindingen holder — det er arm-til-endepunkt som ikke gjør det.
+    expect(report.checkedFields).toContain('comparator_arm')
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  it('bekrefter en rad der populasjonen står i samme påstand som armen', () => {
+    const støtte =
+      'Sertraline-treated patients with major depressive disorder had a mean weight change'
+    const report = check(
+      {
+        extraction: {
+          ...utenTall,
+          populationLabel: 'major depressive disorder',
+          populationAvailability: 'reported_value',
+          rawExtraction: { arm: støtte },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${støtte}</p>`,
+    )
+
+    expect(report.outcome).toBe('verified')
+    expect(report.checkedFields).toContain('population')
+  })
+
   // Den positive kontrollen: står begrepene faktisk i utdraget, er raden
   // bekreftet som før. Uten denne kunne rettelsen over gjort alt uavklart.
   it('bekrefter en rad uten tallfelt når begrepene faktisk står i utdraget', () => {
