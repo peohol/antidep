@@ -14,7 +14,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(39);
+select plan(40);
 
 -- ===========================================================================
 -- Del 1 — Tabellene og nøklene som bærer separasjonen
@@ -350,6 +350,20 @@ select has_function(
 );
 select has_function(
   'provenance', 'assert_agent_run_open', 'provenance.assert_agent_run_open() finnes'
+);
+
+-- §74.32: sjekken av at kjøringen er åpen må ta radlås på agentkjøringsraden,
+-- ellers kan en samtidig api.complete_agent_run(...) lukke kjøringen mellom
+-- sjekk og den påfølgende INSERT-en i den kallende skriveveien. En pgTAP-test
+-- kjører i én sesjon og kan ikke observere en annen transaksjon blokkere (se
+-- samme forbehold i 260_publication_operations_test.sql); assersjonen her
+-- viser i stedet, som der, at implementasjonen faktisk tar FOR UPDATE. Fjernes
+-- den, feiler testen.
+select ok(
+  (select p.prosrc from pg_proc p
+   where p.oid = 'provenance.assert_agent_run_open(uuid,uuid)'::regprocedure)
+    ~ 'provenance\.agent_runs[^;]*for update',
+  'provenance.assert_agent_run_open() låser agentkjøringsraden med FOR UPDATE før den leser status'
 );
 select has_trigger(
   'provenance', 'agent_identities', 'agent_identities_record_audit_event',

@@ -158,9 +158,10 @@ select enum_has_labels(
     'claim_published', 'claim_publication_replaced', 'claim_publication_withdrawn',
     'claim_publication_rolled_back', 'role_granted', 'role_ended', 'source_created',
     'evidence_item_created', 'agent_identity_registered',
-    'agent_identity_credential_issued', 'agent_identity_revoked'
+    'agent_identity_credential_issued', 'agent_identity_revoked',
+    'evidence_verification_registered'
   ],
-  'audit.event_operation dekker publiseringshandlingene, rolleforvaltningen, kildeopprettelse (migrasjon 008a), evidensregistrering (008b) og agentidentitetenes livssyklus (008c)'
+  'audit.event_operation dekker publiseringshandlingene, rolleforvaltningen, kildeopprettelse (migrasjon 008a), evidensregistrering (008b), agentidentitetenes livssyklus (008c) og ekstraksjonsverifikasjon (008d)'
 );
 
 -- De fire publiseringsverdiene skal svare én-til-én til

@@ -35,9 +35,10 @@ select enum_has_labels(
     'claim_published', 'claim_publication_replaced', 'claim_publication_withdrawn',
     'claim_publication_rolled_back', 'role_granted', 'role_ended', 'source_created',
     'evidence_item_created', 'agent_identity_registered',
-    'agent_identity_credential_issued', 'agent_identity_revoked'
+    'agent_identity_credential_issued', 'agent_identity_revoked',
+    'evidence_verification_registered'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering og agentidentitetenes livssyklus'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus og ekstraksjonsverifikasjon'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -75,10 +76,16 @@ select is_empty(
         -- 410_agent_identity_structure_test.sql; her er poenget at listen er
         -- uttømmende.
         'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb)',
-        'api.complete_agent_run(text,text,uuid,text,jsonb,text)'
+        'api.complete_agent_run(text,text,uuid,text,jsonb,text)',
+        -- Migrasjon 005g. Samme begrunnelse som de to over: en autentisert
+        -- ekstraksjonsverifikator kaller den som anon, og den rører ingenting
+        -- før autentiseringen og den åpne kjøringen er kontrollert. Hvilke
+        -- roller som faktisk har EXECUTE, kontrolleres i
+        -- 440_extraction_verification_registration_test.sql.
+        'api.register_extraction_verification(text,text,uuid,uuid,text,text,text[],text,text)'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de fire kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de fem kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$

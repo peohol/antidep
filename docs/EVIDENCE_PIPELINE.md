@@ -546,6 +546,8 @@ Kontrollen BØR minst dekke:
 - at agenten ikke har fylt inn ikke-rapporterte data
 - at begrensninger som endrer tolkningen er fanget opp
 
+`ExtractionVerifier` (§61) registrerer resultatet gjennom `api.register_extraction_verification(...)`, som krever at kalleren er autentisert nøyaktig for agentrollen `extraction_verification` og handler inne i en åpen kjøring i samme rolle (DATABASE_ARCHITECTURE.md §29, §33). Skriveveien håndhever ikke selv om kontrollen faktisk dekket punktene over — det er verifikatorens ansvar — men den kan ikke registrere en kontroll av et evidensfunn den selv produserte, uansett agentkjøring.
+
 ## 26. Verifikasjonsstatus
 
 Et evidensfunn skal minst kunne ha status:

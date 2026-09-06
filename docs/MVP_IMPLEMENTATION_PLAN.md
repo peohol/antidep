@@ -1382,7 +1382,8 @@ PR G  db: add publication events and gate                                   (#15
       feat: add the controlled write path for registering an EvidenceItem   (#43)  merget   migrasjon 008b, 007d, 007e
       docs: record the evidence registration deployed to the hosted project (#46)  merget   ingen migrasjon
       docs: record the first real evidence registration in production       (#47)  merget   ingen migrasjon
-      db: add technical agent identity and agent runs                        (#48)  åpen     migrasjon 005d, 008c, 005e, 005f
+      db: add technical agent identity and agent runs                        (#48)  merget   migrasjon 005d, 008c, 005e, 005f
+      db: add the extraction verification registration write path            (#50)  åpen     migrasjon 008d, 005g
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1461,19 +1462,24 @@ den `editor`-rollen den skriveveien krever (§74.25). De tre siste hører til st
 adminflyten (§74.27): migrasjon 008b utvider auditvokabularet med enda én verdi, 007d utvider
 api-lesemodellen en femte gang — med den redaksjonelle lesemodellen registreringen trenger —
 og 007e gir den sitt andre skrivbare medlem, skriveveien for å registrere et EvidenceItem.
-De fire siste hører til agentidentiteten (§74.31): 005d utvider agentrollevokabularet med
+De fire neste hører til agentidentiteten (§74.31): 005d utvider agentrollevokabularet med
 `extraction_verification`, 008c utvider auditvokabularet med agentidentitetenes tre
 livssyklushendelser, 005e bygger identitets- og kjøringsmodellen med sine to
 api-inngangspunkter, og 005f registrerer den første agentidentiteten.
+De to siste hører til det neste leddet i pipelinen (§74.30, §74.31, §74.32): 008d utvider
+auditvokabularet en sjette gang, med `evidence_verification_registered`, og 005g bygger den
+kontrollerte skriveveien som lar den registrerte ekstraksjonsverifikatoren registrere en
+verifikasjon i `workflow.evidence_verifications` — bundet deklarativt til riktig aktør og
+riktig agentrolle med to sammensatte fremmednøkler mot `provenance.agent_runs`.
 Filrekkefølgen er dermed 001, 002, 003, 004, 005, 006, 006a, 007, 008, 007a, 005a, 005b,
-007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c, 005e, 005f — sortert på
-tidsstempel, ikke på migrasjonsnummer, og de fjorten siste filene bærer alle et bokstavnummer,
-altså et nummer utenfor den planlagte rekken. (Setningen sa tidligere at «de
+007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c, 005e, 005f, 008d, 005g — sortert
+på tidsstempel, ikke på migrasjonsnummer, og de seksten siste filene bærer alle et
+bokstavnummer, altså et nummer utenfor den planlagte rekken. (Setningen sa tidligere at «de
 seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot listen over —
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1405 pgTAP-assertions over 43 testfiler.
+Databaselaget teller nå 1430 pgTAP-assertions over 44 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1622,12 +1628,12 @@ bak G4/G5, er planlagt i §74.30.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   39 enum-typer, fordelt på de tjuefire migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   39 enum-typer, fordelt på de tjueseks migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
-   005e og 005f — i filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6, 11, 7, 10,
-   2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 og 0.
+   005e, 005f, 008d og 005g — i filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
+   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle tjuefire ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle tjueseks ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -1640,10 +1646,13 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
    (§74.23). 005c oppretter heller ingen: den skriver én rad i medlemskapsmodellen og bruker
    `workflow.app_role`, som migrasjon 001 opprettet. Av de tre neste er 008b en ren
    `ALTER TYPE ... ADD VALUE` som 008a, 007d projiserer eksisterende vokabularer som `text`
-   som resten av `api`, og 007e tar dem imot som `text` som 007c. Av de fire siste er 005d og
+   som resten av `api`, og 007e tar dem imot som `text` som 007c. Av de fire neste er 005d og
    008c begge rene `ALTER TYPE ... ADD VALUE`, 005f skriver to rader uten å innføre noe
    vokabular, og bare 005e oppretter en ny type — `provenance.agent_run_status`. Den er den
-   ene som løfter totalen fra 38 til 39.
+   ene som løfter totalen fra 38 til 39. De to siste legger ingen til: 008d er en ren
+   `ALTER TYPE ... ADD VALUE` som 008a, 008b og 008c, og 005g tar imot verifikasjonens tre
+   vokabularer (utfall, kildetilgang og kontrollerte felter) som `text` og array av `text`, og
+   caster dem i funksjonskroppen — samme mønster som 007c, 007d, 007e og 005e.
    Viewene caster enum-kolonner til `text`, så den offentlige kontrakten er en streng
    fra et dokumentert vokabular, ikke PostgreSQL-typen. Et senere bytte til
    oppslagstabeller er dermed ikke en brytende API-endring. Castingen sparer også
@@ -4560,6 +4569,63 @@ det som må avgjøres og ikke antas. Rollen som verifiserer er nå to ting og ik
 for et menneske som verifiserer gjennom skjemaet, og agentidentiteten
 `agent-identity:extraction-verification-01` for den automatiserte veien. Begge skriver til
 samme tabell, og separasjonskravet gjelder likt for begge.
+
+---
+
+### 74.32 Skriveveien for ekstraksjonsverifikasjon — bygget, med punkt 2 avgjort under review
+
+§74.30 listet fire ting én PR skulle avgjøre før skriveveien inn i
+`workflow.evidence_verifications` var bygget. Denne PR-en bygger nøyaktig den skriveveien —
+`api.register_extraction_verification(...)` — og prøver den fullt ut i test. Punkt 3 og 4
+(rollen og hvem som kan verifisere hvem) var avgjort da PR-en åpnet; punkt 2 («adresse pluss
+hash» som verifikasjonsgrunnlag) ble avgjort i teknisk review før merge, i samme PR. Punkt 1
+(kildeversjoner, issue 44) står fortsatt åpen — det er en eksplisitt avgrensning av denne PR-en,
+ikke en forglemmelse.
+
+**Hva som er bygget.** Ett inngangspunkt, i samme form som `api.create_source(...)` og
+`api.create_evidence_item(...)`: en autentisert `extraction_verification`-agent, inne i en
+åpen `provenance.agent_run` i samme rolle, registrerer én verifikasjonsrad. Aktør, rolle og
+kjøring er ikke parametre kalleren oppgir — de utledes av autentiseringen og av kjøringen selv
+— og bindingen er deklarativ: to nye sammensatte fremmednøkler
+(`evidence_verifications_agent_run_actor_fkey`, `evidence_verifications_agent_run_role_fkey`)
+mot `provenance.agent_runs (id, actor_id)` og `(id, agent_role)` fra migrasjon 005e, nøyaktig
+slik den migrasjonens hodekommentar forutså. De tre lagene som hindrer selvverifikasjon —
+rollen, aktøren og nå kjøringen — er alle prøvd, hver for seg og sammen.
+
+**Punkt 2 er avgjort: adresse pluss hash er et tilstrekkelig verifikasjonsgrunnlag.**
+`knowledge.source_versions` sin egen hodekommentar sier hvorfor `retrieved_from` er `NOT NULL`:
+«en `content_hash` uten en adresse å hente på nytt fra kan ikke etterprøves». Med begge til
+stede kan en tredjepart hente kilden på nytt og kontrollere den mot hashen, uavhengig av om
+Antidep har lagret fulltekst i `storage_reference` — det er selve mekanismen
+`verifiable_representation` beskriver. `api.register_extraction_verification(...)` håndhever nå
+dette: `p_source_access = 'verifiable_representation'` avvises både når evidensfunnets
+`source_version_id` er NULL og når kildeversjonen den peker på selv mangler `content_hash`. En
+kildeversjon med bare `retrieved_from` (et sporet besøk, uten fingeravtrykk) kvalifiserer altså
+ikke. Et reelt evidensfunn uten lagret kildeversjon (som Efexor-funnet, §74.30) har fortsatt
+ingenting å kontrollere `verifiable_representation` mot i produksjon, men det er nå fordi
+grunnlaget mangler, ikke fordi databasen ikke kan se forskjellen. Issue 44 (selve
+kildeversjonsskriveveien) står fortsatt åpen — det er punkt 1, ikke punkt 2.
+
+**Migrasjonsdisiplin: en race-fiks skrevet fremover, ikke inn i en merget fil.**
+Migrasjon 20260905092000 (fra PR #48) er allerede merget. En teknisk gjennomgang fanget at en
+tidlig versjon av denne PR-en rettet en race condition i `provenance.assert_agent_run_open(...)`
+(manglende radlås mellom «kjøringen er åpen»-sjekken og innsettingen) ved å redigere den
+migrasjonen direkte — en endring som aldri ville nådd et miljø som allerede har kjørt den, fordi
+Supabase aldri kjører en registrert migrasjonsversjon på nytt. Rettelsen ligger nå der den
+faktisk virker: en `CREATE OR REPLACE FUNCTION` i denne PR-ens egen migrasjon, som legger
+`FOR UPDATE` på radlåsen uten å endre signatur eller rettigheter.
+
+**Hva dette betyr i praksis akkurat nå.** Skriveveien er reviewbar og fullt prøvd, men ingen
+legitimasjon er utstedt til `agent-identity:extraction-verification-01` i produksjon (§74.31
+sier hvorfor: utstedelsen hører til den PR-en som bygger den faktiske kjøreren). Ingen reell
+verifikasjon er derfor registrert i det hostede prosjektet av denne PR-en, og kunne heller ikke
+vært det: identiteten er fortsatt inert. Milepæl B mangler fortsatt de samme tre tingene som
+§74.4 lister; denne PR-en fjerner en teknisk hindring til, men lukker ingen av dem.
+
+**Neste steg.** Kildeversjonssnapshot (issue 44), deretter utstedelse av legitimasjon til
+verifikatoren i det miljøet en faktisk agentkjører leser hemmeligheten fra, og til slutt
+claim-verifikasjon (`workflow.claim_verifications`, `citation_support_verification`) som egen,
+senere PR.
 
 ---
 

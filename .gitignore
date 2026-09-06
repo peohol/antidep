@@ -11,6 +11,7 @@ coverage/
 *.local
 
 # Verktøy og OS
+.claude/worktrees/
 .vercel/
 .vite/
 supabase/.temp/

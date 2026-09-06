@@ -718,6 +718,8 @@ som peker til `evidence_item_id` og inneholder:
 
 En korrigert ekstraksjon oppretter et nytt `EvidenceItem` eller en ny immutable evidensrevisjon; den gamle skal ikke silently overskrives.
 
+Skriveveien inn i `workflow.evidence_verifications` er `api.register_extraction_verification(...)`: en autentisert agentidentitet i rollen `extraction_verification`, inne i en åpen `provenance.agent_run` i samme rolle. Aktør, rolle og kjøring er ikke parametre kalleren oppgir — de utledes av autentiseringen (§49) og av kjøringen selv (§33) — og bindingen mellom verifikasjonsraden og kjøringen er deklarativ, med to sammensatte fremmednøkler mot `provenance.agent_runs (id, actor_id)` og `(id, agent_role)`, som §33 og §59 beskriver. Kravet om at verifikator og ekstraktør er ulike aktører (§74.31 i implementasjonsplanen) er en egen `CHECK` på tabellen, uendret av skriveveien.
+
 ## 30. Claim-verifikasjon
 
 Claim-verifikasjon skal være eksplisitt og minst dekke:
