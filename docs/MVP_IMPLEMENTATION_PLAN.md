@@ -4643,6 +4643,28 @@ Fire rekkefølger godtas, og det er de kilder faktisk skriver: nivået foran ell
 grensene foran eller bak begge. Begge kravene er mutasjonstestet hver for seg — fjernes
 prosentkravet feller to tester, løsnes limet feller en.
 
+**Den syvende runden fant at «kort og sifferfritt» ikke er det samme som «nøytralt».** Limet var
+«hva som helst uten siffer, høyst 16 tegn», og en benektelse passer i den beskrivelsen:
+
+```text
+95% CI was not 0.4 to 2.6
+95% CI, not 0.4 to 2.6
+```
+
+Kilden sier uttrykkelig at 0,4–2,6 *ikke* er intervallet, og begge ble bekreftet. Reprodusert før
+rettelsen. En verifikator som skal lete etter numeriske avvik, må ikke kunne bekrefte et talluttrykk
+gjennom en benektelse.
+
+Limet er nå en **tillatelsesliste** og ikke en lengdegrense: skilletegn, mellomrom, en gjentakelse
+av selve intervallnavnet («… interval (CI) …»), og en kort liste nøytrale koblingsord (`of`, `was`,
+`is`, `med`, `fra` …). Et ord som ikke står på listen — `not`, `except`, `unlike`, `ikke` — bryter
+uttrykket. Punktum er heller ikke lim: en setningsgrense er ingen forbindelse.
+
+Listen er bevisst kort, og retningen på feilen er valgt: en skrivemåte kontrollen ikke kjenner igjen
+gir `uncertain`, altså en uavklart kontroll — ikke en falsk bekreftelse. Mutasjonstestet: settes
+limet tilbake til den sifferfrie lengdegrensen, feller fire tester det, mens den positive formen
+«95% CI was 0.4 to 2.6» fortsatt må bekreftes.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

@@ -205,8 +205,25 @@ describe('checkExtraction — tallene', () => {
     expect(report.checkedFields).not.toContain('confidence_interval')
   })
 
+  // «Kort og sifferfritt» er ikke det samme som «nøytralt». Begge disse er
+  // korte og uten siffer, og begge snur betydningen av tallene som følger.
+  it.each([
+    ['was not', 'Mean weight change. 95% CI was not 0.4 to 2.6'],
+    ['komma + not', 'Mean weight change. 95% CI, not 0.4 to 2.6'],
+    ['except', 'Mean weight change. 95% CI except 0.4 to 2.6'],
+    ['ikke', 'Vektendring. 95 % konfidensintervall ikke 0,4 til 2,6'],
+  ])('bekrefter ikke et intervall en benektelse står foran (%s)', (_navn, kilde) => {
+    const report = check({ extraction: { rawExtraction: { sitat: 'Mean weight change' } } }, kilde)
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
   it.each([
     ['95% CI 0.4 to 2.6', 'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6).'],
+    // Den positive formen benektelsene over er en variant av. Uten denne ville
+    // rettelsen kunne bestå ved å avvise alt.
+    ['nøytralt «was» som lim', 'Mean weight change. 95% CI was 0.4 to 2.6'],
     ['CI etter nivået med kolon', 'Mean weight change was 1.5 kg (CI 95%: 0.4 to 2.6).'],
     ['nivået skrevet ut', 'Mean weight change was 1.5 kg, 95% confidence interval 0.4 to 2.6.'],
     ['grensene før ankeret', 'Mean weight change was 1.5 kg, 0.4 to 2.6 (95% CI).'],

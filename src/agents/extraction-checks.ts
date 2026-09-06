@@ -418,11 +418,43 @@ const CI_ANCHOR_SOURCE = '\\bCI\\b|\\bC\\.I\\.|confidence intervals?|konfidensin
 /**
  * Det som får stå mellom delene i uttrykket.
  *
- * Ingen siffer, og høyst 16 tegn: nok til «: », « (», « of », « (CI) », men
- * ikke til « was not reported; observed values ranged from ». Sifferforbudet
- * er det som hindrer at et annet tall står imellom og likevel teller.
+ * En **tillatelsesliste**, ikke en lengdegrense. «Kort og uten siffer» er ikke
+ * det samme som «nøytralt»: «was not» og «, not» er begge korte og sifferfrie,
+ * og begge snur betydningen av det som følger.
+ *
+ *   «95% CI was not 0.4 to 2.6»   ← kilden sier at dette *ikke* er intervallet
+ *   «95% CI, not 0.4 to 2.6»      ← samme
+ *
+ * Limet er derfor bare skilletegn, mellomrom, en gjentakelse av selve
+ * intervallnavnet («… interval (CI) …»), og en kort liste nøytrale koblingsord
+ * som ikke kan bære en benektelse. Et ord som ikke står på listen — `not`,
+ * `except`, `unlike`, `ikke` — bryter uttrykket, og det er meningen. Punktum
+ * er heller ikke lim: en setningsgrense er ikke en forbindelse.
+ *
+ * Listen er bevisst kort. Et uttrykk kontrollen ikke kjenner igjen, gir
+ * `uncertain` og ikke et avvik, så en manglende form koster en uavklart
+ * kontroll — ikke en falsk bekreftelse. Den veien er den trygge.
  */
-const CI_GLUE = '[^\\d]{0,16}'
+const CI_GLUE_WORDS = [
+  'of',
+  'was',
+  'were',
+  'is',
+  'are',
+  'at',
+  'for',
+  'and',
+  'the',
+  'with',
+  'var',
+  'er',
+  'med',
+  'fra',
+  'og',
+  'på',
+] as const
+
+const CI_GLUE = `(?:[\\s:;,=()\\[\\]/-]|${CI_ANCHOR_SOURCE}|${CI_GLUE_WORDS.join('|')}){0,12}`
 
 /**
  * Nivået må være en eksplisitt prosentangivelse.
