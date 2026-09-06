@@ -882,13 +882,24 @@ function unique(fields: readonly EvidenceCheckField[]): readonly EvidenceCheckFi
 }
 
 /**
- * `findings` er begrenset til 4000 tegn i basen. En begrunnelse som sprenger
- * grensen, skal kortes ned framfor å felle registreringen av en kontroll som
- * faktisk ble gjennomført.
+ * Både `findings` og `rationale` er begrenset til 4000 tegn i basen
+ * (`evidence_verifications_findings_format_check`,
+ * `evidence_verifications_rationale_check`). Tekstene bygges av
+ * `raw_extraction`, som er jsonb uten tilsvarende grense: mange eller lange
+ * utdrag, eller lange nøkler, kan sprenge den.
+ *
+ * En for lang begrunnelse skal kortes ned framfor å felle registreringen av en
+ * kontroll som faktisk ble gjennomført. Grensen håndheves derfor på *begge*
+ * feltene og på hver vei ut av funksjonen, ikke bare på den ene teksten som
+ * tilfeldigvis var lengst da regelen ble skrevet.
  */
-function truncateFindings(text: string): string {
+const DATABASE_TEXT_LIMIT = 4000
+
+function withinDatabaseLimit(text: string): string {
   const trimmed = text.trim()
-  return trimmed.length <= 4000 ? trimmed : `${trimmed.slice(0, 3997).trimEnd()}…`
+  return trimmed.length <= DATABASE_TEXT_LIMIT
+    ? trimmed
+    : `${trimmed.slice(0, DATABASE_TEXT_LIMIT - 3).trimEnd()}…`
 }
 
 function joinSentences(parts: readonly string[]): string {
@@ -980,10 +991,38 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // Er ingen utdrag gjenfunnet, finnes det ingen slik binding, og da føres
   // ingen tallfelt opp som kontrollert. Det er samme regel som gjelder
   // kildepekeren, og av samme grunn (DATABASE_ARCHITECTURE.md §29).
+  //
   // --------------------------------------------------------------------------
-  const claimProjections = quotesFound
+  // …og utdraget må selv si hvilken arm det gjelder
+  //
+  // En samling verifiserte utdrag er ikke i seg selv en binding. Et funn kan ha
+  // to utdrag der bare det ene navngir armen:
+  //
+  //   «Sertraline-treated patients were included in the trial.»
+  //   «Paroxetine patients (N = 48) had mean weight change 1.5 kg (95% CI …).»
+  //
+  // Begge står ordrett i kilden, sertralin finnes, endepunktet finnes, og det
+  // er nøyaktig én kandidat per felt — men alle tallene tilhører paroksetin.
+  // Slått sammen til én tekst så det ut som en bekreftet sertralinrad.
+  //
+  // Tallene leses derfor bare fra de utdragene som *selv* navngir funnets
+  // intervensjon. Et resultatutdrag som ikke sier hvilken arm det gjelder, kan
+  // ikke bekrefte et tall for den armen — og da står feltet uavklart, ikke som
+  // et avvik. Det er også en regel for redaktøren: et utdrag som skal
+  // etterprøve et tall, må ta med armen tallet gjelder.
+  //
+  // Begrepene leses fra funnets egne utdrag av samme grunn: at legemiddelnavnet
+  // står *et sted* i artikkelen, sier ingenting om denne raden.
+  // --------------------------------------------------------------------------
+  const quoteProjections = quotesFound
     ? quotes.flatMap((quote) => searchProjections(quote.text))
     : []
+  const boundQuotes = quotesFound
+    ? quotes.filter((quote) =>
+        occursIn(searchProjections(quote.text), item.extraction.interventionDrugName),
+      )
+    : []
+  const claimProjections = boundQuotes.flatMap((quote) => searchProjections(quote.text))
   const unmatchedNumbers: string[] = []
   const numericFields = new Set<EvidenceCheckField>()
   const unresolvedFields = new Set<EvidenceCheckField>()
@@ -1042,10 +1081,15 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   }
   if (numericFields.size > 0 && claimProjections.length === 0) {
     noteUnresolved(
-      'Ingen av funnets ordrette utdrag ble gjenfunnet i representasjonen, så tallene hadde ' +
-        'ingen tekst som tilhører nettopp dette funnet å kontrolleres mot. En artikkel kan ' +
-        'beskrive flere armer og flere utfall, og et treff et annet sted i den ville tilhørt ' +
-        'et annet funn.',
+      quotesFound
+        ? `Ingen av funnets ordrette utdrag navngir intervensjonen «${item.extraction.interventionDrugName}», så ` +
+            'tallene hadde ingen tekst som entydig tilhører denne armen å kontrolleres mot. En ' +
+            'artikkel beskriver ofte flere armer, og et tall i et utdrag som ikke sier hvilken ' +
+            'arm det gjelder, kan tilhøre en annen.'
+        : 'Ingen av funnets ordrette utdrag ble gjenfunnet i representasjonen, så tallene hadde ' +
+            'ingen tekst som tilhører nettopp dette funnet å kontrolleres mot. En artikkel kan ' +
+            'beskrive flere armer og flere utfall, og et treff et annet sted i den ville tilhørt ' +
+            'et annet funn.',
     )
   }
   if (ambiguousNumbers.length > 0) {
@@ -1068,7 +1112,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // 4. Begrepene. Bare bekreftelse teller; se hodekommentaren.
   const unmatchedTerms: string[] = []
   for (const claim of termClaims(item)) {
-    if (occursIn(projections, claim.term)) {
+    if (occursIn(quoteProjections, claim.term)) {
       checked.push(claim.field)
     } else {
       unmatchedTerms.push(`${claim.label} («${claim.term}»)`)
@@ -1144,10 +1188,10 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     checkedFields: unique(checked),
     findings:
       findings.length > 0
-        ? joinSentences(findings)
+        ? withinDatabaseLimit(joinSentences(findings))
         : outcome === 'verified'
           ? null
-          : truncateFindings(unresolved),
-    rationale: joinSentences([method, ...notes]),
+          : withinDatabaseLimit(unresolved),
+    rationale: withinDatabaseLimit(joinSentences([method, ...notes])),
   }
 }

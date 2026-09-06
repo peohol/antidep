@@ -265,7 +265,25 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
         rationale: report.rationale,
         findings: report.findings,
       }
-      const verificationId = await api.registerVerification(args)
+      // Registreringen ligger innenfor den samme innkapslingen som kontrollen:
+      // en avvist rad — en verdi basen ikke tar imot, et brudd på en
+      // begrensning — er den ene radens problem, ikke køens. Uten dette ville
+      // én slik avvisning felt hele kjøringen, og de øvrige funnene ville
+      // stått ukontrollert av en grunn som ikke er deres.
+      let verificationId: Uuid
+      try {
+        verificationId = await api.registerVerification(args)
+      } catch (cause) {
+        const reason = cause instanceof Error ? cause.message : String(cause)
+        log(`— ${summarize(item)}: ingen verifikasjon registrert. ${reason}`)
+        results.push({
+          evidenceItemId: item.evidenceItemId,
+          sourceTitle: item.sourceTitle,
+          decision: 'skipped',
+          reason: `Registreringen ble avvist av databasen: ${reason}`,
+        })
+        continue
+      }
       log(`— ${summarize(item)}: ${report.outcome}, registrert som ${verificationId}.`)
       results.push({
         evidenceItemId: item.evidenceItemId,

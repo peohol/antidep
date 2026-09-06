@@ -121,6 +121,39 @@ describe('checkExtraction — kontrakten mot databasen', () => {
     expect((report.findings ?? '').length).toBeLessThanOrEqual(4000)
   })
 
+  // `raw_extraction` er jsonb uten størrelsesgrense, mens begge tekstfeltene er
+  // begrenset til 4000 tegn i basen. Mange eller lange utdrag skal ikke kunne
+  // felle registreringen av en kontroll som faktisk ble gjennomført.
+  it.each([
+    ['mange utdrag med lange nøkler', 30, 300],
+    ['få utdrag, svært lange nøkler', 4, 3000],
+  ])('holder findings og rationale innenfor 4000 tegn (%s)', (_navn, antall, nøkkellengde) => {
+    const rawExtraction: Record<string, string> = {}
+    for (let i = 0; i < antall; i += 1) {
+      rawExtraction[`utdrag_${String(i)}_${'x'.repeat(nøkkellengde)}`] =
+        'Sertraline-treated patients had a mean weight change of 1.5 kg (95% CI 0.4 to 2.6)'
+    }
+    const report = check({ extraction: { rawExtraction } })
+
+    expect(report.rationale.length).toBeLessThanOrEqual(4000)
+    expect((report.findings ?? '').length).toBeLessThanOrEqual(4000)
+    expect(report.rationale).toBe(report.rationale.trim())
+    expect(report.findings ?? 'x').toBe((report.findings ?? 'x').trim())
+  })
+
+  it('holder også et avvik innenfor 4000 tegn', () => {
+    const rawExtraction: Record<string, string> = {}
+    for (let i = 0; i < 40; i += 1) {
+      rawExtraction[`utdrag_${String(i)}_${'x'.repeat(300)}`] =
+        `noe som ikke står i kilden ${String(i)}`
+    }
+    const report = check({ extraction: { rawExtraction } })
+
+    expect(report.outcome).toBe('needs_correction')
+    expect((report.findings ?? '').length).toBeLessThanOrEqual(4000)
+    expect(report.rationale.length).toBeLessThanOrEqual(4000)
+  })
+
   it('lar findings være tom bare når kontrollen faktisk bekreftet raden', () => {
     const report = check()
 
@@ -188,12 +221,15 @@ describe('checkExtraction — tallene', () => {
   it('lar ikke et tilfeldig 90 et annet sted bekrefte et 90 %-intervall mot en 95 %-kilde', () => {
     const kilde =
       'Among 284 adults with depression, 90 participants were enrolled at site B. ' +
-      'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6) over the study period.'
+      'Sertraline patients had a mean weight change of 1.5 kg (95% CI 0.4 to 2.6) ' +
+      'over the study period.'
     const report = check(
       {
         extraction: {
           ciLevelPercent: '90',
-          rawExtraction: { sitat: 'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6)' },
+          rawExtraction: {
+            sitat: 'Sertraline patients had a mean weight change of 1.5 kg (95% CI 0.4 to 2.6)',
+          },
         },
       },
       kilde,
@@ -298,7 +334,7 @@ describe('checkExtraction — tallene', () => {
 
   it('bekrefter ikke et estimat fra et utdrag som oppgir to armer i samme setning', () => {
     const utdrag =
-      'The mean difference was 0.8 kg for mirtazapine and the mean difference was 0.4 kg ' +
+      'The mean difference was 0.8 kg for sertraline and the mean difference was 0.4 kg ' +
       'for fluoxetine.'
     const report = check(
       { extraction: { estimate: '0.8', rawExtraction: { resultat: utdrag } } },
@@ -311,8 +347,8 @@ describe('checkExtraction — tallene', () => {
 
   it('bekrefter ikke et konfidensintervall fra et utdrag som oppgir to intervaller', () => {
     const utdrag =
-      'Weight change was 1.5 kg (95% CI 0.4 to 2.6) and quality of life improved ' +
-      '(95% CI 1.1 to 3.2) over the study period.'
+      'Sertraline: weight change was 1.5 kg (95% CI 0.4 to 2.6) and quality of life ' +
+      'improved (95% CI 1.1 to 3.2) over the study period.'
     const report = check(
       { extraction: { rawExtraction: { resultat: utdrag } } },
       `Forord. ${utdrag}`,
@@ -321,6 +357,60 @@ describe('checkExtraction — tallene', () => {
     expect(report.outcome).not.toBe('verified')
     expect(report.checkedFields).not.toContain('confidence_interval')
     expect(report.rationale).toContain('flere verdier for de samme feltene')
+  })
+
+  // En samling verifiserte utdrag er ikke i seg selv en binding: her navngir
+  // det ene utdraget armen, mens alle tallene står i det andre — og tilhører
+  // paroksetin. Slått sammen så det ut som en bekreftet sertralinrad.
+  it('bekrefter ikke tall som står i et utdrag om en annen arm enn radens', () => {
+    const arm = 'Sertraline-treated patients were included in the trial.'
+    const tall = 'Paroxetine patients (N = 48) had mean weight change 1.5 kg (95% CI 0.4 to 2.6).'
+    const report = check(
+      { extraction: { sampleSize: 48, rawExtraction: { arm, resultat: tall } } },
+      `Forord. ${arm} ${tall}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+    // Armutdraget er bundet, men har ingen tall; tallutdraget navngir en annen
+    // arm og leses ikke. Begrunnelsen sier at tallene ikke ble gjenfunnet i
+    // funnets egne utdrag.
+    expect(report.rationale).toContain('funnets egne utdrag')
+  })
+
+  it('sier fra når ingen av utdragene navngir armen i det hele tatt', () => {
+    const tall = 'Paroxetine patients (N = 48) had mean weight change 1.5 kg (95% CI 0.4 to 2.6).'
+    const report = check(
+      { extraction: { sampleSize: 48, rawExtraction: { resultat: tall } } },
+      `Forord. ${tall}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+    expect(report.rationale).toContain('navngir intervensjonen')
+  })
+
+  it('leser tallene fra det utdraget som navngir armen, når det finnes', () => {
+    const arm = 'Sertraline-treated patients (N = 48) had a mean weight change of 1.5 kg.'
+    const annen = 'Paroxetine patients had a mean weight change of 9.9 kg.'
+    const report = check(
+      {
+        extraction: {
+          sampleSize: 48,
+          confidenceIntervalAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          rawExtraction: { arm, annen },
+        },
+      },
+      `Forord. ${arm} ${annen}`,
+    )
+
+    expect(report.checkedFields).toContain('sample_size')
+    expect(report.checkedFields).toContain('estimate')
   })
 
   // Et nakent tall ved ankeret er ikke et nivå. Her er `90` en utvalgsstørrelse,
@@ -382,7 +472,10 @@ describe('checkExtraction — tallene', () => {
   ])('kjenner igjen intervallet skrevet som «%s»', (_navn, kilde) => {
     // Teksten er funnets eget utdrag: tallene kontrolleres mot den, ikke mot
     // resten av artikkelen.
-    const report = check({ extraction: { rawExtraction: { sitat: kilde } } }, `Forord. ${kilde}`)
+    const report = check(
+      { extraction: { rawExtraction: { sitat: `Sertraline. ${kilde}` } } },
+      `Forord. Sertraline. ${kilde}`,
+    )
 
     expect(report.checkedFields).toContain('confidence_interval')
   })
@@ -502,8 +595,13 @@ describe('checkExtraction — tallene', () => {
     ['norsk form', 'Studien inkluderte 48 pasienter.', 48],
   ])('kjenner igjen utvalgsstørrelsen skrevet som «%s»', (_navn, kilde, størrelse) => {
     const report = check(
-      { extraction: { sampleSize: størrelse, rawExtraction: { sitat: kilde } } },
-      `Forord. ${kilde}`,
+      {
+        extraction: {
+          sampleSize: størrelse,
+          rawExtraction: { sitat: `Sertraline. ${kilde}` },
+        },
+      },
+      `Forord. Sertraline. ${kilde}`,
     )
 
     expect(report.checkedFields).toContain('sample_size')
@@ -515,8 +613,8 @@ describe('checkExtraction — tallene', () => {
     ['norsk form', 'Vekt. Gjennomsnittlig endring var 0,8 kg.'],
   ])('kjenner igjen estimatet skrevet som «%s»', (_navn, kilde) => {
     const report = check(
-      { extraction: { estimate: '0.8', rawExtraction: { sitat: kilde } } },
-      `Forord. ${kilde}`,
+      { extraction: { estimate: '0.8', rawExtraction: { sitat: `Sertraline. ${kilde}` } } },
+      `Forord. Sertraline. ${kilde}`,
     )
 
     expect(report.checkedFields).toContain('estimate')

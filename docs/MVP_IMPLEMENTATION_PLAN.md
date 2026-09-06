@@ -4782,6 +4782,35 @@ regel enn den som bekrefter ble prøvd og forkastet — den fant tall langt unna
 enhver rad uavklart, altså en verifikator som ikke lenger sier noe. Alle tre rettelsene er
 mutasjonstestet hver for seg.
 
+**Den tolvte runden fant at en samling utdrag ikke er en binding, og at 4000-grensen bare var halvt
+håndhevet.**
+
+*Utdraget må selv si hvilken arm det gjelder.* Å lese tallene fra funnets utdrag var ikke nok, fordi
+utdragene ble slått sammen til én tekst. Et funn med to utdrag:
+
+```text
+«Sertraline-treated patients were included in the trial.»
+«Paroxetine patients (N = 48) had mean weight change 1.5 kg (95% CI 0.4 to 2.6).»
+```
+
+Begge står ordrett i kilden, sertralin finnes, endepunktet finnes, og det er nøyaktig én kandidat
+per felt — men alle tallene tilhører paroksetin. Utfallet ble `verified`. Reprodusert før rettelsen.
+Tallene leses nå bare fra de utdragene som *selv* navngir funnets intervensjon, og begrepene leses
+fra funnets utdrag av samme grunn: at legemiddelnavnet står et sted i artikkelen, sier ingenting om
+denne raden. Det er også blitt en regel for redaktøren, og en rimelig en: et utdrag som skal
+etterprøve et tall, må ta med armen tallet gjelder.
+
+*Begge tekstfeltene har en grense, ikke bare det ene.* `findings` og `rationale` er begrenset til
+4000 tegn hver, mens `raw_extraction` er jsonb uten tilsvarende grense. Avkortingen gjaldt bare
+fallback-teksten for `uncertain`: et funn med mange eller lange utdragsnøkler ga en `rationale` på
+10 448 tegn, som basen ville avvist. Grensen håndheves nå på begge feltene og på hver vei ut av
+kontrollen.
+
+*Og registreringen er flyttet innenfor innkapslingen.* En avvist rad felte hele kjøringen, slik at
+de øvrige funnene sto ukontrollert av en grunn som ikke var deres. En avvisning er nå den ene radens
+problem: funnet føres som overhoppet med databasens egen begrunnelse, og køen går videre. Alle tre
+rettelsene er mutasjonstestet hver for seg.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

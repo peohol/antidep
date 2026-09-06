@@ -316,19 +316,23 @@ describe('runExtractionVerification — tørrkjøring', () => {
 })
 
 describe('runExtractionVerification — kjøringen lukkes alltid', () => {
-  it('lukker kjøringen som failed når noe uventet skjer', async () => {
+  // En avvist registrering er den ene radens problem, ikke køens: uten denne
+  // innkapslingen ville én verdi basen ikke tar imot, felt hele kjøringen, og
+  // de øvrige funnene ville stått ukontrollert av en grunn som ikke er deres.
+  it('lar en avvist registrering stoppe det ene funnet, ikke hele kjøringen', async () => {
     const api = fakeApi([await matchingItem()], {
       registerVerification: () => Promise.reject(new Error('avvist av databasen')),
     })
 
-    await expect(
-      runExtractionVerification({ api, premises: PREMISSER, retrieve: retrieveFixture() }),
-    ).rejects.toThrow('avvist av databasen')
-
-    expect(api.completions[0]).toMatchObject({
-      status: 'failed',
-      failureReason: 'avvist av databasen',
+    const report = await runExtractionVerification({
+      api,
+      premises: PREMISSER,
+      retrieve: retrieveFixture(),
     })
+
+    expect(report.items[0]).toMatchObject({ decision: 'skipped' })
+    expect(report.items[0]?.reason).toContain('avvist av databasen')
+    expect(api.completions[0]?.status).toBe('succeeded')
   })
 
   it('avviser et svar som ikke har den dokumenterte formen', async () => {
