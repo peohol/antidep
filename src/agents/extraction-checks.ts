@@ -192,12 +192,41 @@ export function searchProjections(sourceText: string): readonly string[] {
   return raw === withoutTags ? [raw] : [raw, withoutTags]
 }
 
+/** Ordrett forekomst. Brukes på sitater, som er lange og entydige i seg selv. */
 function occursIn(projections: readonly string[], needle: string): boolean {
   const wanted = normalize(needle)
   if (wanted.length === 0) {
     return false
   }
   return projections.some((haystack) => haystack.includes(wanted))
+}
+
+/**
+ * Forekomst av et *begrep* — et legemiddelnavn, et endepunkt — med ordgrense.
+ *
+ * En delstrengsjekk er farlig i nettopp dette registeret: «citalopram» står
+ * inne i «escitalopram», og «venlafaxine» inne i «desvenlafaxine». Et utdrag om
+ * escitalopram ville da bundet en citalopramrad, og tallene i det ville blitt
+ * kontrollert som om de var citalopramradens. De klinisk viktige forvekslingene
+ * er nettopp de prefikserte formene — `es-`, `des-`, `levo-` — så grensen foran
+ * begrepet er den som avgjør.
+ *
+ * Etter begrepet tillates inntil to bokstaver. Katalogen er på norsk og kildene
+ * på engelsk, og forskjellen er som regel nettopp en endelse: «sertralin» i
+ * katalogen, «sertraline» i kilden. Uten den åpningen ville ingen norsk
+ * legemiddeletikett matchet en engelsk kilde. To bokstaver er nok til
+ * endelsen og for lite til å nå et annet virkestoffnavn.
+ */
+function termOccursIn(projections: readonly string[], term: string): boolean {
+  const wanted = normalize(term)
+  if (wanted.length === 0) {
+    return false
+  }
+  const pattern = new RegExp(
+    `(?<![\\p{L}\\p{N}])${escapeRegExp(wanted)}\\p{L}{0,2}(?![\\p{L}\\p{N}])`,
+    'u',
+  )
+  return projections.some((haystack) => pattern.test(haystack))
 }
 
 // ----------------------------------------------------------------------------
@@ -1017,12 +1046,35 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   const quoteProjections = quotesFound
     ? quotes.flatMap((quote) => searchProjections(quote.text))
     : []
-  const boundQuotes = quotesFound
-    ? quotes.filter((quote) =>
-        occursIn(searchProjections(quote.text), item.extraction.interventionDrugName),
-      )
-    : []
-  const claimProjections = boundQuotes.flatMap((quote) => searchProjections(quote.text))
+  // Et utvalg hører til armen; et estimat og et konfidensintervall hører til
+  // *ett endepunkt hos den armen*. To korrekte utdrag kan ellers settes sammen
+  // til en gal rad:
+  //
+  //   «Sertraline-treated patients had a mean change of 5.0 points on HAM-D.»
+  //   «Body weight change was the prespecified primary outcome.»
+  //
+  // Begge er sanne, begge står ordrett i kilden, og sammen «bekreftet» de en
+  // sertralinrad om vektendring med estimat 5,0 — et tall som hører til HAM-D.
+  // Effektmålene krever derfor et utdrag som navngir både armen og endepunktet.
+  //
+  // Konsekvensen er skrevet ut framfor pyntet på: katalogen er på norsk og
+  // kildene på engelsk, så et endepunkt som «vektendring» sjelden står i en
+  // engelsk kilde. Estimat og konfidensintervall vil derfor stå uavklart for de
+  // fleste reelle kilder inntil et ledd som forstår språk finnes. Det er den
+  // riktige enden å ta feil i: alternativet er en bekreftelse som bygger på at
+  // to sanne setninger om forskjellige ting stod i samme artikkel.
+  const quotesNaming = (term: string) =>
+    quotesFound ? quotes.filter((quote) => termOccursIn(searchProjections(quote.text), term)) : []
+
+  const armQuotes = quotesNaming(item.extraction.interventionDrugName)
+  const armAndOutcomeQuotes = armQuotes.filter((quote) =>
+    termOccursIn(searchProjections(quote.text), item.extraction.outcomeLabel),
+  )
+  const projectionsOf = (subset: readonly { readonly text: string }[]) =>
+    subset.flatMap((quote) => searchProjections(quote.text))
+
+  const claimProjections = projectionsOf(armQuotes)
+  const outcomeBoundProjections = projectionsOf(armAndOutcomeQuotes)
   const unmatchedNumbers: string[] = []
   const numericFields = new Set<EvidenceCheckField>()
   const unresolvedFields = new Set<EvidenceCheckField>()
@@ -1030,7 +1082,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   for (const claim of numericClaims(item)) {
     numericFields.add(claim.field)
     const match = anchoredNumberMatch(
-      claimProjections,
+      claim.field === 'sample_size' ? claimProjections : outcomeBoundProjections,
       claim.value,
       claim.anchorsBefore,
       claim.anchorsAfter,
@@ -1049,7 +1101,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   let confidenceIntervalUnresolved = false
   if (reportedInterval !== null) {
     numericFields.add('confidence_interval')
-    const ci = confidenceIntervalCheck(claimProjections, reportedInterval)
+    const ci = confidenceIntervalCheck(outcomeBoundProjections, reportedInterval)
     if (!ci.confirmed) {
       unresolvedFields.add('confidence_interval')
       confidenceIntervalUnresolved = true
@@ -1112,7 +1164,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // 4. Begrepene. Bare bekreftelse teller; se hodekommentaren.
   const unmatchedTerms: string[] = []
   for (const claim of termClaims(item)) {
-    if (occursIn(quoteProjections, claim.term)) {
+    if (termOccursIn(quoteProjections, claim.term)) {
       checked.push(claim.field)
     } else {
       unmatchedTerms.push(`${claim.label} («${claim.term}»)`)

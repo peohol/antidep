@@ -413,6 +413,98 @@ describe('checkExtraction — tallene', () => {
     expect(report.checkedFields).toContain('estimate')
   })
 
+  // «citalopram» står inne i «escitalopram». En delstrengsjekk gjorde et utdrag
+  // om det ene til et utdrag om det andre — i et antidepressivregister er det
+  // en forveksling som ikke kan stå.
+  it.each([
+    ['citalopram', 'Escitalopram-treated patients (N = 48) had a weight change of 1.5 kg.'],
+    ['venlafaxine', 'Desvenlafaxine-treated patients (N = 48) had a weight change of 1.5 kg.'],
+    ['milnacipran', 'Levomilnacipran-treated patients (N = 48) had a weight change of 1.5 kg.'],
+  ])('binder ikke en %s-rad til et utdrag om et annet virkestoff', (virkestoff, utdrag) => {
+    const report = check(
+      {
+        extraction: {
+          interventionDrugName: virkestoff,
+          sampleSize: 48,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('intervention_arm')
+    expect(report.checkedFields).not.toContain('sample_size')
+  })
+
+  it('binder fortsatt en norsk legemiddeletikett til den engelske formen', () => {
+    const utdrag = 'Sertraline-treated patients (N = 48) had a weight change of 1.5 kg.'
+    const report = check(
+      {
+        extraction: {
+          interventionDrugName: 'sertralin',
+          sampleSize: 48,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.checkedFields).toContain('intervention_arm')
+    expect(report.checkedFields).toContain('sample_size')
+  })
+
+  // Begge utdragene er sanne, og begge står ordrett i kilden. Sammen «bekreftet»
+  // de et estimat som tilhører et helt annet endepunkt.
+  it('bekrefter ikke et estimat satt sammen av riktig arm og riktig endepunkt fra hvert sitt utdrag', () => {
+    const a = 'Sertraline-treated patients had a mean change of 5.0 points on the HAM-D scale.'
+    const b = 'Body weight change was the prespecified primary outcome.'
+    const report = check(
+      {
+        extraction: {
+          estimate: '5.0',
+          estimateUnit: null,
+          effectMeasure: 'risk_ratio',
+          outcomeLabel: 'body weight change',
+          sampleSizeAvailability: 'not_reported',
+          sampleSize: null,
+          confidenceIntervalAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          rawExtraction: { arm: a, endepunkt: b },
+        },
+      },
+      `Forord. ${a} ${b}`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+  })
+
+  it('bekrefter et estimat når ett og samme utdrag navngir både armen og endepunktet', () => {
+    const utdrag =
+      'Sertraline-treated patients had a mean body weight change of 5.0 kg over the trial.'
+    const report = check(
+      {
+        extraction: {
+          estimate: '5.0',
+          outcomeLabel: 'body weight change',
+          sampleSizeAvailability: 'not_reported',
+          sampleSize: null,
+          confidenceIntervalAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          rawExtraction: { sitat: utdrag },
+        },
+      },
+      `Forord. ${utdrag}`,
+    )
+
+    expect(report.checkedFields).toContain('estimate')
+  })
+
   // Et nakent tall ved ankeret er ikke et nivå. Her er `90` en utvalgsstørrelse,
   // og kilden sier aldri prosent — den sier ikke hvilket nivå intervallet har.
   it('bekrefter ikke et nivå kilden aldri oppgir som prosent', () => {
@@ -472,10 +564,10 @@ describe('checkExtraction — tallene', () => {
   ])('kjenner igjen intervallet skrevet som «%s»', (_navn, kilde) => {
     // Teksten er funnets eget utdrag: tallene kontrolleres mot den, ikke mot
     // resten av artikkelen.
-    const report = check(
-      { extraction: { rawExtraction: { sitat: `Sertraline. ${kilde}` } } },
-      `Forord. Sertraline. ${kilde}`,
-    )
+    // Utdraget må navngi både armen og endepunktet: et intervall hører til
+    // ett endepunkt hos én arm.
+    const utdrag = `Sertraline, weight change. ${kilde}`
+    const report = check({ extraction: { rawExtraction: { sitat: utdrag } } }, `Forord. ${utdrag}`)
 
     expect(report.checkedFields).toContain('confidence_interval')
   })
@@ -613,8 +705,13 @@ describe('checkExtraction — tallene', () => {
     ['norsk form', 'Vekt. Gjennomsnittlig endring var 0,8 kg.'],
   ])('kjenner igjen estimatet skrevet som «%s»', (_navn, kilde) => {
     const report = check(
-      { extraction: { estimate: '0.8', rawExtraction: { sitat: `Sertraline. ${kilde}` } } },
-      `Forord. Sertraline. ${kilde}`,
+      {
+        extraction: {
+          estimate: '0.8',
+          rawExtraction: { sitat: `Sertraline, weight change. ${kilde}` },
+        },
+      },
+      `Forord. Sertraline, weight change. ${kilde}`,
     )
 
     expect(report.checkedFields).toContain('estimate')
@@ -697,8 +794,12 @@ describe('checkExtraction — begreper som ikke lar seg kontrollere', () => {
 
   it('behandler et manglende begrepstreff som en merknad, ikke som et avvik', () => {
     const report = check({ extraction: { outcomeLabel: 'vektendring' } })
-    expect(report.outcome).toBe('verified')
-    expect(report.findings).toBeNull()
+    // Ikke et avvik: utfallet er uavklart, ikke `needs_correction`, og
+    // begrunnelsen sier at feltet ikke ble kontrollert. Et endepunkt på norsk
+    // som ikke står i en engelsk kilde, binder heller ikke effektmålene — se
+    // hodekommentaren om arm og endepunkt.
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).not.toContain('finnes ikke ordrett')
     expect(report.rationale).toContain('ikke ført opp som kontrollert')
   })
 

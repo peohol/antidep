@@ -4811,6 +4811,40 @@ de øvrige funnene sto ukontrollert av en grunn som ikke var deres. En avvisning
 problem: funnet føres som overhoppet med databasens egen begrunnelse, og køen går videre. Alle tre
 rettelsene er mutasjonstestet hver for seg.
 
+**Den trettende runden fant to forvekslinger til, og den første er den farligste i akkurat dette
+registeret.**
+
+*Legemiddelnavn ble matchet som delstreng.* «citalopram» står inne i «escitalopram», og
+«venlafaxine» inne i «desvenlafaxine». Et ordrett utdrag om escitalopram bandt derfor en
+citalopramrad, og tallene i det ble kontrollert som om de var citalopramradens. Begreper matches nå
+med ordgrense.
+
+Grensen foran begrepet er den som avgjør, fordi de klinisk farlige forvekslingene er nettopp de
+prefikserte formene — `es-`, `des-`, `levo-`. Etter begrepet tillates inntil to bokstaver, fordi
+katalogen er på norsk og kildene på engelsk og forskjellen som regel er en endelse: «sertralin» mot
+«sertraline». Uten den åpningen ville ingen norsk legemiddeletikett matchet en engelsk kilde. To
+bokstaver er nok til endelsen og for lite til å nå et annet virkestoffnavn.
+
+*Et estimat hører til ett endepunkt hos én arm.* Bindingen filtrerte bare på intervensjonen, mens
+endepunktet ble kontrollert mot alle utdragene under ett. To sanne utdrag kunne dermed settes sammen
+til en gal rad:
+
+```text
+«Sertraline-treated patients had a mean change of 5.0 points on the HAM-D scale.»
+«Body weight change was the prespecified primary outcome.»
+```
+
+Begge står ordrett i kilden, og sammen «bekreftet» de en sertralinrad om vektendring med estimat
+5,0 — et tall som hører til HAM-D. Estimat og konfidensintervall krever nå ett utdrag som navngir
+både armen og endepunktet. Utvalgsstørrelsen krever fortsatt bare armen, fordi den er en egenskap
+ved armen og ikke ved endepunktet.
+
+**Konsekvensen er skrevet ut framfor pyntet på:** katalogen er på norsk og kildene på engelsk, så et
+endepunkt som «vektendring» står sjelden i en engelsk kilde. Estimat og konfidensintervall vil derfor
+stå uavklart for de fleste reelle kilder inntil et ledd som forstår språk finnes. Det er den riktige
+enden å ta feil i — alternativet er en bekreftelse som bygger på at to sanne setninger om
+forskjellige ting stod i samme artikkel. Begge rettelsene er mutasjonstestet hver for seg.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen
