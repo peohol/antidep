@@ -42,7 +42,12 @@ export function extractionFixture(
 ): VerificationExtraction {
   return {
     designCode: 'randomized_controlled_trial',
-    populationLabel: 'voksne med depressiv lidelse',
+    // Engelsk, som resten av fiksturens begreper og av samme grunn: fiksturen er
+    // den *positive* kontrollen, der alt raden oppgir faktisk lar seg gjenfinne i
+    // kilden. En norsk etikett mot en engelsk kilde er en helt reell situasjon, og
+    // den er prøvd der den hører hjemme — i testen som viser at et begrep som ikke
+    // ble gjenfunnet, gir `uncertain`.
+    populationLabel: 'major depressive disorder',
     populationAvailability: 'reported_value',
     populationDetail: 'Voksne med depressiv lidelse.',
     sampleSize: 284,

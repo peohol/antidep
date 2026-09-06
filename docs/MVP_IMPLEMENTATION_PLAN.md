@@ -4949,6 +4949,32 @@ Alle tre er mutasjonstestet, og de to som ikke falt på første forsøk fikk ska
 mildere krav: intervallets armbinding er prøvd på en setning der radens eget estimat *er* bekreftet,
 og enhetslimet på en setning der samme sifferrekke står både med og uten enhet.
 
+**Den attende runden fant den siste veien til en falsk `verified`, og den ble tydeligere nettopp
+fordi tallbindingen var blitt strengere.** Et registrert klinisk begrep som ikke lot seg gjenfinne,
+ble notert i begrunnelsen og holdt utenfor `checked_fields` — men det påvirket ikke utfallet.
+Databasen fanger det ikke: for `verified` krever den `source_locator` i `checked_fields`, ikke armen
+eller endepunktet. En rad uten oppgitte tallfelt hadde da ingenting igjen som kunne gjøre den
+uavklart, og et ordrett — men fullstendig irrelevant — utdrag bar hele raden:
+
+> Raden gjelder `sertraline` og `weight change`. `raw_extraction` er utdraget
+> «`The trial was randomized and double blind.`», som står ordrett i riktig kildeversjon.
+
+Sitatet ble gjenfunnet, kildepekeren korroborert, ingen tallkontroll kunne slå ut — og utfallet ble
+`verified`, uten at kontrollen noen gang hadde sett at utdraget handlet om dette legemiddelet eller
+dette endepunktet. Et manglende begrep gjør nå utfallet `uncertain`, fortsatt ikke
+`needs_correction`: en norsk etikett mot en engelsk kilde er den vanligste grunnen, og den er ikke en
+feilekstraksjon.
+
+Regelen er prøvd ett begrep om gangen — intervensjon, endepunkt, aktiv komparator og rapportert
+populasjon — med et utdrag som navngir alt *unntatt* det ene testen handler om, pluss reviewerens
+egen sak i sin helhet og en positiv kontroll der begrepene faktisk står der. Mutasjonstestet: uten
+regelen feller fem tester.
+
+Fiksturens `population_label` var samtidig den eneste norske etiketten i en ellers engelsk fikstur,
+og det var en inkonsistens uten konsekvens fram til nå. Den positive kontrollen skal være positiv,
+så etiketten følger resten av fiksturen; at en norsk etikett mot en engelsk kilde gir `uncertain`, er
+prøvd der det hører hjemme.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

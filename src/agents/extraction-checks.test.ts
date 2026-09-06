@@ -1245,6 +1245,103 @@ describe('checkExtraction — begreper som ikke lar seg kontrollere', () => {
   })
 })
 
+// ----------------------------------------------------------------------------
+// Et begrep som ikke ble gjenfunnet, er en kontroll som ikke konkluderte
+//
+// Uten dette kunne et ordrett, men irrelevant utdrag bære hele raden: sitatet
+// finnes i riktig kildeversjon, ingen tallfelt er oppgitt, og verken
+// legemiddelet eller endepunktet står i utdraget — men utfallet ble `verified`.
+// ----------------------------------------------------------------------------
+describe('checkExtraction — begrepene må være gjenfunnet for at raden er bekreftet', () => {
+  // Ingen tallfelt oppgitt: da er begrepene det eneste som kan gjøre raden til
+  // noe annet enn bekreftet, og testene måler nettopp det de sier.
+  const utenTall = {
+    sampleSize: null,
+    sampleSizeAvailability: 'not_reported',
+    estimate: null,
+    estimateUnit: null,
+    estimateAvailability: 'not_reported',
+    ciLower: null,
+    ciUpper: null,
+    ciLevelPercent: null,
+    confidenceIntervalAvailability: 'not_reported',
+  } as const satisfies Partial<VerificationExtraction>
+
+  function utenTallMedUtdrag(quote: string, extraction: Partial<VerificationExtraction> = {}) {
+    return check(
+      { extraction: { ...utenTall, ...extraction, rawExtraction: { utdrag: quote } } },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${quote}</p>`,
+    )
+  }
+
+  const BEGGE = 'Sertraline-treated patients had a mean weight change over the trial'
+
+  // Ett begrep om gangen: utdraget navngir alt raden trenger *unntatt* det ene
+  // testen handler om.
+  it.each([
+    [
+      'intervensjonen',
+      'Patients had a mean weight change over the trial',
+      { populationAvailability: 'not_reported' },
+      'intervention_arm',
+    ],
+    [
+      'endepunktet',
+      'Sertraline-treated patients were followed over the trial',
+      { populationAvailability: 'not_reported' },
+      'outcome',
+    ],
+    [
+      'komparatoren',
+      BEGGE,
+      {
+        comparatorKind: 'drug',
+        comparatorDrugName: 'fluoxetine',
+        populationAvailability: 'not_reported',
+      },
+      'comparator_arm',
+    ],
+    ['populasjonen', BEGGE, { populationLabel: 'voksne med depressiv lidelse' }, 'population'],
+  ] as const)(
+    'bekrefter ikke en rad der %s ikke ble gjenfunnet i funnets utdrag',
+    (_navn, quote, extraction, felt) => {
+      const report = utenTallMedUtdrag(quote, extraction)
+
+      expect(report.outcome).toBe('uncertain')
+      expect(report.checkedFields).not.toContain(felt)
+      // Fortsatt ikke et avvik: en norsk etikett mot en engelsk kilde er den
+      // vanligste grunnen, og den er ikke en feilekstraksjon.
+      expect(report.findings).toContain('Kontrollen konkluderte ikke')
+    },
+  )
+
+  // Reviewerens egen sak, i sin helhet: et ordrett og korrekt utdrag som ikke
+  // handler om raden i det hele tatt.
+  it('bekrefter ikke en rad der et ordrett, men irrelevant utdrag er alt som finnes', () => {
+    const report = utenTallMedUtdrag('The trial was randomized and double blind', {
+      populationAvailability: 'not_reported',
+    })
+
+    expect(report.outcome).toBe('uncertain')
+    expect(report.checkedFields).toEqual(
+      expect.arrayContaining(['raw_extraction', 'source_locator']),
+    )
+    expect(report.checkedFields).not.toContain('intervention_arm')
+    expect(report.checkedFields).not.toContain('outcome')
+  })
+
+  // Den positive kontrollen: står begrepene faktisk i utdraget, er raden
+  // bekreftet som før. Uten denne kunne rettelsen over gjort alt uavklart.
+  it('bekrefter en rad uten tallfelt når begrepene faktisk står i utdraget', () => {
+    const report = utenTallMedUtdrag(BEGGE, { populationAvailability: 'not_reported' })
+
+    expect(report.outcome).toBe('verified')
+    expect(report.checkedFields).toEqual(
+      expect.arrayContaining(['raw_extraction', 'source_locator', 'intervention_arm', 'outcome']),
+    )
+  })
+})
+
 describe('checkExtraction — når kontrollen ikke kan konkludere', () => {
   it('gir uncertain når funnet ikke har noe sitat å kontrollere', () => {
     const report = check({ extraction: { rawExtraction: null } })

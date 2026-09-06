@@ -1551,7 +1551,8 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     !quotesFound ||
     unmatchedNumbers.length > 0 ||
     ambiguousNumbers.length > 0 ||
-    confidenceIntervalUnresolved
+    confidenceIntervalUnresolved ||
+    unmatchedTerms.length > 0
   ) {
     // Et oppgitt tall som ikke lot seg gjenfinne, er ikke et avvik — men det er
     // heller ikke en bekreftelse av raden som helhet. Utfallet sier nettopp det.
@@ -1559,6 +1560,24 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     // Konfidensintervallet står her selv om hvert av tallene fantes et sted i
     // teksten: fant kontrollen dem ikke i samme intervalluttrykk, er intervallet
     // ikke kontrollert, og en rad med et ukontrollert intervall er ikke bekreftet.
+    //
+    // Begrepene står her av samme grunn, og uten dem kunne et ordrett — men
+    // fullstendig irrelevant — utdrag bære hele raden. En rad uten oppgitte
+    // tallfelt har da ingenting annet å bli kontrollert på:
+    //
+    //   raden gjelder «sertraline» og «weight change»
+    //   utdraget sier «The trial was randomized and double blind.»
+    //
+    // Sitatet finnes ordrett i riktig kildeversjon, kildepekeren korroboreres,
+    // ingen tallkontroll kan slå ut — og utfallet ble `verified`, uten at
+    // kontrollen noen gang hadde sett at utdraget handlet om dette
+    // legemiddelet eller dette endepunktet. Databasen fanger det ikke: den
+    // krever `source_locator` i `checked_fields` for `verified`, ikke armen
+    // eller endepunktet.
+    //
+    // Fortsatt ikke et avvik: et begrep som ikke er gjenfunnet, betyr som
+    // regel bare at katalogen er på norsk og kilden på engelsk. Men det er
+    // heller ikke en bekreftelse (ANTIDEP_CONSTITUTION.md §6, §11).
     outcome = 'uncertain'
   } else {
     outcome = 'verified'
