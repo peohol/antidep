@@ -1385,6 +1385,7 @@ PR G  db: add publication events and gate                                   (#15
       db: add technical agent identity and agent runs                        (#48)  merget   migrasjon 005d, 008c, 005e, 005f
       db: add the extraction verification registration write path            (#50)  merget   migrasjon 008d, 005g
       feat: run the extraction verifier from source version to verification (#51)  merget   migrasjon 008e, 007f, 005h
+      ops: activate the extraction verifier in the hosted project           (#56)  åpen     ingen migrasjon
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
