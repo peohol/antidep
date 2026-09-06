@@ -4731,6 +4731,34 @@ lenger bare et resonnement: det er en avlesning.
 
 ---
 
+**Rettet under teknisk review: hentingen var en SSRF-vei.** Den første versjonen av kjøreren
+hentet `retrieved_from` med `fetch()` og fulgte redirect automatisk, uten noen grense på hvilke
+adresser den kunne nå. Gjennomgangen fanget at det gjør en registrert kilde til en fjernstyring
+av hva den betrodde maskinen kobler seg til: `localhost`, et privat nett, eller
+169.254.169.254 — skymiljøenes metadatatjeneste. Responsen ble dessuten lest ubegrenset inn i
+minnet.
+
+Rettelsen er ikke en filtrering av URL-en, og det er hele poenget. Å slå opp navnet, godkjenne
+adressen og *deretter* kalle `fetch` ville etterlatt et vindu der DNS kan svare noe annet enn
+det som ble godkjent (rebinding). Hentingen bruker derfor `node:https` med en egen
+`lookup`-funksjon — den samme funksjonen socketen bruker som sitt eget navneoppslag — slik at
+adressen som godkjennes *er* adressen det kobles til. Det finnes ikke to oppslag å komme
+imellom.
+
+| Kontroll | Hva den stopper |
+| --- | --- |
+| Bare `http:` og `https:` | `file:`, `ftp:` og resten |
+| Bokstavelige IP-verter kontrolleres direkte | `http://127.0.0.1:8080/`. Node slår ikke opp noe når verten allerede er en adresse, så `lookup` ville aldri sett den — en egen test fanget nettopp den blindsonen i første forsøk på rettelsen |
+| Navn kontrolleres i socketens eget oppslag | et navn som peker på en privat adresse, og DNS-rebinding |
+| Alle adressene et navn gir, ikke bare den første | et navn som peker på både en offentlig og en privat adresse |
+| Hvert redirect-hopp kontrolleres på nytt | en offentlig kilde som sender kjøreren videre innover |
+| Størrelsesgrense og samlet tidsavbrudd | en kilde som bruker opp minnet eller tiden til kjøreren |
+
+Adresseparsingen er streng med vilje: `127.000.000.1`, `0x7f.0.0.1` og `2130706433` avvises som
+uleselige framfor å bli tolket. En vakt som leser en adresse annerledes enn socketen som kobler
+til, er ingen vakt. De innkapslede formene som *er* kanoniske — `::ffff:127.0.0.1` og NAT64 —
+pakkes ut og kontrolleres som den IPv4-adressen de bærer.
+
 **Hva denne PR-en bevisst ikke gjør.** Den registrerer ingenting i det hostede prosjektet:
 migrasjonene er ikke deployet dit, ingen legitimasjon er utstedt der, og ingen verifikasjon er
 registrert der. Alt over er kjørt mot en lokal stack. Den bygger heller ikke

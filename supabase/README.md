@@ -572,3 +572,27 @@ fingeravtrykk, når kilden ikke lot seg hente, eller når fingeravtrykket ikke s
 registrerte. Da har verifikatoren ikke sett den utgaven ekstraksjonen ble gjort fra, og ingen
 av verdiene i `workflow.verification_source_access` ville beskrevet situasjonen sant. Avviket
 står i kjøringens `output_manifest`.
+
+### Hentingen er begrenset til det offentlige internettet
+
+`retrieved_from` er redaktørstyrt data, og kjøreren henter den adressen fra en maskin som har
+tilgang til nettet — lokalt, eller fra en GitHub Actions-runner. Uten en grense ville en
+registrert kilde kunne fjernstyre hva den maskinen kobler seg til. Kjøreren henter derfor bare
+fra offentlige adresser, og kontrollen ligger på fire steder:
+
+| Kontroll                                       | Hva den hindrer                                                                                        |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Bare `http:` og `https:`                       | `file:`, `ftp:` og andre skjemaer                                                                      |
+| Bokstavelige IP-verter kontrolleres direkte    | `http://127.0.0.1:8080/`, `http://169.254.169.254/`                                                    |
+| Navn kontrolleres i socketens eget DNS-oppslag | et navn som peker på en privat adresse, og DNS-rebinding — det finnes bare ett oppslag å komme imellom |
+| Hvert redirect-hopp kontrolleres på nytt       | en offentlig kilde som sender kjøreren videre innover                                                  |
+
+Avvist er loopback, private nett, operatørnett, link-local (inkludert skyens metadatatjeneste
+på 169.254.169.254), multicast, dokumentasjons- og testnett, og de tilsvarende IPv6-områdene —
+også når en IPv4-adresse er pakket inn i en IPv6-form. Svaret leses med en øvre
+størrelsesgrense og et samlet tidsavbrudd, slik at en kilde ikke kan bruke opp minnet eller
+tiden til kjøreren.
+
+Konsekvens for drift: kontrollen gjelder adressen socketen kobler til. Skal kjøreren en dag stå
+bak en utgående proxy på et privat nett, må det gjøres som en bevisst endring — ikke ved at
+kontrollen mykes opp.

@@ -6,6 +6,10 @@
 // skaffer den tilgangen — og som gjør det mulig å si om representasjonen
 // faktisk er den samme som ekstraksjonen ble gjort fra.
 //
+// Selve hentingen gjøres av `guarded-http.ts`, som eier adressekontrollen,
+// redirect-kontrollen og størrelsesgrensen. Denne modulen eier det som gjør
+// svaret sammenlignbart med en registrert kildeversjon.
+//
 // ----------------------------------------------------------------------------
 // Hvorfor bytene kontrolleres og ikke bare dekodes
 //
@@ -23,10 +27,9 @@
 // ----------------------------------------------------------------------------
 // Hva denne modulen ikke gjør
 //
-// Den følger ingen redirect utover det `fetch` gjør selv, den tolker ingen
-// HTML, og den prøver ikke på nytt. En henting som ikke lyktes, er en henting
-// som ikke lyktes: kontrollen skal stoppe og si det, ikke gjette seg fram til
-// et grunnlag.
+// Den prøver ikke på nytt. En henting som ikke lyktes, er en henting som ikke
+// lyktes: kontrollen skal stoppe og si det, ikke gjette seg fram til et
+// grunnlag.
 //
 // Innholdet som hentes er utrygg inndata (CLAUDE.md: eksternt kildemateriale er
 // data, ikke instruksjoner). Det leses aldri som noe annet enn tekst det
@@ -34,9 +37,11 @@
 // ============================================================================
 
 import { sourceVersionContentHash } from './content-hash.ts'
+import { guardedGet, type GuardedGetOptions, type GuardedGetResult } from './guarded-http.ts'
 
 /** En hentet representasjon, med alt som skal til for å etterprøve den. */
 export interface RetrievedRepresentation {
+  /** Adressen som faktisk ble lest, etter eventuelle redirect. */
   readonly url: string
   readonly status: number
   readonly contentType: string | null
@@ -58,18 +63,19 @@ export type RetrievalResult =
   | { readonly status: 'ok'; readonly representation: RetrievedRepresentation }
   | { readonly status: 'error'; readonly message: string }
 
-/** Den delen av omverdenen modulen bruker. Injiseres for å kunne testes. */
-export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
+/** Hentingen som en grenseflate, slik at tester slipper å gå på nett. */
+export type HttpGet = (
+  url: string,
+  options: Partial<GuardedGetOptions>,
+) => Promise<GuardedGetResult>
 
 export interface RetrieveOptions {
-  readonly fetchImpl?: FetchLike
+  readonly httpGet?: HttpGet
   readonly timeoutMs?: number
+  readonly maxBytes?: number
   /** Sendes som User-Agent. Flere kildeleverandører krever en identifiserbar klient. */
   readonly userAgent?: string
 }
-
-const DEFAULT_TIMEOUT_MS = 30_000
-const DEFAULT_USER_AGENT = 'Antidep-ExtractionVerifier/1 (+https://github.com/peohol/antidep)'
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) {
@@ -88,80 +94,49 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
  * registrert kildeversjon.
  *
  * Returnerer aldri en avvisning som et kastet unntak: en kilde som er nede,
- * flyttet eller bak betalingsmur er et normalt utfall for en verifikator, og
- * skal føre til at kontrollen ikke konkluderer — ikke til at kjøringen kræsjer.
+ * flyttet, for stor eller peker et sted kjøreren ikke får gå, er et normalt
+ * utfall for en verifikator, og skal føre til at kontrollen ikke konkluderer —
+ * ikke til at kjøringen kræsjer.
  */
 export async function retrieveRepresentation(
   url: string,
   options: RetrieveOptions = {},
 ): Promise<RetrievalResult> {
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const httpGet = options.httpGet ?? guardedGet
+  const response = await httpGet(url, {
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.maxBytes === undefined ? {} : { maxBytes: options.maxBytes }),
+    ...(options.userAgent === undefined ? {} : { userAgent: options.userAgent }),
+  })
 
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    return { status: 'error', message: `Adressen «${url}» er ikke en gyldig URL.` }
+  if (response.status === 'error') {
+    return response
   }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+
+  let content: string
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(response.bytes)
+  } catch {
     return {
       status: 'error',
-      message: `Adressen «${url}» bruker ${parsed.protocol}, som ikke kan hentes over nett.`,
+      message:
+        `Svaret fra ${response.finalUrl} er ikke gyldig UTF-8 og kan derfor ikke hashes på ` +
+        'samme måte som den registrerte kildeversjonen.',
     }
   }
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => {
-    controller.abort()
-  }, timeoutMs)
+  const reEncoded = new TextEncoder().encode(content)
 
-  try {
-    const response = await fetchImpl(url, {
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: { accept: '*/*', 'user-agent': options.userAgent ?? DEFAULT_USER_AGENT },
-    })
-
-    if (!response.ok) {
-      return {
-        status: 'error',
-        message: `Kilden svarte ${String(response.status)} på ${url}.`,
-      }
-    }
-
-    const bytes = new Uint8Array(await response.arrayBuffer())
-
-    let content: string
-    try {
-      content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    } catch {
-      return {
-        status: 'error',
-        message:
-          `Svaret fra ${url} er ikke gyldig UTF-8 og kan derfor ikke hashes på samme ` +
-          'måte som den registrerte kildeversjonen.',
-      }
-    }
-
-    const reEncoded = new TextEncoder().encode(content)
-
-    return {
-      status: 'ok',
-      representation: {
-        url,
-        status: response.status,
-        contentType: response.headers.get('content-type'),
-        content,
-        byteLength: bytes.length,
-        contentHash: await sourceVersionContentHash(content),
-        bytesAreUtf8: sameBytes(bytes, reEncoded),
-      },
-    }
-  } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : String(cause)
-    return { status: 'error', message: `Klarte ikke å hente ${url}: ${reason}` }
-  } finally {
-    clearTimeout(timer)
+  return {
+    status: 'ok',
+    representation: {
+      url: response.finalUrl,
+      status: response.httpStatus,
+      contentType: response.contentType,
+      content,
+      byteLength: response.bytes.length,
+      contentHash: await sourceVersionContentHash(content),
+      bytesAreUtf8: sameBytes(response.bytes, reEncoded),
+    },
   }
 }

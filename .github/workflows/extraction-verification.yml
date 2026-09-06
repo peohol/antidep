@@ -21,6 +21,11 @@
 # Kjøringen når internett — den henter hver kildeversjons adresse på nytt for å
 # kontrollere fingeravtrykket. Det er hele poenget: en kontroll mot et sammendrag
 # ville ikke vært en kontroll (ANTIDEP_CONSTITUTION.md §11).
+#
+# Adressene er redaktørstyrt data, og en runner har tilgang til mer enn det
+# offentlige internettet. Kjøreren henter derfor bare fra offentlige adresser, og
+# kontrollerer både bokstavelige verter, navneoppslag og hvert redirect-hopp; se
+# `src/agents/guarded-http.ts` og supabase/README.md.
 
 name: Ekstraksjonsverifikasjon
 

@@ -566,6 +566,8 @@ De øvrige punktene i §25 — riktig populasjon, riktig tidspunkt, overtolkning
 
 **Verifikatoren registrerer ingenting når den ikke har sett grunnlaget.** Mangler funnet en kildeversjon eller et fingeravtrykk, lot kilden seg ikke hente, eller stemmer ikke fingeravtrykket med det registrerte, skrives ingen rad — ingen av verdiene i `workflow.verification_source_access` ville beskrevet situasjonen sant, og en usann verdi er verre enn en manglende rad. Avviket står i kjøringens `output_manifest`.
 
+**Hentingen er en rettighetsgrense, ikke bare et nettkall.** `retrieved_from` er redaktørstyrt data, og kjøreren henter den fra en maskin med nettilgang. Kjøreren henter derfor bare fra offentlige internettadresser: bokstavelige IP-verter kontrolleres direkte, navn kontrolleres i socketens eget DNS-oppslag (så det ikke finnes to oppslag en rebinding kan komme imellom), og hvert redirect-hopp kontrolleres på nytt. Svaret leses med en øvre størrelsesgrense og et samlet tidsavbrudd. Uten disse ville en registrert kilde vært en fjernstyring av hva kjøreren kobler seg til — et pipelineledd som kunne nå interne tjenester er en rettighetseskalering, uansett at det bare «leser en kilde» (§63).
+
 ## 26. Verifikasjonsstatus
 
 Et evidensfunn skal minst kunne ha status:
