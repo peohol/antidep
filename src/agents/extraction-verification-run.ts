@@ -98,7 +98,37 @@ function summarize(item: VerificationItem): string {
   return `${item.evidenceItemId} (${item.sourceTitle})`
 }
 
+/**
+ * Vurderer ett funn, og lar aldri en uventet feil nå kalleren.
+ *
+ * Kildeinnhold er utrygg ekstern data, og en representasjon kan inneholde noe
+ * ingen har tenkt på. Skulle kontrollen kaste, er det den ene kilden som ikke
+ * lot seg kontrollere — ikke hele køen. Uten denne innkapslingen ville én slik
+ * kilde stoppet alle funnene bak seg i køen, og det er en tilgjengelighetsfeil
+ * som ser ut som en tom arbeidsliste.
+ *
+ * Feilen forsvinner ikke: den blir årsaken raden føres som overhoppet med, og
+ * står i kjøringens `output_manifest`.
+ */
 async function evaluateItem(
+  item: VerificationItem,
+  retrieve: RetrieveLike,
+): Promise<
+  | { readonly kind: 'skip'; readonly reason: string }
+  | { readonly kind: 'checked'; readonly report: ExtractionCheckReport }
+> {
+  try {
+    return await evaluateItemUnguarded(item, retrieve)
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause)
+    return {
+      kind: 'skip',
+      reason: `Kontrollen av dette funnet feilet uventet, og ble ikke registrert: ${reason}`,
+    }
+  }
+}
+
+async function evaluateItemUnguarded(
   item: VerificationItem,
   retrieve: RetrieveLike,
 ): Promise<

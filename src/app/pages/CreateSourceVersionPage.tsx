@@ -15,10 +15,22 @@
 // ingen kan etterprøve, er verre enn ingen hash. Skjemaet ber derfor om
 // representasjonen ordrett, og forklarer hvordan man får tak i den.
 //
-// Feltet er bevisst en `textarea` uten formattering, uten «lim inn som ren
-// tekst»-magi og uten trimming: hashen skal reproduseres av `sha256sum` på
-// svaret fra adressen, så alt som endrer én byte, endrer svaret. Det er ikke en
-// svakhet ved skjemaet — det er selve mekanismen, og teksten på siden sier det.
+// ----------------------------------------------------------------------------
+// Hvorfor en fil og ikke et tekstfelt
+//
+// Første utkast brukte en `textarea`. Det var galt, og feilen var stille:
+// HTML-standarden normaliserer linjeskift i feltets API-verdi, så en
+// representasjon med CRLF ville blitt hashet som om den hadde LF. Verifikatoren
+// hasher de faktiske bytene fra nettet, og ville da rapportert at kilden hadde
+// endret seg — for en kilde som var uendret. Nøyaktig den kjeden denne siden
+// finnes for å opprette, ville vært brutt for enhver kilde som leveres med
+// CRLF.
+//
+// Registreringen tar derfor imot en fil. `arrayBuffer()` gir bytene slik de ble
+// lagret, uten normalisering, og `read-utf8-file.ts` dekoder dem strengt som
+// UTF-8 — den samme regelen verifikatoren bruker på svaret sitt. Er filen ikke
+// gyldig UTF-8, avvises registreringen framfor å lagre et fingeravtrykk ingen
+// kan etterprøve.
 //
 // ----------------------------------------------------------------------------
 // Ingen rollegate, bare en innloggingsgate
@@ -34,6 +46,7 @@ import { Link } from 'react-router'
 import { createSourceVersion } from '../../lib/create-source-version'
 import { fetchEditorSources } from '../../lib/editor-read-model'
 import { localInputValueToIso, nowAsLocalInputValue } from '../../lib/local-datetime'
+import { readUtf8File } from '../../lib/read-utf8-file'
 import { sourceChoice } from '../../lib/source-choice'
 import { useAntidepClient } from '../antidep-client'
 import { useAuthSession, type AuthSessionState } from '../use-auth-session'
@@ -63,7 +76,6 @@ interface FormState {
   readonly sourceId: string
   readonly retrievedAt: string
   readonly retrievedFrom: string
-  readonly retrievedContent: string
   readonly externalVersion: string
   readonly storageReference: string
 }
@@ -76,7 +88,7 @@ function CreatedNotice({ sourceVersionId }: { readonly sourceVersionId: Uuid }) 
         Kildeversjonens id: <code>{sourceVersionId}</code>
       </p>
       <p className="knowledge-notice__detail">
-        Fingeravtrykket er beregnet av databasen av innholdet du limte inn. Neste steg er å{' '}
+        Fingeravtrykket er beregnet av databasen, av bytene i filen du lastet opp. Neste steg er å{' '}
         <Link to={newEvidenceItemPath()}>registrere et evidensfunn</Link> som peker på denne
         versjonen.
       </p>
@@ -92,10 +104,15 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
     sourceId: sources[0]?.source_id ?? '',
     retrievedAt: nowAsLocalInputValue(),
     retrievedFrom: '',
-    retrievedContent: '',
     externalVersion: '',
     storageReference: '',
   }))
+  // Filen ligger utenfor `form`: en `File` er ikke en verdi skjemaet redigerer,
+  // og feltet er ukontrollert fordi et filfelt ikke kan settes fra kode.
+  const [file, setFile] = useState<File | null>(null)
+  // Bumpes etter en vellykket registrering, slik at filfeltet monteres på nytt
+  // og tømmes. Et filfelt kan ikke nullstilles ved å sette `value`.
+  const [formToken, setFormToken] = useState(0)
   const [status, setStatus] = useState<SubmitStatus>('idle')
   const [result, setResult] = useState<CreateSourceVersionResult | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
@@ -115,23 +132,36 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
       return
     }
 
-    // Den ene kontrollen skjemaet gjør selv, og den handler om form og ikke om
-    // innhold: `datetime-local` kan ikke uttrykke en tidssone, så verdien må
-    // bygges om før den sendes. Alt annet er databasens dom.
+    // De to kontrollene skjemaet gjør selv handler om form, ikke om innhold:
+    // `datetime-local` kan ikke uttrykke en tidssone, og filen må være gyldig
+    // UTF-8 for at fingeravtrykket skal kunne etterprøves. Alt annet er
+    // databasens dom.
     const retrievedAt = localInputValueToIso(form.retrievedAt)
     if (retrievedAt === null) {
       setProblem('Oppgi når representasjonen ble hentet.')
       return
     }
-    setProblem(null)
+    if (file === null) {
+      setProblem('Velg filen med representasjonen slik den ble hentet.')
+      return
+    }
 
     setStatus('submitting')
+    const content = await readUtf8File(file)
+    if (content.status === 'error') {
+      setStatus('idle')
+      setProblem(content.message)
+      return
+    }
+    setProblem(null)
+
     const outcome = await createSourceVersion(availability.client, {
       sourceId: form.sourceId as Uuid,
       retrievedAt,
       retrievedFrom: form.retrievedFrom,
-      // Ikke trimmet: hashen skal være hashen av det som faktisk ble hentet.
-      retrievedContent: form.retrievedContent,
+      // Uendret: verken trimmet, normalisert eller omkodet. Hashen skal være
+      // hashen av det som faktisk lå på adressen.
+      retrievedContent: content.text,
       externalVersion: blankToNull(form.externalVersion),
       storageReference: blankToNull(form.storageReference),
     })
@@ -142,10 +172,11 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
         sourceId: form.sourceId,
         retrievedAt: nowAsLocalInputValue(),
         retrievedFrom: '',
-        retrievedContent: '',
         externalVersion: '',
         storageReference: '',
       })
+      setFile(null)
+      setFormToken((token) => token + 1)
     }
   }
 
@@ -200,20 +231,25 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
         </div>
 
         <div className="admin-form__field">
-          <label htmlFor={contentId}>Representasjonen, ordrett</label>
-          <textarea
+          {/* Ikke `required`: en manglende fil avvises av skjemaet selv, med en
+              setning på norsk, framfor av nettleserens egen boble. Samme
+              behandling som den manglende datoen får. */}
+          <label htmlFor={contentId}>Representasjonen, som fil</label>
+          <input
             aria-describedby={contentHelpId}
             id={contentId}
-            onChange={(event) => setForm({ ...form, retrievedContent: event.target.value })}
-            required
-            rows={12}
-            value={form.retrievedContent}
+            key={formToken}
+            onChange={(event) => {
+              setFile(event.target.files?.[0] ?? null)
+            }}
+            type="file"
           />
           <p className="admin-form__hint" id={contentHelpId}>
-            Lim inn svaret fra adressen nøyaktig slik det er, uten å redigere det. Antidep beregner
-            et fingeravtrykk (sha256) av teksten, og det er fingeravtrykket som gjør at en
-            kontrollør senere kan hente adressen på nytt og se om kilden har endret seg. Ett tegn
-            fra eller til gir et annet fingeravtrykk.
+            Last opp svaret fra adressen nøyaktig slik det er — lagret rett fra nettet, ikke kopiert
+            inn i et tekstfelt. Antidep beregner et fingeravtrykk (sha256) av innholdet, og det er
+            fingeravtrykket som gjør at en kontrollør senere kan hente adressen på nytt og se om
+            kilden har endret seg. Ett tegn fra eller til gir et annet fingeravtrykk, så filen må
+            være uredigert og i UTF-8.
           </p>
         </div>
 

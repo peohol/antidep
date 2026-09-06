@@ -299,6 +299,37 @@ describe('trimNumericText', () => {
   })
 })
 
+// Kildeinnhold er utrygg ekstern data. Én ugyldig entitet i én kilde skal ikke
+// kunne stoppe kontrollen av resten av køen — og før denne rettelsen kastet
+// `String.fromCodePoint` en RangeError som gjorde nettopp det.
+describe('searchProjections — ugyldige entiteter i kildeinnhold', () => {
+  it.each([
+    ['&#x110000;', 'kodepunkt over U+10FFFF, heksadesimalt'],
+    ['&#1114112;', 'kodepunkt over U+10FFFF, desimalt'],
+    ['&#99999999999999999999;', 'et tall som er større enn noe kodepunkt'],
+    ['&#xFFFFFFFFFFFF;', 'et heksadesimalt tall uten øvre grense'],
+  ])('kaster ikke på %s (%s)', (entity) => {
+    expect(() => searchProjections(`<p>${entity}</p>`)).not.toThrow()
+  })
+
+  it('beholder en ugyldig entitet ordrett framfor å gjette på hva den var', () => {
+    expect(searchProjections('&#x110000;')[0]).toContain('&#x110000;')
+  })
+
+  it('avkoder fortsatt en gyldig entitet', () => {
+    expect(searchProjections('&#xe6; &#229; &amp;')[0]).toBe('æ å &')
+  })
+
+  it('stopper ikke kontrollen av et funn når kilden har en ugyldig entitet', () => {
+    const report = checkExtraction({
+      item: verificationItemFixture(),
+      sourceText: `${FIXTURE_SOURCE_TEXT}\n<p>&#x110000;</p>`,
+      representationReproduced: true,
+    })
+    expect(report.outcome).toBe('verified')
+  })
+})
+
 describe('searchProjections', () => {
   it('gir én projeksjon for ren tekst og to når det finnes markup', () => {
     expect(searchProjections('ren tekst')).toHaveLength(1)

@@ -4783,6 +4783,43 @@ er den eneste av alle funnene i denne PR-en som kunne påvirket klinisk innhold:
    feilet verifikasjonskjøring ville sett grønn ut. `shell: bash` og `set -euo pipefail` er nå
    eksplisitte, og forskjellen er prøvd i et skall før den ble skrevet inn.
 
+**To til, fanget i den tredje gjennomgangsrunden.** Begge var reelle, og den første brøt
+nøyaktig den kjeden denne PR-en finnes for å bygge:
+
+1. **Redaktørflaten kunne ikke bevare bytene `content_hash` hevder å beskrive.**
+   `/source-versions/new` tok imot representasjonen i en `<textarea>`, og HTML-standarden
+   normaliserer linjeskift i feltets API-verdi: en kilde levert med CRLF ble hashet som om den
+   hadde LF. Verifikatoren hasher de faktiske bytene fra nettet, så den ville rapportert
+   `needs_correction` — «kilden har endret seg» — for en kilde som var uendret, og for hver
+   eneste kilde som leveres med CRLF. Feilen var stille: ingenting i basen kunne oppdage den,
+   fordi hashen var korrekt beregnet av en tekst som bare ikke var kildens.
+
+   Registreringen tar nå imot en fil. `arrayBuffer()` gir bytene uten normalisering, og
+   `src/lib/read-utf8-file.ts` dekoder dem strengt som UTF-8 — samme regel kjøreren bruker på
+   svaret sitt — og avviser filen framfor å lagre et fingeravtrykk ingen kan etterprøve.
+   Rettelsen er prøvd tre steder: en enhetstest på lesefunksjonen, en sidetest som feller
+   `textarea`-semantikken (mutasjonstestet ved å normalisere CRLF i siden — testen feller det),
+   og i en faktisk nettleser, der `File` gir kodepunktene `97,13,10,98` mens en `textarea` gir
+   `97,10,98`.
+
+2. **En ugyldig numerisk entitet i kildeinnhold kunne felle hele kjøringen.** Søkeprojeksjonen
+   avkoder HTML-entiteter for å finne et sitat som står med `&amp;` eller `&#8722;` i kilden.
+   `String.fromCodePoint` kaster på et kodepunkt over `0x10FFFF`, så `&#x110000;` i én kilde
+   avbrøt hele kjøringen — også kontrollen av alle de andre funnene i køen. Avkodingen er nå
+   total: et kodepunkt utenfor området beholdes ordrett framfor å kastes på. I tillegg er hvert
+   funn isolert, slik at en uventet feil på én kilde gir «ikke registrert, med begrunnelse» for
+   det funnet og lar resten av køen gå videre.
+
+**Og en tredje av samme slag, funnet i gjennomlesingen av rettelsen selv: BOM-en.**
+`TextDecoder` fjerner et innledende U+FEFF med mindre man ber den la være, og flaggets navn
+(`ignoreBOM`) betyr det motsatte av hva det ser ut til. En kilde som leveres med BOM ville
+dermed fått de tre bytene EF BB BF fjernet på vei inn — samme stille brudd som CRLF — og på
+vei ut ville verifikatorens gjenkoding manglet dem, slik at `bytesAreUtf8` ble usann og kilden
+aldri kunne verifiseres. Begge sider leser nå med `ignoreBOM: true`, og at det henger sammen
+er avlest og ikke resonnert: `sha256sum` på en fil med BOM og
+`knowledge.source_version_content_hash(...)` på den samme teksten gir samme verdi. Begge de nye
+testene er mutasjonstestet — uten flagget feller de rettelsen.
+
 **Hva denne PR-en bevisst ikke gjør.** Den registrerer ingenting i det hostede prosjektet:
 migrasjonene er ikke deployet dit, ingen legitimasjon er utstedt der, og ingen verifikasjon er
 registrert der. Alt over er kjørt mot en lokal stack. Den bygger heller ikke

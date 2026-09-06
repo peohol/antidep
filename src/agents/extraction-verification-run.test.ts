@@ -255,6 +255,32 @@ describe('runExtractionVerification — når ingenting skal registreres', () => 
     expect(report.items[0]?.reason).toContain('ikke ren UTF-8')
   })
 
+  // Kildeinnhold er utrygg ekstern data. Én kilde som får kontrollen til å
+  // kaste, skal ikke stoppe funnene bak seg i køen — den blir ett overhoppet
+  // funn med en årsak, og resten kontrolleres.
+  it('lar én kilde som feiler uventet, ikke stoppe resten av køen', async () => {
+    const first = await matchingItem()
+    const api = fakeApi([first, { ...first, evidenceItemId: 'det-andre-funnet' }])
+    let call = 0
+    const report = await runExtractionVerification({
+      api,
+      premises: PREMISSER,
+      retrieve: (url) => {
+        call += 1
+        if (call === 1) {
+          throw new Error('noe uventet i den første kilden')
+        }
+        return retrieveFixture()(url)
+      },
+    })
+
+    expect(report.runStatus).toBe('succeeded')
+    expect(report.items[0]).toMatchObject({ decision: 'skipped' })
+    expect(report.items[0]?.reason).toContain('noe uventet i den første kilden')
+    expect(report.items[1]).toMatchObject({ decision: 'registered' })
+    expect(api.registered).toHaveLength(1)
+  })
+
   it('lar en overhoppet kontroll stå i kjøringens outputmanifest', async () => {
     const api = fakeApi([verificationItemFixture({ sourceVersion: null })])
     await runExtractionVerification({ api, premises: PREMISSER, retrieve: retrieveFixture() })

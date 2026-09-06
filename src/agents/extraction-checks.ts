@@ -135,15 +135,31 @@ const XML_ENTITIES: Readonly<Record<string, string>> = {
   nbsp: ' ',
 }
 
+/**
+ * Ett kodepunkt fra en numerisk entitet, eller `null` når det ikke finnes noe.
+ *
+ * `String.fromCodePoint` kaster `RangeError` på alt over U+10FFFF, og
+ * `&#x110000;` er fullt lovlig å skrive i en fil. Kildeinnhold er utrygg
+ * ekstern data (CLAUDE.md), så avkodingen må være total: én slik sekvens i én
+ * kilde skal ikke kunne stoppe kontrollen av resten av køen. En ugyldig
+ * entitet beholdes ordrett framfor å bli til noe annet — vi vet ikke hva den
+ * var ment å være, og en gjetning ville endret teksten kontrollen søker i.
+ */
+function codePointFrom(digits: string, radix: number): string | null {
+  const code = Number.parseInt(digits, radix)
+  if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) {
+    return null
+  }
+  return String.fromCodePoint(code)
+}
+
 function decodeEntities(text: string): string {
   return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
     if (body.startsWith('#x') || body.startsWith('#X')) {
-      const code = Number.parseInt(body.slice(2), 16)
-      return Number.isNaN(code) ? match : String.fromCodePoint(code)
+      return codePointFrom(body.slice(2), 16) ?? match
     }
     if (body.startsWith('#')) {
-      const code = Number.parseInt(body.slice(1), 10)
-      return Number.isNaN(code) ? match : String.fromCodePoint(code)
+      return codePointFrom(body.slice(1), 10) ?? match
     }
     return XML_ENTITIES[body.toLowerCase()] ?? match
   })

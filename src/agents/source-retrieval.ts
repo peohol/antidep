@@ -115,7 +115,11 @@ export async function retrieveRepresentation(
 
   let content: string
   try {
-    content = new TextDecoder('utf-8', { fatal: true }).decode(response.bytes)
+    // `ignoreBOM: true` beholder et innledende U+FEFF. Uten flagget fjernes det,
+    // og `bytesAreUtf8` ville blitt usann for enhver kilde som leveres med BOM —
+    // altså en kilde som aldri kunne verifiseres, av en grunn som ikke er dens.
+    // Samme flagg brukes på veien inn (`src/lib/read-utf8-file.ts`).
+    content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(response.bytes)
   } catch {
     return {
       status: 'error',

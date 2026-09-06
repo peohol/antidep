@@ -510,6 +510,15 @@ teksten_. Den siste koblingen kontrolleres av ekstraksjonsverifikatoren, som hen
 på nytt og sammenligner — en registrering der teksten ikke kom fra adressen, overlever derfor
 ikke første verifikasjon.
 
+**Redaktørflaten laster opp en fil, den limer ikke inn tekst.** `/source-versions/new` tar
+imot representasjonen som en fil, fordi et `<textarea>` normaliserer linjeskift i sin
+API-verdi: en kilde levert med CRLF ville blitt hashet som om den hadde LF, og
+verifikatoren — som hasher de faktiske bytene fra nettet — ville rapportert endring for en
+uendret kilde. Filen dekodes strengt som UTF-8 etter samme regel som verifikatoren bruker
+på svaret sitt, og avvises hvis den ikke er det, framfor å lagre et fingeravtrykk ingen kan
+etterprøve, og et innledende byte-order-mark beholdes framfor å bli fjernet av dekoderen.
+Lagre derfor svaret rett fra nettet (`curl -o`), ikke via utklippstavlen.
+
 ## Legitimasjon til agentidentiteten
 
 `agent-identity:extraction-verification-01` (migrasjon 005f) er registrert uten utstedt

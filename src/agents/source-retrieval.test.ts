@@ -31,6 +31,22 @@ describe('retrieveRepresentation', () => {
     })
   })
 
+  // Uten `ignoreBOM: true` fjerner `TextDecoder` et innledende U+FEFF, og
+  // gjenkodingen ville manglet EF BB BF. `bytesAreUtf8` ble da usann, og en
+  // kilde som leveres med BOM ville aldri kunne verifiseres — av en grunn som
+  // ikke er kildens. Hashen må dessuten være den samme som databasen beregnet
+  // av den samme filen (`src/lib/read-utf8-file.ts`).
+  it('beholder en BOM, slik at en kilde som leveres med BOM kan verifiseres', async () => {
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8('antidep')])
+    const result = await retrieveRepresentation('https://eksempel.invalid/bom', {
+      httpGet: responds(bytes),
+    })
+    expect(result).toMatchObject({
+      status: 'ok',
+      representation: { bytesAreUtf8: true, byteLength: 10, content: '\ufeffantidep' },
+    })
+  })
+
   it('sier fra når svaret ikke er ren UTF-8', async () => {
     // 0xff finnes ikke i noen gyldig UTF-8-sekvens. Da kan hashen av den
     // dekodede teksten ikke reproduseres med sha256sum på svaret, og
