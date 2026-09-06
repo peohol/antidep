@@ -382,11 +382,23 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
 // `90` fra utvalget, `0.4` og `2.6` fra et intervall som er oppgitt med et
 // annet nivå. Kilden sier 95 %, raden sier 90 %, og kontrollen sa `verified`.
 //
-// Intervallet kontrolleres derfor rundt et anker: stedet i teksten der kilden
-// selv navngir et konfidensintervall. Nivået må stå *inntil* ankeret, slik
-// kilder faktisk skriver det («95% CI», «CI 95%», «95 % konfidensintervall»),
-// og begge grensene innenfor et avgrenset vindu rundt det samme ankeret. Et
-// tall et helt annet sted i teksten kan da ikke lenger tre inn i rollen.
+// Å kreve de tre delene i samme *vindu* er ikke nok, og det er den andre
+// halvparten av den samme lærdommen:
+//
+//   «n=90; CI 0.4 to 2.6»
+//   «95% CI was not reported; observed values ranged from 0.4 to 2.6.»
+//
+// I den første er `90` en utvalgsstørrelse og ikke et nivå — kilden sier aldri
+// prosent. I den andre sier kilden uttrykkelig at intervallet *ikke* er
+// rapportert, og grenseparet hører til noe annet. Begge lå innenfor et vindu,
+// og begge ville blitt bekreftet.
+//
+// Intervallet kontrolleres derfor som **ett sammenhengende uttrykk**: nivået
+// som en eksplisitt prosentangivelse, ankeret der kilden navngir intervallet,
+// og grenseparet — i en av de rekkefølgene kilder faktisk skriver dem, med bare
+// skilletegn og korte bindeord imellom. Mellomrommet mellom delene kan ikke
+// inneholde et siffer, og kan ikke være langt. Da finnes det ikke lenger et
+// «i nærheten» et annet tall kan smyge seg inn i.
 //
 // Finner kontrollen ikke et slikt uttrykk, er utfallet `uncertain` og feltet
 // føres ikke opp — ikke et avvik. En kilde kan oppgi intervallet i en tabell,
@@ -401,13 +413,33 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
  * Et anker som treffer feil er ufarlig: det åpner bare for en kontroll som
  * fortsatt krever nivå *og* begge grenser på rett plass.
  */
-const CI_ANCHOR = /\bCI\b|\bC\.I\.|confidence intervals?|konfidensintervall\w*/gi
+const CI_ANCHOR_SOURCE = '\\bCI\\b|\\bC\\.I\\.|confidence intervals?|konfidensintervall\\w*'
 
-/** Hvor nær ankeret nivået må stå. «95 % konfidensintervall» er 5 tegn. */
-const CI_LEVEL_ADJACENCY = 12
+/**
+ * Det som får stå mellom delene i uttrykket.
+ *
+ * Ingen siffer, og høyst 16 tegn: nok til «: », « (», « of », « (CI) », men
+ * ikke til « was not reported; observed values ranged from ». Sifferforbudet
+ * er det som hindrer at et annet tall står imellom og likevel teller.
+ */
+const CI_GLUE = '[^\\d]{0,16}'
 
-/** Hvor langt fra ankeret grensene kan stå. «CI 0.4 to 2.6 (p = 0.01)» får plass. */
-const CI_BOUNDS_WINDOW = 80
+/**
+ * Nivået må være en eksplisitt prosentangivelse.
+ *
+ * Et nakent tall ved ankeret er ikke et nivå: i «n=90; CI 0.4 to 2.6» er `90`
+ * en utvalgsstørrelse. Kilden må selv si prosent.
+ */
+function levelPattern(value: string): string | null {
+  const number = numberPattern(value)
+  if (number === null) {
+    return null
+  }
+  return (
+    `${leadingBoundary(number.isNegative)}${number.body}${TRAILING_BOUNDARY}` +
+    '\\s*(?:%|percent|pct|prosent)'
+  )
+}
 
 // Det som skiller de to grensene i et intervall. Inne i et navngitt
 // konfidensintervall er en bindestrek intervallets strek og ikke et minustegn —
@@ -417,29 +449,30 @@ const CI_BOUNDS_WINDOW = 80
 const CI_RANGE_SEPARATOR = '\\s*(?:to|til|and|og|[,;-])\\s*'
 
 /**
- * Om de to grensene står i teksten som ett intervall.
+ * De to grensene som ett intervall.
  *
- * Dette er hele forskjellen fra to uavhengige tallsøk: «0,4 til 1,9 … 1,1 til
- * 2,6» inneholder både 0,4 og 2,6, men ingen av intervallene er 0,4–2,6. Bare
- * en sammenhengende skrivemåte teller.
+ * Dette er forskjellen fra to uavhengige tallsøk: «0,4 til 1,9 … 1,1 til 2,6»
+ * inneholder både 0,4 og 2,6, men ingen av intervallene er 0,4–2,6. Bare en
+ * sammenhengende skrivemåte teller.
  */
-export function boundsPairOccursIn(text: string, lower: string, upper: string): boolean {
+function boundsPattern(lower: string, upper: string): string | null {
   const low = numberPattern(lower)
   const high = numberPattern(upper)
   if (low === null || high === null) {
-    return false
+    return null
   }
   // Etter separatoren er en bindestrek separatoren selv. Et negativt
   // *øvre* tall trenger derfor sitt eget minustegn i tillegg.
-  const pattern = new RegExp(
+  return (
     `${leadingBoundary(low.isNegative)}${low.body}${CI_RANGE_SEPARATOR}` +
-      `${high.isNegative ? '-' : ''}${high.body}${TRAILING_BOUNDARY}`,
+    `${high.isNegative ? '-' : ''}${high.body}${TRAILING_BOUNDARY}`
   )
-  return pattern.test(text)
 }
 
-function windowAround(text: string, start: number, end: number, radius: number): string {
-  return text.slice(Math.max(0, start - radius), Math.min(text.length, end + radius))
+/** Om de to grensene står i teksten som ett intervall. */
+export function boundsPairOccursIn(text: string, lower: string, upper: string): boolean {
+  const pattern = boundsPattern(lower, upper)
+  return pattern !== null && new RegExp(pattern).test(text)
 }
 
 /** Det registrerte intervallet, slik det skal gjenfinnes. */
@@ -458,45 +491,63 @@ export interface ConfidenceIntervalReport {
 }
 
 /**
+ * De rekkefølgene et konfidensintervall faktisk skrives i.
+ *
+ * Fire, og ikke flere: nivået foran eller bak ankeret, og grensene foran eller
+ * bak begge. Alt annet er ikke en skrivemåte, det er tre deler som tilfeldigvis
+ * står i nærheten av hverandre.
+ */
+function confidenceIntervalPatterns(interval: ConfidenceInterval): readonly string[] {
+  const level = levelPattern(interval.levelPercent)
+  const bounds = boundsPattern(interval.lower, interval.upper)
+  if (level === null || bounds === null) {
+    return []
+  }
+  const anchor = `(?:${CI_ANCHOR_SOURCE})`
+  const glue = CI_GLUE
+  return [
+    // «95% CI 0.4 to 2.6», «95 % konfidensintervall 0,4 til 2,6»
+    `${level}${glue}${anchor}${glue}${bounds}`,
+    // «CI 95%: 0.4 to 2.6»
+    `${anchor}${glue}${level}${glue}${bounds}`,
+    // «0.4 to 2.6 (95% CI)»
+    `${bounds}${glue}${level}${glue}${anchor}`,
+    // «0.4 to 2.6 (CI 95%)»
+    `${bounds}${glue}${anchor}${glue}${level}`,
+  ]
+}
+
+/**
  * Om representasjonen bekrefter det registrerte konfidensintervallet som ett
  * uttrykk. Kalles bare når intervallet er oppgitt.
  *
- * Begge betingelsene må holde ved *samme* anker: nivået inntil ankeret, og de
- * to grensene som ett intervall i vinduet rundt det. Et anker som oppfyller
- * begge, bekrefter; ellers sier rapporten hvilken del som manglet.
+ * Bekreftelsen krever at nivå, anker og grensepar står som én sammenhengende
+ * skrivemåte. Rapporten sier hvilken del som manglet når den ikke gjør det —
+ * og skiller «denne delen finnes ikke noe sted» fra «delene finnes, men ikke i
+ * samme uttrykk», fordi de to betyr forskjellige ting for en leser.
  */
 export function confidenceIntervalCheck(
   projections: readonly string[],
   interval: ConfidenceInterval,
 ): ConfidenceIntervalReport {
-  let anchors = 0
-  let levelSeen = false
-  let boundsSeen = false
-
-  for (const projection of projections) {
-    // Regexen er deklarert utenfor og bærer `lastIndex`, så den kan ikke
-    // gjenbrukes rått mellom kall.
-    for (const anchor of projection.matchAll(new RegExp(CI_ANCHOR.source, 'gi'))) {
-      const start = anchor.index
-      const end = start + anchor[0].length
-      anchors += 1
-
-      const level = numberOccursIn(
-        [windowAround(projection, start, end, CI_LEVEL_ADJACENCY)],
-        interval.levelPercent,
-      )
-      const bounds = boundsPairOccursIn(
-        windowAround(projection, start, end, CI_BOUNDS_WINDOW),
-        interval.lower,
-        interval.upper,
-      )
-      if (level && bounds) {
-        return { confirmed: true, unmatched: [], noAnchor: false }
-      }
-      levelSeen ||= level
-      boundsSeen ||= bounds
-    }
+  const patterns = confidenceIntervalPatterns(interval)
+  if (
+    patterns.some((pattern) =>
+      projections.some((projection) => new RegExp(pattern, 'i').test(projection)),
+    )
+  ) {
+    return { confirmed: true, unmatched: [], noAnchor: false }
   }
+
+  const level = levelPattern(interval.levelPercent)
+  const levelSeen =
+    level !== null && projections.some((projection) => new RegExp(level, 'i').test(projection))
+  const boundsSeen = projections.some((projection) =>
+    boundsPairOccursIn(projection, interval.lower, interval.upper),
+  )
+  const anchorSeen = projections.some((projection) =>
+    new RegExp(CI_ANCHOR_SOURCE, 'i').test(projection),
+  )
 
   const unmatched: string[] = []
   if (!boundsSeen) {
@@ -505,7 +556,7 @@ export function confidenceIntervalCheck(
   if (!levelSeen) {
     unmatched.push(`konfidensnivå (${interval.levelPercent})`)
   }
-  return { confirmed: false, unmatched, noAnchor: anchors === 0 }
+  return { confirmed: false, unmatched, noAnchor: !anchorSeen }
 }
 
 /** Det registrerte intervallet, eller `null` når raden ikke oppgir noe. */

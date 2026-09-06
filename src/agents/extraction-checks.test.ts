@@ -181,6 +181,30 @@ describe('checkExtraction — tallene', () => {
     expect(report.checkedFields).not.toContain('confidence_interval')
   })
 
+  // Et nakent tall ved ankeret er ikke et nivå. Her er `90` en utvalgsstørrelse,
+  // og kilden sier aldri prosent — den sier ikke hvilket nivå intervallet har.
+  it('bekrefter ikke et nivå kilden aldri oppgir som prosent', () => {
+    const report = check(
+      { extraction: { ciLevelPercent: '90', rawExtraction: { sitat: 'Mean weight change' } } },
+      'Mean weight change. n=90; CI 0.4 to 2.6',
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
+  // Kilden sier uttrykkelig at intervallet ikke er rapportert. Nivået står ved
+  // ankeret og grenseparet finnes i teksten, men de er ikke det samme uttrykket.
+  it('bekrefter ikke et intervall kilden sier den ikke har rapportert', () => {
+    const report = check(
+      { extraction: { rawExtraction: { sitat: 'Mean weight change' } } },
+      'Mean weight change. 95% CI was not reported; observed values ranged from 0.4 to 2.6.',
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
   it.each([
     ['95% CI 0.4 to 2.6', 'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6).'],
     ['CI etter nivået med kolon', 'Mean weight change was 1.5 kg (CI 95%: 0.4 to 2.6).'],
@@ -190,6 +214,12 @@ describe('checkExtraction — tallene', () => {
     // Den vanligste skrivemåten i MEDLINE-sammendrag. Utenfor et navngitt
     // intervall leses en bindestrek fortsatt ikke som intervallstrek.
     ['bindestrek som intervallstrek', 'Mean weight change was 1.5 kg (95% CI 0.4-2.6).'],
+    ['nivået skrevet «percent»', 'Weight change 1.5 kg, 95 percent CI 0.4 to 2.6.'],
+    [
+      'ankeret i parentes mellom nivå og grenser',
+      'Weight change, 95% confidence interval (CI) 0.4 to 2.6.',
+    ],
+    ['grensene før ankeret og nivået', 'Weight change 0.4 to 2.6 (CI 95%).'],
   ])('kjenner igjen intervallet skrevet som «%s»', (_navn, kilde) => {
     const report = check(
       { extraction: { rawExtraction: { sitat: 'Mean weight change' } } },

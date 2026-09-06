@@ -4617,6 +4617,32 @@ Mutasjonstestet: settes kontrollen tilbake til tre uavhengige globale tallsøk, 
 testene den. De to seedede funnene er kjørt på nytt mot sine reelle NCBI-poster og er fortsatt
 `verified` — ingen av dem rapporterer konfidensintervall.
 
+**Den sjette runden viste at «samme vindu» ikke er «samme uttrykk».** Ankerregelen over lukket
+eksempelet den ble skrevet for, men to nye viste at et vindu fortsatt har et «i nærheten» et annet
+tall kan smyge seg inn i:
+
+```text
+n=90; CI 0.4 to 2.6
+95% CI was not reported; observed values ranged from 0.4 to 2.6.
+```
+
+I den første er `90` en utvalgsstørrelse — kilden sier aldri prosent, og sier dermed ikke hvilket
+nivå intervallet har. I den andre sier kilden uttrykkelig at intervallet *ikke* er rapportert, og
+grenseparet hører til noe annet. Begge lå innenfor vinduet, og begge ble bekreftet. Reprodusert
+før rettelsen.
+
+Intervallet kontrolleres nå som **ett sammenhengende uttrykk**, og de to kravene er hver for seg
+det som stopper hvert av eksemplene:
+
+| Krav | Hva det stopper |
+| --- | --- |
+| Nivået må være en eksplisitt prosentangivelse (`95%`, `95 %`, `95 percent`) | `n=90; CI …` — et nakent tall ved ankeret er ikke et nivå |
+| Delene bindes sammen av høyst 16 tegn uten et eneste siffer | `95% CI was not reported; … 0.4 to 2.6` — det er ikke ett uttrykk, det er to setninger |
+
+Fire rekkefølger godtas, og det er de kilder faktisk skriver: nivået foran eller bak ankeret, og
+grensene foran eller bak begge. Begge kravene er mutasjonstestet hver for seg — fjernes
+prosentkravet feller to tester, løsnes limet feller en.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen
