@@ -360,6 +360,19 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
         value: e.ciUpper,
       })
     }
+    // Nivået hører til intervallet, ikke ved siden av det: «0,4 til 2,6» er
+    // en annen påstand med 90 % enn med 95 %. Databasen krever da også begge
+    // eller ingen (`evidence_items_confidence_level_pairing_check`). Uten
+    // denne kontrollen ville `confidence_interval` blitt ført som kontrollert
+    // mot en kilde som oppgir et annet nivå enn det registrerte — og
+    // auditsporet ville sagt at intervallet var etterprøvd.
+    if (e.ciLevelPercent !== null) {
+      claims.push({
+        field: 'confidence_interval',
+        label: 'konfidensnivå',
+        value: e.ciLevelPercent,
+      })
+    }
   }
   return claims
 }

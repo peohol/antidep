@@ -118,6 +118,45 @@ describe('checkExtraction — tallene', () => {
     expect(report.rationale).toContain('øvre konfidensgrense (9.9)')
   })
 
+  // Nivået hører til intervallet: «0,4 til 2,6» er en annen påstand med 90 %
+  // enn med 95 %. Grensene alene er derfor ikke nok til å føre feltet som
+  // kontrollert — ellers ville auditsporet sagt at intervallet var etterprøvd
+  // mot en kilde som oppgir noe annet.
+  it('fører ikke konfidensintervallet som kontrollert når nivået ikke stemmer', () => {
+    const report = check({ extraction: { ciLevelPercent: '90' } })
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+    expect(report.rationale).toContain('konfidensnivå (90)')
+  })
+
+  it('fører konfidensintervallet som kontrollert når grensene og nivået alle står der', () => {
+    const report = check()
+
+    expect(report.checkedFields).toContain('confidence_interval')
+  })
+
+  // Presisjonsfellen, sett fra kontrollen: den avrundede verdien står i
+  // kilden, den registrerte gjør ikke. Ville tallet kommet inn som et
+  // JSON-tall, hadde de to vært samme verdi her — og kontrollen ville
+  // bekreftet et estimat som ikke står i kilden.
+  it('bekrefter ikke et estimat der bare den avrundede verdien står i kilden', () => {
+    const report = check(
+      {
+        extraction: {
+          estimate: '9007199254740993',
+          estimateUnit: null,
+          effectMeasure: 'risk_ratio',
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT} Estimatet var 9007199254740992.`,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.rationale).toContain('estimat (9007199254740993)')
+  })
+
   it('behandler en utvalgsstørrelse som ikke ble gjenfunnet på samme måte', () => {
     const report = check({ extraction: { sampleSize: 285 } })
     expect(report.outcome).toBe('uncertain')

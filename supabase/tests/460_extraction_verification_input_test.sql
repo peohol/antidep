@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(31);
+select plan(33);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -113,7 +113,8 @@ insert into knowledge.evidence_items (
   population_detail, sample_size, sample_size_availability,
   intervention_drug_id, comparator_kind, comparator_drug_id,
   outcome_concept_id, outcome_detail, timepoint_availability,
-  reported_direction, estimate_availability, confidence_interval_availability,
+  reported_direction, effect_measure, estimate, estimate_unit, estimate_availability,
+  ci_lower, ci_upper, ci_level_percent, confidence_interval_availability,
   source_locator, extraction_method, raw_extraction, created_by_actor_id
 )
 values (
@@ -125,7 +126,11 @@ values (
   (select id from fixture where name = 'sertralin'), 'drug',
   (select id from fixture where name = 'mirtazapin'),
   (select id from fixture where name = 'weight'), 'Vektendring i 460.',
-  'not_reported', 'increase', 'not_reported', 'not_reported',
+  -- Estimatet har flere signifikante siffer enn en IEEE-754 double rommer:
+  -- kom det ut av api-funksjonen som et JSON-tall, ville det blitt avrundet
+  -- til 1 i det klienten leste svaret, og kontrollen ville lett etter feil tall.
+  'not_reported', 'increase', 'mean_change', 1.0000000000000000001, 'kg', 'reported_value',
+  0.4, 2.6, 95, 'reported_value',
   'Sammendrag, avsnitt 2', 'ai_assisted',
   jsonb_build_object('sitat', 'Ordrett sitat fra kilden, for 460.'),
   (select id from fixture where name = 'extractor')
@@ -138,7 +143,8 @@ values (
   null, 'not_reported',
   (select id from fixture where name = 'sertralin'), 'none', null,
   (select id from fixture where name = 'weight'), 'Funn laget av verifikatoren selv, for 460.',
-  'not_reported', 'not_stated', 'not_reported', 'not_reported',
+  'not_reported', 'not_stated', null, null, null, 'not_reported',
+  null, null, null, 'not_reported',
   'Sammendrag, avsnitt 3', 'ai_assisted', null,
   (select id from fixture where name = 'verifier')
 ),
@@ -151,7 +157,8 @@ values (
   null, 'not_reported',
   (select id from fixture where name = 'sertralin'), 'none', null,
   (select id from fixture where name = 'weight'), 'Funn uten registrert kildeversjon, for 460.',
-  'not_reported', 'not_stated', 'not_reported', 'not_reported',
+  'not_reported', 'not_stated', null, null, null, 'not_reported',
+  null, null, null, 'not_reported',
   'Sammendrag, avsnitt 4', 'ai_assisted', null,
   (select id from fixture where name = 'extractor')
 );
@@ -358,6 +365,26 @@ select is(
   'reported_value',
   'availability-statusene er med: en verdi uten sin status er ikke kontrollerbar (ANTIDEP_CONSTITUTION.md §6)'
 );
+-- Kliniske tallverdier er `numeric` i basen, altså vilkårlig presise. Kom de
+-- ut som JSON-tall, ville de blitt IEEE-754 doubles i det klienten leste
+-- svaret — før noen linje i verifikatoren kjørte — og et estimat kunne blitt
+-- bekreftet av den avrundede verdien framfor den registrerte. De serialiseres
+-- derfor med ::text, slik timepoint_min/max alt gjorde.
+select is(
+  (select jsonb_typeof(item -> 'extraction' -> 'estimate')
+       || ',' || jsonb_typeof(item -> 'extraction' -> 'ci_lower')
+       || ',' || jsonb_typeof(item -> 'extraction' -> 'ci_upper')
+       || ',' || jsonb_typeof(item -> 'extraction' -> 'ci_level_percent')
+   from pg_temp.queued),
+  'string,string,string,string',
+  'kliniske tallverdier er tekst i svaret, ikke JSON-tall som ville blitt avrundet av klienten'
+);
+select is(
+  (select item -> 'extraction' ->> 'estimate' from pg_temp.queued),
+  '1.0000000000000000001',
+  'estimatet beholder hvert siffer: en double ville gjort dette til 1'
+);
+
 select is(
   (select item ->> 'created_by_actor_key' from pg_temp.queued),
   'agent:evidence-extraction',

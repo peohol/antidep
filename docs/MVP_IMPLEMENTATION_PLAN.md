@@ -1485,7 +1485,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1498 pgTAP-assertions over 46 testfiler.
+Databaselaget teller nå 1500 pgTAP-assertions over 46 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -4557,6 +4557,36 @@ etterlater sin egen auditrad.
 ekte HTTP gjennom PostgREST med publishable-nøkkelen som `anon`: feil hemmelighet og feil
 rolle gir begge 401 med identisk melding, riktig legitimasjon gir en kjøring, avslutningen gir
 200, og tabellene selv er ikke eksponert.
+
+**To i den fjerde runden, begge i selve evidenskontrollen.** Den første er den andre feilen i
+denne PR-en som kunne gitt en falsk `verified`:
+
+1. **Kliniske tallverdier mistet presisjon på vei ut av databasen.**
+   `api.extraction_verification_input(...)` la `estimate`, `ci_lower`, `ci_upper` og
+   `ci_level_percent` rett inn i jsonb som `numeric`. De ble da JSON-tall, og et JSON-tall blir en
+   IEEE-754 double i det `JSON.parse` leser svaret — før noen linje i verifikatoren kjører.
+   Et lagret `9007199254740993` var allerede blitt `9007199254740992`, og
+   `0.1234567890123456789` var blitt `0.12345678901234568`. Kommentaren i parseren sa at den leste
+   tall som tekst for å bevare presisjonen; avrundingen hadde skjedd et lag tidligere.
+
+   Konsekvensen er en falsk bekreftelse: står den avrundede verdien i kilden mens den lagrede ikke
+   gjør det, ville `estimate` blitt ført som kontrollert for et tall som ikke står der. De fire
+   feltene serialiseres nå med `::text`, slik `timepoint_min` og `timepoint_max` alt gjorde, og
+   parseren *kaster* på et tall framfor å bruke det — så en senere endring i api-funksjonen ikke
+   kan gjeninnføre avrundingen stille. Prøvd i begge ender: pgTAP kontrollerer at svaret gir tekst
+   og at `1.0000000000000000001` beholder hvert siffer, og enhetstestene går gjennom `JSON.parse`
+   framfor et håndbygd objekt, fordi det er nettopp der presisjonen gikk tapt.
+
+2. **Konfidensintervallet ble ført som kontrollert uten at nivået var det.** Kontrollen så bare på
+   `ci_lower` og `ci_upper`. Et registrert 90 %-intervall kunne dermed bli `verified` mot en kilde
+   som skriver «95% CI 0.4 to 2.6», og auditsporet ville sagt at intervallet var etterprøvd.
+   «0,4 til 2,6» er ikke samme påstand med 90 % som med 95 %, og databasen krever da også begge
+   eller ingen (`evidence_items_confidence_level_pairing_check`). Nivået inngår nå i tallkontrollen
+   under `confidence_interval`, og feltet føres først som kontrollert når nedre grense, øvre grense
+   og nivå alle er gjenfunnet.
+
+Begge er mutasjonstestet, og ingen av dem endrer utfallet for de to seedede funnene: de rapporterer
+ikke konfidensintervall, og estimatet `0.8` har ingen presisjon å miste.
 
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den

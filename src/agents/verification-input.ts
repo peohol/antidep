@@ -106,19 +106,36 @@ function asOptionalString(value: unknown): string | null {
 }
 
 /**
- * Tall fra jsonb. `numeric` kommer som tall fra PostgREST, men leses som tekst
- * her når det er en klinisk verdi: et estimat med flere signifikante siffer enn
- * en IEEE-754 double rommer, skal ikke avrundes på vei inn i en kontroll av om
- * tallet står i kilden. Samme resonnement som `lib/create-evidence-item.ts`.
+ * En klinisk `numeric` — estimat og konfidensgrenser — som tekst.
+ *
+ * Verdien *må* komme som tekst, og et tall er en kontraktsbrudd som skal si
+ * fra. Grunnen er at avrundingen ikke kan angres her: `numeric` er
+ * vilkårlig presis, men et JSON-tall blir en IEEE-754 double i det
+ * `JSON.parse` leser svaret — før noen linje i denne filen kjører. Et lagret
+ * `9007199254740993` er da allerede blitt `9007199254740992`, og
+ * `0.1234567890123456789` er blitt `0.12345678901234568`.
+ *
+ * Konsekvensen ville vært en falsk bekreftelse: står den avrundede verdien i
+ * kilden, mens den lagrede ikke gjør det, ville kontrollen ført `estimate` som
+ * kontrollert for et tall som ikke står der. Det er nøyaktig det denne
+ * verifikatoren finnes for å hindre.
+ *
+ * `api.extraction_verification_input(...)` serialiserer derfor feltene med
+ * `::text`, slik `timepoint_min` og `timepoint_max` alt gjorde. Kastet her er
+ * det som gjør at en senere endring i den funksjonen ikke kan gjeninnføre
+ * avrundingen stille. Samme resonnement som `lib/create-evidence-item.ts`.
  */
-function asOptionalNumericText(value: unknown): string | null {
+function asOptionalNumericText(value: unknown, field: string): string | null {
   if (typeof value === 'string') {
     return value
   }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return String(value)
+  if (value === null || value === undefined) {
+    return null
   }
-  return null
+  throw new Error(
+    `${field} kom som ${typeof value} og ikke som tekst. Kliniske tallverdier må ` +
+      'serialiseres med ::text, ellers er de allerede avrundet av JSON-lesingen.',
+  )
 }
 
 function asOptionalInteger(value: unknown): number | null {
@@ -172,15 +189,18 @@ function parseExtraction(value: unknown): VerificationExtraction {
     ),
     reportedDirection: asString(record['reported_direction'], 'extraction.reported_direction'),
     effectMeasure: asOptionalString(record['effect_measure']),
-    estimate: asOptionalNumericText(record['estimate']),
+    estimate: asOptionalNumericText(record['estimate'], 'extraction.estimate'),
     estimateUnit: asOptionalString(record['estimate_unit']),
     estimateAvailability: asString(
       record['estimate_availability'],
       'extraction.estimate_availability',
     ),
-    ciLower: asOptionalNumericText(record['ci_lower']),
-    ciUpper: asOptionalNumericText(record['ci_upper']),
-    ciLevelPercent: asOptionalNumericText(record['ci_level_percent']),
+    ciLower: asOptionalNumericText(record['ci_lower'], 'extraction.ci_lower'),
+    ciUpper: asOptionalNumericText(record['ci_upper'], 'extraction.ci_upper'),
+    ciLevelPercent: asOptionalNumericText(
+      record['ci_level_percent'],
+      'extraction.ci_level_percent',
+    ),
     confidenceIntervalAvailability: asString(
       record['confidence_interval_availability'],
       'extraction.confidence_interval_availability',

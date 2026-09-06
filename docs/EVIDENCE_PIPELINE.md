@@ -562,8 +562,11 @@ Kontrollen skiller skarpt mellom å bekrefte og å avkrefte, og skillet er en kl
 | Oppgitt tall ikke gjenfunnet | `uncertain`, feltet føres ikke som kontrollert | Tallet kan stå skrevet med bokstaver, i en annen enhet eller i en tabell som ikke er med i representasjonen |
 | Tall gjenfunnet, men med motsatt fortegn | `uncertain`, feltet føres ikke som kontrollert | Fortegnet er en del av tallet: −1,5 kg og 1,5 kg peker motsatt vei, og en bekreftelse på tvers av dem ville godkjent et funn som snur effektretningen |
 | Begrep ikke gjenfunnet | Ingen virkning på utfallet, feltet føres ikke som kontrollert | Kildene er på engelsk og katalogen på norsk |
+| Konfidensgrensene gjenfunnet, men ikke nivået | `uncertain`, `confidence_interval` føres ikke som kontrollert | «0,4 til 2,6» er ikke samme påstand med 90 % som med 95 %; feltet dekker hele intervallet, og en bekreftelse skal dekke det den gir inntrykk av |
 
 De øvrige punktene i §25 — riktig populasjon, riktig tidspunkt, overtolkning, manglende forbehold — krever språkforståelse og dekkes ikke av dagens kontroll. `checked_fields` sier derfor alltid nøyaktig hvilke felter kontrollen faktisk gikk gjennom, slik at en bekreftelse aldri dekker mer enn den gir inntrykk av (DATABASE_ARCHITECTURE.md §29). Et senere ledd med språkmodell er et nytt adapter i samme modell: kjøringen registrerer leverandør, modell og modellversjon som ethvert annet agentledd (§65), så de to kan stå ved siden av hverandre.
+
+**Tallene sammenlignes siffer for siffer, ikke som flyttall.** `estimate`, `ci_lower`, `ci_upper` og `ci_level_percent` er `numeric` i basen — vilkårlig presise — og leses hele veien som tekst. Gikk de gjennom et JSON-tall, ville de blitt avrundet av klientens flyttallsrepresentasjon før kontrollen så dem, og et estimat kunne blitt bekreftet av den avrundede verdien framfor den registrerte. En bekreftelse skal gjelde tallet som faktisk står i basen.
 
 **Verifikatoren registrerer ingenting når den ikke har sett grunnlaget.** Mangler funnet en kildeversjon eller et fingeravtrykk, lot kilden seg ikke hente, eller stemmer ikke fingeravtrykket med det registrerte, skrives ingen rad — ingen av verdiene i `workflow.verification_source_access` ville beskrevet situasjonen sant, og en usann verdi er verre enn en manglende rad. Avviket står i kjøringens `output_manifest`.
 
