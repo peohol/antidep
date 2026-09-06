@@ -74,7 +74,7 @@
 // endre hva kontrollen gjør.
 // ============================================================================
 
-import type { VerificationItem } from './verification-input.ts'
+import type { VerificationExtraction, VerificationItem } from './verification-input.ts'
 
 /** Verdiene `workflow.evidence_check_field` tillater (migrasjon 005). */
 export type EvidenceCheckField =
@@ -398,6 +398,32 @@ interface NumericClaim {
   /** Uttrykk som navngir feltet, og som tallet må stå inntil. */
   readonly anchorsBefore: readonly string[]
   readonly anchorsAfter: readonly string[]
+  /**
+   * Begrepene som *alle* må stå i samme sammenhengende treff som tallet.
+   *
+   * Dette er bindingen mellom verdien og raden. Uten den kan en setning som
+   * navngir det raden trenger, likevel tilskrive tallet noe annet:
+   * «Sertraline and paroxetine were compared, and body weight change was
+   * 5.0 kg in paroxetine patients» navngir både sertralin og endepunktet, og
+   * verdien er paroksetinets.
+   */
+  readonly contextTerms: readonly string[]
+  /**
+   * Om et av begrepene selv navngir det tallet er en verdi *av*.
+   *
+   * Endepunktet gjør det: i «weight change of 1.5» er det endepunktet som gjør
+   * 1,5 til et estimat. Et legemiddelnavn gjør det aldri — det navngir armen,
+   * ikke feltet — og da må feltets egne ankere stå i treffet i tillegg.
+   */
+  readonly contextIsAnchor: boolean
+  /** Det kilden må skrive rett etter tallet, som en registrert enhet. */
+  readonly valueSuffix: string
+  /** Enheter tallet aldri kan bære i denne rollen. */
+  readonly forbiddenAfter: readonly string[]
+  /** Merker foran tallet som gir det en annen rolle. */
+  readonly forbiddenBefore: readonly string[]
+  /** Radens *andre* registrerte tallpåstander, som lim. Se `claimExpressions`. */
+  readonly glueExtra: readonly string[]
 }
 
 interface TermClaim {
@@ -411,6 +437,39 @@ function isReported(availability: string): boolean {
   return availability === 'reported_value'
 }
 
+/**
+ * Radens egne tallpåstander slik kilder skriver dem — «N = 48», «a mean change
+ * of 1.5 kg» — til bruk som lim mellom armen og *en annen* av radens verdier.
+ *
+ * Et tall mellom armen og verdien er nesten alltid radens eget:
+ * «Sertraline-treated patients (N = 48) had a mean weight change of 1.5 kg».
+ * Uten utvalgsstørrelsen som lim ville denne helt vanlige og korrekte setningen
+ * ikke lenger bundet estimatet til armen.
+ *
+ * Bare radens egne registrerte verdier slipper igjennom, ikke et hvilket som
+ * helst tall: et **fremmed** tall mellom armen og verdien er nettopp signalet om
+ * at setningen har begynt å snakke om noe annet. Estimatet står alltid med
+ * enheten det er registrert med, av samme grunn som ellers.
+ */
+function sampleSizeExpressions(e: VerificationExtraction): readonly string[] {
+  if (!isReported(e.sampleSizeAvailability) || e.sampleSize === null) {
+    return []
+  }
+  const number = numberPattern(String(e.sampleSize))
+  return number === null ? [] : [...SAMPLE_SIZE_ANCHORS_BEFORE, number.body]
+}
+
+function estimateExpressions(
+  e: VerificationExtraction,
+  estimate: string | null,
+): readonly string[] {
+  if (estimate === null) {
+    return []
+  }
+  const number = numberPattern(estimate)
+  return number === null ? [] : [...ESTIMATE_ANCHORS, `${number.body}${unitSuffix(e.estimateUnit)}`]
+}
+
 function numericClaims(item: VerificationItem): readonly NumericClaim[] {
   const e = item.extraction
   const claims: NumericClaim[] = []
@@ -422,6 +481,20 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       value: String(e.sampleSize),
       anchorsBefore: SAMPLE_SIZE_ANCHORS_BEFORE,
       anchorsAfter: SAMPLE_SIZE_ANCHORS_AFTER,
+      // Et utvalg er et antall personer i én arm, og bindes til armen.
+      contextTerms: [e.interventionDrugName],
+      // «Sertraline: 48 tablets were dispensed» navngir armen og står inntil
+      // et tall, men sier ingenting om at tallet er et antall personer. Kilden
+      // må selv si det — «N = 48», «48 patients» — ellers står feltet
+      // uavklart. Retningen er valgt: en liste over enheter som *ikke* er
+      // personer («tablets», «centres», «sites», …) kan aldri bli komplett,
+      // mens uttrykkene som navngir et utvalg, er få og kjente.
+      contextIsAnchor: false,
+      valueSuffix: '',
+      // En utvalgsstørrelse er et antall personer og bærer aldri en måleenhet.
+      forbiddenAfter: [...MEASURE_UNITS, ...TIME_UNITS],
+      forbiddenBefore: [],
+      glueExtra: estimateExpressions(e, isReported(e.estimateAvailability) ? e.estimate : null),
     })
   }
   if (isReported(e.estimateAvailability) && e.estimate !== null) {
@@ -431,6 +504,18 @@ function numericClaims(item: VerificationItem): readonly NumericClaim[] {
       value: e.estimate,
       anchorsBefore: ESTIMATE_ANCHORS,
       anchorsAfter: ESTIMATE_ANCHORS,
+      // Et estimat er verdien av ett endepunkt hos én arm. Begge må stå i
+      // samme treff som tallet: at setningen nevner armen et sted, er ikke det
+      // samme som at det er den armen verdien gjelder.
+      contextTerms: [e.interventionDrugName, e.outcomeLabel],
+      contextIsAnchor: true,
+      valueSuffix: unitSuffix(e.estimateUnit),
+      // Et effektestimat er verken et tidspunkt eller et antall personer.
+      forbiddenAfter: [...TIME_UNITS, ...PERSON_NOUNS],
+      // Et tall rett etter «N =» er en utvalgsstørrelse, uansett hva som
+      // kommer etter det.
+      forbiddenBefore: ['\\bn\\s*[=:]'],
+      glueExtra: sampleSizeExpressions(e),
     })
   }
   // Konfidensintervallet står ikke her: det er én påstand med tre deler, og de
@@ -564,9 +649,27 @@ const CI_GLUE_WORDS = [
 /** Skilletegnene som får være lim. Ingen bokstaver, og ikke punktum. */
 const GLUE_PUNCTUATION = '[\\s:;,=()\\[\\]/-]'
 
+/**
+ * Hvor langt limet rekker.
+ *
+ * Inne i ett uttrykk — mellom ankeret og tallet, eller mellom delene i et
+ * konfidensintervall — er avstanden kort. Mellom armen og verdien er den ikke:
+ * armen er setningens subjekt, og utvalgsstørrelsen står gjerne imellom
+ * («Sertraline-treated patients (N = 48) had a mean weight change of 1.5 kg»).
+ *
+ * Rekkevidden er den svakeste av de to grensene, og det er med vilje: det som
+ * faktisk stopper en gal binding, er at limet er en **tillatelsesliste**. Et
+ * ord som ikke står på den, bryter kjeden — og et annet legemiddelnavn er
+ * alltid et slikt ord. «Sertraline and paroxetine were compared, and body
+ * weight change was 5.0 kg … in paroxetine patients» stoppes derfor av `and`
+ * og av `paroxetine`, ikke av en avstand.
+ */
+const GLUE_REACH = 12
+const BINDING_REACH = 24
+
 /** Lim, eventuelt med ekstra former som er nøytrale for nettopp dette uttrykket. */
-function glue(extra: readonly string[] = []): string {
-  return `(?:${[GLUE_PUNCTUATION, ...extra, ...CI_GLUE_WORDS].join('|')}){0,12}`
+function glue(extra: readonly string[] = [], reach: number = GLUE_REACH): string {
+  return `(?:${[GLUE_PUNCTUATION, ...extra, ...CI_GLUE_WORDS].join('|')}){0,${String(reach)}}`
 }
 
 const CI_GLUE = glue([CI_ANCHOR_SOURCE])
@@ -798,14 +901,53 @@ function termAnchor(term: string): string {
   return `(?<![\\p{L}\\p{N}])${escapeRegExp(normalize(term))}\\p{L}{0,2}(?![\\p{L}\\p{N}])`
 }
 
+/**
+ * Enheten kilden må skrive rett etter tallet.
+ *
+ * Samme tall i kilogram og i prosent er to forskjellige kliniske påstander, og
+ * datamodellen krever derfor en enhet for de dimensjonale effektmålene
+ * (`mean_change`, `mean_difference`). Kontrollen kan da bare føre estimatet opp
+ * som kontrollert når verdien **og** enheten er gjenfunnet sammen: «a mean
+ * weight change of 1.5%» bekrefter ikke en rad registrert som 1,5 kg.
+ *
+ * Er ingen enhet registrert, er målet dimensjonsløst (OR, RR, HR) og det finnes
+ * ingen enhet å kreve.
+ *
+ * Skriver kilden enheten på en annen form enn den registrerte — «kilograms»
+ * mot «kg», «points» mot «poeng» — står feltet uavklart. Det er den trygge
+ * retningen: en kontroll som ikke konkluderte, ikke en bekreftelse av en verdi
+ * i feil størrelse.
+ */
+function unitSuffix(unit: string | null): string {
+  const normalized = unit === null ? '' : normalize(unit)
+  if (normalized === '') {
+    return ''
+  }
+  return `\\s*${escapeRegExp(normalized)}(?![\\p{L}\\p{N}])`
+}
+
+/**
+ * Alle rekkefølgene delene kan stå i.
+ *
+ * Kilder skriver dem i alle: «sertraline … weight change … 1.5» og «a weight
+ * change of 1.5 in sertraline patients» sier det samme. Rekkefølgen er derfor
+ * åpen, mens kravet om at delene står i *samme* treff, ikke er det.
+ */
+function permutations<T>(items: readonly T[]): T[][] {
+  if (items.length <= 1) {
+    return [[...items]]
+  }
+  return items.flatMap((item, index) =>
+    permutations([...items.slice(0, index), ...items.slice(index + 1)]).map((rest) => [
+      item,
+      ...rest,
+    ]),
+  )
+}
+
 function anchoredNumberMatch(
   projections: readonly string[],
-  value: string,
-  anchorsBefore: readonly string[],
-  anchorsAfter: readonly string[],
-  contextTerms: readonly string[],
-  forbiddenAfter: readonly string[],
-  forbiddenBefore: readonly string[],
+  claim: NumericClaim,
 ): AnchoredNumberMatch {
   // **Ett sammenhengende treff**, ikke to som tilfeldigvis gir samme tall.
   //
@@ -815,32 +957,38 @@ function anchoredNumberMatch(
   // patients (N = 48)» ga 48 fra feltankeret, og snittet ble {48} — uten at
   // noen ett sted sa at sertralinarmen hadde 48 deltakere.
   //
-  // Mønsteret krever derfor at det bindende begrepet, feltets anker og tallet
-  // står i *samme* treff. Feltets egne ankere er lim inne i det treffet, siden
-  // det er de som gjør tallet til nettopp dette feltet.
-  const number = numberInRole(forbiddenAfter, forbiddenBefore)
-  const g = glue([...anchorsBefore, ...anchorsAfter])
-  const anchored: string[] = []
-  if (anchorsBefore.length > 0) {
-    anchored.push(`(?:${anchorsBefore.join('|')})${g}${number}`)
+  // Mønsteret krever derfor at **alle** de bindende begrepene, feltets anker og
+  // tallet står i *samme* treff, i en hvilken som helst rekkefølge. Begrepene
+  // er ikke alternativer til hverandre og ikke alternativer til ankeret: et
+  // legemiddelnavn ved siden av et tall er ikke en utvalgsstørrelse, og en
+  // setning som nevner armen et sted, tilskriver ikke verdien den armen.
+  const number = `${numberInRole(claim.forbiddenAfter, claim.forbiddenBefore)}${claim.valueSuffix}`
+  const g = glue([...claim.anchorsBefore, ...claim.anchorsAfter])
+  // Limet mellom begrepene og verdien rekker lenger enn limet inne i uttrykket,
+  // og slipper i tillegg igjennom radens egne andre tallpåstander. Se
+  // `BINDING_REACH` og `sampleSizeExpressions`.
+  const binding = glue(
+    [...claim.anchorsBefore, ...claim.anchorsAfter, ...claim.glueExtra],
+    BINDING_REACH,
+  )
+
+  // Formene tallet kan ha inne i treffet: navngitt av feltets eget anker, eller
+  // — når et av begrepene selv navngir feltet — av begrepet ved siden av.
+  const valueForms: string[] = []
+  if (claim.contextIsAnchor) {
+    valueForms.push(number)
   }
-  if (anchorsAfter.length > 0) {
-    anchored.push(`${number}${g}(?:${anchorsAfter.join('|')})`)
+  if (claim.anchorsBefore.length > 0) {
+    valueForms.push(`(?:${claim.anchorsBefore.join('|')})${g}${number}`)
+  }
+  if (claim.anchorsAfter.length > 0) {
+    valueForms.push(`${number}${g}(?:${claim.anchorsAfter.join('|')})`)
   }
 
-  const patterns =
-    contextTerms.length === 0
-      ? anchored
-      : contextTerms.flatMap((term) => {
-          const context = termAnchor(term)
-          return [
-            // Begrepet kan stå på begge sider, og selv være ankeret: i «weight
-            // change of 1.5» er endepunktet det som gjør 1,5 til en verdi.
-            `${context}${g}${number}`,
-            `${number}${g}${context}`,
-            ...anchored.flatMap((one) => [`${context}${g}${one}`, `${one}${g}${context}`]),
-          ]
-        })
+  const terms = claim.contextTerms.map(termAnchor)
+  const patterns = valueForms.flatMap((form) =>
+    permutations([...terms, form]).map((parts) => parts.join(binding)),
+  )
 
   const candidates = collectNumbers(projections, patterns)
   if (candidates.size === 0) {
@@ -849,7 +997,7 @@ function anchoredNumberMatch(
   if (candidates.size > 1) {
     return { kind: 'ambiguous', candidates: [...candidates].sort() }
   }
-  return candidates.has(sameNumber(value)) ? { kind: 'confirmed' } : { kind: 'missing' }
+  return candidates.has(sameNumber(claim.value)) ? { kind: 'confirmed' } : { kind: 'missing' }
 }
 
 /**
@@ -928,19 +1076,28 @@ export interface ConfidenceIntervalReport {
  * står i nærheten av hverandre.
  */
 /**
- * Uttrykket med endepunktet foran eller bak.
+ * Uttrykket med armen og endepunktet i samme treff, i en hvilken som helst
+ * rekkefølge.
  *
- * Uten dette kunne et intervall som tilhører et annet endepunkt i samme setning
- * bekrefte raden: «a mean HAM-D change of 5.0 points (95% CI 4.0 to 6.0), while
- * body weight change was also recorded» navngir endepunktet, men intervallet er
- * HAM-D-ens. Limet slipper igjennom radens eget estimat — intervallet hører til
- * det — og ellers ingen tall.
+ * Begge kreves, av hver sin grunn. Uten endepunktet kunne et intervall som
+ * tilhører et annet endepunkt i samme setning bekrefte raden: «a mean HAM-D
+ * change of 5.0 points (95% CI 4.0 to 6.0), while body weight change was also
+ * recorded» navngir endepunktet, men intervallet er HAM-D-ens. Uten armen
+ * kunne et intervall som setningen uttrykkelig tilskriver en annen arm gjøre
+ * det samme: «Sertraline and paroxetine were compared, and body weight change
+ * was 5.0 kg (95% CI 4.0 to 6.0) in paroxetine patients».
+ *
+ * Limet slipper igjennom radens eget estimat — intervallet hører til det — men
+ * bare med enheten estimatet er registrert med. Ellers kunne en prosentverdi
+ * limt et intervall til en rad registrert i kilogram.
  */
-function withOutcome(order: string, outcomeTerm: string, estimate: string | null): string[] {
-  const estimateNumber = estimate === null ? null : numberPattern(estimate)
-  const g = glue([CI_ANCHOR_SOURCE, ...(estimateNumber === null ? [] : [estimateNumber.body])])
-  const outcome = termAnchor(outcomeTerm)
-  return [`${outcome}${g}${order}`, `${order}${g}${outcome}`]
+function withTerms(
+  order: string,
+  contextTerms: readonly string[],
+  glueExtra: readonly string[],
+): string[] {
+  const binding = glue([CI_ANCHOR_SOURCE, ...glueExtra], BINDING_REACH)
+  return permutations([...contextTerms.map(termAnchor), order]).map((parts) => parts.join(binding))
 }
 
 function intervalOrders(level: string, bounds: string): readonly string[] {
@@ -960,15 +1117,15 @@ function intervalOrders(level: string, bounds: string): readonly string[] {
 
 function confidenceIntervalPatterns(
   interval: ConfidenceInterval,
-  outcomeTerm: string,
-  estimate: string | null,
+  contextTerms: readonly string[],
+  glueExtra: readonly string[],
 ): readonly string[] {
   const level = levelPattern(interval.levelPercent)
   const bounds = boundsPattern(interval.lower, interval.upper)
   if (level === null || bounds === null) {
     return []
   }
-  return intervalOrders(level, bounds).flatMap((order) => withOutcome(order, outcomeTerm, estimate))
+  return intervalOrders(level, bounds).flatMap((order) => withTerms(order, contextTerms, glueExtra))
 }
 
 /**
@@ -1015,17 +1172,20 @@ function confidenceIntervalCandidates(projections: readonly string[]): readonly 
 export function confidenceIntervalCheck(
   projections: readonly string[],
   interval: ConfidenceInterval,
-  /** Endepunktet uttrykket må stå inntil. */
-  outcomeTerm: string,
-  /** Radens eget estimat, når det er bekreftet. Det er lim, ikke et fremmedlegeme. */
-  confirmedEstimate: string | null,
+  /** Armen og endepunktet uttrykket må stå i samme treff som. */
+  contextTerms: readonly string[],
+  /**
+   * Radens egne øvrige tallpåstander, som lim — utvalgsstørrelsen, og estimatet
+   * når det er bekreftet. De er radens eget, ikke fremmedlegemer.
+   */
+  glueExtra: readonly string[],
 ): ConfidenceIntervalReport {
   const candidates = confidenceIntervalCandidates(projections)
   if (candidates.length > 1) {
     return { confirmed: false, unmatched: [], noAnchor: false, ambiguous: candidates }
   }
 
-  const patterns = confidenceIntervalPatterns(interval, outcomeTerm, confirmedEstimate)
+  const patterns = confidenceIntervalPatterns(interval, contextTerms, glueExtra)
   if (
     patterns.some((pattern) =>
       projections.some((projection) => new RegExp(pattern, 'iu').test(projection)),
@@ -1237,7 +1397,19 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   //
   // Begge er sanne, begge står ordrett i kilden, og sammen «bekreftet» de en
   // sertralinrad om vektendring med estimat 5,0 — et tall som hører til HAM-D.
-  // Effektmålene krever derfor et utdrag som navngir både armen og endepunktet.
+  //
+  // Bindingen er derfor ikke på utdraget, og heller ikke på setningen. Et helt
+  // utdrag som nevner riktig arm er ikke nok, for det kan nevne flere — men det
+  // kan én setning også:
+  //
+  //   «Sertraline and paroxetine were compared, and body weight change was
+  //    5.0 kg (95% CI 4.0 to 6.0) in paroxetine patients.»
+  //
+  // Setningen navngir både sertralin og endepunktet, og hvert tall i den
+  // tilhører paroksetin. Kravet er derfor at armen, endepunktet og verdien står
+  // i **samme sammenhengende treff** (`anchoredNumberMatch`, `withTerms`), med
+  // bare tillatt lim imellom. Setningsdelingen står igjen som et billigere
+  // forfilter foran det samme kravet.
   //
   // Konsekvensen er skrevet ut framfor pyntet på: katalogen er på norsk og
   // kildene på engelsk, så et endepunkt som «vektendring» sjelden står i en
@@ -1245,27 +1417,12 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // fleste reelle kilder inntil et ledd som forstår språk finnes. Det er den
   // riktige enden å ta feil i: alternativet er en bekreftelse som bygger på at
   // to sanne setninger om forskjellige ting stod i samme artikkel.
-  // Bindingen er på *setningen*, ikke på utdraget. Et helt utdrag som nevner
-  // riktig arm er ikke nok, for det kan nevne flere:
-  //
-  //   «Sertraline and paroxetine were compared; paroxetine patients (N = 48) …»
-  //   «Sertraline … a mean change of 5.0 points on HAM-D; body weight change …»
-  //
-  // Begge navngir det raden trenger, og i begge tilhører tallet noe annet.
-  // Utdragene deles derfor i setninger, og et tall teller bare fra en setning
-  // som selv navngir armen — og for effektmål endepunktet.
   const quoteFragments = quotesFound
     ? quotes.flatMap((quote) => searchProjections(quote.text)).flatMap(sentences)
     : []
-  const armFragments = quoteFragments.filter((fragment) =>
+  const claimProjections = quoteFragments.filter((fragment) =>
     termOccursIn([fragment], item.extraction.interventionDrugName),
   )
-  const outcomeBoundFragments = armFragments.filter((fragment) =>
-    termOccursIn([fragment], item.extraction.outcomeLabel),
-  )
-
-  const claimProjections = armFragments
-  const outcomeBoundProjections = outcomeBoundFragments
   const unmatchedNumbers: string[] = []
   const numericFields = new Set<EvidenceCheckField>()
   const unresolvedFields = new Set<EvidenceCheckField>()
@@ -1273,28 +1430,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   let confirmedEstimate: string | null = null
   for (const claim of numericClaims(item)) {
     numericFields.add(claim.field)
-    const match = anchoredNumberMatch(
-      claim.field === 'sample_size' ? claimProjections : outcomeBoundProjections,
-      claim.value,
-      claim.anchorsBefore,
-      claim.anchorsAfter,
-      // Et utvalg er et antall personer i en arm, og bindes til armen. Et
-      // estimat er verdien av et endepunkt, og bindes til endepunktet — armen
-      // er allerede bundet på setningen. Å kreve begge inntil samme tall ville
-      // krevd at armen sto klistret til verdien, og det gjør den nesten aldri:
-      // armen er setningens subjekt og endepunktet står imellom.
-      claim.field === 'sample_size'
-        ? [item.extraction.interventionDrugName]
-        : [item.extraction.outcomeLabel],
-      // En utvalgsstørrelse er et antall personer og bærer aldri en måleenhet;
-      // et effektestimat er verken et tidspunkt eller et antall personer.
-      claim.field === 'sample_size'
-        ? [...MEASURE_UNITS, ...TIME_UNITS]
-        : [...TIME_UNITS, ...PERSON_NOUNS],
-      // Et tall som står rett etter «N =» er en utvalgsstørrelse, uansett hva
-      // som kommer etter det.
-      claim.field === 'sample_size' ? [] : ['\\bn\\s*[=:]'],
-    )
+    const match = anchoredNumberMatch(claimProjections, claim)
     if (match.kind === 'ambiguous') {
       unresolvedFields.add(claim.field)
       ambiguousNumbers.push(`${claim.label} (${match.candidates.join(', ')})`)
@@ -1312,10 +1448,13 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   if (reportedInterval !== null) {
     numericFields.add('confidence_interval')
     const ci = confidenceIntervalCheck(
-      outcomeBoundProjections,
+      claimProjections,
       reportedInterval,
-      item.extraction.outcomeLabel,
-      confirmedEstimate,
+      [item.extraction.interventionDrugName, item.extraction.outcomeLabel],
+      [
+        ...sampleSizeExpressions(item.extraction),
+        ...estimateExpressions(item.extraction, confirmedEstimate),
+      ],
     )
     if (!ci.confirmed) {
       unresolvedFields.add('confidence_interval')

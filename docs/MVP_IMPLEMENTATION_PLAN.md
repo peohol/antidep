@@ -4920,6 +4920,35 @@ kobles til det neste gjennom dem.
 
 Alle tre er mutasjonstestet hver for seg.
 
+**Den syttende runden fant tre veier til en falsk `verified` i den samme bindingen — og alle tre
+handlet om at tallet tilhørte noe annet enn raden.**
+
+*Et legemiddelnavn navngir armen, ikke feltet.* Begrepet kunne stå som *alternativ* til feltets eget
+anker, og for utvalgsstørrelsen er begrepet bare legemiddelnavnet. «`Sertraline: 48 tablets were
+dispensed`» bekreftet dermed en registrert `sample_size = 48`. Å svarteliste `tablets`, `centres`,
+`sites` … ville aldri blitt komplett; uttrykkene som *navngir* et utvalg, er derimot få og kjente.
+Begrepene er nå krav ved siden av ankeret og ikke alternativer til det, og utvalgsstørrelsen
+bekreftes bare når samme treff både sier at tallet er et antall personer og binder det til armen.
+
+*Én setning kan navngi det raden trenger og likevel tilskrive tallet en annen arm.* Effektmålene var
+bundet til armen på setningen og til endepunktet i uttrykket, så «`Sertraline and paroxetine were
+compared, and body weight change was 5.0 kg (95% CI 4.0 to 6.0) in paroxetine patients`» bekreftet en
+**sertralin**rad med både estimat og intervall. Armen, endepunktet og verdien må nå stå i samme
+sammenhengende treff, i en hvilken som helst rekkefølge. Det som stopper en gal binding, er at limet
+er en tillatelsesliste: et annet legemiddelnavn er alltid et ord limet ikke kjenner. Rekkevidden er
+en sekundær grense, og radens *egne* øvrige tall — «`(N = 48)`» mellom armen og verdien — er lim,
+fordi et fremmed tall der er nettopp signalet om at setningen har begynt å snakke om noe annet.
+
+*Enheten er en del av påstanden.* `estimate_unit` ble ikke brukt i det hele tatt, så en rad med
+`estimate = 1,5` og `estimate_unit = kg` ble bekreftet av «`a mean weight change of 1.5%`» — samme
+tall, en helt annen klinisk størrelse. Et dimensjonalt estimat må nå gjenfinnes sammen med enheten
+det er registrert med, og estimatet limer bare konfidensintervallet til endepunktet med den samme
+enheten.
+
+Alle tre er mutasjonstestet, og de to som ikke falt på første forsøk fikk skarpere tester framfor
+mildere krav: intervallets armbinding er prøvd på en setning der radens eget estimat *er* bekreftet,
+og enhetslimet på en setning der samme sifferrekke står både med og uten enhet.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

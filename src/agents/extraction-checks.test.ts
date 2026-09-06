@@ -7,6 +7,7 @@ import {
   trimNumericText,
 } from './extraction-checks'
 import { FIXTURE_SOURCE_TEXT, verificationItemFixture } from './test-support'
+import type { VerificationExtraction } from './verification-input'
 
 function check(
   overrides: Parameters<typeof verificationItemFixture>[0] = {},
@@ -1045,6 +1046,177 @@ describe('checkExtraction — tallene', () => {
     // ut, så de andre kontrollene slår ut som de skal.
     const report = check({ extraction: { estimate: '1.5' } }, 'Vektendringen var 1,5 kg.')
     expect(report.findings).not.toContain('estimat')
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Bindingen mellom et tall og den raden det er registrert på
+//
+// Tre veier til en falsk bekreftelse, alle av samme slag: tallet står i et
+// utdrag som er ordrett riktig, men verdien tilhører noe annet enn raden.
+// ----------------------------------------------------------------------------
+describe('checkExtraction — tallet må tilhøre denne raden', () => {
+  function withQuote(quote: string, extraction: Partial<VerificationExtraction>) {
+    return check(
+      { extraction: { ...extraction, rawExtraction: { utdrag: quote } } },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${quote}</p>`,
+    )
+  }
+
+  // Legemiddelnavnet navngir armen, ikke feltet. Uten et uttrykk som sier at
+  // tallet er et antall personer, er «Sertraline: 48 …» ikke en
+  // utvalgsstørrelse — uansett hvilken enhet som følger.
+  it('bekrefter ikke en utvalgsstørrelse som bare står inntil legemiddelnavnet', () => {
+    const report = withQuote(
+      'Sertraline: 48 tablets were dispensed; body weight change was assessed',
+      { sampleSize: 48, sampleSizeAvailability: 'reported_value' },
+    )
+    expect(report.checkedFields).not.toContain('sample_size')
+    expect(report.outcome).not.toBe('verified')
+  })
+
+  it('bekrefter fortsatt en utvalgsstørrelse som er navngitt som et antall personer', () => {
+    const report = withQuote('Sertraline patients (N = 48) were randomised', {
+      sampleSize: 48,
+      sampleSizeAvailability: 'reported_value',
+    })
+    expect(report.checkedFields).toContain('sample_size')
+  })
+
+  // Setningen navngir sertralin, men verdiene er uttrykkelig paroksetinets.
+  it('bekrefter ikke et estimat som setningen tilskriver en annen arm', () => {
+    const report = withQuote(
+      'Sertraline and paroxetine were compared, and body weight change was 5.0 kg ' +
+        '(95% CI 4.0 to 6.0) in paroxetine patients',
+      {
+        estimate: '5.0',
+        estimateUnit: 'kg',
+        ciLower: '4.0',
+        ciUpper: '6.0',
+        ciLevelPercent: '95',
+      },
+    )
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.outcome).not.toBe('verified')
+  })
+
+  it('bekrefter ikke et konfidensintervall som setningen tilskriver en annen arm', () => {
+    const report = withQuote(
+      'Sertraline and paroxetine were compared, and body weight change was 5.0 kg ' +
+        '(95% CI 4.0 to 6.0) in paroxetine patients',
+      {
+        estimate: '5.0',
+        estimateUnit: 'kg',
+        ciLower: '4.0',
+        ciUpper: '6.0',
+        ciLevelPercent: '95',
+      },
+    )
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
+  // Den skarpe formen av den forrige: her er radens **eget estimat bekreftet**,
+  // og det er nettopp estimatet som ellers limer intervallet til endepunktet.
+  // Uten armen i samme treff ble et intervall som uttrykkelig tilhører den
+  // andre armen, ført opp som kontrollert.
+  it('bekrefter ikke et annet arms intervall selv når radens eget estimat er bekreftet', () => {
+    const report = withQuote(
+      'Sertraline-treated patients had a mean weight change of 1.5 kg, and paroxetine ' +
+        'patients had a weight change of 1.5 kg (95% CI 4.0 to 6.0)',
+      {
+        estimate: '1.5',
+        estimateUnit: 'kg',
+        ciLower: '4.0',
+        ciUpper: '6.0',
+        ciLevelPercent: '95',
+      },
+    )
+    expect(report.checkedFields).toContain('estimate')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
+  // Samme tall i kilogram og i prosent er to forskjellige kliniske påstander.
+  it('bekrefter ikke et estimat i kg mot en prosentverdi i kilden', () => {
+    const report = withQuote(
+      'Sertraline-treated patients had a mean weight change of 1.5% over the trial',
+      {
+        estimate: '1.5',
+        estimateUnit: 'kg',
+        confidenceIntervalAvailability: 'not_reported',
+        ciLower: null,
+        ciUpper: null,
+        ciLevelPercent: null,
+      },
+    )
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.outcome).not.toBe('verified')
+  })
+
+  // Det er tillatelseslisten som stopper en gal binding, ikke avstanden: et
+  // annet legemiddelnavn er alltid et ord limet ikke kjenner, og bryter kjeden.
+  it.each([
+    [
+      'en annen arm mellom armen og verdien',
+      'Sertraline patients, paroxetine patients had a mean weight change of 1.5 kg',
+    ],
+    [
+      'en annen arm bak verdien',
+      'Sertraline was studied, a mean weight change of 1.5 kg in paroxetine patients',
+    ],
+    [
+      'en limkjede som er lengre enn bindingen rekker',
+      'Sertraline patients patients patients patients patients patients patients ' +
+        'patients patients patients patients patients patients had a mean weight ' +
+        'change of 1.5 kg',
+    ],
+  ])('bekrefter ikke et estimat når bindingen til armen er brutt (%s)', (_navn, quote) => {
+    const report = withQuote(quote, {
+      sampleSizeAvailability: 'not_reported',
+      sampleSize: null,
+      estimate: '1.5',
+      estimateUnit: 'kg',
+      confidenceIntervalAvailability: 'not_reported',
+      ciLower: null,
+      ciUpper: null,
+      ciLevelPercent: null,
+    })
+    expect(report.checkedFields).not.toContain('estimate')
+  })
+
+  // Radens eget estimat er limet som binder intervallet til endepunktet. Uten
+  // enheten kunne en *annen* forekomst av samme sifferrekke gjøre den jobben —
+  // og da er det ikke lenger radens egen påstand som limer.
+  it('limer ikke et intervall med en enhetsløs forekomst av estimatets tall', () => {
+    const report = withQuote(
+      'Sertraline patients had a mean weight change of 1.5 kg, the change of 1.5 ' +
+        '(95% CI 4.0 to 6.0)',
+      {
+        sampleSizeAvailability: 'not_reported',
+        sampleSize: null,
+        estimate: '1.5',
+        estimateUnit: 'kg',
+        ciLower: '4.0',
+        ciUpper: '6.0',
+        ciLevelPercent: '95',
+      },
+    )
+    expect(report.checkedFields).toContain('estimate')
+    expect(report.checkedFields).not.toContain('confidence_interval')
+  })
+
+  it('bekrefter et estimat i prosent når kilden oppgir prosent', () => {
+    const report = withQuote(
+      'Sertraline-treated patients had a mean weight change of 1.5% over the trial',
+      {
+        estimate: '1.5',
+        estimateUnit: '%',
+        confidenceIntervalAvailability: 'not_reported',
+        ciLower: null,
+        ciUpper: null,
+        ciLevelPercent: null,
+      },
+    )
+    expect(report.checkedFields).toContain('estimate')
   })
 })
 
