@@ -66,7 +66,15 @@ export function extractionFixture(
     confidenceIntervalAvailability: 'reported_value',
     limitationsText: null,
     sourceLocator: 'Sammendrag, resultatavsnittet',
-    rawExtraction: { sitat: 'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6)' },
+    // To utdrag, som i de seedede radene fra migrasjon 003: tallene kontrolleres
+    // mot funnets egne utdrag, så et funn som oppgir utvalgsstørrelse må ha et
+    // utdrag som sier den.
+    rawExtraction: {
+      metode:
+        'A total of 284 adults with major depressive disorder were randomised to ' +
+        'sertraline or fluoxetine.',
+      resultat: 'Mean weight change was 1.5 kg (95% CI 0.4 to 2.6)',
+    },
     ...overrides,
   }
 }

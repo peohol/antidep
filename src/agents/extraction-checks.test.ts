@@ -62,6 +62,10 @@ describe('checkExtraction — feilsitering', () => {
     expect(report.checkedFields).toContain('raw_extraction')
   })
 
+  // De tre neste prøver sitatmatchingen alene. De erstatter fiksturens utdrag
+  // med ett smalt sitat, og da har ikke de øvrige tallfeltene lenger et utdrag
+  // som dekker dem — utfallet for raden sier derfor noe annet enn det disse
+  // testene handler om. Asserten er at sitatet ble gjenfunnet.
   it('finner et sitat som krysser markup i råsvaret', () => {
     // Sitatet spenner over to linjer og et element i fiksturen.
     const report = check({
@@ -69,7 +73,8 @@ describe('checkExtraction — feilsitering', () => {
         rawExtraction: { metode: 'A total of 284 adults with major depressive disorder' },
       },
     })
-    expect(report.outcome).toBe('verified')
+    expect(report.findings).toBeNull()
+    expect(report.checkedFields).toContain('raw_extraction')
   })
 
   it('finner et sitat med en avkodet entitet', () => {
@@ -78,7 +83,8 @@ describe('checkExtraction — feilsitering', () => {
         rawExtraction: { sitat: '(95% CI 0.4 to 2.6) & the difference was significant' },
       },
     })
-    expect(report.outcome).toBe('verified')
+    expect(report.findings).toBeNull()
+    expect(report.checkedFields).toContain('raw_extraction')
   })
 
   it('finner et sitat med typografiske anførselstegn i den ene enden', () => {
@@ -86,7 +92,8 @@ describe('checkExtraction — feilsitering', () => {
       { extraction: { rawExtraction: { sitat: '"Mean weight change over the trial"' } } },
       `${FIXTURE_SOURCE_TEXT}\n“Mean weight change over the trial”`,
     )
-    expect(report.outcome).toBe('verified')
+    expect(report.findings).toBeNull()
+    expect(report.checkedFields).toContain('raw_extraction')
   })
 })
 
@@ -181,6 +188,58 @@ describe('checkExtraction — tallene', () => {
     expect(report.checkedFields).not.toContain('confidence_interval')
   })
 
+  // En artikkel beskriver flere armer. Tallet finnes — men for en annen arm enn
+  // den raden gjelder, og da er det ikke denne raden som er kontrollert.
+  it('bekrefter ikke en utvalgsstørrelse som tilhører en annen arm i samme artikkel', () => {
+    const kilde =
+      'Patients (fluoxetine, N = 44; paroxetine, N = 48) completed the trial. ' +
+      'Sertraline-treated patients had a modest weight increase.'
+    const report = check(
+      {
+        extraction: {
+          sampleSize: 48,
+          rawExtraction: { sitat: 'Sertraline-treated patients had a modest weight increase.' },
+        },
+      },
+      kilde,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('sample_size')
+    expect(report.rationale).toContain('utvalgsstørrelse (48)')
+  })
+
+  it('bekrefter ikke et estimat som tilhører et annet utfall i samme artikkel', () => {
+    const kilde =
+      'Quality of life improved by a mean difference of 0.8 points. ' +
+      'Weight did not change appreciably in either group.'
+    const report = check(
+      {
+        extraction: {
+          estimate: '0.8',
+          rawExtraction: { sitat: 'Weight did not change appreciably in either group.' },
+        },
+      },
+      kilde,
+    )
+
+    expect(report.outcome).not.toBe('verified')
+    expect(report.checkedFields).not.toContain('estimate')
+  })
+
+  it('sier i begrunnelsen hvorfor tallene ikke kunne kontrolleres uten et gjenfunnet utdrag', () => {
+    const report = check(
+      {
+        extraction: { rawExtraction: { sitat: 'et sitat som ikke står i kilden i det hele tatt' } },
+      },
+      'A total of 284 adults. Mean weight change was 1.5 kg (95% CI 0.4 to 2.6).',
+    )
+
+    expect(report.checkedFields).not.toContain('sample_size')
+    expect(report.checkedFields).not.toContain('estimate')
+    expect(report.rationale).toContain('ingen tekst som tilhører nettopp dette funnet')
+  })
+
   // Et nakent tall ved ankeret er ikke et nivå. Her er `90` en utvalgsstørrelse,
   // og kilden sier aldri prosent — den sier ikke hvilket nivå intervallet har.
   it('bekrefter ikke et nivå kilden aldri oppgir som prosent', () => {
@@ -238,10 +297,9 @@ describe('checkExtraction — tallene', () => {
     ],
     ['grensene før ankeret og nivået', 'Weight change 0.4 to 2.6 (CI 95%).'],
   ])('kjenner igjen intervallet skrevet som «%s»', (_navn, kilde) => {
-    const report = check(
-      { extraction: { rawExtraction: { sitat: 'Mean weight change' } } },
-      `Mean weight change. ${kilde}`,
-    )
+    // Teksten er funnets eget utdrag: tallene kontrolleres mot den, ikke mot
+    // resten av artikkelen.
+    const report = check({ extraction: { rawExtraction: { sitat: kilde } } }, `Forord. ${kilde}`)
 
     expect(report.checkedFields).toContain('confidence_interval')
   })
@@ -361,8 +419,8 @@ describe('checkExtraction — tallene', () => {
     ['norsk form', 'Studien inkluderte 48 pasienter.', 48],
   ])('kjenner igjen utvalgsstørrelsen skrevet som «%s»', (_navn, kilde, størrelse) => {
     const report = check(
-      { extraction: { sampleSize: størrelse, rawExtraction: { sitat: 'Vekt' } } },
-      `Vekt. ${kilde}`,
+      { extraction: { sampleSize: størrelse, rawExtraction: { sitat: kilde } } },
+      `Forord. ${kilde}`,
     )
 
     expect(report.checkedFields).toContain('sample_size')
@@ -374,8 +432,8 @@ describe('checkExtraction — tallene', () => {
     ['norsk form', 'Vekt. Gjennomsnittlig endring var 0,8 kg.'],
   ])('kjenner igjen estimatet skrevet som «%s»', (_navn, kilde) => {
     const report = check(
-      { extraction: { estimate: '0.8', rawExtraction: { sitat: 'Vekt' } } },
-      kilde,
+      { extraction: { estimate: '0.8', rawExtraction: { sitat: kilde } } },
+      `Forord. ${kilde}`,
     )
 
     expect(report.checkedFields).toContain('estimate')

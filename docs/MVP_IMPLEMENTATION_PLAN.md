@@ -4711,6 +4711,38 @@ feilklasse på estimatsiden, som gjennomgangen ikke hadde pekt på.
 gjør det ikke. Verbene ga altså ingen dekning listene ikke allerede hadde — bare en åpning. Begge
 innstrammingene er mutasjonstestet, og begge de reelle NCBI-funnene er fortsatt `verified`.
 
+**Den tiende runden lukket to ting: en SSRF-omvei og bindingen mellom tall og funn.**
+
+*NAT64 er to prefikser, ikke ett.* Vakten leste de siste 32 bitene som destinasjonen for hele
+`64:ff9b::/32`. Det er bare riktig for `/96`. RFC 6052 tillater også kortere prefikser, og den lokale
+blokken `64:ff9b:1::/48` (RFC 8215) bruker en slik: der er de siste 32 bitene suffiks. I
+`64:ff9b:1:a00:0:100:808:808` er destinasjonen **10.0.0.1** — privat — mens de siste 32 bitene er
+8.8.8.8 og ser offentlige ut. Vakten slapp den gjennom; det er prøvd. Nå pakkes bare `/96` ut, og
+resten av `64:ff9b::/32` avvises: en destinasjon vakten ikke kan lese, er ikke en den kan godkjenne.
+Samme runde tok inn de IPv6-blokkene registeret har fått siden: `100:0:0:1::/64` (dummy),
+`3fff::/20` og `5f00::/16` — og Teredo-regelen ble utvidet til hele `2001::/23`, som også dekker
+benchmarking, ORCHIDv2 og drone remote id. Grensene er prøvd i begge retninger, slik at
+publikumsadresser like utenfor blokkene fortsatt slipper gjennom.
+
+*Et tall må tilhøre funnet, ikke bare artikkelen.* Tallene ble søkt i hele representasjonen, og en
+artikkel beskriver ofte flere armer og flere utfall:
+
+```text
+raden gjelder sertralin med sample_size = 48
+artikkelen sier «paroxetine, N = 48» et annet sted
+```
+
+Feltet ble ført opp i `checked_fields` fordi en *annen arm* hadde det tallet. Bindingen som manglet,
+fantes allerede: `raw_extraction` er funnets egne ordrette utdrag, og de er nettopp verifisert ord
+for ord mot representasjonen. Tallene søkes derfor i dem. Er ingen utdrag gjenfunnet, føres ingen
+tallfelt opp — samme regel som gjelder kildepekeren, og av samme grunn.
+
+Innstrammingen krevde at fiksturen fikk to utdrag, som de seedede radene alt hadde: et funn som
+oppgir utvalgsstørrelse må ha et utdrag som sier den. **Begge de reelle NCBI-funnene er fortsatt
+`verified`** — «sertraline, N = 48» og «a mean weight gain of 0.8 +/- 2.7 kg» står begge i funnenes
+egne utdrag, mens `48` i den samme artikkelens referanseliste og i paroksetin-armen nå er utenfor.
+Begge rettelsene er mutasjonstestet hver for seg.
+
 **Hva denne PR-en bevisst ikke gjør.** Den bygger ikke skriveveien inn i
 `workflow.evidence_verifications` — den hører til neste PR og bruker mekanismen her. Den
 utsteder ingen legitimasjon i produksjon, registrerer ingen verifikasjon, ingen

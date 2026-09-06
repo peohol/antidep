@@ -187,19 +187,49 @@ const IPV4_MAPPED: Prefix = {
   length: 96,
   why: 'IPv4-innpakket',
 }
-const NAT64: Prefix = {
+
+// NAT64 er to prefikser, ikke ett, og bare det første kan pakkes ut her.
+//
+// `64:ff9b::/96` (RFC 6052) legger IPv4-adressen i de siste 32 bitene, og der
+// er utpakkingen entydig. Men RFC 6052 tillater også prefikslengdene 32, 40,
+// 48, 56 og 64, og da ligger IPv4-adressen *et annet sted* i adressen, med et
+// reservert byte inni seg — resten er suffiks. Den lokale NAT64-blokken
+// `64:ff9b:1::/48` (RFC 8215) bruker nettopp en slik innpakking.
+//
+// Å lese de siste 32 bitene der ville vært å lese suffikset som destinasjon.
+// I `64:ff9b:1:a00:0:100:808:808` er destinasjonen 10.0.0.1 — privat — mens de
+// siste 32 bitene er 8.8.8.8 og ser offentlige ut. Vakten ville sluppet den
+// gjennom.
+//
+// Resten av `64:ff9b::/32` avvises derfor i sin helhet. Å implementere alle
+// RFC 6052-lengdene ville krevd å vite hvilken lengde translatoren bruker, og
+// det står ikke i adressen. En destinasjon vakten ikke kan lese, er ikke en
+// destinasjon den kan godkjenne.
+const NAT64_WELL_KNOWN: Prefix = {
+  bytes: [0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0],
+  length: 96,
+  why: 'NAT64',
+}
+const NAT64_OTHER: Prefix = {
   bytes: [0x00, 0x64, 0xff, 0x9b],
   length: 32,
-  why: 'NAT64',
+  why: 'NAT64 med en innpakking vakten ikke kan lese destinasjonen ut av',
 }
 
 const BLOCKED_IPV6: readonly Prefix[] = [
   { bytes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], length: 128, why: 'uspesifisert' },
   { bytes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], length: 128, why: 'loopback' },
   { bytes: [0x01, 0x00], length: 64, why: 'discard-prefiks' },
-  { bytes: [0x20, 0x01, 0x00, 0x00], length: 32, why: 'Teredo-tunnel' },
+  { bytes: [0x01, 0x00, 0, 0, 0, 0, 0, 0x01], length: 64, why: 'dummy-prefiks' },
+  // Hele IETF-blokken, ikke bare Teredo: den rommer også benchmarking
+  // (2001:2::/48), ORCHIDv2 (2001:20::/28) og drone remote id (2001:30::/28),
+  // som ingen av dem er globalt tilgjengelige. Å liste dem hver for seg ville
+  // vært en liste som må vedlikeholdes; blokken er én regel som holder.
+  { bytes: [0x20, 0x01, 0x00], length: 23, why: 'IETF-protokolltildeling, blant annet Teredo' },
   { bytes: [0x20, 0x01, 0x0d, 0xb8], length: 32, why: 'dokumentasjonsnett' },
   { bytes: [0x20, 0x02], length: 16, why: '6to4-tunnel' },
+  { bytes: [0x3f, 0xff], length: 20, why: 'dokumentasjonsnett' },
+  { bytes: [0x5f, 0x00], length: 16, why: 'SRv6 SID-blokk' },
   { bytes: [0xfc, 0x00], length: 7, why: 'unique local' },
   { bytes: [0xfe, 0x80], length: 10, why: 'link-local' },
   { bytes: [0xff, 0x00], length: 8, why: 'multicast' },
@@ -233,9 +263,13 @@ export function judgeAddress(value: string): AddressVerdict {
     return judgeIpv4(address.bytes)
   }
 
-  // De innkapslede formene kontrolleres som den IPv4-adressen de faktisk bærer.
-  if (matchesPrefix(address.bytes, IPV4_MAPPED) || matchesPrefix(address.bytes, NAT64)) {
+  // De innkapslede formene kontrolleres som den IPv4-adressen de faktisk bærer —
+  // men bare der utpakkingen er entydig.
+  if (matchesPrefix(address.bytes, IPV4_MAPPED) || matchesPrefix(address.bytes, NAT64_WELL_KNOWN)) {
     return judgeIpv4(address.bytes.slice(12))
+  }
+  if (matchesPrefix(address.bytes, NAT64_OTHER)) {
+    return { allowed: false, reason: NAT64_OTHER.why }
   }
 
   for (const prefix of BLOCKED_IPV6) {

@@ -57,11 +57,28 @@ describe('judgeAddress — IPv6', () => {
     ['2002:7f00:1::', '6to4-tunnel'],
     ['2001:0:1::', 'Teredo-tunnel'],
     ['100::1', 'discard-prefiks'],
+    ['100:0:0:1::1', 'dummy-prefiks'],
+    ['2001:2::1', 'benchmarking, inne i IETF-blokken'],
+    ['2001:20::1', 'ORCHIDv2, inne i IETF-blokken'],
+    ['2001:30::1', 'drone remote id, inne i IETF-blokken'],
+    ['2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff', 'siste adresse i IETF-blokken'],
+    ['3fff::1', 'dokumentasjonsnett'],
+    ['3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff', 'siste adresse i dokumentasjonsnettet'],
+    ['5f00::1', 'SRv6 SID-blokk'],
   ])('avviser %s (%s)', (address) => {
     expect(isPublicAddress(address)).toBe(false)
   })
 
-  it.each(['2606:4700:4700::1111', '2a00:1450:4001:80f::200e'])('godtar %s', (address) => {
+  // Grensene rundt de nye blokkene: en for vid regel ville stengt ute
+  // publikumsadresser, og det er en feil den andre veien.
+  it.each([
+    ['2606:4700:4700::1111', 'Cloudflare'],
+    ['2a00:1450:4001:80f::200e', 'Google'],
+    ['2001:4860:4860::8888', 'like utenfor IETF-blokken'],
+    ['2001:200::1', 'første adresse etter IETF-blokken'],
+    ['4000::1', 'like etter dokumentasjonsnettet'],
+    ['6000::1', 'like etter SRv6-blokken'],
+  ])('godtar %s (%s)', (address) => {
     expect(isPublicAddress(address)).toBe(true)
   })
 
@@ -78,9 +95,28 @@ describe('judgeAddress — IPv6', () => {
     expect(isPublicAddress(address)).toBe(false)
   })
 
-  it('godtar en innpakket offentlig adresse', () => {
-    expect(isPublicAddress('::ffff:8.8.8.8')).toBe(true)
+  it.each(['::ffff:8.8.8.8', '64:ff9b::8.8.8.8'])(
+    'godtar den innpakkede offentlige adressen %s',
+    (address) => {
+      expect(isPublicAddress(address)).toBe(true)
+    },
+  )
+
+  // Bare `64:ff9b::/96` legger IPv4-adressen i de siste 32 bitene. RFC 6052
+  // tillater også kortere prefikser, og da ligger destinasjonen et annet sted.
+  // Her er destinasjonen 10.0.0.1 — privat — mens de siste 32 bitene er
+  // 8.8.8.8 og ser offentlige ut. En vakt som leste dem, ville sluppet den
+  // gjennom til et privat nett.
+  it('avviser en NAT64-adresse der destinasjonen ikke ligger i de siste 32 bitene', () => {
+    expect(isPublicAddress('64:ff9b:1:a00:0:100:808:808')).toBe(false)
   })
+
+  it.each(['64:ff9b:1::8.8.8.8', '64:ff9b:0:1::808:808', '64:ff9b:ffff::1'])(
+    'avviser %s, som er NAT64 med en innpakking vakten ikke kan lese',
+    (address) => {
+      expect(isPublicAddress(address)).toBe(false)
+    },
+  )
 
   it('leser en sone-id uten å la den omgå kontrollen', () => {
     expect(isPublicAddress('fe80::1%eth0')).toBe(false)

@@ -844,13 +844,40 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // gjenfunnet. Konfidensintervallet er det som gjør regelen nødvendig: det har
   // to tall, og et felt som ble ført opp fordi den nedre grensen stemte, ville
   // påstått at intervallet var kontrollert selv om den øvre ikke var funnet.
+  //
+  // --------------------------------------------------------------------------
+  // Tallene søkes i funnets egne utdrag, ikke i hele representasjonen
+  //
+  // En artikkel beskriver ofte flere armer og flere utfall. Søkes tallene i hele
+  // teksten, kan treffet tilhøre et annet funn enn det som kontrolleres:
+  //
+  //   raden gjelder sertralin med sample_size = 48
+  //   artikkelen sier «paroxetine, N = 48» et annet sted
+  //
+  // Feltet ble da ført opp i `checked_fields` fordi *en annen arm* hadde det
+  // tallet. Bindingen som mangler, finnes allerede: `raw_extraction` er
+  // funnets egne ordrette utdrag, og de er nettopp verifisert ord for ord mot
+  // representasjonen. Tallene søkes derfor i dem.
+  //
+  // Er ingen utdrag gjenfunnet, finnes det ingen slik binding, og da føres
+  // ingen tallfelt opp som kontrollert. Det er samme regel som gjelder
+  // kildepekeren, og av samme grunn (DATABASE_ARCHITECTURE.md §29).
+  // --------------------------------------------------------------------------
+  const claimProjections = quotesFound
+    ? quotes.flatMap((quote) => searchProjections(quote.text))
+    : []
   const unmatchedNumbers: string[] = []
   const numericFields = new Set<EvidenceCheckField>()
   const unresolvedFields = new Set<EvidenceCheckField>()
   for (const claim of numericClaims(item)) {
     numericFields.add(claim.field)
     if (
-      !anchoredNumberOccursIn(projections, claim.value, claim.anchorsBefore, claim.anchorsAfter)
+      !anchoredNumberOccursIn(
+        claimProjections,
+        claim.value,
+        claim.anchorsBefore,
+        claim.anchorsAfter,
+      )
     ) {
       unresolvedFields.add(claim.field)
       unmatchedNumbers.push(`${claim.label} (${claim.value})`)
@@ -862,7 +889,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   let confidenceIntervalUnresolved = false
   if (reportedInterval !== null) {
     numericFields.add('confidence_interval')
-    const ci = confidenceIntervalCheck(projections, reportedInterval)
+    const ci = confidenceIntervalCheck(claimProjections, reportedInterval)
     if (!ci.confirmed) {
       unresolvedFields.add('confidence_interval')
       confidenceIntervalUnresolved = true
@@ -890,9 +917,17 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
       checked.push(field)
     }
   }
+  if (numericFields.size > 0 && claimProjections.length === 0) {
+    notes.push(
+      'Ingen av funnets ordrette utdrag ble gjenfunnet i representasjonen, så tallene hadde ' +
+        'ingen tekst som tilhører nettopp dette funnet å kontrolleres mot. En artikkel kan ' +
+        'beskrive flere armer og flere utfall, og et treff et annet sted i den ville tilhørt ' +
+        'et annet funn.',
+    )
+  }
   if (unmatchedNumbers.length > 0) {
     notes.push(
-      `Følgende oppgitte tall ble ikke gjenfunnet som tall i representasjonen, og er derfor ` +
+      `Følgende oppgitte tall ble ikke gjenfunnet som tall i funnets egne utdrag, og er derfor ` +
         `ikke ført opp som kontrollert: ${unmatchedNumbers.join(', ')}. Et tall kan stå ` +
         'skrevet med bokstaver, i en annen enhet eller i en tabell som ikke er med i denne ' +
         'representasjonen, så et manglende treff er ikke i seg selv et avvik.',
