@@ -934,6 +934,7 @@ header nav a {
   margin: 0;
   color: var(--color-text-muted);
   font-size: 0.9375rem;
+  overflow-wrap: anywhere;
 }
 
 .review-panel {
@@ -986,12 +987,24 @@ header nav a {
   max-width: 40rem;
 }
 
+/* Aktørnøkler, kjørings-ID-er og fingeravtrykk er lange og har ingen
+   brytepunkter. Uten dette skyver de siden ut i bredden på en telefon. */
+.review-record__meta,
+.review-record__rationale,
+.review-record__findings {
+  overflow-wrap: anywhere;
+}
+
 .review-record__citations,
 .review-unlinked,
 .review-decisions {
   margin: 0.5rem 0;
   padding-inline-start: 1.25rem;
   font-size: 0.9375rem;
+  /* Kontrollradene bærer fingeravtrykk på 64 tegn uten et eneste brytepunkt.
+     Uten dette skjøv de hele siden ut i bredden på en telefon, og mobil er
+     førsteklasses (§47). Samme grep som .detail-list__item dd. */
+  overflow-wrap: anywhere;
 }
 
 /* De sju kontrollpunktene som par av navn og resultat. Alltid alle sju, også
