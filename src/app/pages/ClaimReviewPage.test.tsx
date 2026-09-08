@@ -305,7 +305,8 @@ describe('Reviewarbeidsflaten — de to beslutningene', () => {
   })
 
   it('sender godkjenningen som en egen beslutning, med sitt eget avtrykk', async () => {
-    const { rpcCalls } = renderReview()
+    // Godkjenning tilbys bare når forutsetningene holder (migrasjon 006e).
+    const { rpcCalls } = renderReview({ approval_readiness: { status: 'passes' } })
     await screen.findByRole('button', { name: 'Registrer beslutningen' })
     fireEvent.change(screen.getByLabelText('Beslutning'), { target: { value: 'approved' } })
     fireEvent.change(screen.getAllByLabelText('Faglig begrunnelse')[1] as HTMLElement, {
@@ -328,6 +329,36 @@ describe('Reviewarbeidsflaten — de to beslutningene', () => {
   it('starter beslutningen på «endringer bedt om», ikke på godkjent', async () => {
     renderReview()
     expect(await screen.findByLabelText('Beslutning')).toHaveValue('changes_requested')
+  })
+
+  it('tilbyr ikke godkjenning før grunnlaget er kontrollert, og sier hvorfor', async () => {
+    // Migrasjon 006e: skriveveien avviser en approved-beslutning før
+    // publiseringsgatens G1-G10 holder. En flate som lot valget stå, ville
+    // tilbudt en handling databasen uansett avviser — og verre: den ville sett
+    // ut som om godkjenning av et ukontrollert utkast var et lovlig steg.
+    renderReview()
+    const decision = await screen.findByLabelText('Beslutning')
+    expect(within(decision).queryByRole('option', { name: 'Godkjent for publisering' })).toBeNull()
+    expect(within(decision).getByRole('option', { name: 'Endringer bedt om' })).toBeInTheDocument()
+    expect(within(decision).getByRole('option', { name: 'Avslått' })).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Du kan ikke gå god for publisering ennå: grunnlaget er ikke ferdig kontrollert.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('tilbyr godkjenning når forutsetningene holder', async () => {
+    renderReview({ approval_readiness: { status: 'passes' } })
+    const decision = await screen.findByLabelText('Beslutning')
+    expect(
+      within(decision).getByRole('option', { name: 'Godkjent for publisering' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        'Du kan ikke gå god for publisering ennå: grunnlaget er ikke ferdig kontrollert.',
+      ),
+    ).toBeNull()
   })
 
   it('henter grunnlaget på nytt etter en registrering', async () => {

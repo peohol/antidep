@@ -18,7 +18,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(36);
+select plan(41);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -415,6 +415,21 @@ select is(
   null,
   'ingen registrert kontroll er NULL — ikke en kontroll med et negativt utfall'
 );
+-- Forutsetningene før godkjenningen leses av sin egen funksjon (migrasjon 006e),
+-- og de er den flaten kan love noe om: skriveveien krever nøyaktig dem før en
+-- approved-beslutning.
+select is(
+  (select (payload #>> '{revision,approval_readiness,status}') || '|'
+       || (payload #>> '{revision,approval_readiness,sqlstate}')
+   from workspace where label = 'før'),
+  'blocked|23001',
+  'forutsetningene før godkjenningen blokkerer, med den samme avvisningskoden'
+);
+select alike(
+  (select payload #>> '{revision,approval_readiness,message}' from workspace where label = 'før'),
+  '%ingen registrert claim-verifikasjon%',
+  'og navngir det samme som stenger: påstanden er ikke kontrollert mot grunnlaget'
+);
 
 -- Den avgjørende assertionen: mennesket og maskinen leser det samme grunnlaget.
 create temporary table cred (label text primary key, secret text) on commit drop;
@@ -496,6 +511,16 @@ select alike(
   '%ikke godkjent av en kvalifisert redaktør%',
   'etter kontrollen er det godkjenningen gaten venter på: de to er to beslutninger, ikke én'
 );
+-- ... og nettopp derfor er `approval_readiness` ikke utledbar av gaten. Gaten
+-- stopper på det første vilkåret som svikter, og rett før en godkjenning er det
+-- alltid G11. En flate som leste gaten alene, kunne ikke skilt «mangler bare
+-- godkjenningen» fra «grunnlaget er ikke kontrollert ennå».
+select is(
+  (select payload #> '{revision,approval_readiness}'
+   from workspace where label = 'etter kontroll'),
+  '{"status": "passes"}'::jsonb,
+  'forutsetningene holder selv om gaten blokkerer: det er godkjenningen som mangler, ikke kontrollen'
+);
 select is(
   (select payload #>> '{revision,review_decisions,0,decision}'
    from workspace where label = 'etter godkjenning'),
@@ -524,6 +549,41 @@ select is(
 -- sin kode, og flaten skal skille dem. Endringene rulles tilbake sammen med
 -- transaksjonen.
 -- ===========================================================================
+-- Forutsetningene før godkjenningen har sin egen fangst, og den skal skille de
+-- samme to tilfellene. Muteres de først, mens gaten fortsatt er den ekte,
+-- blokkerer begge — gaten kaller dem selv.
+create or replace function knowledge.assert_claim_revision_ready_for_approval(p_claim_revision_id uuid)
+  returns void
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  raise exception using
+    errcode = 'restrict_violation',
+    message = 'Mutert forutsetning: en ordinær faglig blokkering.',
+    hint = 'Mutert forutsetning: hintet.';
+end;
+$$;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"52000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+insert into workspace select 'mutert forutsetning',
+  api.claim_review_workspace('52000000-0000-4000-8000-000000000031');
+reset role;
+
+select is(
+  (select payload #> '{revision,approval_readiness}'
+   from workspace where label = 'mutert forutsetning'),
+  jsonb_build_object(
+    'status', 'blocked',
+    'sqlstate', '23001',
+    'message', 'Mutert forutsetning: en ordinær faglig blokkering.',
+    'hint', 'Mutert forutsetning: hintet.'
+  ),
+  'forutsetningenes egen avvisning gjengis ordrett som en blokkering'
+);
+
 create or replace function knowledge.assert_claim_revision_publishable(p_claim_revision_id uuid)
   returns void
   language plpgsql
@@ -609,6 +669,31 @@ set local role authenticated;
 select lives_ok(
   $$select api.claim_review_workspace()$$,
   'arbeidskøen leser ikke gaten, og felles derfor ikke av en gate som kaster'
+);
+reset role;
+
+-- Og til slutt forutsetningene igjen, denne gangen med en teknisk feil. Den skal
+-- felle hele kallet, akkurat som en teknisk feil i gaten — ellers ville en
+-- regresjon i forutsetningene sett ut som et ukontrollert grunnlag.
+create or replace function knowledge.assert_claim_revision_ready_for_approval(p_claim_revision_id uuid)
+  returns void
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  raise exception using
+    errcode = 'internal_error',
+    message = 'Mutert forutsetning: en intern feil, ikke en faglig mangel.';
+end;
+$$;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"52000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+select throws_ok(
+  $$select api.claim_review_workspace('52000000-0000-4000-8000-000000000031')$$,
+  'XX000', 'Mutert forutsetning: en intern feil, ikke en faglig mangel.',
+  'en teknisk feil i forutsetningene feller hele kallet, framfor å bli presentert som et ukontrollert grunnlag'
 );
 reset role;
 

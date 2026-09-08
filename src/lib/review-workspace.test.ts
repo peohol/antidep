@@ -111,6 +111,7 @@ function revision(overrides: Record<string, unknown> = {}): Record<string, unkno
     evidence_assessment: null,
     is_published_revision: false,
     publication_gate: { status: 'passes' },
+    approval_readiness: { status: 'passes' },
     ...overrides,
   }
 }
@@ -196,7 +197,33 @@ describe('parseClaimReviewWorkspace', () => {
     // må aldri kunne falle sammen med «gaten passerer».
     expect(() =>
       parseClaimReviewWorkspace(payload({ publication_gate: { status: 'kanskje' } })),
-    ).toThrow(/ukjent tilstand for publiseringsgaten/)
+    ).toThrow(/ukjent tilstand for «publication_gate»/)
+  })
+
+  it('leser forutsetningene før godkjenningen som sitt eget svar', () => {
+    // Forutsetningene (migrasjon 006e) er ikke det samme som gaten: her holder
+    // de, mens gaten fortsatt venter på selve godkjenningen. Leses de som ett,
+    // ville flaten enten tilbudt en godkjenning databasen avviser, eller stengt
+    // en den ville godtatt.
+    const parsed = parseClaimReviewWorkspace(
+      payload({
+        approval_readiness: { status: 'passes' },
+        publication_gate: {
+          status: 'blocked',
+          sqlstate: '23001',
+          message: 'Revisjonen er ikke godkjent av en kvalifisert redaktør.',
+          hint: null,
+        },
+      }),
+    )
+    expect(parsed.revision.approvalReadiness).toEqual({ status: 'passes' })
+    expect(parsed.revision.publicationGate.status).toBe('blocked')
+  })
+
+  it('avviser en ukjent tilstand for forutsetningene, av samme grunn', () => {
+    expect(() =>
+      parseClaimReviewWorkspace(payload({ approval_readiness: { status: 'kanskje' } })),
+    ).toThrow(/ukjent tilstand for «approval_readiness»/)
   })
 
   it('leser «ingen registrert kontroll» som fravær, ikke som et negativt utfall', () => {

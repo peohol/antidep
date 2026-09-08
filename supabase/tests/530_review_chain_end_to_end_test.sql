@@ -24,7 +24,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(19);
+select plan(20);
 
 -- ===========================================================================
 -- Fikstur
@@ -216,6 +216,26 @@ select throws_like(
   '%konkluderer ikke med verified%',
   'G9 blokkerer: en uavklart kontroll er ingen bekreftelse'
 );
+
+-- Og rekkefølgen er bindende: godkjenningen kan ikke gis nå. Uten det vilkåret
+-- kunne revieweren godkjent her, og den godkjenningen ville blitt stående og
+-- båret publiseringen etter at kontrollen kom — altså en godkjenning gitt til et
+-- ukontrollert utkast (migrasjon 006e, ANTIDEP_CONSTITUTION.md §13).
+select set_config('request.jwt.claims',
+                  '{"sub":"53000000-0000-4000-8000-0000000000a0"}', true);
+set local role authenticated;
+select throws_like(
+  $$
+    select api.register_publication_approval(
+      '53000000-0000-4000-8000-000000000031'::uuid,
+      (select value from digest where label = 'r31'),
+      'approved',
+      'Prøve i 530: forsøk på å godkjenne før kontrollen er gjort.')
+  $$,
+  '%konkluderer ikke med verified%',
+  'godkjenningen kan ikke registreres før påstanden er kontrollert mot grunnlaget'
+);
+reset role;
 
 -- ===========================================================================
 -- Ledd 2 — Den menneskelige faglige kontrollen

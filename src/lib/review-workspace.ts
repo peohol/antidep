@@ -152,12 +152,14 @@ export interface EvidenceAssessmentRecord {
 }
 
 /**
- * Hva publiseringsgaten svarer, lest av gaten selv og ikke regnet ut på nytt.
+ * Hva en av databasens sperrer svarer, lest av sperren selv og ikke regnet ut
+ * på nytt.
  *
- * Gaten stopper på det første vilkåret som svikter, så `blocked` navngir én
- * blokkering om gangen. Det er ikke en mangel i flaten: det er gaten som er
- * fasiten, og en andre formulering av den ville kunnet si «klar» om noe gaten
- * stenger.
+ * Både publiseringsgaten og forutsetningene før godkjenningen svarer i denne
+ * formen. De stopper på det første vilkåret som svikter, så `blocked` navngir
+ * én blokkering om gangen. Det er ikke en mangel i flaten: det er databasen som
+ * er fasiten, og en andre formulering av regelen ville kunnet si «klar» om noe
+ * databasen stenger.
  */
 export type PublicationGateState =
   | { readonly status: 'passes' }
@@ -179,6 +181,13 @@ export interface ClaimReviewRevision {
   readonly evidenceAssessment: EvidenceAssessmentRecord | null
   readonly isPublishedRevision: boolean
   readonly publicationGate: PublicationGateState
+  /**
+   * Forutsetningene skriveveien krever før en `approved`-beslutning: gatens G1
+   * til G10. Den er ikke utledbar av {@link publicationGate}, som stopper på
+   * det første vilkåret som svikter — og rett før en godkjenning er det alltid
+   * «ikke godkjent av en kvalifisert redaktør».
+   */
+  readonly approvalReadiness: PublicationGateState
 }
 
 export interface ClaimReviewWorkspace {
@@ -326,22 +335,28 @@ function parseEvidenceAssessment(value: unknown): EvidenceAssessmentRecord | nul
   }
 }
 
-function parsePublicationGate(value: unknown): PublicationGateState {
-  const record = asRecord(value, 'publication_gate')
-  const status = asString(record['status'], 'publication_gate.status')
+/**
+ * Leser svaret fra en av databasens sperrer.
+ *
+ * En ukjent tilstand kaster framfor å bli lest som «klar»: fravær av et kjent
+ * svar er ikke et ja (ANTIDEP_CONSTITUTION.md §17).
+ */
+function parseGateState(value: unknown, field: string): PublicationGateState {
+  const record = asRecord(value, field)
+  const status = asString(record['status'], `${field}.status`)
   if (status === 'passes') {
     return { status: 'passes' }
   }
   if (status !== 'blocked') {
     throw new Error(
-      `Svaret fra ${SOURCE} oppgir en ukjent tilstand for publiseringsgaten («${status}»). ` +
+      `Svaret fra ${SOURCE} oppgir en ukjent tilstand for «${field}» («${status}»). ` +
         'En ukjent tilstand kan ikke leses som «klar til publisering».',
     )
   }
   return {
     status: 'blocked',
-    sqlstate: asString(record['sqlstate'], 'publication_gate.sqlstate'),
-    message: asString(record['message'], 'publication_gate.message'),
+    sqlstate: asString(record['sqlstate'], `${field}.sqlstate`),
+    message: asString(record['message'], `${field}.message`),
     hint: asOptionalString(record['hint']),
   }
 }
@@ -365,7 +380,8 @@ export function parseClaimReviewWorkspace(payload: unknown): ClaimReviewWorkspac
         revision['is_published_revision'],
         'revision.is_published_revision',
       ),
-      publicationGate: parsePublicationGate(revision['publication_gate']),
+      publicationGate: parseGateState(revision['publication_gate'], 'publication_gate'),
+      approvalReadiness: parseGateState(revision['approval_readiness'], 'approval_readiness'),
     },
   }
 }

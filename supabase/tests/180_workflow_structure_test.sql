@@ -14,7 +14,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(61);
+select plan(62);
 
 -- ---------------------------------------------------------------------------
 -- Tabellene i migrasjon 005
@@ -40,6 +40,11 @@ select has_table(
   'knowledge', 'publication_events',
   'knowledge.publication_events finnes; publiseringsgaten leser beslutningene fra denne migrasjonen'
 );
+-- Gaten er to funksjoner fra migrasjon 006e: forutsetningene før den
+-- menneskelige godkjenningen (G1-G10) er flyttet ut i
+-- knowledge.assert_claim_revision_ready_for_approval(uuid), slik at skriveveien
+-- for godkjenningen kan kreve nøyaktig de samme vilkårene uten å kopiere dem.
+-- Kravet er derfor på de to til sammen: gaten skal fortsatt lese hver av dem.
 select is_empty(
   $$
     select t.needle
@@ -50,11 +55,21 @@ select is_empty(
                  ('publication_approval'),
                  ('approved_evidence_set_digest')) as t(needle)
     where position(t.needle in
-           (select p.prosrc
+           (select string_agg(p.prosrc, ' ')
             from pg_proc p
-            where p.oid = 'knowledge.assert_claim_revision_publishable(uuid)'::regprocedure)) = 0
+            where p.oid in ('knowledge.assert_claim_revision_publishable(uuid)'::regprocedure,
+                            'knowledge.assert_claim_revision_ready_for_approval(uuid)'::regprocedure))) = 0
   $$,
   'publiseringsgaten leser verifikasjonene, godkjenningen og tilbaketrekkingsbeslutningen fra workflow'
+);
+-- ... og forutsetningene skal faktisk kalles av gaten. Uten denne assertionen
+-- kunne G1-G10 blitt liggende igjen som en frittstående funksjon ingen leser,
+-- og gaten sluppet gjennom alt de stenger.
+select ok(
+  position('knowledge.assert_claim_revision_ready_for_approval' in
+           (select p.prosrc from pg_proc p
+            where p.oid = 'knowledge.assert_claim_revision_publishable(uuid)'::regprocedure)) > 0,
+  'publiseringsgaten kaller forutsetningene før godkjenningen, framfor å ha en egen kopi av dem'
 );
 select is_empty(
   $$

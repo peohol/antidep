@@ -28,6 +28,12 @@
 // avvisninger vises ordrett (DATABASE_ARCHITECTURE.md §43, §57). Det flaten gjør,
 // er å si det på forhånd, slik at regelen ikke er en overraskelse.
 //
+// Det gjelder også godkjenningen: at den ikke kan gis før grunnlaget er
+// kontrollert, avgjøres av databasen (migrasjon 006e), og flaten leser svaret
+// fra den samme funksjonen skriveveien bruker. Den regner ikke ut på nytt om
+// godkjenning er mulig — da kunne de to kommet i utakt, og flaten tilbudt noe
+// databasen avviser, eller stengt noe den ville godtatt.
+//
 // ----------------------------------------------------------------------------
 // Avtrykket sendes tilbake uendret
 //
@@ -375,7 +381,16 @@ function PublicationApprovalForm({
   readonly onRegistered: () => void
 }) {
   const availability = useAntidepClient()
-  const { dossier } = workspace.revision
+  const { approvalReadiness, dossier } = workspace.revision
+  // Forutsetningene skriveveien krever før en godkjenning, lest av den samme
+  // funksjonen databasen bruker (migrasjon 006e). Er de ikke oppfylt, tilbys
+  // ikke godkjenning i det hele tatt: å la valget stå ville vært å tilby en
+  // handling som uansett blir avvist. De to andre beslutningene står igjen —
+  // det er nettopp nå de trengs.
+  const canApprove = approvalReadiness.status === 'passes'
+  const decisions = canApprove
+    ? APPROVAL_DECISIONS
+    : APPROVAL_DECISIONS.filter((value) => value !== 'approved')
   const [decision, setDecision] = useState<string>('changes_requested')
   const [rationale, setRationale] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -411,8 +426,28 @@ function PublicationApprovalForm({
       <p className="admin-form__intro">
         Dette er en egen beslutning: går du god for at påstanden kan publiseres slik den står, på
         dette evidensgrunnlaget? Den erstatter ikke kontrollen i steg 1 — publiseringsgaten krever
-        begge. Et avslag og en anmodning om endringer bevares på lik linje med en godkjenning.
+        begge, og en godkjenning kan først gis når kontrollen i steg 1 er gjort. Et avslag og en
+        anmodning om endringer bevares på lik linje med en godkjenning.
       </p>
+
+      {canApprove ? null : (
+        <div className="knowledge-notice knowledge-notice--absence" role="note">
+          <p className="knowledge-notice__lead">
+            Du kan ikke gå god for publisering ennå: grunnlaget er ikke ferdig kontrollert.
+          </p>
+          <p className="knowledge-notice__caveat">
+            Det er den samme blokkeringen som står øverst på siden: forutsetningene før en
+            godkjenning er nettopp de kravene publiseringsgaten stiller før den spør etter
+            godkjenningen i det hele tatt.
+          </p>
+          <p className="knowledge-notice__caveat">
+            En godkjenning skal gjelde innhold som er kontrollert mot kilden. Den blir stående som
+            den gjeldende beslutningen, så en godkjenning gitt nå ville båret publiseringen den
+            dagen kontrollen kom — uten at noen hadde sett innholdet i kontrollert stand. Et avslag
+            og en anmodning om endringer kan du registrere som vanlig.
+          </p>
+        </div>
+      )}
 
       <div className="admin-form__field">
         <label htmlFor={decisionId}>Beslutning</label>
@@ -421,7 +456,7 @@ function PublicationApprovalForm({
           onChange={(event) => setDecision(event.target.value)}
           value={decision}
         >
-          {APPROVAL_DECISIONS.map((value) => (
+          {decisions.map((value) => (
             <option key={value} value={value}>
               {REVIEW_OUTCOME_LABELS[value]}
             </option>

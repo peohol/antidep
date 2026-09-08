@@ -11,7 +11,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(46);
+select plan(47);
 
 -- ---------------------------------------------------------------------------
 -- Tabellen og §39 sitt minimumsfeltsett
@@ -220,6 +220,10 @@ select has_function(
   'publiseringsgaten finnes som en egen funksjon'
 );
 select has_function(
+  'knowledge', 'assert_claim_revision_ready_for_approval', array['uuid'],
+  'forutsetningene før den menneskelige godkjenningen finnes som en egen funksjon (migrasjon 006e)'
+);
+select has_function(
   'knowledge', 'claim_evidence_set_digest', array['uuid'],
   'avtrykket av evidenssettet finnes som en egen funksjon'
 );
@@ -277,6 +281,7 @@ select is_empty(
   $$
     select f.function_name
     from (values ('knowledge.assert_claim_revision_publishable(uuid)'),
+                 ('knowledge.assert_claim_revision_ready_for_approval(uuid)'),
                  ('knowledge.assert_publisher_authorized(uuid, uuid)'))
            as f(function_name)
     where (select p.prosecdef from pg_proc p where p.oid = f.function_name::regprocedure)
@@ -290,6 +295,7 @@ select is_empty(
   $$
     select f.function_name
     from (values ('knowledge.assert_claim_revision_publishable(uuid)'),
+                 ('knowledge.assert_claim_revision_ready_for_approval(uuid)'),
                  ('knowledge.assert_publisher_authorized(uuid, uuid)'),
                  ('knowledge.publish_claim_revision(uuid, uuid, text)'),
                  ('knowledge.withdraw_claim_publication(uuid, uuid, text)'),
@@ -314,6 +320,7 @@ select is_empty(
   $$
     select f.function_name
     from (values ('knowledge.assert_claim_revision_publishable(uuid)'),
+                 ('knowledge.assert_claim_revision_ready_for_approval(uuid)'),
                  ('knowledge.assert_publisher_authorized(uuid, uuid)'),
                  ('knowledge.publish_claim_revision(uuid, uuid, text)'),
                  ('knowledge.withdraw_claim_publication(uuid, uuid, text)'),

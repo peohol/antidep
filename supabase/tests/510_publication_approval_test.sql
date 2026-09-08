@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(36);
+select plan(46);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -146,8 +146,14 @@ insert into knowledge.sources (id, source_type, title, authors_or_issuer, create
 values ('51000000-0000-4000-8000-000000000001', 'journal_article', 'Testkilde for 510',
         'Testforfatter 510', (select id from fixture where name = 'editor'));
 
+insert into knowledge.source_versions
+  (id, source_id, retrieved_at, retrieved_from, content_hash, retrieved_by_actor_id)
+values ('51000000-0000-4000-8000-000000000021', '51000000-0000-4000-8000-000000000001',
+        now(), 'https://example.test/510', 'sha256:' || repeat('a', 64),
+        (select id from fixture where name = 'extractor'));
+
 insert into knowledge.evidence_items (
-  id, source_id, design_code, population_availability, population_detail,
+  id, source_id, source_version_id, design_code, population_availability, population_detail,
   sample_size_availability, intervention_drug_id, comparator_kind,
   outcome_concept_id, outcome_detail, timepoint_availability,
   reported_direction, estimate_availability, confidence_interval_availability,
@@ -155,12 +161,14 @@ insert into knowledge.evidence_items (
 )
 values
   ('51000000-0000-4000-8000-000000000011', '51000000-0000-4000-8000-000000000001',
+   '51000000-0000-4000-8000-000000000021',
    'randomized_controlled_trial', 'not_reported', 'Prøve i 510.',
    'not_reported', (select id from fixture where name = 'sertralin'), 'none',
    (select id from fixture where name = 'weight'), 'Første funn, for 510.',
    'not_reported', 'increase', 'not_reported', 'not_reported',
    'Avsnitt 1', 'ai_assisted', (select id from fixture where name = 'extractor')),
   ('51000000-0000-4000-8000-000000000012', '51000000-0000-4000-8000-000000000001',
+   '51000000-0000-4000-8000-000000000021',
    'randomized_controlled_trial', 'not_reported', 'Prøve i 510.',
    'not_reported', (select id from fixture where name = 'sertralin'), 'none',
    (select id from fixture where name = 'weight'), 'Andre funn, for 510.',
@@ -210,11 +218,41 @@ values
    '51000000-0000-4000-8000-000000000011', 'supports', 'direct',
    'Lenke på R3 i 510.', (select id from fixture where name = 'synthesis'));
 
+-- R4 har sitt eget evidensfunn, slik at Del 10 kan bygge kontrollene opp fra
+-- ingenting uten å røre grunnlaget de andre revisjonene hviler på.
+insert into knowledge.evidence_items (
+  id, source_id, source_version_id, design_code, population_availability, population_detail,
+  sample_size_availability, intervention_drug_id, comparator_kind,
+  outcome_concept_id, outcome_detail, timepoint_availability,
+  reported_direction, estimate_availability, confidence_interval_availability,
+  source_locator, extraction_method, created_by_actor_id
+)
+values
+  ('51000000-0000-4000-8000-000000000013', '51000000-0000-4000-8000-000000000001',
+   '51000000-0000-4000-8000-000000000021',
+   'randomized_controlled_trial', 'not_reported', 'Prøve i 510.',
+   'not_reported', (select id from fixture where name = 'sertralin'), 'none',
+   (select id from fixture where name = 'weight'), 'Tredje funn, for 510.',
+   'not_reported', 'increase', 'not_reported', 'not_reported',
+   'Avsnitt 3', 'ai_assisted', (select id from fixture where name = 'extractor'));
+
+select pg_temp.make_revision('51000000-0000-4000-8000-000000000034',
+  (select id from fixture where name = 'synthesis'), 'Testpåstand R4 for 510.');
+
+insert into knowledge.claim_evidence_links
+  (id, claim_revision_id, evidence_item_id, relationship_type, directness,
+   relevance_note, created_by_actor_id)
+values
+  ('51000000-0000-4000-8000-000000000045', '51000000-0000-4000-8000-000000000034',
+   '51000000-0000-4000-8000-000000000013', 'supports', 'direct',
+   'Lenke på R4 i 510.', (select id from fixture where name = 'synthesis'));
+
 create temporary table digest (label text primary key, value text) on commit drop;
 insert into digest values
   ('r31', knowledge.claim_evidence_set_digest('51000000-0000-4000-8000-000000000031')),
   ('r32', knowledge.claim_evidence_set_digest('51000000-0000-4000-8000-000000000032')),
-  ('r33', knowledge.claim_evidence_set_digest('51000000-0000-4000-8000-000000000033'));
+  ('r33', knowledge.claim_evidence_set_digest('51000000-0000-4000-8000-000000000033')),
+  ('r34', knowledge.claim_evidence_set_digest('51000000-0000-4000-8000-000000000034'));
 grant select on digest to authenticated;
 
 create function pg_temp.approval_sql(p_revision uuid, p_digest text, p_decision text)
@@ -225,6 +263,84 @@ create function pg_temp.approval_sql(p_revision uuid, p_digest text, p_decision 
     || quote_literal(p_decision) || ', '
     || $q$'Prøve i 510: faglig begrunnelse.')$q$;
 $$;
+
+create function pg_temp.citation(p_link uuid) returns jsonb language sql as $$
+  select jsonb_build_array(jsonb_build_object(
+    'claim_evidence_link_id', p_link,
+    'source_access', 'original_source',
+    'source_version_id', '51000000-0000-4000-8000-000000000021',
+    'checked_content_hash', 'sha256:' || repeat('a', 64),
+    'relationship_supported', 'ok'));
+$$;
+grant execute on function pg_temp.citation(uuid) to authenticated;
+
+-- ===========================================================================
+-- Del 2b — Grunnlaget bak R1 og R2 er kontrollert
+--
+-- Fra migrasjon 006e kan en godkjenning ikke registreres på et ukontrollert
+-- utkast: `approved` krever publiseringsgatens G1 til G10. Fikstruen må derfor
+-- bygge livsløpet i den rekkefølgen det faktisk skjer — kildekontroll, deretter
+-- kontroll av påstanden mot grunnlaget — før noen kan gå god for publisering.
+-- Det er ikke en omgåelse av regelen, men prøven på den: den lykkede stien i
+-- Del 4 og selvgodkjenningen i Del 6 skal treffe nøyaktig sin egen sperre, og
+-- ikke stoppe på en manglende kontroll lenger nede.
+--
+-- R3 og R4 står med vilje ukontrollerte.
+-- ===========================================================================
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, rationale, verified_at)
+select e.id, e.created_by_actor_id,
+       (select id from provenance.actors where actor_key = 'agent:extraction-verification'),
+       'verified', 'original_source', workflow.required_check_fields(e.id),
+       'Prøve i 510: fullstendig kontrollert ekstraksjon.', now()
+from knowledge.evidence_items e where e.id = '51000000-0000-4000-8000-000000000011';
+
+insert into knowledge.evidence_assessments
+  (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
+   risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
+   rationale, assessed_at, created_by_actor_id)
+select r.id, 'evidence_synthesis', 'grade', 'low',
+       'serious', 'not_assessable', 'not_serious', 'serious', 'not_assessable',
+       'Prøve i 510: lav sikkerhet er en vurdering, ikke et fravær av evidens.',
+       now(), (select id from fixture where name = 'synthesis')
+from (values ('51000000-0000-4000-8000-000000000031'::uuid),
+             ('51000000-0000-4000-8000-000000000032'::uuid),
+             ('51000000-0000-4000-8000-000000000034'::uuid)) as r(id);
+
+-- Kontrollen av R1 gjøres av reviewer H, som ikke har formulert den. Kontrollen
+-- av R2 gjøres av reviewer F, siden R2 er formulert av H selv.
+select set_config('request.jwt.claims',
+                  '{"sub":"51000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+select lives_ok(
+  $$
+    select api.register_human_claim_verification(
+      '51000000-0000-4000-8000-000000000031'::uuid,
+      (select value from digest where label = 'r31'),
+      'verified', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok',
+      pg_temp.citation('51000000-0000-4000-8000-000000000041'),
+      'Prøve i 510: påstanden er kontrollert mot grunnlaget.')
+  $$,
+  'R1 er kontrollert mot grunnlaget før noen tar stilling til publisering'
+);
+reset role;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"51000000-0000-4000-8000-0000000000f1"}', true);
+set local role authenticated;
+select lives_ok(
+  $$
+    select api.register_human_claim_verification(
+      '51000000-0000-4000-8000-000000000032'::uuid,
+      (select value from digest where label = 'r32'),
+      'verified', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok',
+      pg_temp.citation('51000000-0000-4000-8000-000000000042'),
+      'Prøve i 510: påstanden er kontrollert mot grunnlaget.')
+  $$,
+  'R2 er kontrollert mot grunnlaget av en annen enn den som formulerte den'
+);
+reset role;
 
 -- ===========================================================================
 -- Del 3 — Hver autorisasjonsgren
@@ -515,7 +631,117 @@ select throws_ok(
 reset role;
 
 -- ===========================================================================
--- Del 9 — Mutasjonstest: skriveveiens kontroll er ikke den eneste sperren
+-- Del 9 — En godkjenning kan ikke gis til et ukontrollert utkast
+--
+-- Migrasjon 006e. Godkjenningen er append-only og bundet bare til hvilke
+-- evidenslenker som fantes — ikke til hvilke kontroller som var gjeldende. Uten
+-- vilkåret kunne en reviewer godkjent mens G5 eller G9 blokkerte, og den gamle
+-- godkjenningen ville blitt stående og båret publiseringen den dagen kontrollene
+-- kom. Godkjenningen ville da gjeldt noe annet enn det som ble publisert
+-- (ANTIDEP_CONSTITUTION.md §13, KNOWLEDGE_MODEL.md §20).
+--
+-- R4 bygges opp fra ingenting, i den rekkefølgen livsløpet faktisk har.
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"51000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+select throws_ok(
+  pg_temp.approval_sql('51000000-0000-4000-8000-000000000034',
+    (select value from digest where label = 'r34'), 'approved'),
+  '23001',
+  'Evidensfunn uten registrert ekstraksjonsverifikasjon: 51000000-0000-4000-8000-000000000013.',
+  'en godkjenning kan ikke registreres før ekstraksjonen er kildekontrollert'
+);
+-- ... men et avslag og en anmodning om endringer skal fortsatt kunne
+-- registreres, for det er nettopp da de trengs.
+select lives_ok(
+  pg_temp.approval_sql('51000000-0000-4000-8000-000000000034',
+    (select value from digest where label = 'r34'), 'changes_requested'),
+  'en reviewer kan be om endringer nettopp mens grunnlaget ikke er kontrollert'
+);
+reset role;
+
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, rationale, verified_at)
+select e.id, e.created_by_actor_id,
+       (select id from provenance.actors where actor_key = 'agent:extraction-verification'),
+       'verified', 'original_source', workflow.required_check_fields(e.id),
+       'Prøve i 510: fullstendig kontrollert ekstraksjon av R4s funn.', now()
+from knowledge.evidence_items e where e.id = '51000000-0000-4000-8000-000000000013';
+
+select set_config('request.jwt.claims',
+                  '{"sub":"51000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+select throws_like(
+  pg_temp.approval_sql('51000000-0000-4000-8000-000000000034',
+    (select value from digest where label = 'r34'), 'approved'),
+  '%ingen registrert claim-verifikasjon%',
+  'kildekontroll alene er ikke nok: påstanden må også være kontrollert mot grunnlaget'
+);
+select lives_ok(
+  $$
+    select api.register_human_claim_verification(
+      '51000000-0000-4000-8000-000000000034'::uuid,
+      (select value from digest where label = 'r34'),
+      'verified', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok',
+      pg_temp.citation('51000000-0000-4000-8000-000000000045'),
+      'Prøve i 510: påstanden er kontrollert mot grunnlaget.')
+  $$,
+  'revieweren registrerer den faglige kontrollen som sitt eget beslutningsobjekt'
+);
+reset role;
+
+-- now() er transaksjonens starttidspunkt, så anmodningen om endringer og
+-- godkjenningen ville fått samme decided_at og «den gjeldende» ville vært
+-- avgjort av en tilfeldig uuid. Den foregående dyttes derfor en time bakover,
+-- slik en reell kjøring får det av at hver registrering er sin egen
+-- transaksjon. Samme grep og samme begrunnelse som i 530.
+create function pg_temp.age_earlier_decisions(p_revision uuid) returns void language plpgsql as $$
+begin
+  set local session_replication_role = replica;
+  update workflow.review_decisions
+  set decided_at = decided_at - interval '1 hour',
+      created_at = created_at - interval '1 hour'
+  where claim_revision_id = p_revision;
+  set local session_replication_role = origin;
+end;
+$$;
+select pg_temp.age_earlier_decisions('51000000-0000-4000-8000-000000000034');
+
+select set_config('request.jwt.claims',
+                  '{"sub":"51000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+select lives_ok(
+  pg_temp.approval_sql('51000000-0000-4000-8000-000000000034',
+    (select value from digest where label = 'r34'), 'approved'),
+  'med kildekontrollen og claim-kontrollen på plass kan godkjenningen registreres'
+);
+reset role;
+
+select is(
+  (select rd.decision::text from workflow.review_decisions rd
+   where rd.claim_revision_id = '51000000-0000-4000-8000-000000000034'
+   order by rd.decided_at desc, rd.created_at desc, rd.id desc limit 1),
+  'approved',
+  'godkjenningen er den gjeldende beslutningen, og anmodningen om endringer er bevart ved siden av'
+);
+select lives_ok(
+  $$select knowledge.assert_claim_revision_publishable(
+      '51000000-0000-4000-8000-000000000034')$$,
+  'hele publiseringsgaten slipper gjennom når leddene er tatt i riktig rekkefølge'
+);
+
+-- Dekningskontrollen på claim_verifications er utsatt til commit, og denne
+-- transaksjonen rulles tilbake. Uten dette ville de fire kontrollene i filen
+-- aldri blitt kontrollert av den.
+select lives_ok(
+  $$set constraints all immediate$$,
+  'den utsatte dekningskontrollen godtar alle kontrollene filen har registrert'
+);
+
+-- ===========================================================================
+-- Del 10 — Mutasjonstest: skriveveiens kontroll er ikke den eneste sperren
 --
 -- workflow.assert_reviewer_authorized(uuid) muteres til å slippe alle gjennom.
 -- Kallet skal fortsatt avvises, av tabellens egen

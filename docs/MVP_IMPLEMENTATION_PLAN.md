@@ -1387,7 +1387,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: run the extraction verifier from source version to verification (#51)  merget   migrasjon 008e, 007f, 005h
       ops: activate the extraction verifier in the hosted project           (#56)  merget   ingen migrasjon
       feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
-      feat: add the human claim review and publication approval flow        (#59)  åpen     migrasjon 008g, 005m, 005n, 006d, 005o
+      feat: add the human claim review and publication approval flow        (#59)  åpen     migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1489,7 +1489,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1718 pgTAP-assertions over 53 testfiler.
+Databaselaget teller nå 1736 pgTAP-assertions over 53 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1657,15 +1657,15 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   39 enum-typer, fordelt på de førtito migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   39 enum-typer, fordelt på de førtitre migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
-   005m, 005n, 006d, 005o og 005p — i
+   005m, 005n, 006d, 005o, 005p og 006e — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle førtito ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle førtitre ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -5838,7 +5838,7 @@ for å registrere en `publication_approval` — som egen, senere PR.
 hele veien — begge skriveveiene, den redaksjonelle flaten, og testene — og prøver hele kjeden
 mot de reelle radene i det hostede prosjektet.
 
-**Fem migrasjoner.**
+**Sju migrasjoner.**
 
 | Migrasjon | Hva den gjør |
 | --- | --- |
@@ -5848,6 +5848,7 @@ mot de reelle radene i det hostede prosjektet.
 | 006d | Auditskriver og trigger på `workflow.review_decisions`, og `api.register_publication_approval(...)` |
 | 005o | `api.claim_review_workspace(uuid)` — arbeidsflaten, med publiseringsgaten lest av gaten selv |
 | 005p | Rettelse av et funn i teknisk review; se under |
+| 006e | Rettelse av et andre funn i teknisk review; se under |
 
 **To dører som har vært låst innenfra siden migrasjon 005, er åpnet — uten at noen regel er
 myket opp.** Den menneskelige grenen av `workflow.claim_verifier_has_mandate(...)` har vært
@@ -5971,6 +5972,62 @@ teknisk feil og ikke et svar om innholdet. Prøven er en mutasjon i
 `520_claim_review_workspace_test.sql`: gatefunksjonen byttes ut med varianter som kaster hver
 sin kode, og flaten må skille dem. Feilen er reprodusert først — med `when others` gir begge de
 tekniske mutasjonene «no exception» der testen krever en — og deretter borte.
+
+---
+
+**Rettet i teknisk review: en godkjenning kunne gis til et ukontrollert utkast.** 006d lot
+`decision = 'approved'` registreres når som helst i livsløpet — også før ekstraksjonen og
+påstanden var kontrollert. Det er ikke bare rekkefølge på skjermen. Godkjenningen er
+append-only og bundet bare til `approved_evidence_set_digest`, altså til *hvilke* evidenslenker
+som fantes — ikke til hvilke kontroller som var gjeldende. Sekvensen «godkjenn mens G5 eller G9
+blokkerer → registrer kontrollene senere → publiser» var derfor lovlig: den gamle godkjenningen
+ville fortsatt vært den gjeldende beslutningen, G13 ville passert fordi avtrykket var uendret,
+og revisjonen kunne publiseres uten at noe menneske hadde gått god for den etter at innholdet
+faktisk ble kildekontrollert. Godkjenningen ville gjeldt noe annet enn det som ble publisert.
+Det bryter livsløpet `ANTIDEP_CONSTITUTION.md` §13 og `KNOWLEDGE_MODEL.md` §20 beskriver, og
+rekkefølgen i §15.
+
+006e retter det i databasen, ikke i flaten. Publiseringsgatens G1 til G10 — «alt som skal holde
+før et menneske tar stilling» — er flyttet ordrett ut i
+`knowledge.assert_claim_revision_ready_for_approval(uuid)`. Gaten kaller den framfor å eie
+vilkårene, og `api.register_publication_approval(...)` krever den før den registrerer en
+`approved`-beslutning. Ingen logikk er kopiert, så de to kan ikke komme i utakt — samme
+begrunnelse som mandatet har for å ligge i én boolsk funksjon og dossieret i ett uttrykk.
+`rejected` og `changes_requested` er ikke bundet av vilkåret: det er nettopp når noe blokkerer
+at de trengs.
+
+Flaten sier det på forhånd. `api.claim_review_workspace(uuid)` svarer nå med
+`approval_readiness` ved siden av `publication_gate`, lest av den samme funksjonen skriveveien
+bruker. De to er ikke det samme: gaten stopper på det første vilkåret som svikter, og rett før
+en godkjenning er det alltid G11 — «ikke godkjent av en kvalifisert redaktør». En flate som
+leste gaten alene, kunne ikke skilt «mangler bare godkjenningen» fra «grunnlaget er ikke
+kontrollert ennå». Er forutsetningene ikke oppfylt, tilbys ikke godkjenning i det hele tatt, og
+flaten sier hvorfor.
+
+Regresjonsprøven står i `510_publication_approval_test.sql` Del 9: en revisjon bygges opp fra
+ingenting, og godkjenningen avvises først på manglende kildekontroll, så på manglende
+claim-kontroll, og lykkes først når begge er på plass — mens anmodningen om endringer kan
+registreres hele veien. `530` prøver det samme i den fulle kjeden, og `520` at flaten skiller
+`approval_readiness` fra `publication_gate` og at en teknisk feil i forutsetningene feller hele
+kallet framfor å bli lest som et ukontrollert grunnlag. Filens egen «lykkede sti» er samtidig
+rettet: den registrerte en `approved`-rad uten at noen claim-verifikasjon fantes, altså
+nøyaktig det som nå er umulig.
+
+**Prøvd mot de reelle radene etter 006e**, i én transaksjon som ble rullet tilbake, på revisjon
+`724bc69b…`:
+
+| Steg | Svar |
+| --- | --- |
+| Godkjenning slik det står nå | `avvist: 23001 Evidensfunn med åpent verifikasjonsfunn: 5b98b916…` |
+| Anmodning om endringer slik det står nå | registrert — den er ikke bundet av forutsetningene |
+| Godkjenning etter en syntetisk fullstendig ekstraksjonsbekreftelse | `avvist: 23001 … konkluderer ikke med verified` |
+| Godkjenning etter den menneskelige claim-verifikasjonen | registrert |
+| Publiseringsgaten | passerer |
+
+Etterkontrollen er uendret: to claim-verifikasjoner, null `verified`, null reviewbeslutninger,
+null publiseringer. Arbeidsflaten lest som den navngitte redaktøren gir
+`approval_readiness = blocked / 23001` med den samme setningen gaten gir, altså den reelle
+faglige mangelen og ikke en teknisk feil.
 
 **Neste steg.** Den menneskelige ekstraksjonskontrollen — speilbildet av 005n for
 `workflow.evidence_verifications` — som egen, senere PR. Den er det siste leddet som mangler

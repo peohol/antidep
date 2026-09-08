@@ -448,6 +448,14 @@ tidligere kontroll med sine sju kontrollpunkter og sine funn. Blokkeringer som s
 publisering leses av publiseringsgaten selv, slik at flaten ikke kan si «klar» om noe gaten
 stenger.
 
+Flaten skiller to spørsmål som ser like ut: om revisjonen kan publiseres, og om den i det hele
+tatt kan godkjennes. Det siste er forutsetningene før den menneskelige godkjenningen, og de
+leses av den samme funksjonen skriveveien krever. Er de ikke oppfylt, tilbys godkjenning ikke —
+et avslag og en anmodning om endringer kan fortsatt registreres. En godkjenning skal gjelde
+innhold som er kontrollert mot kilden; siden den blir stående som den gjeldende beslutningen,
+ville en godkjenning gitt før kontrollen båret publiseringen den dagen kontrollen kom, uten at
+noen hadde sett innholdet i kontrollert stand.
+
 ## 27. KI skal ikke skjule uenighet
 
 Agenten skal ikke optimaliseres for å produsere en «ren» konklusjon på bekostning av relevante motfunn.

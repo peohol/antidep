@@ -842,6 +842,20 @@ på beslutningstidspunktet med en tildelingsrad som fantes senest da. Raden er a
 enhver innsetting etterlater en `review_decision_registered`-rad i `audit.events` (§35), med
 beslutningens egen begrunnelse i `reason`.
 
+En `approved`-beslutning krever i tillegg at forutsetningene før den menneskelige godkjenningen
+allerede holder: `knowledge.assert_claim_revision_ready_for_approval(uuid)`, som er
+publiseringsgatens G1 til G10 flyttet ut i én funksjon. Gaten kaller den framfor å eie
+vilkårene, slik at de finnes ett sted og ikke kan komme i utakt med skriveveien.
+
+Vilkåret er ikke en formalitet om rekkefølge. Godkjenningen er append-only og bundet bare til
+`approved_evidence_set_digest`, altså til *hvilke* evidenslenker som fantes — ikke til hvilke
+kontroller som var gjeldende. Uten vilkåret var sekvensen «godkjenn mens kontrollene mangler →
+registrer kontrollene senere → publiser» lovlig: den gamle godkjenningen ville fortsatt vært den
+gjeldende beslutningen, avtrykket uendret, og revisjonen kunne publiseres uten at noe menneske
+hadde gått god for den etter at innholdet ble kildekontrollert. Godkjenningen ville da gjeldt et
+ukontrollert utkast. `rejected` og `changes_requested` er ikke bundet av vilkåret: de trengs
+nettopp mens noe blokkerer, og skal kunne registreres og bevares da.
+
 Beslutningen om at innholdet kan publiseres, er ikke den samme som kontrollen av at det holder
 mot grunnlaget: de er to beslutningsobjekter i to tabeller, og publiseringsgaten krever dem
 hver for seg. En redaksjonell flate skal derfor ha to atskilte handlinger, ikke én samlet

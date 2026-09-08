@@ -805,6 +805,12 @@ export function claimReviewPayload(
         message: 'Revisjon har ingen registrert claim-verifikasjon.',
         hint: 'En separat kontrollfase skal ha forsøkt å falsifisere påstanden.',
       },
+      approval_readiness: {
+        status: 'blocked',
+        sqlstate: '23001',
+        message: 'Revisjon har ingen registrert claim-verifikasjon.',
+        hint: 'En separat kontrollfase skal ha forsøkt å falsifisere påstanden.',
+      },
       ...revisionOverrides,
     },
   }
