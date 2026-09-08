@@ -111,10 +111,25 @@ select is_empty(
         -- 520_claim_review_workspace_test.sql.
         'api.register_human_claim_verification(uuid,text,text,text,text,text,text,text,text,text,jsonb,text,text)',
         'api.register_publication_approval(uuid,text,text,text)',
-        'api.claim_review_workspace(uuid)'
+        'api.claim_review_workspace(uuid)',
+        -- Migrasjon 005s og 005t. Den menneskelige ekstraksjonskontrollen: én
+        -- skrivevei og én lesevei, begge bare for authenticated, og begge
+        -- autoriserer kalleren på sitt eget kall
+        -- (workflow.assert_reviewer_authorized). Hvilke roller som faktisk har
+        -- EXECUTE, kontrolleres i
+        -- 540_human_extraction_verification_test.sql og
+        -- 550_extraction_review_workspace_test.sql.
+        'api.register_human_extraction_verification(uuid,text,text,text,text[],text,text)',
+        'api.extraction_review_workspace(uuid)',
+        -- Migrasjon 006h. Den redaksjonelle publiseringshandlingen. Bare
+        -- authenticated, og hele publiseringsgaten pluss publisher-rollen
+        -- avgjøres av knowledge.publish_claim_revision(uuid, uuid, text) inne i
+        -- transaksjonen som skriver hendelsen. Hvilke roller som faktisk har
+        -- EXECUTE, kontrolleres i 560_publication_action_test.sql.
+        'api.publish_claim_revision(uuid,text)'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de tolv kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de femten kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$

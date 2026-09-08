@@ -248,6 +248,53 @@ export type Database = {
         }
         Returns: Uuid
       }
+      // De to neste er den menneskelige ekstraksjonskontrollen (migrasjon 005s
+      // og 005t): kontrollen av at et evidensfunn faktisk gjengir det kilden
+      // rapporterer. Den er et annet ledd enn kontrollen av at grunnlaget
+      // støtter påstanden, og publiseringsgaten krever dem hver for seg (G5 og
+      // G9).
+      //
+      // Svaret fra lesegrunnlaget er `unknown` av samme grunn som for
+      // claim_review_workspace: det er jsonb, og formen leses av
+      // `lib/extraction-review.ts`.
+      extraction_review_workspace: {
+        Args: {
+          p_evidence_item_id?: Uuid | null
+        }
+        Returns: unknown
+      }
+      // `p_checked_fields` er `text[]` i SQL og en liste av strenger her:
+      // vokabularet er en enum i `workflow`, som authenticated ikke har usage
+      // på, så parameteren tar imot tekst og castes inne i kroppen — samme
+      // begrunnelse som for de øvrige vokabularparametrene.
+      //
+      // `p_seen_extraction_digest` er avtrykket flaten faktisk viste, sendt
+      // tilbake uendret. Databasen sammenligner det med grunnlaget slik det er
+      // nå, under radlåsen, og avviser hvis kildeversjonen, kildens status eller
+      // kontrollhistorikken er endret mens vurderingen pågikk.
+      register_human_extraction_verification: {
+        Args: {
+          p_evidence_item_id: Uuid
+          p_seen_extraction_digest: string
+          p_outcome: string
+          p_source_access: string
+          p_checked_fields: readonly string[]
+          p_rationale: string
+          p_findings?: string | null
+        }
+        Returns: Uuid
+      }
+      // Migrasjon 006h: den redaksjonelle publiseringshandlingen. Publisher-
+      // aktøren er ikke en parameter — den utledes av databasen fra den
+      // innloggede brukerens egen aktørrad — og hele publiseringsgaten kjøres
+      // inne i transaksjonen som skriver hendelsen.
+      publish_claim_revision: {
+        Args: {
+          p_claim_revision_id: Uuid
+          p_reason: string
+        }
+        Returns: Uuid
+      }
     }
   }
 }

@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(65);
+select plan(67);
 
 -- ---------------------------------------------------------------------------
 -- Testdata som bare finnes inne i denne transaksjonen
@@ -42,6 +42,11 @@ create function pg_temp.seeded_evidence(drug text) returns uuid language sql sta
   from knowledge.evidence_items e
   join catalog.drugs d on d.id = e.intervention_drug_id
   where d.canonical_name = drug
+    -- Ikke funnet denne filen selv lager lenger nede for å prøve
+    -- selvverifikasjonsregelen. `is distinct from` og ikke `<>`: aktøren finnes
+    -- ikke ennå når funksjonen defineres, og NULL <> x er ukjent, ikke sant.
+    and e.created_by_actor_id
+        is distinct from pg_temp.actor('agent:extraction-verifier-test')
 $$;
 
 insert into auth.users (id, email)
@@ -65,6 +70,13 @@ values
   -- annen rolle med vilje, slik at avvisningen kan prøves med den.
   ('agent', 'agent:citation-verifier-test', 'Test claim-verifikator',
    'KI-aktør i sitat- og kildestøtterollen i testdata.', null, 'citation_support_verification'),
+  -- Egen aktør for ekstraksjonsverifikasjonene, av samme grunn: migrasjon 005q
+  -- krever at den som kontrollerer en ekstraksjon mot kilden har mandatet til
+  -- det, og for en agent er mandatet rollen extraction_verification.
+  -- agent:verifier-test har en annen rolle med vilje, slik at avvisningen kan
+  -- prøves med den.
+  ('agent', 'agent:extraction-verifier-test', 'Test ekstraksjonsverifikator',
+   'KI-aktør i ekstraksjonskontrollrollen i testdata.', null, 'extraction_verification'),
   ('human', 'human:reviewer-test', 'Test Reviewer',
    'Menneskelig fagredaktør med reviewer-rolle i testdata.',
    pg_temp.user_id('reviewer@test.invalid'), null),
@@ -118,6 +130,33 @@ from c;
 create function pg_temp.self_authored_revision() returns uuid language sql stable as $$
   select r.id from knowledge.claim_revisions r
   where r.created_by_actor_id = pg_temp.actor('agent:citation-verifier-test')
+$$;
+
+-- Samme grep for ekstraksjonskontrollen: forfatteren av de seedede
+-- evidensfunnene er agent:evidence-extraction, som avvises av mandatet (005q)
+-- før evidence_verifications_separate_actor_check i det hele tatt prøves. Dette
+-- funnet har en forfatter som *har* mandatet, og er derfor det eneste grunnlaget
+-- der selvverifikasjonen er det som faktisk feller forsøket.
+insert into knowledge.evidence_items (
+  source_id, design_code, population_availability, population_detail,
+  sample_size_availability, intervention_drug_id, comparator_kind,
+  outcome_concept_id, outcome_detail, timepoint_availability,
+  reported_direction, estimate_availability, confidence_interval_availability,
+  source_locator, extraction_method, created_by_actor_id
+)
+select
+  e.source_id, 'randomized_controlled_trial', 'not_reported',
+  'Testdata i 190; bare til for å prøve selvverifikasjonsregelen.',
+  'not_reported', e.intervention_drug_id, 'none',
+  e.outcome_concept_id, 'Testendepunkt i 190.', 'not_reported',
+  'increase', 'not_reported', 'not_reported',
+  'Avsnitt for 190', 'ai_assisted', pg_temp.actor('agent:extraction-verifier-test')
+from knowledge.evidence_items e
+where e.id = pg_temp.seeded_evidence('sertralin');
+
+create function pg_temp.self_authored_evidence() returns uuid language sql stable as $$
+  select e.id from knowledge.evidence_items e
+  where e.created_by_actor_id = pg_temp.actor('agent:extraction-verifier-test')
 $$;
 
 -- Scoped reviewer: godkjent for «depressiv lidelse», ikke for «vektendring».
@@ -387,11 +426,12 @@ declare
   payload jsonb;
 begin
   payload := jsonb_build_object(
-    'verifier', 'agent:verifier-test',
+    'verifier', 'agent:extraction-verifier-test',
     'outcome', 'verified',
     'source_access', 'original_source',
     'checked_fields', '["source_locator", "estimate", "population"]'::jsonb,
-    'rationale', 'Testkontroll av ekstraksjonen mot kildeversjonen.'
+    'rationale', 'Testkontroll av ekstraksjonen mot kildeversjonen.',
+    'evidence', 'seeded'
   ) || overrides;
 
   insert into workflow.evidence_verifications (
@@ -415,7 +455,10 @@ begin
     payload ->> 'rationale',
     coalesce((payload ->> 'verified_at')::timestamptz, now())
   from knowledge.evidence_items e
-  where e.id = pg_temp.seeded_evidence('sertralin');
+  where e.id = case payload ->> 'evidence'
+                 when 'self_authored' then pg_temp.self_authored_evidence()
+                 else pg_temp.seeded_evidence('sertralin')
+               end;
 end;
 $$;
 
@@ -423,9 +466,26 @@ select lives_ok(
   $$select pg_temp.insert_evidence_verification()$$,
   'en separat verifikator kan bekrefte en ekstraksjon mot originalkilden'
 );
+-- Mandatet (migrasjon 005q) er en annen grense enn selvverifikasjonsregelen, og
+-- den prøves med en agent som har en annen rolle enn extraction_verification.
 select throws_ok(
   $$select pg_temp.insert_evidence_verification(
-      '{"verifier": "agent:evidence-extraction"}'::jsonb)$$,
+      '{"verifier": "agent:verifier-test"}'::jsonb)$$,
+  '42501', null,
+  'en agent uten rollen extraction_verification kan ikke kontrollere en ekstraksjon (ANTIDEP_CONSTITUTION.md §10)'
+);
+select throws_ok(
+  $$select pg_temp.insert_evidence_verification(
+      '{"verifier": "human:editor-test"}'::jsonb)$$,
+  '42501', null,
+  'et menneske uten reviewer-rolle kan ikke kontrollere en ekstraksjon'
+);
+-- Selvverifikasjonen prøves på det funnet den mandaterte testverifikatoren selv
+-- har laget; ellers ville mandatet felt forsøket først, og CHECK-en aldri blitt
+-- prøvd.
+select throws_ok(
+  $$select pg_temp.insert_evidence_verification(
+      '{"evidence": "self_authored"}'::jsonb)$$,
   '23514', null,
   'ekstraktøren kan ikke verifisere sin egen ekstraksjon (ANTIDEP_CONSTITUTION.md §10)'
 );
@@ -878,7 +938,7 @@ select throws_ok(
 -- Kunnskapsobjektene kan ikke slettes bort under beslutningene som peker på dem
 -- (DATABASE_ARCHITECTURE.md §36, §37).
 select throws_ok(
-  $$delete from provenance.actors where actor_key = 'agent:verifier-test'$$,
+  $$delete from provenance.actors where actor_key = 'agent:extraction-verifier-test'$$,
   '23503', null,
   'en aktør som står oppført på en verifikasjon kan ikke slettes'
 );

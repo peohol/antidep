@@ -65,7 +65,10 @@ function toPayload(item: VerificationItem): Record<string, unknown> {
   const e = item.extraction
   return {
     evidence_item_id: item.evidenceItemId,
+    created_by_actor_id: item.createdByActorId,
     created_by_actor_key: item.createdByActorKey,
+    extraction_method: item.extractionMethod,
+    content_hash: item.contentHash,
     created_at: '2026-09-01T00:00:00+00:00',
     verifications_by_this_actor: item.verificationsByThisActor,
     source: {

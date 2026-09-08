@@ -82,6 +82,7 @@ describe('skallet', () => {
       'Opprett kilde',
       'Registrer kildeversjon',
       'Registrer evidensfunn',
+      'Kildekontroll',
       'Faglig vurdering',
     ])
   })

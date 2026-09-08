@@ -39,6 +39,8 @@ import { CreateEvidenceItemPage } from './pages/CreateEvidenceItemPage'
 import { CreateSourcePage } from './pages/CreateSourcePage'
 import { CreateSourceVersionPage } from './pages/CreateSourceVersionPage'
 import { DrugPage } from './pages/DrugPage'
+import { ExtractionReviewPage } from './pages/ExtractionReviewPage'
+import { ExtractionReviewQueuePage } from './pages/ExtractionReviewQueuePage'
 import { HomePage } from './pages/HomePage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { ReviewQueuePage } from './pages/ReviewQueuePage'
@@ -49,6 +51,7 @@ import {
   accessPath,
   homePath,
   newEvidenceItemPath,
+  extractionReviewQueuePath,
   newSourcePath,
   newSourceVersionPath,
   reviewQueuePath,
@@ -114,10 +117,14 @@ export function AppLayout() {
           <Link to={newSourcePath()}>Opprett kilde</Link>
           <Link to={newSourceVersionPath()}>Registrer kildeversjon</Link>
           <Link to={newEvidenceItemPath()}>Registrer evidensfunn</Link>
-          {/* Steg 4 (§15): den faglige vurderingen. Lenken står sammen med de tre
-              registreringsstegene fordi den er neste ledd i den samme kjeden —
-              men handlingen er en annen rolles: å registrere innhold og å gå god
-              for det er forskjellige rettigheter (MVP_IMPLEMENTATION_PLAN.md §16). */}
+          {/* Steg 4 og 5 (§15). Begge er kontroller, og de er to fordi de spør om
+              to forskjellige ting: om ekstraksjonen gjengir kilden riktig, og om
+              grunnlaget støtter påstanden. Publiseringsgaten krever dem hver for
+              seg (G5 og G9). Lenkene står sammen med registreringsstegene fordi de
+              er neste ledd i den samme kjeden — men handlingen er en annen rolles:
+              å registrere innhold og å gå god for det er forskjellige rettigheter
+              (MVP_IMPLEMENTATION_PLAN.md §16). */}
+          <Link to={extractionReviewQueuePath()}>Kildekontroll</Link>
           <Link to={reviewQueuePath()}>Faglig vurdering</Link>
         </nav>
       </header>
@@ -133,6 +140,11 @@ export function AppLayout() {
           <Route element={<CreateEvidenceItemPage />} path={ROUTE_PATTERNS.evidenceNew} />
           <Route element={<ReviewQueuePage />} path={ROUTE_PATTERNS.reviewQueue} />
           <Route element={<ClaimReviewPage />} path={ROUTE_PATTERNS.claimReview} />
+          <Route
+            element={<ExtractionReviewQueuePage />}
+            path={ROUTE_PATTERNS.extractionReviewQueue}
+          />
+          <Route element={<ExtractionReviewPage />} path={ROUTE_PATTERNS.extractionReview} />
           <Route element={<SourcePage />} path={ROUTE_PATTERNS.source} />
           <Route element={<AccessPage />} path={ROUTE_PATTERNS.access} />
           <Route element={<NotFoundPage />} path="*" />

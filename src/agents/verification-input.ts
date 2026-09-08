@@ -70,7 +70,20 @@ export interface VerificationExtraction {
 
 export interface VerificationItem {
   readonly evidenceItemId: string
+  readonly createdByActorId: string
   readonly createdByActorKey: string
+  /**
+   * Hvordan raden ble til. Sier hvem eller hva som laget ekstraksjonen, aldri om
+   * den er kontrollert — kontrollen er en egen hendelse
+   * (ANTIDEP_CONSTITUTION.md §10).
+   */
+  readonly extractionMethod: string
+  /**
+   * Fingeravtrykket databasen har beregnet av hele ekstraksjonen. Bundet til
+   * raden og ikke til id-en: en korrigert ekstraksjon er et nytt funn med et
+   * annet avtrykk.
+   */
+  readonly contentHash: string
   readonly sourceId: string
   readonly sourceTitle: string
   /**
@@ -252,7 +265,10 @@ export function parseVerificationItem(value: unknown): VerificationItem {
 
   return {
     evidenceItemId: asString(record['evidence_item_id'], 'items[].evidence_item_id'),
+    createdByActorId: asString(record['created_by_actor_id'], 'items[].created_by_actor_id'),
     createdByActorKey: asString(record['created_by_actor_key'], 'items[].created_by_actor_key'),
+    extractionMethod: asString(record['extraction_method'], 'items[].extraction_method'),
+    contentHash: asString(record['content_hash'], 'items[].content_hash'),
     sourceId: asString(source['source_id'], 'items[].source.source_id'),
     sourceTitle: asString(source['title'], 'items[].source.title'),
     sourceType: asString(source['source_type'], 'items[].source.source_type'),

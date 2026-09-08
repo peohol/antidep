@@ -77,6 +77,15 @@ export interface FakeApi {
   /** De to beslutningene (migrasjon 005n og 006d). */
   readonly register_human_claim_verification?: FakeRpcOutcome<string>
   readonly register_publication_approval?: FakeRpcOutcome<string>
+  /**
+   * Kildekontrollen (migrasjon 005s og 005t). Samme dispatch som reviewflaten:
+   * uten en evidens-ID er svaret køen, med den er svaret arbeidsflaten.
+   */
+  readonly extraction_review_queue?: FakeRpcOutcome<unknown>
+  readonly extraction_review_workspace?: FakeRpcOutcome<unknown>
+  readonly register_human_extraction_verification?: FakeRpcOutcome<string>
+  /** Publiseringshandlingen (migrasjon 006h). */
+  readonly publish_claim_revision?: FakeRpcOutcome<string>
 }
 
 interface RecordedQuery {
@@ -115,6 +124,18 @@ function fakeRpcOutcome(api: FakeApi, name: string, args: unknown): FakeRpcOutco
       return api.register_human_claim_verification ?? { data: DEFAULT_RPC_ID }
     case 'register_publication_approval':
       return api.register_publication_approval ?? { data: DEFAULT_RPC_ID }
+    case 'extraction_review_workspace': {
+      const evidenceItemId = (args as { p_evidence_item_id?: string | null } | undefined)
+        ?.p_evidence_item_id
+      if (evidenceItemId == null) {
+        return api.extraction_review_queue ?? { data: extractionQueuePayload([]) }
+      }
+      return api.extraction_review_workspace ?? { data: extractionReviewPayload() }
+    }
+    case 'register_human_extraction_verification':
+      return api.register_human_extraction_verification ?? { data: DEFAULT_RPC_ID }
+    case 'publish_claim_revision':
+      return api.publish_claim_revision ?? { data: DEFAULT_RPC_ID }
     default:
       throw new Error(`fakeClient.rpc(): ukjent funksjon «${name}».`)
   }
@@ -873,5 +894,129 @@ export function reviewDecisionRecord(
     rationale: 'Går god for at påstanden kan publiseres på dette grunnlaget.',
     approved_evidence_set_digest: `sha256-v1:${'d'.repeat(64)}`,
     ...overrides,
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Kildekontroll av ett evidensfunn (migrasjon 005r, 005s, 005t)
+//
+// Fiksturene bygger jsonb-svaret slik `api.extraction_review_workspace(uuid)`
+// faktisk gir det. Selve evidensfunnet er nøyaktig den formen
+// `workflow.evidence_extraction_dossier(uuid)` bygger, og den formen finnes
+// allerede i `reviewLink()` — den gjenbrukes her, av samme grunn som databasen
+// bare har én projeksjon: to fiksturer av samme form ville før eller siden
+// beskrevet to forskjellige grunnlag.
+// ----------------------------------------------------------------------------
+
+const EXTRACTION_VERIFICATION = '77777777-7777-4777-8777-555555555555'
+
+export const TEST_EXTRACTION_IDS = {
+  evidenceItem: REVIEW_EVIDENCE_ITEM,
+  sourceVersion: REVIEW_SOURCE_VERSION,
+  extractorActor: '00000000-0000-4000-8000-444444444444',
+  reviewerActor: REVIEW_REVIEWER_ACTOR,
+  verification: EXTRACTION_VERIFICATION,
+  digest: `sha256-v1:${'b'.repeat(64)}`,
+} as const
+
+/** Feltene funnet i fiksturen påstår noe om, slik gaten regner dem ut. */
+const EXTRACTION_REQUIRED_FIELDS = [
+  'raw_extraction',
+  'source_locator',
+  'intervention_arm',
+  'outcome',
+  'reported_direction',
+  'availability_semantics',
+  'effect_measure',
+  'comparator_arm',
+  'population',
+  'sample_size',
+  'timepoint',
+  'estimate',
+  'confidence_interval',
+]
+
+/** Én kørad, slik køen gir den. */
+export function extractionQueueItem(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    evidence_item_id: REVIEW_EVIDENCE_ITEM,
+    created_at: '2026-08-30T08:00:00Z',
+    created_by_actor_id: TEST_EXTRACTION_IDS.extractorActor,
+    created_by_actor_key: 'agent:evidence-extraction',
+    source_id: SOURCE_A,
+    source_title: 'Testkilde A: vektendring ved åtte uker',
+    source_status: 'active',
+    intervention_drug_name: 'virkestoff a',
+    outcome_label: 'vektendring',
+    outcome_concept_id: TOPIC_WEIGHT,
+    current_extraction_verification_outcome: null,
+    verification_count: 0,
+    required_check_fields: EXTRACTION_REQUIRED_FIELDS,
+    covered_check_fields: [],
+    linked_claim_revision_count: 1,
+    ...overrides,
+  }
+}
+
+/** Hele køsvaret. */
+export function extractionQueuePayload(
+  items: readonly Record<string, unknown>[] = [extractionQueueItem()],
+): Record<string, unknown> {
+  return { reviewer_actor_id: REVIEW_REVIEWER_ACTOR, queue: items }
+}
+
+/** Én registrert ekstraksjonskontroll, slik historikken gir den. */
+export function extractionVerificationRecord(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    evidence_verification_id: EXTRACTION_VERIFICATION,
+    outcome: 'uncertain',
+    source_access: 'verifiable_representation',
+    checked_fields: ['source_locator', 'raw_extraction'],
+    findings: 'Fant ikke utdraget som dekker tidspunktet.',
+    rationale: 'Deterministisk kontroll mot den lagrede representasjonen.',
+    verified_at: '2026-09-02T10:00:00Z',
+    created_at: '2026-09-02T10:00:00Z',
+    verifier_actor_id: '00000000-0000-4000-8000-666666666666',
+    verifier_actor_key: 'agent:extraction-verification',
+    verifier_actor_type: 'agent',
+    verifier_display_name: 'Ekstraksjonsverifikator',
+    agent_run_id: '11111111-1111-4111-8111-666666666666',
+    ...overrides,
+  }
+}
+
+/** Hele svaret på et oppslag av ett evidensfunn. */
+export function extractionReviewPayload(
+  itemOverrides: Record<string, unknown> = {},
+  reviewerActorId: string = REVIEW_REVIEWER_ACTOR,
+): Record<string, unknown> {
+  const dossier = reviewLink()['evidence_item'] as Record<string, unknown>
+  return {
+    reviewer_actor_id: reviewerActorId,
+    item: {
+      ...dossier,
+      extraction_digest: TEST_EXTRACTION_IDS.digest,
+      required_check_fields: EXTRACTION_REQUIRED_FIELDS,
+      covered_check_fields: [],
+      current_extraction_verification_id: null,
+      extraction_verifications: [],
+      linked_claim_revisions: [
+        {
+          claim_revision_id: REVIEW_REVISION,
+          claim_id: REVIEW_CLAIM,
+          revision_number: 1,
+          statement: 'Testpåstand til vurdering: virkestoff a er assosiert med vektøkning.',
+          subject_drug_name: 'virkestoff a',
+          topic_label: 'vektendring',
+          relationship_type: 'supports',
+          is_published_revision: false,
+        },
+      ],
+      ...itemOverrides,
+    },
   }
 }

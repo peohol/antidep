@@ -108,7 +108,10 @@ export function verificationItemFixture(
   const { extraction, sourceVersion, ...rest } = overrides
   return {
     evidenceItemId: '3422c284-31eb-428e-b1a0-bebf3f616ffc',
+    createdByActorId: '99999999-9999-4999-8999-999999999999',
     createdByActorKey: 'agent:evidence-extraction',
+    extractionMethod: 'ai_assisted',
+    contentHash: 'sha256-v2:' + 'a'.repeat(64),
     sourceId: '50000000-0000-4000-8000-000000000001',
     sourceTitle: 'Testkilde',
     sourceType: 'journal_article',

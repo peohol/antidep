@@ -1387,7 +1387,8 @@ PR G  db: add publication events and gate                                   (#15
       feat: run the extraction verifier from source version to verification (#51)  merget   migrasjon 008e, 007f, 005h
       ops: activate the extraction verifier in the hosted project           (#56)  merget   ingen migrasjon
       feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
-      feat: add the human claim review and publication approval flow        (#59)  åpen     migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
+      feat: add the human claim review and publication approval flow        (#59)  merget   migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
+      feat: add the human extraction check and make publication operational (#61)  åpen     migrasjon 005q, 005r, 005s, 005t, 006g, 006h
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1489,7 +1490,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1742 pgTAP-assertions over 53 testfiler.
+Databaselaget teller nå 1867 pgTAP-assertions over 57 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1657,15 +1658,15 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   39 enum-typer, fordelt på de førtifire migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   39 enum-typer, fordelt på de femti migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
-   005m, 005n, 006d, 005o, 005p, 006e og 006f — i
+   005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g og 006h — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle førtifire ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle femti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -6070,6 +6071,156 @@ lar raden stå ulåst.
 før en påstand kan komme helt gjennom på faglig grunnlag alene.
 
 ---
+
+### 74.37 Ekstraksjonskontrollen har fått et menneske, og publiseringen er operativ
+
+§74.36 endte med tre ting mellom golden slice og Milepæl B, og bare den første var kode:
+ekstraksjonskontrollene konkluderte med `uncertain` uten at det fantes en menneskelig
+skrivevei å rette det med, og `publisher`-rollen var ikke tildelt. Denne leveransen bygger
+det første, gjør det andre mulig, og legger til den redaksjonelle handlingen som faktisk
+publiserer.
+
+**Seks migrasjoner.**
+
+| Migrasjon | Hva den gjør |
+| --- | --- |
+| 005q | `workflow.evidence_verifier_has_mandate(uuid, uuid, timestamptz)` og triggeren som håndhever den på raden. `workflow.covered_check_fields(uuid)` flytter G5b sin dekningsberegning ut av gaten. Gaten får G5c |
+| 005r | `workflow.evidence_extraction_dossier(uuid)` — grunnlaget for en ekstraksjonskontroll, ett sted. `api.extraction_verification_input(...)` bygger svaret sitt av den |
+| 005s | `workflow.evidence_extraction_digest(uuid)`, `workflow.assert_extraction_unchanged(uuid, text)`, `workflow.record_evidence_verification(...)` som begge skriveveier deler, og `api.register_human_extraction_verification(...)` |
+| 005t | `api.extraction_review_workspace(uuid)` — køen og kontrollflaten |
+| 006g | `workflow.ensure_publisher_role_grant()` |
+| 006h | `api.publish_claim_revision(uuid, text)` |
+
+**En dør til er åpnet innenfra, og et lag er lagt til.** `workflow.evidence_verifications`
+hadde ingen mandatkontroll på raden. Så lenge den eneste veien inn autentiserte en
+agentidentitet eksplisitt for rollen `extraction_verification`, var forskjellen uten
+praktisk konsekvens. Med to skriveveier — den andre et menneske med sesjon og reviewer-rolle
+— er skriveveiens egen kontroll ikke lenger det eneste som avgjør hvor raden kan komme fra.
+Regelen ligger derfor nå i én boolsk funksjon som håndheves to steder: ved innsetting av
+raden, og i publiseringsgatens G5c på den gjeldende kontrollen. Nøyaktig samme form som
+migrasjon 005j og G9c gir claim-kontrollen.
+
+Ingen CHECK, constraint, trigger, policy eller grant er fjernet eller svekket, og ingen ny
+direkte tabelltilgang er gitt til `anon` eller `authenticated`.
+
+**Prisen står i testene, og den er betalt framfor omgått.** Mandattriggeren er
+`BEFORE INSERT` og fyrer før CHECK-ene. Fire tidligere testfiler (190, 200, 430 og 440)
+prøvde radinvarianter med aktører som ikke har mandatet, og den nye grensen ville skjult den
+gamle. Fiksturene skiller nå de to: hver fil har en aktør som *har* mandatet, slik at
+selvverifikasjonsregelen og de sammensatte fremmednøklene fortsatt er det som faktisk feller
+forsøket. 440 fikk i tillegg en mutasjonstest — med mandatkontrollen byttet ut mot en variant
+som slipper alle gjennom, må de to fremmednøklene fra 005g fortsatt fange forsøket.
+
+**Avtrykket dekker mer enn evidenssettet gjorde, og det er en avlesning.** For en
+claim-kontroll er «det du faktisk så» evidenssettet (005n). For en ekstraksjonskontroll er det
+fire ting, og alle fire kan endre seg mens revieweren leser kilden:
+
+1. kildens status — en kilde som blir trukket tilbake, er nettopp det G7 stopper på
+2. kildeversjonen funnet peker på, med adresse og fingeravtrykk
+3. selve ekstraksjonen, gjennom radens eget innholdsavtrykk
+4. settet av kontroller som allerede er registrert
+
+Det siste er det viktigste. En ny kontroll i vinduet endrer hva som er «den gjeldende», og et
+åpent funn kunne ellers blitt borte uten at noen så på det omstridte feltet igjen — nøyaktig
+den luken G5b sin nullstilling finnes for å stenge.
+
+**Låsen tas før sammenligningen.** Lærdommen fra teknisk review av PR #59 (migrasjon 006f) er
+anvendt før feilen oppstod: `workflow.assert_extraction_unchanged(uuid, text)` tar
+`for update` på evidensfunnet og `for share` på kilden *før* den sammenligner, og
+`workflow.record_evidence_verification(...)` tar den samme radlåsen. Begge skriveveier går
+gjennom den, så to registreringer serialiseres mot hverandre uansett hvilken vei de kommer
+fra. Låserekkefølgen er evidensfunn → kilde, og ingen kodevei tar dem i motsatt rekkefølge.
+
+`scripts/db-lock-test.sh` kjører nå tre samtidighetsprøver med to reelle forbindelser, ikke
+én. De to nye er reprodusert med en mutert kontroll uten lås: da slipper økt B forbi og
+registrerer kontrollen sin, framfor å svare 55P03.
+
+**Publiseringen er to ting, og de er fortsatt to.** `publisher` er retten til å *utføre*
+publiseringen; `reviewer` er retten til å avgjøre om innholdet er godt nok. Tildelingen åpner
+ingen gate — alle vilkårene kjøres på nytt inne i publiseringstransaksjonen, etter at
+rettigheten er kontrollert — og `api.publish_claim_revision(uuid, text)` regner ingenting ut
+selv. At forfatter, godkjenner og publisher nå er samme menneske, står eksplisitt i
+`grant_reason` som registrert gjeld (CONTENT_GOVERNANCE.md §5, §74.7), og skal revurderes så
+snart Antidep har mer enn én kvalifisert person.
+
+Bare publisering er eksponert. Avpublisering og rollback finnes i `knowledge` fra migrasjon
+006 og trenger hver sin flate med sine egne spørsmål; de hører til sin egen leveranse.
+
+---
+
+**Kjeden er prøvd i produksjon. Dette er avlesningen.**
+
+| Ledd | Avlesning |
+| --- | --- |
+| 1. Deploy | Seks migrasjoner kjørt med `./scripts/deploy-migrations.sh`; etterpå femti rader mot femti filer |
+| 2. Rolletildelingen | `publisher` skrevet for den navngitte redaktørkontoen. Kontoen har nå `editor`, `reviewer` og `publisher` — tre rader, tre begrunnelser |
+| 3. Lesing som redaktør | `api.extraction_review_workspace()` gir to evidensfunn i køen, begge med `uncertain` som gjeldende kontroll og null av henholdsvis elleve og ti påkrevde felter dekket |
+| 4. Hele kjeden | Kjørt mot evidensfunn `5b98b916…` og revisjon `724bc69b…` i én transaksjon som ble rullet tilbake; se tabellen under |
+| 5. Etterkontroll | Tre ekstraksjonskontroller, null `verified`, to claim-verifikasjoner, null `verified`, null reviewbeslutninger, null publiseringer, null publiserte påstander — uendret fra før deployen |
+
+| Steg | Svar fra gaten |
+| --- | --- |
+| Slik det står nå | Blokkert av G5: `Evidensfunn med åpent verifikasjonsfunn: 5b98b916…` |
+| Menneskelig ekstraksjonskontroll registrert gjennom skriveveien | Rad `cb0b510f…` |
+| Etter kontrollen | Blokkert av G9: claim-kontrollen konkluderer ikke med `verified` — altså passerte G4, G5, G5b og G5c |
+| Menneskelig claim-verifikasjon registrert | Rad `8c70bf24…` |
+| Etter den | Blokkert av G11: ikke godkjent av en kvalifisert redaktør |
+| Publiseringsgodkjenning registrert | Rad `da59a174…` |
+| Etter godkjenningen | **Hele publiseringsgaten passerer** |
+| Publisering gjennom `api.publish_claim_revision(...)` | Hendelse `957ec378…`, `publish av human:peder-holman`, og påstanden synlig i `api.published_claims` |
+
+Det siste leddet er den positive assertionen for hele gaten på én gang, og det første ledd i
+prosjektets historie der en publisering faktisk lykkes.
+
+**De fire vurderingene i tabellen er syntetiske, og det er ikke en formalitet.** De ble
+registrert for å prøve at skriveveiene og gaten virker mot de reelle radene, og transaksjonen
+ble rullet tilbake. De er ikke faglige vurderinger av innholdet, og ingen `verified`
+ekstraksjonskontroll, ingen `verified` claim-verifikasjon, ingen godkjenning og ingen
+publisering finnes i produksjon. De vurderingene hører til prosjekteieren — å registrere dem
+fra en agentsesjon ville vært å gjøre nøyaktig det `ANTIDEP_CONSTITUTION.md` §12 forbyr. Ingen
+klinisk verdi er endret for å få gaten grønn.
+
+**Flaten.** To nye sider, `/extraction-review` og `/extraction-review/:evidenceItemId`, og en
+tredje handling på reviewflaten. Ingen felter er huket av på forhånd: en avhuking er en påstand
+om at revieweren faktisk har sammenlignet feltet med kilden, og en forhåndsutfylt liste ville
+gjort den påstanden på hens vegne. Feltdekningen leses av publiseringsgatens egne funksjoner,
+og differansen mellom «kreves» og «dekket» er ren mengdelære over to lister databasen har
+levert. Publiseringen tilbys bare når gaten selv sier at den passerer — en visning av
+tilstanden, ikke en beslutning om den.
+
+**Testene.** Fire nye pgTAP-filer: `540` (den menneskelige skriveveien, med hver
+autorisasjonsgren, radinvariantene, avtrykket, append-only, mandatet som radens egen garanti
+når skriveveiens autorisasjon er mutert bort, og at kontrollen tar radlåsen), `550` (flaten,
+radgrensen, feltdekningen lest av gatens egne funksjoner, og assertionen om at verifikatorens
+lesegrunnlag er *nøyaktig* det samme uttrykket flaten viser), `560` (publisher-tildelingens
+fire tilstander og publiseringshandlingens avvisninger, med den viktigste assertionen sist:
+rollen åpner ingen gate) og `570` (hele kjeden fra deterministisk `uncertain` til publisert
+påstand, med hvert ledd registrert gjennom sin egen faktiske skrivevei, og med et senere avvik
+som nullstiller dekningen til slutt).
+
+**`scripts/verify-counts.sh` er utvidet.** Kontrollen «hver merget rad har sin commit» krevde
+`(#N)` i et commit-emne. Squash-mergen av #59 tok ikke med nummeret i emnet — bare i kroppen —
+så raden kunne verken føres som merget eller stå som åpen uten at vakten slo ut. Kontrollen
+godtar nå også et eksakt treff på radens tittel, som tabellen uansett hevder er commit-emnet
+ordrett. Det er en strengere påstand enn nummeret alene, ikke en løsere, og den er
+mutasjonstestet: en fabrikkert rad ført som merget slår fortsatt ut.
+
+**Hva som gjenstår for Milepæl B.** Ingenting som er kode. Maskineriet er komplett, deployet og
+prøvd mot de reelle radene. Det som står igjen, er prosjekteierens faktiske faglige vurderinger
+i flaten:
+
+1. **Kontroller ekstraksjonen mot kilden** på `/extraction-review`, for det evidensfunnet
+   påstanden hviler på. Kontrollen må dekke hvert felt funnet påstår noe om — flaten viser
+   hvilke — og konkludere med `verified` for at G5 og G5b skal slippe.
+2. **Kontroller påstanden mot grunnlaget** på `/review`, og konkluder med `verified` når alle
+   sju kontrollpunktene holder.
+3. **Registrer publiseringsgodkjenningen** som en egen beslutning på den samme flaten.
+4. **Publiser revisjonen** med handlingen som da blir tilbudt.
+
+Fire vurderinger, tre av dem faglige. Ingen av dem kan tas av en agent.
+
+---
+
 
 ## 75. Neste steg
 

@@ -491,8 +491,9 @@ export function PublicationGatePanel({
             : 'Publiseringsgaten passerer. Alle kravene før publisering er oppfylt.'}
         </p>
         <p className="knowledge-notice__detail">
-          Publisering er en egen handling med sin egen rettighet, og den utføres av en publisher —
-          ikke herfra.
+          Publisering er fortsatt en egen handling med sin egen rettighet: den krever
+          publisher-rollen, som er en annen enn den som lar deg godkjenne. Handlingen står nederst
+          på siden.
         </p>
       </div>
     )

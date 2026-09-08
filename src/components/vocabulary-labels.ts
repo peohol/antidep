@@ -25,6 +25,7 @@ import type {
   DrugStatus,
   EffectMeasure,
   EstimateUnit,
+  EvidenceCheckField,
   EvidenceRelationshipType,
   ExtractionMethod,
   GradeDomainRating,
@@ -270,6 +271,30 @@ export const VERIFICATION_SOURCE_ACCESS_LABELS: Record<VerificationSourceAccess,
   original_source: 'Originalkilden',
   verifiable_representation: 'Etterprøvbar representasjon',
   derived_summary: 'Sammendrag fra et annet ledd',
+}
+
+/**
+ * Feltene en ekstraksjonskontroll kan ha gått gjennom, som det kliniske
+ * innholdet de faktisk dekker — ikke som kolonnenavn. En reviewer skal kunne
+ * lese listen som «hva har jeg faktisk sammenlignet mot kilden?», og
+ * `availability_semantics` er nettopp det punktet som er lettest å hoppe over:
+ * det gjelder ikke en verdi, men begrunnelsen for at en verdi mangler.
+ */
+export const EVIDENCE_CHECK_FIELD_LABELS: Record<EvidenceCheckField, string> = {
+  population: 'Populasjonen funnet gjelder',
+  sample_size: 'Antall deltakere',
+  intervention_arm: 'Behandlingsarmen',
+  comparator_arm: 'Sammenligningsarmen',
+  outcome: 'Endepunktet',
+  timepoint: 'Tidspunktet målingen gjelder',
+  reported_direction: 'Retningen kilden rapporterer',
+  effect_measure: 'Effektmålet',
+  estimate: 'Selve estimatet',
+  confidence_interval: 'Konfidensintervallet',
+  availability_semantics: 'Begrunnelsen for felter uten verdi',
+  limitations: 'Forbeholdene',
+  source_locator: 'Hvor i kilden funnet står',
+  raw_extraction: 'Den rå ekstraksjonen, ordrett',
 }
 
 export const REVIEW_OUTCOME_LABELS: Record<ReviewOutcome, string> = {
