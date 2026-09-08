@@ -22,7 +22,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(37);
+select plan(43);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -254,6 +254,15 @@ select pg_temp.make_revision('50000000-0000-4000-8000-000000000031',
   (select id from fixture where name = 'synthesis'), 'Testpåstand R1 for 500.');
 select pg_temp.make_revision('50000000-0000-4000-8000-000000000032',
   '50000000-0000-4000-8000-000000000081', 'Testpåstand R2 for 500, formulert av reviewer H.');
+-- To revisjoner uten evidenslenker, for låseprøven i Del 7 og Del 10. De må stå
+-- urørte: hver innsetting i knowledge.claim_evidence_links tar selv FOR UPDATE
+-- på revisjonen, så en revisjon med en lenke ville allerede vært låst av
+-- fiksturen og prøven ville målt fiksturen framfor kontrollen.
+select pg_temp.make_revision('50000000-0000-4000-8000-000000000035',
+  (select id from fixture where name = 'synthesis'), 'Testpåstand R5 for 500, uten lenker.');
+select pg_temp.make_revision('50000000-0000-4000-8000-000000000036',
+  (select id from fixture where name = 'synthesis'), 'Testpåstand R6 for 500, uten lenker.');
+
 select pg_temp.make_revision('50000000-0000-4000-8000-000000000033',
   (select id from fixture where name = 'synthesis'), 'Testpåstand R3 for 500.');
 
@@ -654,6 +663,53 @@ select throws_ok(
 );
 reset role;
 
+-- Kontrollen er ikke bare en sammenligning: den tar FOR UPDATE på revisjonen
+-- *før* den sammenligner, og holder låsen ut transaksjonen (migrasjon 006f).
+--
+-- Uten den låsen er kontrollen bare et øyeblikksbilde. Avtrykket som faktisk
+-- lagres, beregnes senere av triggeren på raden, og en lenke som commitet i
+-- vinduet mellom de to ville blitt en del av det lagrede avtrykket — hvorpå både
+-- G9b og G13 ville passert på et evidenssett revieweren aldri så.
+--
+-- xmax på raden settes når noen tar radlåsen. Revisjonen er opprettet av denne
+-- transaksjonen og finnes ikke for noen annen forbindelse, så en xmax som går
+-- fra 0 til noe annet kan bare komme fra kontrollens egen FOR UPDATE.
+select is(
+  (select r.xmax::text from knowledge.claim_revisions r
+   where r.id = '50000000-0000-4000-8000-000000000035'),
+  '0',
+  'revisjonen er ulåst før kontrollen kalles'
+);
+select lives_ok(
+  $$
+    select workflow.assert_evidence_set_unchanged(
+      '50000000-0000-4000-8000-000000000035',
+      knowledge.claim_evidence_set_digest('50000000-0000-4000-8000-000000000035'))
+  $$,
+  'kontrollen passerer når evidenssettet er det kalleren så'
+);
+select isnt(
+  (select r.xmax::text from knowledge.claim_revisions r
+   where r.id = '50000000-0000-4000-8000-000000000035'),
+  '0',
+  'og transaksjonen holder nå radlåsen på revisjonen: kontrollen og registreringen er én atomisk grense'
+);
+
+-- Låsen betyr noe bare fordi motparten tar den samme. Hver innsetting i
+-- knowledge.claim_evidence_links går gjennom to BEFORE-triggere som begge låser
+-- revisjonsraden først. Forsvinner det, forsvinner serialiseringen med det.
+select is_empty(
+  $$
+    select f.function_name
+    from (values ('knowledge.reject_evidence_link_after_assessment()'),
+                 ('knowledge.reject_evidence_link_after_publication()'))
+           as f(function_name)
+    where position('for update' in
+           (select p.prosrc from pg_proc p where p.oid = f.function_name::regprocedure)) = 0
+  $$,
+  'en ny evidenslenke låser den samme revisjonsraden, så de to veiene serialiseres mot hverandre'
+);
+
 -- ===========================================================================
 -- Del 8 — Append-only og direkte omgåelse
 -- ===========================================================================
@@ -731,6 +787,52 @@ select throws_ok(
   'raden har sin egen mandatkontroll: en aktør uten reviewer-rolle slipper ikke gjennom selv om skriveveiens kontroll er mutert bort'
 );
 reset role;
+
+-- ===========================================================================
+-- Del 10 — Mutasjonstest: uten låsen er kontrollen bare et øyeblikksbilde
+--
+-- workflow.assert_evidence_set_unchanged(uuid, text) byttes ut med kroppen den
+-- hadde før migrasjon 006f: samme sammenligning, ingen lås. Raden skal da stå
+-- ulåst etter kallet — og det er nøyaktig vinduet en samtidig evidenslenke kunne
+-- commite i, slik at avtrykket som lagres beskriver et sett revieweren aldri så.
+--
+-- Prøven på selve kappløpet krever to forbindelser og ligger i
+-- scripts/db-lock-test.sh; denne assertionen fanger at låsen er der.
+-- ===========================================================================
+create or replace function workflow.assert_evidence_set_unchanged(
+  p_claim_revision_id uuid,
+  p_seen_evidence_set_digest text
+)
+  returns void
+  language plpgsql
+  stable
+  security definer
+  set search_path = ''
+as $$
+begin
+  if knowledge.claim_evidence_set_digest(p_claim_revision_id)
+     is distinct from p_seen_evidence_set_digest then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'Mutert kontroll uten lås.';
+  end if;
+end;
+$$;
+
+select lives_ok(
+  $$
+    select workflow.assert_evidence_set_unchanged(
+      '50000000-0000-4000-8000-000000000036',
+      knowledge.claim_evidence_set_digest('50000000-0000-4000-8000-000000000036'))
+  $$,
+  'den muterte kontrollen sammenligner fortsatt, og passerer'
+);
+select is(
+  (select r.xmax::text from knowledge.claim_revisions r
+   where r.id = '50000000-0000-4000-8000-000000000036'),
+  '0',
+  'men den holder ingen lås: uten FOR UPDATE er kontrollen bare et øyeblikksbilde, og det er kappløpet migrasjon 006f lukker'
+);
 
 select finish();
 rollback;

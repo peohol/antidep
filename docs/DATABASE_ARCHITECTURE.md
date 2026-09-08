@@ -835,6 +835,14 @@ er ikke en parameter; `review_type` er alltid `publication_approval`, `decided_a
 `approved_evidence_set_digest` beregnes av databasen (§38). Kalleren må oppgi avtrykket av det
 evidenssettet flaten faktisk viste, av samme grunn som for claim-verifikasjonen i §30.
 
+Den kontrollen tar `FOR UPDATE` på revisjonsraden før den sammenligner, og holder låsen ut
+transaksjonen. Uten det ville den bare vært et øyeblikksbilde: avtrykket som lagres, beregnes
+senere av triggeren på raden, og en evidenslenke som commitet i vinduet mellom de to ville blitt
+en del av det lagrede avtrykket — hvorpå både G9b og G13 ville passert på et evidenssett
+revieweren aldri så. Låsen er den samme raden hver innsetting i
+`knowledge.claim_evidence_links` allerede låser (§59, §60), så de to veiene serialiseres mot
+hverandre uten ny mekanisme.
+
 Tre invarianter håndheves på raden og ikke bare i skriveveien: reviewer må være en menneskelig
 aktør (deklarativt, med en sammensatt fremmednøkkel mot `provenance.actors (id, actor_type)`
 og en CHECK), reviewer kan ikke være den som formulerte objektet, og rollen må ha vært gyldig

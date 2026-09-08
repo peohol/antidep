@@ -53,6 +53,12 @@ jobs:
         run: npx supabase db reset
       - name: Databasetester (pgTAP)
         run: npm run db:test
+      # pgTAP-filene kjører i én transaksjon som rulles tilbake, og kan derfor
+      # ikke prøve hva som skjer *mellom* to transaksjoner. Denne kjører to
+      # reelle forbindelser mot hverandre og kontrollerer at kontrollen av «det
+      # du faktisk så» holder revisjonslåsen (migrasjon 006f).
+      - name: Samtidighetsprøve (to forbindelser)
+        run: npm run db:test:lock
       - name: Stopp stacken
         if: always()
         run: npx supabase stop

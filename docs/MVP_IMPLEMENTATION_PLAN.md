@@ -1387,7 +1387,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: run the extraction verifier from source version to verification (#51)  merget   migrasjon 008e, 007f, 005h
       ops: activate the extraction verifier in the hosted project           (#56)  merget   ingen migrasjon
       feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
-      feat: add the human claim review and publication approval flow        (#59)  åpen     migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e
+      feat: add the human claim review and publication approval flow        (#59)  åpen     migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1489,7 +1489,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1736 pgTAP-assertions over 53 testfiler.
+Databaselaget teller nå 1742 pgTAP-assertions over 53 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1657,15 +1657,15 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   39 enum-typer, fordelt på de førtitre migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   39 enum-typer, fordelt på de førtifire migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
-   005m, 005n, 006d, 005o, 005p og 006e — i
+   005m, 005n, 006d, 005o, 005p, 006e og 006f — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle førtitre ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle førtifire ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -5838,7 +5838,7 @@ for å registrere en `publication_approval` — som egen, senere PR.
 hele veien — begge skriveveiene, den redaksjonelle flaten, og testene — og prøver hele kjeden
 mot de reelle radene i det hostede prosjektet.
 
-**Sju migrasjoner.**
+**Åtte migrasjoner.**
 
 | Migrasjon | Hva den gjør |
 | --- | --- |
@@ -5849,6 +5849,7 @@ mot de reelle radene i det hostede prosjektet.
 | 005o | `api.claim_review_workspace(uuid)` — arbeidsflaten, med publiseringsgaten lest av gaten selv |
 | 005p | Rettelse av et funn i teknisk review; se under |
 | 006e | Rettelse av et andre funn i teknisk review; se under |
+| 006f | Rettelse av et tredje funn i teknisk review; se under |
 
 **To dører som har vært låst innenfra siden migrasjon 005, er åpnet — uten at noen regel er
 myket opp.** Den menneskelige grenen av `workflow.claim_verifier_has_mandate(...)` har vært
@@ -6028,6 +6029,41 @@ Etterkontrollen er uendret: to claim-verifikasjoner, null `verified`, null revie
 null publiseringer. Arbeidsflaten lest som den navngitte redaktøren gir
 `approval_readiness = blocked / 23001` med den samme setningen gaten gir, altså den reelle
 faglige mangelen og ikke en teknisk feil.
+
+---
+
+**Rettet i teknisk review: kontrollen av «det du faktisk så» tok ingen lås.** 005n innførte
+`workflow.assert_evidence_set_unchanged(uuid, text)`, men den sammenlignet uten å låse noe. Avtrykket
+som faktisk *lagres*, beregnes senere av triggeren på raden, og den låsen beskytter bare
+beregningen — ikke gapet mellom kontrollen og den. En evidenslenke som commitet i det vinduet, ble
+en del av det lagrede avtrykket, og både G9b og G13 ville passert på et evidenssett revieweren
+aldri så. Det er nøyaktig luken `p_seen_evidence_set_digest` finnes for å lukke.
+
+006f tar `FOR UPDATE` på revisjonsraden *før* sammenligningen og holder låsen ut transaksjonen.
+Da er de to mulige rekkefølgene begge riktige: kommer kontrollen først, må lenken vente til
+beslutningen er ferdig, og avtrykket som lagres er det revieweren så; kommer lenken først, avvises
+registreringen som utdatert. Serialiseringen er ikke ny mekanisme: hver innsetting i
+`knowledge.claim_evidence_links` tar allerede den samme låsen, i
+`knowledge.reject_evidence_link_after_assessment()` (migrasjon 004) og
+`knowledge.reject_evidence_link_after_publication()` (migrasjon 006). Funksjonen kan ikke lenger
+være `STABLE` — PostgreSQL tillater ikke `SELECT ... FOR UPDATE` i en ikke-`VOLATILE` funksjon — og
+det er en fordel: en tilbakeføring feiler ved kjøring framfor å fjerne låsen i stillhet.
+
+**Prøven krever to forbindelser, og fikk sin egen fil.** pgTAP-filene kjører i én transaksjon som
+rulles tilbake; en andre forbindelse ville verken sett fiksturen eller kunnet kappes mot den, og
+`dblink` og `postgres_fdw` nekter en ikke-superbruker å koble seg til en server som autentiserer med
+`trust` — som den lokale stacken gjør. `scripts/db-lock-test.sh` kjører derfor to reelle psql-økter
+mot hverandre: økt A kaller kontrollen og holder transaksjonen åpen, økt B forsøker å legge til en
+evidenslenke på den samme revisjonen med `lock_timeout` satt. Med låsen svarer økt B `55P03` («måtte
+vente»); uten den slipper den forbi låsen og får `23001` fra forseglingskontrollen som ligger etter
+den i den samme triggeren. Begge utfall skriver ingenting, og prøven oppretter ingenting: den bruker
+en av revisjonene migrasjon 20260819124500 seeder. Feilen er reprodusert med den gamle kroppen før
+rettelsen ble prøvd. Filen kjøres av CI som et eget steg etter `db:test`.
+
+I `500_human_claim_verification_test.sql` ligger i tillegg den delen som *kan* prøves i én
+transaksjon: at raden er ulåst før kontrollen og låst etter den, at begge triggerne på
+`knowledge.claim_evidence_links` låser den samme raden, og — som mutasjon — at kroppen fra før 006f
+lar raden stå ulåst.
 
 **Neste steg.** Den menneskelige ekstraksjonskontrollen — speilbildet av 005n for
 `workflow.evidence_verifications` — som egen, senere PR. Den er det siste leddet som mangler
