@@ -440,6 +440,22 @@ Revieweren skal kunne gå til:
 - tidligere revisjon
 - agentens usikkerhets-/avviksflagg
 
+Kravet er implementert som `api.claim_review_workspace(uuid)` og reviewflaten over den: hele
+evidenssettet med hvert funn ordrett, kildens status, kildeversjonens adresse og
+fingeravtrykk, den gjeldende ekstraksjonskontrollen per funn, registrert evidens på samme
+virkestoff og endepunkt som *ikke* er lenket til revisjonen, evidensvurderingen, og hver
+tidligere kontroll med sine sju kontrollpunkter og sine funn. Blokkeringer som stopper
+publisering leses av publiseringsgaten selv, slik at flaten ikke kan si «klar» om noe gaten
+stenger.
+
+Flaten skiller to spørsmål som ser like ut: om revisjonen kan publiseres, og om den i det hele
+tatt kan godkjennes. Det siste er forutsetningene før den menneskelige godkjenningen, og de
+leses av den samme funksjonen skriveveien krever. Er de ikke oppfylt, tilbys godkjenning ikke —
+et avslag og en anmodning om endringer kan fortsatt registreres. En godkjenning skal gjelde
+innhold som er kontrollert mot kilden; siden den blir stående som den gjeldende beslutningen,
+ville en godkjenning gitt før kontrollen båret publiseringen den dagen kontrollen kom, uten at
+noen hadde sett innholdet i kontrollert stand.
+
 ## 27. KI skal ikke skjule uenighet
 
 Agenten skal ikke optimaliseres for å produsere en «ren» konklusjon på bekostning av relevante motfunn.

@@ -58,18 +58,26 @@ import {
   type ClaimMagnitudeFault,
 } from './claim-effect'
 import {
+  CERTAINTY_LEVELS,
   DATE_PRECISIONS,
+  KNOWLEDGE_TYPES,
   DRUG_STATUSES,
   EFFECT_MEASURES,
   EVIDENCE_DIRECTNESS_VALUES,
   EVIDENCE_RELATIONSHIP_TYPES,
   EXTRACTION_METHODS,
+  GRADE_DOMAIN_RATINGS,
   REPORTED_DIRECTIONS,
+  REVIEW_OUTCOMES,
   SOURCE_STATUSES,
   SOURCE_TYPES,
   STUDY_DESIGNS,
   VALUE_AVAILABILITIES,
+  VERIFICATION_CHECK_RESULTS,
+  VERIFICATION_OUTCOMES,
+  VERIFICATION_SOURCE_ACCESSES,
   VOCABULARY_STATUSES,
+  type CertaintyLevel,
   type DatePrecision,
   type DrugStatus,
   type EffectMeasure,
@@ -77,11 +85,17 @@ import {
   type EvidenceDirectness,
   type EvidenceRelationshipType,
   type ExtractionMethod,
+  type GradeDomainRating,
+  type KnowledgeType,
   type PublishedClaimEvidenceRow,
   type ReportedDirection,
+  type ReviewOutcome,
   type SourceStatus,
   type SourceType,
   type StudyDesign,
+  type VerificationCheckResult,
+  type VerificationOutcome,
+  type VerificationSourceAccess,
   type VocabularyStatus,
 } from '../types/api'
 
@@ -114,6 +128,15 @@ function readTerm<Term extends string>(
 /** Retningen kilden selv rapporterer. Ikke Antideps vurdering, og ikke påstandens. */
 export function readReportedDirection(value: string): VocabularyTerm<ReportedDirection> {
   return readTerm(REPORTED_DIRECTIONS, value)
+}
+
+/**
+ * Kunnskapstypen påstanden har. De tre typene har ulik epistemisk status og skal
+ * aldri presenteres likt (ANTIDEP_CONSTITUTION.md §5), så en ukjent verdi må
+ * heller ikke kunne falle sammen med en av dem.
+ */
+export function readKnowledgeType(value: string): VocabularyTerm<KnowledgeType> {
+  return readTerm(KNOWLEDGE_TYPES, value)
 }
 
 /** Studiedesignet for funnet. Ikke dokumenttypen kilden har. */
@@ -152,6 +175,47 @@ export function readVocabularyStatus(value: string): VocabularyTerm<VocabularySt
  */
 export function readSourceStatus(value: string): VocabularyTerm<SourceStatus> {
   return readTerm(SOURCE_STATUSES, value)
+}
+
+/**
+ * Utfallet av en kontroll mot grunnlaget. En ukjent verdi må aldri kunne falle
+ * sammen med `verified`: en flate som gjorde det, ville vist en kontroll som
+ * bestått uten å vite at den var det (ANTIDEP_CONSTITUTION.md §11).
+ */
+export function readVerificationOutcome(value: string): VocabularyTerm<VerificationOutcome> {
+  return readTerm(VERIFICATION_OUTCOMES, value)
+}
+
+/**
+ * Resultatet av ett kontrollpunkt. Samme regel som over, og med samme skjerpelse
+ * §6 krever: `not_assessable` er ikke `ok`, og en ukjent verdi er ingen av dem.
+ */
+export function readVerificationCheckResult(
+  value: string,
+): VocabularyTerm<VerificationCheckResult> {
+  return readTerm(VERIFICATION_CHECK_RESULTS, value)
+}
+
+/** Hva kontrollen faktisk hadde tilgang til for grunnlaget den vurderte. */
+export function readVerificationSourceAccess(
+  value: string,
+): VocabularyTerm<VerificationSourceAccess> {
+  return readTerm(VERIFICATION_SOURCE_ACCESSES, value)
+}
+
+/** Utfallet av en menneskelig reviewbeslutning. */
+export function readReviewOutcome(value: string): VocabularyTerm<ReviewOutcome> {
+  return readTerm(REVIEW_OUTCOMES, value)
+}
+
+/** Sikkerheten i kunnskapsgrunnlaget, slik evidensvurderingen graderer den. */
+export function readCertaintyLevel(value: string): VocabularyTerm<CertaintyLevel> {
+  return readTerm(CERTAINTY_LEVELS, value)
+}
+
+/** Vurderingen av ett GRADE-domene. `not_assessable` er ikke `not_serious`. */
+export function readGradeDomainRating(value: string): VocabularyTerm<GradeDomainRating> {
+  return readTerm(GRADE_DOMAIN_RATINGS, value)
 }
 
 // ----------------------------------------------------------------------------

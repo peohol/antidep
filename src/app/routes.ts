@@ -36,6 +36,8 @@ export const ROUTE_PATTERNS = {
   sourceNew: '/sources/new',
   sourceVersionNew: '/source-versions/new',
   evidenceNew: '/evidence/new',
+  reviewQueue: '/review',
+  claimReview: '/review/:claimRevisionId',
   access: '/access',
 } as const
 
@@ -135,4 +137,32 @@ export function newSourceVersionPath(): string {
  */
 export function newEvidenceItemPath(): string {
   return '/evidence/new'
+}
+
+/**
+ * Reviewkøen (MVP_IMPLEMENTATION_PLAN.md §15, ANTIDEP_CONSTITUTION.md §15):
+ * hvilke påstandsrevisjoner som venter på faglig vurdering.
+ *
+ * Ingen parameter. Køen er kallerens egen — den avhenger av hvem som er
+ * innlogget og hvilket innholdsområde reviewer-tildelingen dekker — og en
+ * adresse som bakte inn et filter ville lovet at den kunne deles med noen som
+ * ser noe annet.
+ */
+export function reviewQueuePath(): string {
+  return '/review'
+}
+
+/**
+ * Reviewarbeidsflaten for én påstandsrevisjon.
+ *
+ * Adressert med `claim_revision_id` og ikke med `claim_id`, til forskjell fra
+ * `claimEvidencePath()`. Det er et bevisst skille: klinikerflaten peker på
+ * påstandens stabile identitet, fordi den skal fortsette å peke på påstanden
+ * etter en ny publisering. En faglig vurdering peker på nøyaktig den
+ * formuleringen som ble vurdert (KNOWLEDGE_MODEL.md §19.3) — en godkjenning som
+ * fulgte med over på en senere revisjon, ville vært en godkjenning av noe annet
+ * enn det som ble lest.
+ */
+export function claimReviewPath(claimRevisionId: Uuid): string {
+  return `/review/${encodeURIComponent(claimRevisionId)}`
 }

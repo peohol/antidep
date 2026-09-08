@@ -1,0 +1,34 @@
+-- ============================================================================
+-- Migrasjon 008g — audit.event_operation får verdien review_decision_registered
+--
+-- Utvider auditvokabularet fra migrasjon 008 (§25) en sjuende gang, slik 008a
+-- til 008f gjorde før den, og får derfor neste bokstav.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor workflow.review_decisions ikke hadde en auditrad fra før
+--
+-- Tabellen har fantes siden migrasjon 005, men ingen skrivevei inn i den, så
+-- ingen rad kunne oppstå og ingen auditproduksjon hadde noe å produsere.
+-- Migrasjon 006d åpner skriveveien, og en beslutning som avgjør om klinisk
+-- innhold kan publiseres, er nettopp den operasjonen DATABASE_ARCHITECTURE.md
+-- §35 krever en auditrad for.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor denne ene setningen er sin egen migrasjon
+--
+-- Nøyaktig samme grunn som i 008a-008f: `ALTER TYPE ... ADD VALUE` kan ikke
+-- brukes i samme transaksjon som verdien den legger til, og migrasjonsløperen
+-- sender hver fil som én transaksjon.
+-- `20260909093000_publication_approval_registration.sql` bygger om
+-- CASE-uttrykkene i audit.events sine genererte kolonner og
+-- events_snapshot_shape_check for å dekke verdien, og kan derfor ikke også
+-- innføre den.
+--
+-- Migrasjonen gjør ingenting annet. Fram til den migrasjonen har kjørt, kan
+-- audit.events ikke motta en rad med denne operasjonen: object_schema og
+-- object_table ville gitt NULL og feilet på sin egen NOT NULL, og
+-- events_snapshot_shape_check ville truffet ELSE false. Samme bevisste
+-- uttømmelighet migrasjon 008 sin kommentar beskriver.
+-- ============================================================================
+
+alter type audit.event_operation add value 'review_decision_registered';
