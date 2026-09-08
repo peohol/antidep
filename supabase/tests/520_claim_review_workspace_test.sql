@@ -379,10 +379,17 @@ select is(
   'verified',
   'den gjeldende ekstraksjonsverifikasjonen for hvert funn er med'
 );
-select is(
-  (select payload #>> '{revision,unlinked_related_evidence,0,evidence_item_id}'
-   from workspace where label = 'før'),
-  '52000000-0000-4000-8000-000000000013',
+-- Medlemskap, ikke posisjon. Lista er sortert på funnets uuid, og seeden har
+-- egne registrerte funn på sertralin og vektendring som kan sortere før eller
+-- etter dette; en assertion på indeks 0 ville vært en assertion om en tilfeldig
+-- uuid, ikke om at kandidaten er med.
+select ok(
+  (select exists (
+     select 1
+     from workspace w,
+     lateral jsonb_array_elements(w.payload #> '{revision,unlinked_related_evidence}') as kandidat
+     where w.label = 'før'
+       and kandidat ->> 'evidence_item_id' = '52000000-0000-4000-8000-000000000013')),
   'registrert evidens på samme virkestoff og endepunkt som ikke er lenket, står som kandidat for urepresentert evidens'
 );
 select is(

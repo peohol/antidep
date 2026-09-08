@@ -356,26 +356,42 @@ select is(
 );
 
 -- ===========================================================================
--- Proveniens: hele kjeden står i auditloggen, i rekkefølge
+-- Proveniens: hvert ledd i kjeden står i auditloggen
+--
+-- Assertionen er på hvilke operasjoner som er registrert og hvor mange av hver,
+-- ikke på rekkefølgen mellom dem. Det er et bevisst valg og ikke en svakere
+-- test: alle radene i denne testen skrives i én transaksjon, og `now()` er
+-- transaksjonens starttidspunkt, så `occurred_at` er identisk på alle fire. En
+-- assertion på rekkefølge ville dermed hvilt på radenes fysiske plassering og
+-- ikke på noe loggen faktisk sier — den ville passert eller feilet etter hvilken
+-- uuid som tilfeldigvis ble generert.
+--
+-- Rekkefølgen mellom de to kontrollene er derimot prøvd, og der bærer dataene
+-- den: `verified_at` skiller dem med en time, og assertionen over på hvem som
+-- står som den gjeldende, er nettopp den prøven.
 -- ===========================================================================
 select is(
-  (select string_agg(e.operation::text, ' → ' order by e.occurred_at, e.created_at)
-   from audit.events e
-   where e.operation in ('claim_verification_registered', 'review_decision_registered',
-                         'claim_published')
-     and e.object_id in (
-       select cv.id from workflow.claim_verifications cv
-       where cv.claim_revision_id = '53000000-0000-4000-8000-000000000031'
-       union all
-       select rd.id from workflow.review_decisions rd
-       where rd.claim_revision_id = '53000000-0000-4000-8000-000000000031'
-       union all
-       select c.id from knowledge.claims c
-       join knowledge.claim_revisions r on r.claim_id = c.id
-       where r.id = '53000000-0000-4000-8000-000000000031'
-     )),
-  'claim_verification_registered → claim_verification_registered → review_decision_registered → claim_published',
-  'hele beslutningskjeden står i auditloggen, i den rekkefølgen den faktisk skjedde'
+  (select string_agg(t.operation || '×' || t.antall::text, ', ' order by t.operation)
+   from (
+     select e.operation::text as operation, count(*) as antall
+     from audit.events e
+     where e.operation in ('claim_verification_registered', 'review_decision_registered',
+                           'claim_published')
+       and e.object_id in (
+         select cv.id from workflow.claim_verifications cv
+         where cv.claim_revision_id = '53000000-0000-4000-8000-000000000031'
+         union all
+         select rd.id from workflow.review_decisions rd
+         where rd.claim_revision_id = '53000000-0000-4000-8000-000000000031'
+         union all
+         select c.id from knowledge.claims c
+         join knowledge.claim_revisions r on r.claim_id = c.id
+         where r.id = '53000000-0000-4000-8000-000000000031'
+       )
+     group by e.operation
+   ) as t),
+  'claim_published×1, claim_verification_registered×2, review_decision_registered×1',
+  'hvert ledd i beslutningskjeden har etterlatt sin egen auditrad, og den deterministiske kontrollen er bevart ved siden av den menneskelige'
 );
 
 -- Og påstanden er nå synlig i den offentlige lesemodellen.
