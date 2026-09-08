@@ -1,5 +1,5 @@
 // ============================================================================
-// Premissene ekstraksjonsverifikatoren kjører under
+// Premissene verifikatorene kjører under
 //
 // `provenance.agent_runs` krever fem versjonsfelter, alle NOT NULL: leverandør,
 // modell, modellversjon, promptmalversjon og pipelineversjon. ANTIDEP_CONSTITUTION.md
@@ -33,5 +33,23 @@ export const EXTRACTION_VERIFICATION_PREMISES: AgentRunPremises = {
   model: 'deterministic-extraction-check',
   modelVersion: '1.0.0',
   promptTemplateVersion: 'extraction-verification/deterministic/1',
+  pipelineVersion: 'antidep-evidence/1',
+}
+
+/**
+ * Claim-verifikatoren (migrasjon 005i, 005k).
+ *
+ * Egne premisser og ikke en variant av de andre: leddet har sitt eget mandat,
+ * sin egen aktør og sin egen kontrollrutine, og en kjøring skal kunne leses
+ * tilbake til nøyaktig den kontrollen som faktisk ble gjort. Modellnavnet sier
+ * at kontrollen er deterministisk; et senere språkmodellsteg registrerer sin
+ * egen leverandør og modell, og de to står da ved siden av hverandre framfor å
+ * bli forvekslet (ANTIDEP_CONSTITUTION.md §20, EVIDENCE_PIPELINE.md §65).
+ */
+export const CLAIM_VERIFICATION_PREMISES: AgentRunPremises = {
+  provider: 'antidep',
+  model: 'deterministic-claim-check',
+  modelVersion: '1.0.0',
+  promptTemplateVersion: 'claim-verification/deterministic/1',
   pipelineVersion: 'antidep-evidence/1',
 }

@@ -1,14 +1,21 @@
 // ============================================================================
 // Data API-flaten en agentkjører bruker
 //
-// Fire funksjoner, alle i `api`, alle kalt uten brukersesjon: en agent har ingen
+// Seks funksjoner, alle i `api`, alle kalt uten brukersesjon: en agent har ingen
 // brukerkonto, så kalleren er `anon` i Data API-et og legitimasjonen — ikke
 // Data API-rollen — er kontrollen (migrasjon 005e sin hodekommentar).
 //
 //   api.begin_agent_run                  åpner kjøringen og registrerer premissene
-//   api.extraction_verification_input    grunnlaget kontrollen gjøres mot (005h)
-//   api.register_extraction_verification registrerer resultatet (005g)
 //   api.complete_agent_run               lukker kjøringen med et utfall
+//   api.extraction_verification_input    grunnlaget ekstraksjonskontrollen gjøres mot (005h)
+//   api.register_extraction_verification registrerer resultatet av den (005g)
+//   api.claim_verification_input         grunnlaget claim-kontrollen gjøres mot (005k)
+//   api.register_claim_verification      registrerer resultatet av den (005k)
+//
+// De to første er felles for alle agentledd; de fire andre kommer i par, ett par
+// per rolle. Paret er grenseflaten det enkelte leddet kjenner, og kjøringen som
+// omslutter det er den samme mekanismen i begge tilfeller — derfor er den
+// skrevet én gang, i `createAgentRunApi`.
 //
 // ----------------------------------------------------------------------------
 // Hvorfor typene utvider `Database` framfor å være en ny kopi
@@ -62,6 +69,37 @@ export type AgentDatabase = {
           p_status: string
           p_output_manifest?: Record<string, unknown> | null
           p_failure_reason?: string | null
+        }
+        Returns: Uuid
+      }
+      claim_verification_input: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_run_id: Uuid
+          p_claim_revision_id?: Uuid | null
+        }
+        // jsonb. Formen er dokumentert i migrasjon 005k og leses av
+        // `parseClaimVerificationInput`, som avviser et svar som ikke har den.
+        Returns: unknown
+      }
+      register_claim_verification: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_run_id: Uuid
+          p_claim_revision_id: Uuid
+          p_outcome: string
+          p_source_support: string
+          p_population_match: string
+          p_comparator_match: string
+          p_timeframe_match: string
+          p_direction_and_magnitude: string
+          p_qualifiers_complete: string
+          p_contradictory_evidence_represented: string
+          p_citations: readonly Record<string, unknown>[]
+          p_rationale: string
+          p_findings?: string | null
         }
         Returns: Uuid
       }
@@ -130,11 +168,40 @@ export interface RegisterVerificationArgs {
   readonly findings: string | null
 }
 
-/** De fire kallene runneren gjør, som én grenseflate. */
-export interface ExtractionVerificationApi {
+/** Én kontrollert evidenslenke, slik `api.register_claim_verification` tar imot den. */
+export interface ClaimCitationArgs {
+  readonly claimEvidenceLinkId: Uuid
+  readonly sourceAccess: string
+  readonly sourceVersionId: Uuid | null
+  readonly checkedContentHash: string | null
+  readonly relationshipSupported: string
+  readonly finding: string | null
+}
+
+/** De sju kontrollpunktene DATABASE_ARCHITECTURE.md §30 krever. */
+export interface ClaimCheckResults {
+  readonly sourceSupport: string
+  readonly populationMatch: string
+  readonly comparatorMatch: string
+  readonly timeframeMatch: string
+  readonly directionAndMagnitude: string
+  readonly qualifiersComplete: string
+  readonly contradictoryEvidenceRepresented: string
+}
+
+export interface RegisterClaimVerificationArgs {
+  readonly agentRunId: Uuid
+  readonly claimRevisionId: Uuid
+  readonly outcome: string
+  readonly checks: ClaimCheckResults
+  readonly citations: readonly ClaimCitationArgs[]
+  readonly rationale: string
+  readonly findings: string | null
+}
+
+/** Kjøringen, som er den samme mekanismen for hvert agentledd. */
+export interface AgentRunApi {
   beginRun(premises: AgentRunPremises, inputManifest: Record<string, unknown>): Promise<Uuid>
-  readInput(agentRunId: Uuid, evidenceItemId: Uuid | null): Promise<unknown>
-  registerVerification(args: RegisterVerificationArgs): Promise<Uuid>
   completeRun(
     agentRunId: Uuid,
     status: 'succeeded' | 'failed' | 'aborted',
@@ -143,34 +210,45 @@ export interface ExtractionVerificationApi {
   ): Promise<void>
 }
 
-/** Agentrollen alle fire kallene handler i (provenance.agent_role). */
+/** Kallene ekstraksjonsverifikatoren gjør, som én grenseflate. */
+export interface ExtractionVerificationApi extends AgentRunApi {
+  readInput(agentRunId: Uuid, evidenceItemId: Uuid | null): Promise<unknown>
+  registerVerification(args: RegisterVerificationArgs): Promise<Uuid>
+}
+
+/** Kallene claim-verifikatoren gjør, som én grenseflate. */
+export interface ClaimVerificationApi extends AgentRunApi {
+  readInput(agentRunId: Uuid, claimRevisionId: Uuid | null): Promise<unknown>
+  registerVerification(args: RegisterClaimVerificationArgs): Promise<Uuid>
+}
+
+/** Agentrollene kjøringene handler i (provenance.agent_role). */
 export const EXTRACTION_VERIFICATION_ROLE = 'extraction_verification'
+export const CITATION_SUPPORT_VERIFICATION_ROLE = 'citation_support_verification'
 
 function fail(operation: string, message: string): never {
   throw new Error(`${operation} ble avvist: ${message}`)
 }
 
-/**
- * Porten implementert mot en faktisk Supabase-klient.
- *
- * Legitimasjonen hentes ut på det ene stedet den faktisk sendes, og
- * `AgentSecret` sørger for at den ikke kan havne i en logg på veien
- * (se `agent-credential.ts`).
- */
-export function createExtractionVerificationApi(
-  client: AgentClient,
-  credential: AgentCredential,
-): ExtractionVerificationApi {
-  const identity = {
-    p_identity_key: credential.identityKey,
-    p_secret: credential.secret.reveal(),
-  }
+type Identity = { readonly p_identity_key: string; readonly p_secret: string }
 
+function identityOf(credential: AgentCredential): Identity {
+  return { p_identity_key: credential.identityKey, p_secret: credential.secret.reveal() }
+}
+
+/**
+ * Kjøringen, implementert én gang.
+ *
+ * `api.begin_agent_run` og `api.complete_agent_run` er de samme to kallene for
+ * hvert agentledd; det eneste som skiller dem, er rollen kjøringen åpnes i. Å
+ * skrive dem om igjen per ledd ville vært to steder å glemme et felt.
+ */
+function createAgentRunApi(client: AgentClient, identity: Identity, role: string): AgentRunApi {
   return {
     async beginRun(premises, inputManifest) {
       const { data, error } = await client.rpc('begin_agent_run', {
         ...identity,
-        p_agent_role: EXTRACTION_VERIFICATION_ROLE,
+        p_agent_role: role,
         p_provider: premises.provider,
         p_model: premises.model,
         p_model_version: premises.modelVersion,
@@ -183,6 +261,37 @@ export function createExtractionVerificationApi(
       }
       return data
     },
+
+    async completeRun(agentRunId, status, outputManifest, failureReason) {
+      const { error } = await client.rpc('complete_agent_run', {
+        ...identity,
+        p_agent_run_id: agentRunId,
+        p_status: status,
+        p_output_manifest: outputManifest,
+        p_failure_reason: failureReason,
+      })
+      if (error !== null) {
+        fail('api.complete_agent_run', error.message)
+      }
+    },
+  }
+}
+
+/**
+ * Ekstraksjonsverifikatorens port mot en faktisk Supabase-klient.
+ *
+ * Legitimasjonen hentes ut på det ene stedet den faktisk sendes, og
+ * `AgentSecret` sørger for at den ikke kan havne i en logg på veien
+ * (se `agent-credential.ts`).
+ */
+export function createExtractionVerificationApi(
+  client: AgentClient,
+  credential: AgentCredential,
+): ExtractionVerificationApi {
+  const identity = identityOf(credential)
+
+  return {
+    ...createAgentRunApi(client, identity, EXTRACTION_VERIFICATION_ROLE),
 
     async readInput(agentRunId, evidenceItemId) {
       const { data, error } = await client.rpc('extraction_verification_input', {
@@ -212,18 +321,66 @@ export function createExtractionVerificationApi(
       }
       return data
     },
+  }
+}
 
-    async completeRun(agentRunId, status, outputManifest, failureReason) {
-      const { error } = await client.rpc('complete_agent_run', {
+/**
+ * Claim-verifikatorens port. Samme form, egen rolle og egen legitimasjon: en
+ * identitet i det ene leddet kan ikke utføre operasjonene i det andre
+ * (MVP_IMPLEMENTATION_PLAN.md §49).
+ */
+export function createClaimVerificationApi(
+  client: AgentClient,
+  credential: AgentCredential,
+): ClaimVerificationApi {
+  const identity = identityOf(credential)
+
+  return {
+    ...createAgentRunApi(client, identity, CITATION_SUPPORT_VERIFICATION_ROLE),
+
+    async readInput(agentRunId, claimRevisionId) {
+      const { data, error } = await client.rpc('claim_verification_input', {
         ...identity,
         p_agent_run_id: agentRunId,
-        p_status: status,
-        p_output_manifest: outputManifest,
-        p_failure_reason: failureReason,
+        p_claim_revision_id: claimRevisionId,
       })
       if (error !== null) {
-        fail('api.complete_agent_run', error.message)
+        fail('api.claim_verification_input', error.message)
       }
+      return data
+    },
+
+    async registerVerification(args) {
+      const { data, error } = await client.rpc('register_claim_verification', {
+        ...identity,
+        p_agent_run_id: args.agentRunId,
+        p_claim_revision_id: args.claimRevisionId,
+        p_outcome: args.outcome,
+        p_source_support: args.checks.sourceSupport,
+        p_population_match: args.checks.populationMatch,
+        p_comparator_match: args.checks.comparatorMatch,
+        p_timeframe_match: args.checks.timeframeMatch,
+        p_direction_and_magnitude: args.checks.directionAndMagnitude,
+        p_qualifiers_complete: args.checks.qualifiersComplete,
+        p_contradictory_evidence_represented: args.checks.contradictoryEvidenceRepresented,
+        // Nøklene er databasens, ikke kjøreren sine: formen er kontrakten
+        // migrasjon 005k dokumenterer, og oversettelsen skjer her framfor å
+        // lekke snake_case inn i resten av kjøreren.
+        p_citations: args.citations.map((citation) => ({
+          claim_evidence_link_id: citation.claimEvidenceLinkId,
+          source_access: citation.sourceAccess,
+          source_version_id: citation.sourceVersionId,
+          checked_content_hash: citation.checkedContentHash,
+          relationship_supported: citation.relationshipSupported,
+          finding: citation.finding,
+        })),
+        p_rationale: args.rationale,
+        p_findings: args.findings,
+      })
+      if (error !== null) {
+        fail('api.register_claim_verification', error.message)
+      }
+      return data
     },
   }
 }

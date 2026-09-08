@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(30);
+select plan(32);
 
 -- ---------------------------------------------------------------------------
 -- Testdata som bare finnes inne i denne transaksjonen
@@ -41,6 +41,11 @@ values
    'Systemaktør for immutabilitetstestene.', null, null),
   ('agent', 'agent:immutabilitet', 'Testverifikator',
    'KI-aktør i kontrollrollen for immutabilitetstestene.', null, 'adversarial_review'),
+  -- Claim-verifikasjonen krever mandatet fra migrasjon 005j, og for en agent er
+  -- mandatet rollen citation_support_verification.
+  ('agent', 'agent:citation-immutabilitet', 'Test claim-verifikator',
+   'KI-aktør i sitat- og kildestøtterollen for immutabilitetstestene.', null,
+   'citation_support_verification'),
   ('human', 'human:senkobling', 'Test Senkoblet',
    'Menneskelig aktør som får brukerkonto etter at aktøren ble opprettet.', null, null);
 
@@ -73,7 +78,7 @@ insert into workflow.claim_verifications (
   direction_and_magnitude, qualifiers_complete, contradictory_evidence_represented,
   rationale, verified_at
 )
-select r.id, r.created_by_actor_id, pg_temp.actor('agent:immutabilitet'),
+select r.id, r.created_by_actor_id, pg_temp.actor('agent:citation-immutabilitet'),
        'verified', 'original_source',
        'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok',
        'Testkontroll av påstanden.', now()
@@ -81,6 +86,18 @@ from knowledge.claim_revisions r
 join knowledge.claims cl on cl.id = r.claim_id
 join catalog.drugs d on d.id = cl.subject_drug_id
 where d.canonical_name = 'sertralin';
+
+-- Kontrollradene under claim-verifikasjonen (migrasjon 005j): hva kontrollen
+-- faktisk gikk gjennom, og like uforanderlig som kontrollen selv.
+insert into workflow.claim_verification_citations (
+  claim_verification_id, claim_revision_id, claim_evidence_link_id, evidence_item_id,
+  source_access, relationship_supported, finding
+)
+select cv.id, l.claim_revision_id, l.id, l.evidence_item_id,
+       'original_source', 'not_assessable',
+       'Testkontroll: relasjonstypen lot seg ikke bedømme.'
+from workflow.claim_verifications cv
+join knowledge.claim_evidence_links l on l.claim_revision_id = cv.claim_revision_id;
 
 insert into provenance.actors
   (actor_type, actor_key, display_name, description, auth_user_id)
@@ -123,6 +140,16 @@ select throws_ok(
   $$delete from workflow.claim_verifications$$,
   '23001', null,
   'en claim-verifikasjon kan ikke slettes'
+);
+select throws_ok(
+  $$update workflow.claim_verification_citations set relationship_supported = 'ok'$$,
+  '23001', null,
+  'hva en kontroll fant for én evidenslenke kan ikke endres etter innsetting'
+);
+select throws_ok(
+  $$delete from workflow.claim_verification_citations$$,
+  '23001', null,
+  'en kontrollrad kan ikke slettes; da ville en bekreftelse kunnet miste lenken som felte den'
 );
 select throws_ok(
   $$update workflow.review_decisions set decision = 'approved'$$,

@@ -363,7 +363,14 @@ select results_eq(
            e.new_revision_or_snapshot ? 'secret_hash'
     from audit.events e
     join provenance.actors a on a.id = e.actor_id
+    -- Bare identiteten denne testen arbeider med: migrasjon 005i registrerte
+    -- en identitet til, og den har sin egen registreringsrad som ikke hører til
+    -- det sporet som prøves her.
     where e.object_table = 'agent_identities'
+      and e.object_id = (
+        select id from provenance.agent_identities
+        where identity_key = 'agent-identity:extraction-verification-01'
+      )
     order by e.occurred_at, e.operation::text
   $$,
   $$values ('agent_identity_registered', 'human:peder-holman', false),

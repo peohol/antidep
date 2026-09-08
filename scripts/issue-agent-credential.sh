@@ -7,6 +7,8 @@
 #   ./scripts/issue-agent-credential.sh --management-api     # hostet, uten db-passord
 #   ./scripts/issue-agent-credential.sh --write-env          # til .env.agent.local
 #   ./scripts/issue-agent-credential.sh --identity agent-identity:… --issuer human:…
+#   ./scripts/issue-agent-credential.sh --identity agent-identity:citation-support-verification-01 \
+#       --env-prefix ANTIDEP_CLAIM_AGENT --write-env
 #
 # Hemmeligheten genereres av databasen (provenance.issue_agent_identity_credential),
 # lagres aldri i klartekst, og kan ikke leses ut igjen. Mister du den, utsteder du
@@ -40,7 +42,8 @@
 # utskriften like uegnet som i CI, men behovet for å utstede legitimasjon er
 # reelt: kjøreren skal prøves mot det hostede prosjektet. `--write-env` skriver
 # derfor de to variablene rett inn i en gitignorert miljøfil, uten å vise
-# verdien noe sted. Filen er den samme `npm run agent:verify-extraction` leser.
+# verdien noe sted. Filen er den samme kjørerne leser. `--env-prefix` velger
+# hvilket variabelpar som skrives, slik at flere agentledd kan ligge i samme fil.
 #
 # ----------------------------------------------------------------------------
 # --management-api: en privilegert forbindelse uten databasepassord
@@ -61,6 +64,10 @@ ISSUER='human:peder-holman'
 DB_URL="${ANTIDEP_DB_URL:-}"
 MANAGEMENT_API=0
 ENV_FIL=''
+# Hvert agentledd har sin egen rolle, sin egen identitet og sin egen
+# legitimasjon (migrasjon 005e). To ledd som kjører i samme miljø trenger derfor
+# to hemmeligheter samtidig, og de kan ikke dele ett variabelnavn.
+ENV_PREFIX='ANTIDEP_AGENT'
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -68,19 +75,30 @@ while [ $# -gt 0 ]; do
     --issuer)   ISSUER="${2:?--issuer krever en aktørnøkkel}"; shift 2 ;;
     --db-url)   DB_URL="${2:?--db-url krever en tilkoblingsstreng}"; shift 2 ;;
     --management-api) MANAGEMENT_API=1; shift ;;
+    --env-prefix) ENV_PREFIX="${2:?--env-prefix krever et variabelnavn}"; shift 2 ;;
     --write-env)
       # Valgfri filbane. Neste argument hører til flagget bare når det ikke
       # selv er et flagg.
       if [ $# -ge 2 ] && [ "${2#-}" = "$2" ]; then ENV_FIL="$2"; shift 2
       else ENV_FIL='.env.agent.local'; shift; fi ;;
     -h|--help)
-      sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *)
       echo "Ukjent valg: $1" >&2
       exit 2 ;;
   esac
 done
+
+# Prefikset blir til to variabelnavn i en miljøfil. Et navn med skilletegn i seg
+# ville gitt en linje ingen `.env`-leser tolker som den ser ut, og kontrollen
+# ligger her *og* i write-agent-env-cli.ts: skallet skal si fra før
+# legitimasjonen utstedes, og filskriveren skal ikke stole på kalleren sin.
+if ! printf '%s' "$ENV_PREFIX" | grep -qE '^[A-Z][A-Z0-9_]*$'; then
+  echo "Ugyldig --env-prefix: $ENV_PREFIX" >&2
+  echo "Forventet et variabelnavn med store bokstaver, tall og understrek." >&2
+  exit 2
+fi
 
 # Begge verdiene interpoleres inn i en SQL-setning som kjøres på en privilegert
 # forbindelse. Nøkkelformatet er det samme som
@@ -183,8 +201,8 @@ if [ -n "$ENV_FIL" ]; then
   #
   # Verdien går gjennom miljøet og ikke gjennom argumentlisten, som er lesbar
   # for alle på maskinen gjennom `ps`.
-  if ! ANTIDEP_AGENT_IDENTITY_KEY="$IDENTITY" ANTIDEP_AGENT_SECRET="$SECRET" \
-       node src/agents/write-agent-env-cli.ts "$ENV_FIL"; then
+  if ! env "${ENV_PREFIX}_IDENTITY_KEY=$IDENTITY" "${ENV_PREFIX}_SECRET=$SECRET" \
+       node src/agents/write-agent-env-cli.ts --prefix "$ENV_PREFIX" "$ENV_FIL"; then
     cat >&2 <<'STOPP'
 
 Legitimasjonen ble utstedt, men kunne ikke skrives til miljøfilen.
@@ -199,7 +217,7 @@ STOPP
 
 Legitimasjon utstedt til $IDENTITY.
 
-  ANTIDEP_AGENT_IDENTITY_KEY og ANTIDEP_AGENT_SECRET er skrevet til $ENV_FIL.
+  ${ENV_PREFIX}_IDENTITY_KEY og ${ENV_PREFIX}_SECRET er skrevet til $ENV_FIL.
 
 Verdien er ikke vist noe sted, og kan ikke leses ut av databasen igjen. Filen er
 gitignorert. Trenger et annet miljø den samme kjøreren, utsteder du en ny
@@ -213,8 +231,8 @@ cat <<SLUTT
 
 Legitimasjon utstedt til $IDENTITY.
 
-  ANTIDEP_AGENT_IDENTITY_KEY=$IDENTITY
-  ANTIDEP_AGENT_SECRET=$SECRET
+  ${ENV_PREFIX}_IDENTITY_KEY=$IDENTITY
+  ${ENV_PREFIX}_SECRET=$SECRET
 
 Verdien vises bare denne ene gangen — databasen lagrer bare hashen, og det finnes
 ingen vei til å lese den ut igjen.
@@ -223,11 +241,13 @@ Slik gjør du den tilgjengelig for kjøreren:
 
   Lokalt   Legg de to linjene over i .env.agent.local sammen med
            ANTIDEP_SUPABASE_URL og ANTIDEP_SUPABASE_PUBLISHABLE_KEY. Filen er
-           gitignorert, og npm run agent:verify-extraction leser den.
+           gitignorert, og npm run agent:verify-extraction og
+           npm run agent:verify-claims leser den.
 
   CI       Legg dem inn som krypterte secrets i GitHub (Settings → Secrets and
-           variables → Actions). Arbeidsflyten
-           .github/workflows/extraction-verification.yml leser dem derfra.
+           variables → Actions). Arbeidsflytene
+           .github/workflows/extraction-verification.yml og
+           .github/workflows/claim-verification.yml leser hver sitt par derfra.
 
 Legg dem aldri i repoet, i en commit-melding eller i en logg.
 

@@ -39,7 +39,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(20);
+select plan(22);
 
 -- ---------------------------------------------------------------------------
 -- Aktørene som faktisk produserte de eksisterende radene, og redaktøren
@@ -55,11 +55,12 @@ select results_eq(
     from provenance.actors
     order by actor_key
   $$,
-  $$values ('agent:claim-synthesis', 'agent', 'claim_synthesis', 'Antidep synteseagent'),
+  $$values ('agent:citation-support-verification', 'agent', 'citation_support_verification', 'Antidep claim-verifikator'),
+           ('agent:claim-synthesis', 'agent', 'claim_synthesis', 'Antidep synteseagent'),
            ('agent:evidence-extraction', 'agent', 'evidence_extraction', 'Antidep ekstraksjonsagent'),
            ('agent:extraction-verification', 'agent', 'extraction_verification', 'Antidep ekstraksjonsverifikator'),
            ('human:peder-holman', 'human', null, 'Peder Holman')$$,
-  'aktørregisteret inneholder de tre KI-rollene fra migrasjon 003, 004 og 005f, og den navngitte redaktøren fra 005a'
+  'aktørregisteret inneholder de fire KI-rollene fra migrasjon 003, 004, 005f og 005i, og den navngitte redaktøren fra 005a'
 );
 
 -- ---------------------------------------------------------------------------
@@ -83,9 +84,11 @@ select results_eq(
     join provenance.actors registrar on registrar.id = ai.registered_by_actor_id
     order by ai.identity_key
   $$,
-  $$values ('agent-identity:extraction-verification-01', 'agent:extraction-verification',
+  $$values ('agent-identity:citation-support-verification-01', 'agent:citation-support-verification',
+            'citation_support_verification', 'human:peder-holman', 'human', true, 0, true),
+           ('agent-identity:extraction-verification-01', 'agent:extraction-verification',
             'extraction_verification', 'human:peder-holman', 'human', true, 0, true)$$,
-  'identitetsregisteret inneholder nøyaktig ekstraksjonsverifikatoren, registrert av den navngitte redaktøren og uten utstedt legitimasjon'
+  'identitetsregisteret inneholder nøyaktig de to verifikatorene, begge registrert av den navngitte redaktøren og begge uten utstedt legitimasjon'
 );
 
 -- Identiteten er inert etter migrasjonen, og det skal den være til legitimasjonen
@@ -98,6 +101,13 @@ select throws_ok(
       'extraction_verification'::provenance.agent_role)$$,
   '42501', 'Agentidentiteten kunne ikke autentiseres for denne operasjonen.',
   'en identitet uten utstedt legitimasjon kan ikke autentisere seg'
+);
+select throws_ok(
+  $$select provenance.authenticate_agent_identity(
+      'agent-identity:citation-support-verification-01', 'hva som helst',
+      'citation_support_verification'::provenance.agent_role)$$,
+  '42501', 'Agentidentiteten kunne ikke autentiseres for denne operasjonen.',
+  'det samme gjelder claim-verifikatoren fra migrasjon 005i'
 );
 
 -- Ingen agentkjøring er registrert. En kjøring i migrert tilstand ville betydd
@@ -117,7 +127,7 @@ select is_empty(
     select actor_key from provenance.actors
     where description is null or length(description) < 80
   $$,
-  'alle tre aktørene forklarer konkret hva de er, ikke bare med en etikett'
+  'alle aktørene forklarer konkret hva de er, ikke bare med en etikett'
 );
 select results_eq(
   $$select actor_key from provenance.actors where actor_type = 'human'$$,
@@ -192,6 +202,11 @@ select is(
   (select count(*) from workflow.claim_verifications),
   0::bigint,
   'ingen claim-verifikasjon er seedet; ingen separat kontroll er utført'
+);
+select is(
+  (select count(*) from workflow.claim_verification_citations),
+  0::bigint,
+  'ingen kontrollrad er seedet; det finnes ingen kontroll å registrere kontrollerte lenker for'
 );
 select is(
   (select count(*) from workflow.review_decisions),

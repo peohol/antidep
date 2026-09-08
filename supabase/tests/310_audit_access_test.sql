@@ -215,21 +215,32 @@ select lives_ok(
   'eieren kan lese auditloggen'
 );
 
--- Vaktposten sto som «tom» fram til migrasjon 005f. Den registreringen er
--- nettopp en forvaltningskritisk operasjon — en maskin fikk en identitet i
--- Antidep — og skal derfor legge igjen en rad. Påstanden er strammet framfor
--- svekket: loggen inneholder nøyaktig den ene raden, og fortsatt ingen
--- publisering, ingen rolletildeling og ingen utstedt legitimasjon
+-- Vaktposten sto som «tom» fram til migrasjon 005f. Registreringen av en
+-- agentidentitet er nettopp en forvaltningskritisk operasjon — en maskin fikk en
+-- identitet i Antidep — og skal derfor legge igjen en rad. Migrasjon 005i
+-- registrerte den andre, claim-verifikatoren, og loggen inneholder derfor to
+-- like rader. Påstanden er strammet framfor svekket: nøyaktig de to, og fortsatt
+-- ingen publisering, ingen rolletildeling og ingen utstedt legitimasjon
 -- (MVP_IMPLEMENTATION_PLAN.md §74.4).
+--
+-- Rekkefølgen sorteres på identitetsnøkkelen framfor på occurred_at: begge
+-- radene er skrevet av migrasjoner som kjørte i hver sin transaksjon, men
+-- tidsstemplene kan i prinsippet være like nok til at rekkefølgen ikke er
+-- entydig, og en flakende assertion om auditloggen er verre enn en presis.
 select results_eq(
   $$
-    select e.operation::text, e.object_schema, e.object_table, a.actor_key
+    select e.operation::text, e.object_schema, e.object_table, a.actor_key,
+           ai.identity_key
     from audit.events e
     join provenance.actors a on a.id = e.actor_id
-    order by e.occurred_at
+    join provenance.agent_identities ai on ai.id = e.object_id
+    order by ai.identity_key
   $$,
-  $$values ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman')$$,
-  'auditloggen inneholder nøyaktig registreringen av den første agentidentiteten, attribuert til et menneske'
+  $$values ('agent_identity_registered', 'provenance', 'agent_identities',
+            'human:peder-holman', 'agent-identity:citation-support-verification-01'),
+           ('agent_identity_registered', 'provenance', 'agent_identities',
+            'human:peder-holman', 'agent-identity:extraction-verification-01')$$,
+  'auditloggen inneholder nøyaktig registreringen av de to agentidentitetene, begge attribuert til et menneske'
 );
 
 select * from finish();

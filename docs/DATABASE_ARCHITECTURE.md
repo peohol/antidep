@@ -757,6 +757,36 @@ Dette kan ligge i:
 workflow.claim_verifications
 ```
 
+Skriveveien inn i `workflow.claim_verifications` er `api.register_claim_verification(...)`:
+en autentisert agentidentitet i rollen `citation_support_verification`, inne i en åpen
+`provenance.agent_run` i samme rolle. Aktør, rolle og kjøring er ikke parametre kalleren
+oppgir — de utledes av autentiseringen (§49) og av kjøringen selv (§33) — og bindingen mellom
+verifikasjonsraden og kjøringen er deklarativ, med to sammensatte fremmednøkler mot
+`provenance.agent_runs (id, actor_id)` og `(id, agent_role)`, som §33 og §59 beskriver.
+Grunnlaget verifikatoren arbeider fra, leses gjennom `api.claim_verification_input(...)`.
+
+Tre invarianter ut over de sju kontrollpunktene, alle håndhevet på raden og ikke bare i
+skriveveien:
+
+- **Mandat.** Bare en aktør med mandatet kan registrere raden: en agent i rollen
+  `citation_support_verification`, eller et menneske med gyldig `reviewer`-rolle for
+  revisjonens innholdsområde på `verified_at`. Regelen ligger i
+  `workflow.claim_verifier_has_mandate(...)` og håndheves to steder — ved innsetting, og av
+  publiseringsgaten på den gjeldende kontrollen — fordi de to stiller det samme spørsmålet og
+  ikke skal kunne komme i utakt.
+- **Dekning.** `workflow.claim_verification_citations` har én rad per evidenslenke kontrollen
+  gikk gjennom, med kildegrunnlaget for nettopp den lenken. Sammensatte fremmednøkler låser at
+  lenken hører til den kontrollerte revisjonen, at evidensfunnet er lenkens eget, at
+  kildeversjonen er funnets egen, og at fingeravtrykket er det kildeversjonen faktisk er
+  registrert med. En utsatt constraint-trigger krever at settet er dekket i sin helhet, at en
+  bekreftelse ikke har uavklarte lenker under seg, og at radens samlede `source_access` er den
+  svakeste av lenkenes — ellers kunne forbudet i `ANTIDEP_CONSTITUTION.md` §11 vært omgått ved
+  å aggregere.
+- **Grunnlaget kontrollen gjaldt.** `verified_evidence_set_digest` er databasens avtrykk av
+  evidenssettet ved registrering, etter samme mønster som godkjenningens avtrykk i §38.
+  Publiseringsgaten nekter når settet er endret etterpå: en bekreftelse av et smalere grunnlag
+  er ikke en bekreftelse av det som ville blitt publisert.
+
 ## 31. Human review
 
 Menneskelig faglig review skal lagres som beslutningsobjekter, ikke bare `approved_by` på innholdsraden.

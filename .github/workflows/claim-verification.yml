@@ -1,0 +1,133 @@
+# Kjører claim-verifikatoren mot et Antidep-miljø.
+#
+# Bare `workflow_dispatch`: kjøringen skriver til `workflow.claim_verifications`,
+# som er append-only, og en kontroll skal ikke registreres fordi noen dyttet en
+# commit. Standardvalget er tørrkjøring, som kontrollerer og rapporterer uten å
+# registrere noe.
+#
+# ----------------------------------------------------------------------------
+# Hvorfor dette er en egen arbeidsflyt og ikke et valg i den andre
+#
+# Rollen er rettighetsgrensen (migrasjon 005e). Claim-verifikatoren har sin egen
+# aktør, sin egen identitet og sin egen legitimasjon, og en jobb som hadde begge
+# hemmelighetene i miljøet sitt ville gjort skillet til et navn framfor en grense
+# (MVP_IMPLEMENTATION_PLAN.md §49, EVIDENCE_PIPELINE.md §63).
+#
+# ----------------------------------------------------------------------------
+# Hemmeligheten — og den ene verdien som ikke er en
+#
+# `ANTIDEP_CLAIM_AGENT_SECRET` er legitimasjonen til
+# `agent-identity:citation-support-verification-01` og skal aldri i repoet. Den
+# ligger som en kryptert GitHub-secret, og arbeidsflyten er inert til noen legger
+# den inn: uten den stopper den på kontrollen under, med en setning som sier hva
+# som mangler, framfor på en anonym «kunne ikke autentiseres».
+#
+# **Identitetsnøkkelen er derimot ikke hemmelig.** Den står i klartekst i
+# migrasjon 005i, i `.env.example` og i denne filen, og en kryptert secret for en
+# offentlig, fast verdi ville vært et manuelt oppsettssteg uten sikkerhetsverdi.
+# Den er derfor en konstant her, med `vars` som overstyring for et miljø som
+# kjører en annen identitet — for eksempel et andre uavhengig kontrollag, som
+# ville hatt sin egen aktør og sin egen `-02`-identitet (migrasjon 005f).
+#
+# Nøkkelen er prosjektets publishable key og ikke `service_role`
+# (docs/DATABASE_ARCHITECTURE.md §49): agenten autentiseres av legitimasjonen inne
+# i api-funksjonene, ikke av Data API-rollen.
+#
+# Kjøringen når internett — den henter hver kildeversjons adresse på nytt for å
+# kontrollere fingeravtrykket. Det er hele poenget: en kontroll mot et sammendrag
+# ville ikke vært en kontroll (ANTIDEP_CONSTITUTION.md §11).
+#
+# Adressene er redaktørstyrt data, og en runner har tilgang til mer enn det
+# offentlige internettet. Kjøreren henter derfor bare fra offentlige adresser, og
+# kontrollerer både bokstavelige verter, navneoppslag og hvert redirect-hopp; se
+# `src/agents/guarded-http.ts` og supabase/README.md.
+
+name: Claim-verifikasjon
+
+on:
+  workflow_dispatch:
+    inputs:
+      claim_revision_id:
+        description: 'Én bestemt påstandsrevisjon (uuid). Tomt betyr hele arbeidskøen.'
+        required: false
+        type: string
+      limit:
+        description: 'Høyst så mange revisjoner i denne kjøringen. Tomt betyr alle.'
+        required: false
+        type: string
+      dry_run:
+        description: 'Kontroller og rapporter, men registrer ingenting.'
+        required: false
+        default: true
+        type: boolean
+
+# Ingen skrivetilgang til repoet: kjøringen skriver til databasen, ikke hit.
+permissions:
+  contents: read
+
+env:
+  # Offentlig og fast; se hodekommentaren. `vars` lar et miljø kjøre en annen
+  # identitet uten at verdien må legges inn som en kryptert secret.
+  ANTIDEP_CLAIM_AGENT_IDENTITY_KEY: >-
+    ${{ vars.ANTIDEP_CLAIM_AGENT_IDENTITY_KEY || 'agent-identity:citation-support-verification-01' }}
+
+jobs:
+  verify:
+    name: Kontroller påstander mot grunnlaget
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Installer avhengigheter
+        run: npm ci
+
+      # Feil høyt og tidlig, med en setning som sier hva som mangler. Uten dette
+      # ville et manglende oppsett blitt til den anonyme avvisningen enhver
+      # mislykket agentautentisering gir, og den er med vilje uinformativ.
+      #
+      # `shell: bash` er eksplisitt her og i steget under. GitHub kjører ellers
+      # et uspesifisert Linux-shell, og steget under er avhengig av at
+      # `pipefail` faktisk gjelder.
+      - name: Kontroller at miljøet er satt opp
+        shell: bash
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_CLAIM_AGENT_SECRET: ${{ secrets.ANTIDEP_CLAIM_AGENT_SECRET }}
+        run: |
+          set -euo pipefail
+          mangler=""
+          for navn in ANTIDEP_SUPABASE_URL ANTIDEP_SUPABASE_PUBLISHABLE_KEY \
+                      ANTIDEP_CLAIM_AGENT_SECRET; do
+            if [ -z "${!navn:-}" ]; then mangler="$mangler $navn"; fi
+          done
+          if [ -n "$mangler" ]; then
+            echo "Mangler secrets:$mangler" >&2
+            echo "Se supabase/README.md, avsnittet «Legitimasjon til agentidentiteten»." >&2
+            exit 1
+          fi
+
+      - name: Kjør claim-verifikatoren
+        shell: bash
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_CLAIM_AGENT_SECRET: ${{ secrets.ANTIDEP_CLAIM_AGENT_SECRET }}
+          CLAIM_REVISION_ID: ${{ inputs.claim_revision_id }}
+          LIMIT: ${{ inputs.limit }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # pipefail er det som avgjør her: uten den ville exit-koden fra `tee`
+          # (alltid 0) erstattet exit-koden fra kjøreren, og en mislykket
+          # kontrollkjøring ville sett grønn ut.
+          set -euo pipefail
+          argumenter=()
+          if [ "$DRY_RUN" = "true" ]; then argumenter+=(--dry-run); fi
+          if [ -n "$CLAIM_REVISION_ID" ]; then argumenter+=(--claim-revision "$CLAIM_REVISION_ID"); fi
+          if [ -n "$LIMIT" ]; then argumenter+=(--limit "$LIMIT"); fi
+          npm run agent:verify-claims -- "${argumenter[@]}" | tee -a "$GITHUB_STEP_SUMMARY"

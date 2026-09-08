@@ -2,11 +2,17 @@
 // Fikstur for agenttestene
 //
 // Ett gyldig evidensfunn slik `api.extraction_verification_input(...)` leverer
-// det, med en overstyring per test. Formen er den samme som migrasjon 005h
+// det, og én gyldig påstandsrevisjon slik `api.claim_verification_input(...)`
+// leverer den, med en overstyring per test. Formene er de migrasjon 005h og 005k
 // dokumenterer; hver test varierer nøyaktig det den handler om, slik at det som
 // felles testen, er det testen sier den prøver.
 // ============================================================================
 
+import type {
+  ClaimEvidenceLink,
+  ClaimRevisionInput,
+  ClaimStatement,
+} from './claim-verification-input.ts'
 import type {
   VerificationExtraction,
   VerificationItem,
@@ -60,6 +66,8 @@ export function extractionFixture(
     comparatorDetail: null,
     outcomeLabel: 'weight change',
     outcomeDetail: 'Gjennomsnittlig vektendring.',
+    timepointMin: null,
+    timepointMax: null,
     timepointAvailability: 'not_reported',
     reportedDirection: 'increase',
     effectMeasure: 'mean_change',
@@ -106,6 +114,88 @@ export function verificationItemFixture(
     sourceVersion: sourceVersion === undefined ? sourceVersionFixture() : sourceVersion,
     extraction: extractionFixture(extraction),
     verificationsByThisActor: 0,
+    ...rest,
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Claim-verifikasjonen
+//
+// Én påstandsrevisjon slik `api.claim_verification_input(...)` leverer den, med
+// en overstyring per test. Fiksturen er den *positive* kontrollen: påstandens
+// strukturerte betydning stemmer med evidensfunnet på hvert felt kontrollen kan
+// sammenligne, slik at det som felles i en test, er det testen sier den prøver.
+// ----------------------------------------------------------------------------
+
+export function claimStatementFixture(overrides: Partial<ClaimStatement> = {}): ClaimStatement {
+  return {
+    statement: 'Testpåstand om vektendring ved sertralin.',
+    scope: 'Gjelder gjennomsnittlig vektendring fra behandlingsstart.',
+    populationId: '52000000-0000-4000-8000-000000000001',
+    populationLabel: 'major depressive disorder',
+    timeframeMin: null,
+    timeframeMax: null,
+    comparatorKind: 'none',
+    comparatorDrugId: null,
+    comparatorDrugName: null,
+    direction: 'increase',
+    magnitudeMeasure: null,
+    magnitudeValue: null,
+    magnitudeUnit: null,
+    qualifiers: 'Grunnlaget er armspesifikt.',
+    uncertaintySummary: 'Ett funn fra én studie.',
+    ...overrides,
+  }
+}
+
+export function claimEvidenceLinkFixture(
+  overrides: Partial<Omit<ClaimEvidenceLink, 'evidenceItem'>> & {
+    readonly evidenceItem?: Parameters<typeof verificationItemFixture>[0]
+  } = {},
+): ClaimEvidenceLink {
+  const { evidenceItem, ...rest } = overrides
+  return {
+    claimEvidenceLinkId: '53000000-0000-4000-8000-000000000001',
+    relationshipType: 'supports',
+    directness: 'direct',
+    relevanceNote: 'Funnet rapporterer utfallet påstanden gjelder.',
+    evidenceItem: verificationItemFixture(evidenceItem),
+    currentExtractionVerification: {
+      evidenceVerificationId: '54000000-0000-4000-8000-000000000001',
+      outcome: 'verified',
+      sourceAccess: 'verifiable_representation',
+      checkedFields: ['raw_extraction', 'source_locator'],
+      verifiedAt: '2026-09-02T00:00:00+00:00',
+    },
+    ...rest,
+  }
+}
+
+export function claimRevisionFixture(
+  overrides: Partial<Omit<ClaimRevisionInput, 'claim'>> & {
+    readonly claim?: Partial<ClaimStatement>
+  } = {},
+): ClaimRevisionInput {
+  const { claim, ...rest } = overrides
+  return {
+    claimRevisionId: '55000000-0000-4000-8000-000000000001',
+    claimId: '55000000-0000-4000-8000-000000000002',
+    revisionNumber: 1,
+    knowledgeType: 'evidence_synthesis',
+    createdByActorId: '56000000-0000-4000-8000-000000000001',
+    createdByActorKey: 'agent:claim-synthesis',
+    contentHash: `sha256-v2:${'c'.repeat(64)}`,
+    claimRetiredAt: null,
+    topicConceptId: '57000000-0000-4000-8000-000000000001',
+    topicLabel: 'vektendring',
+    subjectDrugId: '58000000-0000-4000-8000-000000000001',
+    subjectDrugName: 'sertralin',
+    evidenceSetDigest: `sha256-v1:${'d'.repeat(64)}`,
+    claim: claimStatementFixture(claim),
+    links: [claimEvidenceLinkFixture()],
+    unlinkedRelatedEvidence: [],
+    verificationsByThisActor: 0,
+    verificationsTotal: 0,
     ...rest,
   }
 }
