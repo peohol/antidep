@@ -36,9 +36,10 @@ select enum_has_labels(
     'claim_publication_rolled_back', 'role_granted', 'role_ended', 'source_created',
     'evidence_item_created', 'agent_identity_registered',
     'agent_identity_credential_issued', 'agent_identity_revoked',
-    'evidence_verification_registered', 'source_version_registered'
+    'evidence_verification_registered', 'source_version_registered',
+    'claim_verification_registered'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjonsverifikasjon og kildeversjoner'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon og kildeversjoner'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -91,10 +92,18 @@ select is_empty(
         -- ingenting før legitimasjonen og den åpne kjøringen er kontrollert;
         -- hvilke roller som har EXECUTE kontrolleres i
         -- 460_extraction_verification_input_test.sql.
-        'api.extraction_verification_input(text,text,uuid,uuid)'
+        'api.extraction_verification_input(text,text,uuid,uuid)',
+        -- Migrasjon 005k. Claim-verifikatorens to flater, med samme begrunnelse
+        -- som ekstraksjonsverifikatorens: begge kalles av anon, begge gir og
+        -- skriver ingenting før legitimasjonen, rollen og den åpne kjøringen er
+        -- kontrollert. Hvilke roller som faktisk har EXECUTE, kontrolleres i
+        -- 470_claim_verification_registration_test.sql og
+        -- 480_claim_verification_input_test.sql.
+        'api.claim_verification_input(text,text,uuid,uuid)',
+        'api.register_claim_verification(text,text,uuid,uuid,text,text,text,text,text,text,text,text,jsonb,text,text)'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de sju kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de ni kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$

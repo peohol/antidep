@@ -119,6 +119,12 @@ values
    now() - interval '1 year'),
   ('33330000-0000-0000-0000-000000000002', 'publisher', null, now() - interval '1 year',
    (select id from fixture where name = 'verifier'), 'Publiseringsrett for testene i 330.',
+   now() - interval '1 year'),
+  -- Verifikatoren trenger selv reviewer-rollen fra og med migrasjon 005j: en
+  -- claim-verifikasjon krever mandat, og for et menneske er mandatet
+  -- reviewer-rollen for innholdsområdet (MVP_IMPLEMENTATION_PLAN.md §74.30 punkt 3).
+  ('33330000-0000-0000-0000-000000000003', 'reviewer', null, now() - interval '1 year',
+   (select id from fixture where name = 'reviewer'), 'Reviewrett for verifikatoren i 330.',
    now() - interval '1 year');
 alter table workflow.user_roles enable trigger user_roles_set_row_timestamps;
 

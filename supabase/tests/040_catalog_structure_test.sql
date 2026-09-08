@@ -68,8 +68,8 @@ select set_eq(
       and c.relkind in ('r', 'p', 'v', 'm')
   $$,
   $$values ('user_roles'), ('evidence_verifications'), ('claim_verifications'),
-           ('review_decisions')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005'
+           ('claim_verification_citations'), ('review_decisions')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, med kontrollradene fra 005j'
 );
 select set_eq(
   $$

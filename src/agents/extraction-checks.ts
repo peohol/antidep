@@ -242,8 +242,15 @@ export function searchProjections(sourceText: string): readonly string[] {
   return raw === withoutTags ? [raw] : [raw, withoutTags]
 }
 
-/** Ordrett forekomst. Brukes på sitater, som er lange og entydige i seg selv. */
-function occursIn(projections: readonly string[], needle: string): boolean {
+/**
+ * Ordrett forekomst. Brukes på sitater, som er lange og entydige i seg selv.
+ *
+ * Eksportert fordi claim-kontrollen (`claim-checks.ts`) stiller nøyaktig det
+ * samme spørsmålet om de samme utdragene: står det ekstraksjonen sier den siterte,
+ * fortsatt i representasjonen? To implementasjoner av det spørsmålet ville kunnet
+ * svare forskjellig på den samme kilden.
+ */
+export function verbatimOccursIn(projections: readonly string[], needle: string): boolean {
   const wanted = normalize(needle)
   if (wanted.length === 0) {
     return false
@@ -1594,7 +1601,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
 
   // 1. Sitatene. Den ene kontrollen som kan avkrefte en ekstraksjon alene.
   const quotes = verbatimQuotes(item.extraction.rawExtraction)
-  const missingQuotes = quotes.filter((quote) => !occursIn(projections, quote.text))
+  const missingQuotes = quotes.filter((quote) => !verbatimOccursIn(projections, quote.text))
   const quotesChecked = quotes.length > 0
   const quotesFound = quotesChecked && missingQuotes.length === 0
 

@@ -251,13 +251,14 @@ eieren, og det samme gjelder tabellene i `knowledge`, `workflow` og `provenance`
 Migrasjon 005 innfører attribusjonen og kontrollene som `docs/ANTIDEP_CONSTITUTION.md` §10,
 §11, §12 og §14 krever:
 
-| Tabell                            | Innhold                                                                       |
-| --------------------------------- | ----------------------------------------------------------------------------- |
-| `provenance.actors`               | normalisert aktør: menneske, KI-agent, deterministisk prosess, import, system |
-| `workflow.user_roles`             | medlemskapsmodellen med scope og gyldighetsperiode                            |
-| `workflow.evidence_verifications` | kontroll av at et evidensfunn gjengir kilden riktig                           |
-| `workflow.claim_verifications`    | kontroll av at en påstandsrevisjon holder mot grunnlaget                      |
-| `workflow.review_decisions`       | menneskelig faglig beslutning som eget beslutningsobjekt                      |
+| Tabell                                  | Innhold                                                                       |
+| --------------------------------------- | ----------------------------------------------------------------------------- |
+| `provenance.actors`                     | normalisert aktør: menneske, KI-agent, deterministisk prosess, import, system |
+| `workflow.user_roles`                   | medlemskapsmodellen med scope og gyldighetsperiode                            |
+| `workflow.evidence_verifications`       | kontroll av at et evidensfunn gjengir kilden riktig                           |
+| `workflow.claim_verifications`          | kontroll av at en påstandsrevisjon holder mot grunnlaget                      |
+| `workflow.claim_verification_citations` | hvilke evidenslenker den kontrollen faktisk gikk gjennom (migrasjon 005j)     |
+| `workflow.review_decisions`             | menneskelig faglig beslutning som eget beslutningsobjekt                      |
 
 Samtidig får `knowledge.evidence_items`, `claims`, `claim_revisions`,
 `claim_evidence_links` og `evidence_assessments` en påkrevd `created_by_actor_id`.
@@ -548,8 +549,14 @@ Lagre derfor svaret rett fra nettet (`curl -o`), ikke via utklippstavlen.
 
 ## Legitimasjon til agentidentiteten
 
-`agent-identity:extraction-verification-01` (migrasjon 005f) er registrert uten utstedt
-legitimasjon og kan ikke gjøre noe før den får en. Utstedelsen er en bevisst, manuell
+Det finnes to agentidentiteter, én per pipelineledd som skriver:
+`agent-identity:extraction-verification-01` (migrasjon 005f) og
+`agent-identity:citation-support-verification-01` (migrasjon 005i). De deler verken aktør,
+rolle eller hemmelighet: rollen er rettighetsgrensen, så en identitet i det ene leddet kan
+ikke utføre operasjonene i det andre (`docs/MVP_IMPLEMENTATION_PLAN.md` §49,
+`docs/EVIDENCE_PIPELINE.md` §61, §63).
+
+Begge er registrert uten utstedt legitimasjon og kan ikke gjøre noe før de får en. Utstedelsen er en bevisst, manuell
 handling i det miljøet kjøreren skal lese hemmeligheten fra — ikke noe en migrasjon gjør,
 fordi en hemmelighet generert av en migrasjon enten måtte ligget i repoet eller blitt
 returnert gjennom en logg (`docs/MVP_IMPLEMENTATION_PLAN.md` §74.31).
@@ -570,6 +577,12 @@ npm run db:start
 # Der stdout blir en lagret logg (for eksempel en agentsesjon): skriv de to
 # variablene rett i den gitignorerte miljøfila, uten å vise verdien noe sted.
 ./scripts/issue-agent-credential.sh --management-api --write-env
+
+# Claim-verifikatoren. --env-prefix velger hvilket variabelpar som skrives, slik
+# at begge leddene kan ligge i den samme miljøfila uten å overskrive hverandre.
+./scripts/issue-agent-credential.sh --management-api --write-env \
+  --identity agent-identity:citation-support-verification-01 \
+  --env-prefix ANTIDEP_CLAIM_AGENT
 ```
 
 `--write-env` håndhever tre ting framfor å love dem, alle funn fra teknisk review:
@@ -585,33 +598,38 @@ npm run db:start
 
 Logikken ligger i `src/agents/agent-env-file.ts` med tester, ikke i skallet.
 
-**Identiteten er aktivert i det hostede prosjektet, 6. september 2026.**
-`secret_version` er `1` og `secret_issued_by_actor_id` peker på `human:peder-holman`;
-utstedelsen står i auditloggen som `agent_identity_credential_issued`. Legitimasjonen ble
-utstedt med `--write-env` og finnes bare i miljøet den ble utstedt i. Skal en annen
-maskin — for eksempel en GitHub Actions-runner — kjøre verifikatoren, utstedes en ny
-legitimasjon der; den gamle blir da ugyldig, som avsnittet under beskriver.
+**Begge identitetene er aktivert i det hostede prosjektet** — ekstraksjonsverifikatoren 6. september 2026, claim-verifikatoren 8. september 2026. `secret_issued_by_actor_id` peker
+på `human:peder-holman` på begge, og utstedelsene står i auditloggen som
+`agent_identity_credential_issued`. Legitimasjonene ble utstedt med `--write-env` og finnes
+bare i miljøet de ble utstedt i. Skal en annen maskin — for eksempel en GitHub
+Actions-runner — kjøre en verifikator, utstedes en ny legitimasjon der; den gamle blir da
+ugyldig, som avsnittet under beskriver.
 
 Skriptet skriver hemmeligheten til stdout **én gang**. Databasen lagrer bare hashen, og det
 finnes ingen vei til å lese verdien ut igjen; mister du den, utsteder du en ny, som samtidig
 ugyldiggjør den gamle. Skriptet nekter å kjøre når `CI` er satt: i en CI-jobb er stdout en
 logg som lagres og deles.
 
-Kjøreren leser fire miljøvariabler, ingen av dem med `VITE_`-prefiks — Vite eksponerer
-nøyaktig de variablene til nettleseren, så et prefiks her ville lagt hemmeligheten i
-klientbunten:
+Kjørerne leser miljøvariabler uten `VITE_`-prefiks — Vite eksponerer nøyaktig de variablene
+til nettleseren, så et prefiks her ville lagt hemmelighetene i klientbunten. URL og nøkkel er
+miljøets og deles; legitimasjonen har ett par per ledd:
 
 ```
 ANTIDEP_SUPABASE_URL=
 ANTIDEP_SUPABASE_PUBLISHABLE_KEY=
+
 ANTIDEP_AGENT_IDENTITY_KEY=agent-identity:extraction-verification-01
 ANTIDEP_AGENT_SECRET=
+
+ANTIDEP_CLAIM_AGENT_IDENTITY_KEY=agent-identity:citation-support-verification-01
+ANTIDEP_CLAIM_AGENT_SECRET=
 ```
 
 Lokalt legges de i `.env.agent.local`, som er gitignorert og leses av
-`npm run agent:verify-extraction`. I CI legges de inn som krypterte secrets (GitHub:
-Settings → Secrets and variables → Actions), der arbeidsflyten
-`.github/workflows/extraction-verification.yml` leser dem. **Publishable key, aldri
+`npm run agent:verify-extraction` og `npm run agent:verify-claims`. I CI legges de inn som
+krypterte secrets (GitHub: Settings → Secrets and variables → Actions), der arbeidsflytene
+`.github/workflows/extraction-verification.yml` og
+`.github/workflows/claim-verification.yml` leser hver sitt par. **Publishable key, aldri
 `service_role`:** agenten autentiseres av sin egen legitimasjon inne i api-funksjonene, ikke
 av Data API-rollen, og en `service_role`-nøkkel ville omgått RLS og gitt kjøreren alt
 (`docs/DATABASE_ARCHITECTURE.md` §49).
@@ -636,6 +654,40 @@ fingeravtrykk, når kilden ikke lot seg hente, eller når fingeravtrykket ikke s
 registrerte. Da har verifikatoren ikke sett den utgaven ekstraksjonen ble gjort fra, og ingen
 av verdiene i `workflow.verification_source_access` ville beskrevet situasjonen sant. Avviket
 står i kjøringens `output_manifest`.
+
+## Kjøre claim-verifikatoren
+
+```bash
+npm run agent:verify-claims -- --dry-run                # kontroller, registrer ingenting
+npm run agent:verify-claims                             # hele arbeidskøen
+npm run agent:verify-claims -- --claim-revision <uuid>
+npm run agent:verify-claims -- --limit 5
+```
+
+Kjøreren åpner en `provenance.agent_runs`-kjøring i rollen
+`citation_support_verification`, leser grunnlaget med `api.claim_verification_input(...)`
+(migrasjon 005k), henter hver evidenslenkes kildeversjon på nytt over nett, sammenligner
+fingeravtrykket, kontrollerer påstanden deterministisk mot grunnlaget og registrerer
+resultatet med `api.register_claim_verification(...)` — med én kontrollrad per evidenslenke.
+Hentingen er den samme, med de samme adressekontrollene som avsnittet under beskriver.
+
+**Kontrollen kan falsifisere, men aldri bekrefte.** Den sammenligner påstandens strukturerte
+betydning — populasjon, komparator, tidsrom, retning og størrelse — felt for felt med
+evidensgrunnlaget, og kontrollerer at utdragene ekstraksjonen bygger på fortsatt står ordrett
+i kildeversjonen. Hvert avvik den finner, er et faktisk avvik. Men om ordlyden er dekket, om
+vesentlige forbehold mangler, og om det finnes urepresentert motstridende evidens, krever
+språkforståelse eller kunnskap om verden utenfor basen — og det siste kan aldri bli `ok`,
+fordi fravær av registrert motstridende evidens ikke er fravær av slik evidens
+(`docs/ANTIDEP_CONSTITUTION.md` §17). Siden `verified` krever at alle sju kontrollpunktene
+holder, er det beste utfallet denne kontrollen kan gi, `uncertain`. Publiseringsgatens G9
+blokkerer da — og det er riktig svar. Et senere ledd med språkmodell, eller en menneskelig
+reviewer, er det som kan konkludere.
+
+**Kjøringen registrerer ingenting for en revisjon** der én av evidenslenkene mangler
+kildeversjon eller fingeravtrykk, der en kilde ikke lot seg hente, eller der fingeravtrykket
+ikke stemmer. Kontrollen må dekke hele evidenssettet, så den kan ikke registreres delvis —
+og en påstand hviler på hele grunnlaget sitt, også den delen som motsier den. Avviket står i
+kjøringens `output_manifest`.
 
 ### Hentingen er begrenset til det offentlige internettet
 

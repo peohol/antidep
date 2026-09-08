@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(61);
+select plan(65);
 
 -- ---------------------------------------------------------------------------
 -- Testdata som bare finnes inne i denne transaksjonen
@@ -59,6 +59,12 @@ values
    'Systemaktør som tildeler roller i testdata.', null, null),
   ('agent', 'agent:verifier-test', 'Testverifikator',
    'KI-aktør i kontrollrollen i testdata.', null, 'adversarial_review'),
+  -- Egen aktør for claim-verifikasjonene: migrasjon 005j krever at den som
+  -- kontrollerer en påstand mot grunnlaget har mandatet til det, og for en agent
+  -- er mandatet rollen citation_support_verification. agent:verifier-test har en
+  -- annen rolle med vilje, slik at avvisningen kan prøves med den.
+  ('agent', 'agent:citation-verifier-test', 'Test claim-verifikator',
+   'KI-aktør i sitat- og kildestøtterollen i testdata.', null, 'citation_support_verification'),
   ('human', 'human:reviewer-test', 'Test Reviewer',
    'Menneskelig fagredaktør med reviewer-rolle i testdata.',
    pg_temp.user_id('reviewer@test.invalid'), null),
@@ -83,6 +89,36 @@ values
    pg_temp.actor('system:rolleforvaltning'), 'Testtildeling av editor-rolle.'),
   (pg_temp.user_id('editor@test.invalid'), 'admin', null,
    pg_temp.actor('system:rolleforvaltning'), 'Testtildeling av admin-rolle.');
+
+-- En påstandsrevisjon forfattet av den mandaterte testverifikatoren.
+--
+-- Selvverifikasjonsregelen (claim_verifications_separate_actor_check) og
+-- mandatregelen (migrasjon 005j) er to grenser, og den ene skjuler den andre om
+-- fiksturen ikke skiller dem: forfatteren av de seedede revisjonene er
+-- agent:claim-synthesis, som avvises av mandatet før CHECK-en i det hele tatt
+-- prøves. Denne revisjonen har en forfatter som *har* mandatet, og er derfor det
+-- eneste grunnlaget der selvverifikasjonen er det som faktisk feller forsøket.
+with c as (
+  insert into knowledge.claims
+    (knowledge_type, topic_concept_id, subject_drug_id, created_by_actor_id)
+  select 'evidence_synthesis', con.id, d.id, pg_temp.actor('agent:citation-verifier-test')
+  from catalog.clinical_concepts con, catalog.drugs d
+  where con.canonical_label = 'vektendring' and d.canonical_name = 'mirtazapin'
+  returning id, knowledge_type, subject_drug_id, created_by_actor_id
+)
+insert into knowledge.claim_revisions
+  (claim_id, revision_number, knowledge_type, subject_drug_id,
+   statement, scope, comparator_kind, uncertainty_summary, created_by_actor_id)
+select c.id, 1, c.knowledge_type, c.subject_drug_id,
+       'Testpåstand formulert av den mandaterte testverifikatoren, for å prøve selvverifikasjonsregelen.',
+       'Gjelder bare som testdata i 190.',
+       'none', 'Testusikkerhet.', c.created_by_actor_id
+from c;
+
+create function pg_temp.self_authored_revision() returns uuid language sql stable as $$
+  select r.id from knowledge.claim_revisions r
+  where r.created_by_actor_id = pg_temp.actor('agent:citation-verifier-test')
+$$;
 
 -- Scoped reviewer: godkjent for «depressiv lidelse», ikke for «vektendring».
 insert into workflow.user_roles
@@ -449,7 +485,7 @@ declare
   payload jsonb;
 begin
   payload := jsonb_build_object(
-    'verifier', 'agent:verifier-test',
+    'verifier', 'agent:citation-verifier-test',
     'outcome', 'verified',
     'source_access', 'original_source',
     'source_support', 'ok',
@@ -459,7 +495,8 @@ begin
     'direction_and_magnitude', 'ok',
     'qualifiers_complete', 'ok',
     'contradictory_evidence_represented', 'ok',
-    'rationale', 'Testkontroll av påstanden mot det registrerte grunnlaget.'
+    'rationale', 'Testkontroll av påstanden mot det registrerte grunnlaget.',
+    'revision', 'seeded'
   ) || overrides;
 
   insert into workflow.claim_verifications (
@@ -486,7 +523,10 @@ begin
     payload ->> 'rationale',
     coalesce((payload ->> 'verified_at')::timestamptz, now())
   from knowledge.claim_revisions r
-  where r.id = pg_temp.seeded_revision('sertralin');
+  where r.id = case
+    when payload ->> 'revision' = 'self_authored' then pg_temp.self_authored_revision()
+    else pg_temp.seeded_revision('sertralin')
+  end;
 end;
 $$;
 
@@ -516,15 +556,40 @@ select lives_ok(
 );
 select throws_ok(
   $$select pg_temp.insert_claim_verification(
-      '{"verifier": "agent:claim-synthesis"}'::jsonb)$$,
+      '{"revision": "self_authored", "verifier": "agent:citation-verifier-test"}'::jsonb)$$,
   '23514', null,
-  'forfatteren av revisjonen kan ikke verifisere den selv (MVP_IMPLEMENTATION_PLAN.md §49)'
+  'forfatteren av revisjonen kan ikke verifisere den selv, heller ikke med mandatet i orden (MVP_IMPLEMENTATION_PLAN.md §49)'
+);
+select lives_ok(
+  $$select pg_temp.insert_claim_verification(
+      '{"revision": "self_authored", "verifier": "human:reviewer-test"}'::jsonb)$$,
+  'den samme revisjonen kan kontrolleres av en annen mandatert aktør — det er forfatterskapet som feller, ikke revisjonen'
 );
 select throws_ok(
   $$select pg_temp.insert_claim_verification(
       '{"source_access": "derived_summary"}'::jsonb)$$,
   '23514', null,
   'en bekreftet claim-verifikasjon kan ikke hvile på et avledet sammendrag alene'
+);
+-- Migrasjon 005j: mandatet er en egen grense, uavhengig av at verifikator og
+-- forfatter er forskjellige aktører. agent:verifier-test er en annen aktør enn
+-- forfatteren, og har likevel ikke lov: rollen er adversarial_review.
+select throws_ok(
+  $$select pg_temp.insert_claim_verification(
+      '{"verifier": "agent:verifier-test"}'::jsonb)$$,
+  '42501', 'Verifikatoraktøren hadde ikke mandat til å kontrollere denne påstanden mot grunnlaget.',
+  'en agent i en annen kontrollrolle kan ikke registrere en claim-verifikasjon'
+);
+select throws_ok(
+  $$select pg_temp.insert_claim_verification(
+      '{"verifier": "human:unlinked-test"}'::jsonb)$$,
+  '42501', 'Verifikatoraktøren hadde ikke mandat til å kontrollere denne påstanden mot grunnlaget.',
+  'et menneske uten brukerkonto og uten reviewer-rolle kan heller ikke registrere en'
+);
+select lives_ok(
+  $$select pg_temp.insert_claim_verification(
+      '{"verifier": "human:reviewer-test"}'::jsonb)$$,
+  'et menneske med gyldig reviewer-rolle for innholdsområdet kan registrere en claim-verifikasjon (MVP_IMPLEMENTATION_PLAN.md §74.30 punkt 3)'
 );
 
 -- ---------------------------------------------------------------------------

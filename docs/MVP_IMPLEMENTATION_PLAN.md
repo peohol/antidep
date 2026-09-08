@@ -1385,7 +1385,8 @@ PR G  db: add publication events and gate                                   (#15
       db: add technical agent identity and agent runs                        (#48)  merget   migrasjon 005d, 008c, 005e, 005f
       db: add the extraction verification registration write path            (#50)  merget   migrasjon 008d, 005g
       feat: run the extraction verifier from source version to verification (#51)  merget   migrasjon 008e, 007f, 005h
-      ops: activate the extraction verifier in the hosted project           (#56)  åpen     ingen migrasjon
+      ops: activate the extraction verifier in the hosted project           (#56)  merget   ingen migrasjon
+      feat: verify claims against their registered evidence                 (#57)  åpen     migrasjon 008f, 005i, 005j, 005k, 006c, 005l
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1487,7 +1488,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1510 pgTAP-assertions over 46 testfiler.
+Databaselaget teller nå 1590 pgTAP-assertions over 49 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1631,18 +1632,29 @@ et evidensfunn er nettopp det G4 og G5 senere skal kreve en verifikasjon av, og 
 verifikasjon, reviewbeslutning eller publisering er rørt. Neste ledd, ekstraksjonsverifikasjonen
 bak G4/G5, er planlagt i §74.30.
 
+**Begge verifikasjonsleddene er siden bygget og kjørt i produksjon, og ingen av dem lukker en
+gate — fordi ingen av dem konkluderte.** Ekstraksjonsverifikasjonen er kjørbar og kjørt
+(§74.33, §74.34), og claim-verifikasjonen er bygget og kjørt (§74.35). Alle fem registrerte
+kontrollene står som `uncertain`, og det er riktig: begge kontrollene er deterministiske, og en
+deterministisk kontroll kan falsifisere, men ikke bekrefte at ordlyden er dekket eller at ingen
+motstridende evidens mangler. **Det som gjenstår for Milepæl B er derfor fortsatt de samme tre
+tingene** — en bekreftet ekstraksjonskontroll bak G4/G5, en bekreftet claim-kontroll bak
+G8/G9, og den menneskelige godkjenningen bak G11/G12/G13 — men maskineriet foran alle tre er nå
+bygget, prøvd og kjørt mot reelle rader. Den gjeldende avlesningen står i §74.35.
+
 ### 74.5 Beslutninger tatt før migrasjon 007 eksponerte verdier utad
 
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   39 enum-typer, fordelt på de tjueni migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   39 enum-typer, fordelt på de trettiseks migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
-   005e, 005f, 008d, 005g, 008e, 007f, 005h og 006b — i filrekkefølge, ikke i
-   nummerrekkefølge — med henholdsvis 1, 6,
-   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 og 0.
+   005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c og 005l — i
+   filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
+   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+   0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle tretti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle trettiseks ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -1662,6 +1674,11 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
    `ALTER TYPE ... ADD VALUE` som 008a, 008b og 008c, og 005g tar imot verifikasjonens tre
    vokabularer (utfall, kildetilgang og kontrollerte felter) som `text` og array av `text`, og
    caster dem i funksjonskroppen — samme mønster som 007c, 007d, 007e og 005e.
+   De fem siste legger heller ingen til: 008f er en ren `ALTER TYPE ... ADD VALUE`,
+   005i skriver to rader uten å innføre noe vokabular, 005j gjenbruker
+   `workflow.verification_source_access` og `workflow.verification_check_result` fra
+   migrasjon 005 på en ny tabell, 005k tar imot de samme vokabularene som `text` og `jsonb`
+   og caster dem i funksjonskroppen, og 006c og 005l gjenskaper hver sine funksjoner.
    Viewene caster enum-kolonner til `text`, så den offentlige kontrakten er en streng
    fra et dokumentert vokabular, ikke PostgreSQL-typen. Et senere bytte til
    oppslagstabeller er dermed ikke en brytende API-endring. Castingen sparer også
@@ -5614,6 +5631,177 @@ claim-verifikasjonene (G8/G9) og den menneskelige godkjenningen (G11/G12/G13).
 
 **Neste steg.** Claim-verifikasjon (`workflow.claim_verifications`,
 `citation_support_verification`) som egen, senere PR.
+
+---
+
+### 74.35 Claim-verifikasjonen er bygget og kjørt, og G8/G9 er lukket der de kan lukkes
+
+§74.34 endte med ett neste steg: claim-verifikasjon som egen PR. Denne leveransen bygger den
+hele veien — skriveflate, egen agentrolle og identitet, lesegrunnlag, deterministisk kjører,
+publiseringsgater og tester — og kjører den mot de reelle radene i det hostede prosjektet.
+
+**Seks migrasjoner.**
+
+| Migrasjon | Hva den gjør |
+| --- | --- |
+| 008f | `audit.event_operation` får `claim_verification_registered`. Alene i sin egen fil, fordi `ALTER TYPE ... ADD VALUE` ikke kan brukes i samme transaksjon som verdien |
+| 005i | Aktøren `agent:citation-support-verification` og identiteten `agent-identity:citation-support-verification-01`, registrert inert |
+| 005j | Grunnlaget: agentkjøringsbinding, evidenssettavtrykk, mandatkontroll, `workflow.claim_verification_citations` og dekningskontrollen |
+| 005k | `api.claim_verification_input(...)` og `api.register_claim_verification(...)` |
+| 006c | Publiseringsgaten leser hvem som kontrollerte, og hva kontrollen gjaldt (G9b og G9c) |
+| 005l | Rettelse av en feil den første ekte kjøringen mot produksjon fant; se under |
+
+**Rollen er ny, og det er den som gjør skillet til en grense.** `provenance.agent_role` hadde
+`citation_support_verification` fra migrasjon 005 — den er en av de sju
+`ANTIDEP_CONSTITUTION.md` §10 krever — men ingen aktør hadde den. EVIDENCE_PIPELINE.md §61
+skiller `ExtractionVerifier` og `CitationVerifier` på input, output og mandat, og
+ekstraksjonsverifikatoren kan derfor ikke kontrollere en påstand: `authenticate_agent_identity`
+avviser den, og skriveveien leser aldri en rad før den avvisningen har skjedd. De to
+påstandsrevisjonene i produksjon er formulert av `agent:claim-synthesis`, som er en tredje
+aktør — så generering og verifikasjon er atskilte operasjoner i praksis og ikke bare i prosa.
+
+**Fire hull som var åpne i `workflow.claim_verifications`, og som nå er lukket på raden
+selv.** Tabellen fantes fra migrasjon 005 med sine sju kontrollpunkter, og publiseringsgatens
+G8/G9 leste den — men det fantes ingen skrivevei inn, ingen binding til en agentkjøring, ingen
+registrering av *hva* kontrollen så på, og ingen kontroll av at den som skrev raden hadde
+mandat til det. Enhver aktør som ikke tilfeldigvis var forfatteren, kunne skrive raden gaten
+leser.
+
+1. **Mandat.** `workflow.claim_verifier_has_mandate(...)` avgjør spørsmålet ett sted og
+   håndheves to: ved innsetting, og i gaten på den gjeldende kontrollen. En agent må ha rollen
+   `citation_support_verification`; et menneske må ha hatt gyldig `reviewer`-rolle for
+   innholdsområdet på `verified_at`, med en tildelingsrad som fantes senest da — samme regel
+   `workflow.enforce_reviewer_qualification()` bruker, og av samme grunn: en tilbakedatert
+   `valid_from` skal ikke kunne konstruere gyldighet i etterkant.
+2. **Dekning.** `workflow.claim_verification_citations` har én rad per evidenslenke kontrollen
+   gikk gjennom. Fire sammensatte fremmednøkler låser at lenken hører til den kontrollerte
+   revisjonen, at evidensfunnet er lenkens eget, at kildeversjonen er funnets egen, og at
+   fingeravtrykket er **det kildeversjonen faktisk er registrert med**. Den siste er den som
+   gjør `ANTIDEP_CONSTITUTION.md` §11 maskinelt kontrollerbar for dette leddet: en verifikator
+   kan ikke finne på et fingeravtrykk for å få skrevet `verifiable_representation`.
+3. **Samlet kildetilgang er den svakeste, ikke den sterkeste.** Radens `source_access` er ikke
+   en parameter — den utledes av kontrollradene. Var den kallerstyrt, kunne en kontroll der én
+   lenke bare hadde et sammendrag, blitt registrert som `original_source`, og §11 sitt forbud
+   mot å godkjenne på andre agenters sammendrag ville vært omgåelig ved å aggregere.
+4. **Grunnlaget kontrollen gjaldt.** `verified_evidence_set_digest` er databasens avtrykk av
+   evidenssettet ved registrering, etter samme mønster som godkjenningens avtrykk i migrasjon
+   006. Uten det var sekvensen «kontroller → legg til en lenke → publiser» lovlig, og den nye
+   lenken kan være nettopp den motstridende evidensen kontrollen skulle lete etter.
+
+**Publiseringsgaten fikk to nye vilkår, ingen ble myket opp.** G9b krever at den gjeldende
+kontrollens avtrykk er avtrykket av settet slik det er nå; G9c krever at aktøren bak den hadde
+mandatet. Begge leser den samme raden som G9, hentet én gang, slik at de tre aldri kan bli
+uenige om hvilken kontroll som er den gjeldende. Tidssemantikken er uendret og prøvd: den siste
+kontrollen er den gjeldende, så en senere `uncertain` eller `needs_correction` kan ikke skjules
+av en eldre bekreftelse.
+
+**Kjøreren er deterministisk, og kan ikke bekrefte — med hensikt.** Den henter hver
+evidenslenkes kildeversjon på nytt, reproduserer fingeravtrykket, kontrollerer at utdragene
+ekstraksjonen bygger på fortsatt står ordrett i representasjonen, og sammenligner påstandens
+strukturerte betydning felt for felt med grunnlaget. Hvert avvik den melder, er et faktisk
+avvik: en støttende lenke som peker motsatt vei, en komparator som er en annen, et tidspunkt
+helt utenfor påstandens tidsrom, en tallfestet størrelse ingen lenke oppgir.
+
+Men tre av de sju punktene kan aldri bli `ok` herfra. To krever språkforståelse — om ordlyden
+er dekket, og om vesentlige forbehold mangler. Det tredje kan ikke besvares fra basen i det
+hele tatt: **fravær av registrert motstridende evidens er ikke fravær av motstridende evidens**
+(`ANTIDEP_CONSTITUTION.md` §17). Siden `verified` krever at alle sju holder, er `uncertain` det
+beste utfallet denne kontrollen kan gi, og G9 blokkerer da. Det er riktig svar og ikke en
+mangel; et senere ledd med språkmodell eller en menneskelig reviewer er det som kan konkludere,
+og det er et adapterbytte og ikke en datamodellendring (§20).
+
+Kjøreren registrerer heller ingenting for en revisjon der én av lenkenes kildeversjoner ikke
+lot seg etterprøve. Kontrollen må dekke hele settet, så den kan ikke registreres delvis — og en
+usann `source_access` for å få skrevet at kontrollen mislyktes, ville byttet en manglende
+opplysning mot en usann. Avviket står i kjøringens `output_manifest`.
+
+---
+
+**Kjeden er kjørt i produksjon. Dette er avlesningen.**
+
+| Ledd | Avlesning |
+| --- | --- |
+| 1. Deploy | Fem migrasjoner kjørt med `./scripts/deploy-migrations.sh`; etterpå trettiseks rader mot trettiseks filer, sammenlignet maskinelt |
+| 2. Legitimasjon | Utstedt til `agent-identity:citation-support-verification-01` med `--write-env --env-prefix ANTIDEP_CLAIM_AGENT`. Verdien finnes ikke i denne transkripsjonen |
+| 3. Tørrkjøring | Kjøring `210d9a65`, to revisjoner, lukket som `aborted`, null registrert |
+| 4. Ekte kjøring | Kjøring `8b3941c1`, lukket som `succeeded`, to kontroller registrert |
+| 5. Utfall | Begge `uncertain`, begge med `source_access = verifiable_representation`, begge med avtrykket lik settets nåværende |
+| 6. Kontrollrader | Én per evidenslenke, hver mot sin egen kildeversjon og sitt registrerte fingeravtrykk: `sha256:797e91b6…` og `sha256:c62a66215…` — de samme verdiene §74.34 leste av |
+| 7. Proveniens | Hver kontroll peker på kjøringen, kjøringen på identiteten, identiteten på `agent:citation-support-verification`, og hver har nøyaktig én `claim_verification_registered` i auditloggen |
+
+**`uncertain` er riktig svar, og det er verdt å si hvorfor det ikke ble «rettet».** Kontrollen
+fant ingen avvik: populasjon, komparator, tidsrom og retning stemmer for sertralinpåstanden, og
+komparator, tidsrom og retning for mirtazapinpåstanden. Det som står uavklart, er nettopp det
+en deterministisk kontroll ikke kan avgjøre — og for mirtazapin i tillegg populasjonen, fordi
+evidensfunnets egen `population_availability` er `uncertain_extraction`. Kontrollen fant
+dessuten ett registrert evidensfunn på samme virkestoff og endepunkt som ikke er lenket til
+sertralinpåstanden, og førte det opp som kandidat for urepresentert evidens. Ingen klinisk
+verdi er endret for å få kontrollen til å passere.
+
+**Publiseringsgaten er prøvd mot de reelle radene, i en transaksjon som ble rullet tilbake.**
+
+| Scenario | Svar fra gaten |
+| --- | --- |
+| Slik det står nå | Blokkert av G5: ekstraksjonen er `uncertain` |
+| Med en syntetisk fullstendig ekstraksjonsbekreftelse | Blokkert av G9: claim-kontrollen konkluderer ikke med `verified` |
+| Med en syntetisk `verified` claim-kontroll fra `agent:evidence-extraction` | Blokkert av G9c: registrert av en aktør uten mandat |
+| Med en syntetisk `verified` claim-kontroll fra claim-verifikatoren | Blokkert av G11: ikke godkjent av en kvalifisert redaktør |
+
+Den siste raden er den positive assertionen for alle fire claim-gatene: G8, G9, G9b og G9c er
+passert, og det som gjenstår, er den menneskelige godkjenningen. Transaksjonen ble rullet
+tilbake, og etterkontrollen viser fortsatt to claim-verifikasjoner, null `verified`, to
+kontrollrader, to auditrader og null publiseringer.
+
+G9b lot seg ikke prøve mot de reelle radene, og grunnen er en invariant og ikke en mangel:
+begge revisjonene har en registrert evidensvurdering, og migrasjon 004 forsegler evidenssettet
+i det den skrives. En ny lenke kan ikke legges til, så avtrykket kan ikke bli utdatert for dem.
+Vilkåret er prøvd i `250_publication_gate_test.sql` og
+`490_claim_verification_publication_gate_test.sql` i begge retninger.
+
+---
+
+**Rettet under kjøringen mot produksjon: den utsatte kontrollen kjørte som feil rolle.**
+Dekningskontrollen er en `constraint trigger ... deferrable initially deferred`, og
+utsettelsen er nødvendig: kontrollradene finnes ikke ennå når moderraden settes inn. Men en
+utsatt trigger kjører **ved commit**, og da er SECURITY DEFINER-konteksten i skriveveien
+forlatt — den effektive brukeren er igjen `anon`, som ikke har og ikke skal ha `usage` på
+`workflow`. Den første ekte kjøringen mot det hostede prosjektet svarte
+«permission denied for schema workflow» etter at alt annet var utført.
+
+Feilen kunne ikke slått ut i databasetestene: de avsluttes med `rollback`, og en utsatt trigger
+kjører aldri i en transaksjon som rulles tilbake. Rettelsen (005l) gjør begge funksjonene
+SECURITY DEFINER — samme begrunnelse som `workflow.enforce_reviewer_qualification()` har: de
+leser bare, validerer bare, og returnerer ingen data. Ingen ny rettighet følger av det, og
+EXECUTE er fortsatt revokert fra PUBLIC på begge.
+
+Testen som nå dekker den, tvinger kontrollen fram med `set constraints all immediate` **mens
+rollen er `anon`**, som er nøyaktig den situasjonen commit gir. Den er mutasjonstestet: uten
+SECURITY DEFINER feller den med den samme meldingen produksjon ga.
+
+Rettelsen er skrevet fremover og ikke inn i 005j, fordi 005j allerede var kjørt i det hostede
+prosjektet, og Supabase kjører aldri en registrert migrasjonsversjon på nytt (§74.32).
+
+---
+
+**Hva denne leveransen bevisst ikke gjør.** Den bygger ikke human review, ikke reviewbeslutning
+og ikke publisering — de er de neste leddene i §15 og hører til hver sin PR. Den endrer ikke
+klinisk innhold for å få en kontroll til å passere, og den svekker ingen eksisterende kontroll:
+ingen CHECK, ingen policy, ingen grant og ingen gate er fjernet eller myknet opp.
+
+**Én ting gjenstår, og den krever tilgang denne sesjonen ikke har.** GitHub Actions-secretene
+for `.github/workflows/claim-verification.yml` er ikke satt, av samme grunn som §74.34 fant for
+ekstraksjonsarbeidsflyten: sesjonens GitHub-proxy svarer `403` på `actions/secrets`.
+Arbeidsflyten er inert til noen legger dem inn, og stopper da på vaktposten som lister opp hva
+som mangler. Kjøringene over ble gjort med kjøreren lokalt i sesjonen, mot det hostede
+prosjektet — samme kode arbeidsflyten kjører, samme database og samme identitet.
+
+**Hva som gjenstår for Milepæl B.** G8 og G9 kan nå lukkes for en revisjon ved å kjøre
+kjøreren mot den — men er ikke lukket for noen av de to, fordi begge står som `uncertain`, og
+den deterministiske kontrollen kan per konstruksjon ikke gi `verified`. Den siste av de tre
+tingene §74.4 lister, den menneskelige godkjenningen (G11/G12/G13), står urørt.
+
+**Neste steg.** Reviewbeslutningen — `workflow.review_decisions` og den redaksjonelle flaten
+for å registrere en `publication_approval` — som egen, senere PR.
 
 ---
 

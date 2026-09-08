@@ -20,14 +20,9 @@
 import { createAgentClient, createExtractionVerificationApi } from './agent-api.ts'
 import { readAgentConfig } from './agent-environment.ts'
 import { redact } from './agent-credential.ts'
+import { parseVerifierArguments } from './cli-arguments.ts'
 import { runExtractionVerification } from './extraction-verification-run.ts'
 import { EXTRACTION_VERIFICATION_PREMISES } from './pipeline-version.ts'
-
-interface CliOptions {
-  readonly evidenceItemId: string | null
-  readonly dryRun: boolean
-  readonly limit: number | null
-}
 
 const USAGE = `Bruk:
   npm run agent:verify-extraction -- [valg]
@@ -39,41 +34,11 @@ Valg:
   --dry-run               Kontroller og rapporter, men registrer ingenting.
   --help                  Vis denne teksten.`
 
-export function parseCliArguments(argv: readonly string[]): CliOptions {
-  let evidenceItemId: string | null = null
-  let dryRun = false
-  let limit: number | null = null
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]
-    if (argument === '--dry-run') {
-      dryRun = true
-    } else if (argument === '--evidence-item') {
-      const value = argv[index + 1]
-      if (value === undefined || value.startsWith('--')) {
-        throw new Error('--evidence-item krever en uuid.')
-      }
-      evidenceItemId = value
-      index += 1
-    } else if (argument === '--limit') {
-      const value = Number(argv[index + 1])
-      if (!Number.isInteger(value) || value < 1) {
-        throw new Error('--limit krever et heltall større enn null.')
-      }
-      limit = value
-      index += 1
-    } else if (argument === '--help' || argument === '-h') {
-      throw new Error(USAGE)
-    } else {
-      throw new Error(`Ukjent valg: ${String(argument)}\n\n${USAGE}`)
-    }
-  }
-
-  return { evidenceItemId, dryRun, limit }
-}
-
 async function main(): Promise<number> {
-  const options = parseCliArguments(process.argv.slice(2))
+  const options = parseVerifierArguments(process.argv.slice(2), {
+    targetFlag: 'evidence-item',
+    usage: USAGE,
+  })
   const config = readAgentConfig(process.env)
   const api = createExtractionVerificationApi(
     createAgentClient({ url: config.url, publishableKey: config.publishableKey }),
@@ -84,7 +49,7 @@ async function main(): Promise<number> {
     const report = await runExtractionVerification({
       api,
       premises: EXTRACTION_VERIFICATION_PREMISES,
-      evidenceItemId: options.evidenceItemId,
+      evidenceItemId: options.targetId,
       dryRun: options.dryRun,
       limit: options.limit,
       log: (line) => {

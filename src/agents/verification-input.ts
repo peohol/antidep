@@ -40,6 +40,9 @@ export interface VerificationExtraction {
   readonly comparatorDetail: string | null
   readonly outcomeLabel: string
   readonly outcomeDetail: string
+  /** PostgreSQL-interval som tekst, for eksempel «182 days». `null` = ikke oppgitt. */
+  readonly timepointMin: string | null
+  readonly timepointMax: string | null
   readonly timepointAvailability: string
   readonly reportedDirection: string
   readonly effectMeasure: string | null
@@ -183,6 +186,8 @@ function parseExtraction(value: unknown): VerificationExtraction {
     comparatorDetail: asOptionalString(record['comparator_detail']),
     outcomeLabel: asString(record['outcome_label'], 'extraction.outcome_label'),
     outcomeDetail: asString(record['outcome_detail'], 'extraction.outcome_detail'),
+    timepointMin: asOptionalString(record['timepoint_min']),
+    timepointMax: asOptionalString(record['timepoint_max']),
     timepointAvailability: asString(
       record['timepoint_availability'],
       'extraction.timepoint_availability',
@@ -211,7 +216,16 @@ function parseExtraction(value: unknown): VerificationExtraction {
   }
 }
 
-function parseItem(value: unknown): VerificationItem {
+/**
+ * Ett evidensfunn slik både `api.extraction_verification_input(...)` og
+ * `api.claim_verification_input(...)` leverer det.
+ *
+ * De to funksjonene bygger nøyaktig den samme formen for et evidensfunn, og det
+ * er et bevisst valg i migrasjon 005k: da leser de to kjørerne det samme
+ * grunnlaget med den samme koden, og en endring i formen kan ikke bli riktig
+ * det ene stedet og feil det andre.
+ */
+export function parseVerificationItem(value: unknown): VerificationItem {
   const record = asRecord(value, 'items[]')
   const source = asRecord(record['source'], 'items[].source')
   const byThisActor = record['verifications_by_this_actor']
@@ -237,6 +251,6 @@ export function parseVerificationInput(payload: unknown): VerificationInput {
   return {
     agentRunId: asString(record['agent_run_id'], 'agent_run_id'),
     verifierActorId: asString(record['verifier_actor_id'], 'verifier_actor_id'),
-    items: items.map(parseItem),
+    items: items.map(parseVerificationItem),
   }
 }

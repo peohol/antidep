@@ -742,6 +742,63 @@ Spørsmålet er:
 
 > Støtter denne kilden faktisk denne konkrete påstanden slik den er formulert?
 
+`CitationVerifier` (§61) registrerer resultatet gjennom `api.register_claim_verification(...)`,
+som krever at kalleren er autentisert nøyaktig for agentrollen `citation_support_verification`
+og handler inne i en åpen kjøring i samme rolle (DATABASE_ARCHITECTURE.md §30, §33).
+Skriveveien kan ikke registrere en kontroll av en påstand verifikatoren selv formulerte, og
+den krever at kontrollen dekker **hele** evidenssettet til revisjonen: én rad i
+`workflow.claim_verification_citations` per evidenslenke, med den kildeversjonen og det
+fingeravtrykket kontrollen faktisk ble gjort mot. En påstand hviler på hele grunnlaget sitt,
+også den delen som motsier den (§9 i `ANTIDEP_CONSTITUTION.md`).
+
+**Grunnlaget verifikatoren arbeider fra, leses gjennom `api.claim_verification_input(...)`**,
+som gir påstanden i sin helhet, hver evidenslenke med relasjonstype og begrunnelse, hele
+evidensfunnet ordrett, kildeversjonens adresse og fingeravtrykk, og den gjeldende
+ekstraksjonsverifikasjonen for hvert funn. I tillegg gir den registrerte evidensfunn på samme
+virkestoff og endepunkt som *ikke* er lenket til revisjonen — uten den lista ville §41 sitt
+spørsmål om urepresentert evidens vært ubesvarbart av konstruksjon.
+
+### 39.1 Den kjørende claim-verifikatoren i dag
+
+Den implementerte verifikatoren er **deterministisk**, ikke et språkmodellkall. Den henter hver
+evidenslenkes kildeversjon på nytt, sammenligner fingeravtrykket, og sammenligner deretter
+påstandens strukturerte betydning felt for felt med det registrerte grunnlaget.
+
+Asymmetrien er den samme som for ekstraksjonskontrollen (§25.1), og strengere: **kontrollen kan
+falsifisere, men aldri bekrefte.**
+
+| Funn | Utfall | Hvorfor |
+| --- | --- | --- |
+| Ingen lenke er ført som `supports` eller `partially_supports` | `deviation` på kildestøtte | En påstand uten en eneste støttende lenke er ikke etterprøvbar slik den er formulert (§4) |
+| Et utdrag ekstraksjonen bygger på står ikke lenger ordrett i kildeversjonen | `deviation` | Grunnlaget påstanden hviler på lar seg ikke etterprøve mot kilden |
+| En støttende lenke rapporterer en annen retning enn påstanden konkluderer med | `deviation` | En «støttende» kilde som peker motsatt vei, støtter ikke |
+| En `contradicts`-lenke rapporterer den samme retningen som påstanden | `deviation` | Relasjonstypen er motsagt av grunnlaget (§40) |
+| Komparatoren i grunnlaget er en annen enn påstandens | `deviation` | En kontrast mellom to armer er ikke en endring fra behandlingsstart |
+| En lenke ført som `direct` gjelder en annen populasjon enn påstanden | `deviation` | Lenken hevder en direkthet den ikke har. Er lenken ført som `indirect`, er avviket erkjent, og utfallet er uavklart framfor et avvik |
+| Grunnlaget måler et tidspunkt helt utenfor påstandens tidsrom | `deviation` | Delvis overlapp gir derimot `not_assessable`: om grunnlaget dekker hele tidsrommet, er en faglig vurdering |
+| Påstanden tallfester en størrelse ingen støttende lenke oppgir med samme mål og enhet | `deviation` | En påstand skal ikke være mer presis enn grunnlaget under den (§4, §6) |
+| Grunnlaget er indirekte, delvis støttende eller motstridende, og påstanden har ingen forbehold | `deviation` | Det ene falsifiserbare tilfellet av «mangler vesentlige forbehold» |
+| Alt over holder | `uncertain` | Se under |
+
+Tre av de sju kontrollpunktene kan aldri bli `ok` fra denne kontrollen: om ordlyden faktisk er
+dekket, og om vesentlige forbehold mangler, krever språkforståelse — og om det finnes
+urepresentert motstridende evidens, kan ikke besvares fra basen i det hele tatt, fordi fravær
+av registrert motstridende evidens ikke er fravær av slik evidens
+(`ANTIDEP_CONSTITUTION.md` §17). Kontrollen fører de ulenkede kandidatene opp som funn, og lar
+punktet stå uavklart.
+
+Siden `verified` krever at alle sju punktene holder, **kan denne kontrollen ikke produsere en
+bekreftelse**, og publiseringsgatens G9 blokkerer på resultatet. Det er riktig svar, ikke en
+mangel: en kontroll som ikke konkluderte, er ikke en bekreftelse (§6, §11). Et senere ledd med
+språkmodell er et nytt adapter i samme modell — kjøringen registrerer leverandør, modell og
+modellversjon som ethvert annet agentledd (§65), så de to kan stå ved siden av hverandre.
+
+**Verifikatoren registrerer ingenting når den ikke har sett grunnlaget.** Mangler én av
+lenkenes kildeversjoner eller fingeravtrykk, lot en kilde seg ikke hente, eller stemmer ikke
+fingeravtrykket, registreres ingen rad for den revisjonen — kontrollen må dekke hele settet, og
+en usann `source_access` er verre enn en manglende rad. Avviket står i kjøringens
+`output_manifest`.
+
 ## 40. Relasjonstype skal kontrolleres
 
 Verifikatoren skal kunne godkjenne eller endre relasjonen til for eksempel:
@@ -753,6 +810,13 @@ Verifikatoren skal kunne godkjenne eller endre relasjonen til for eksempel:
 - `context_only`
 
 En kilde skal ikke stå som `supports` bare fordi den nevner samme legemiddel eller tema.
+
+Kontrollen av den enkelte relasjonstypen registreres per lenke i
+`workflow.claim_verification_citations.relationship_supported`. Den deterministiske
+verifikatoren setter aldri `ok` der: at et evidensfunn peker samme vei som påstanden, er ikke
+det samme som at det underbygger denne formuleringen. Det den kan avgjøre, er om den
+registrerte relasjonstypen er *motsagt* av grunnlaget — og en bekreftet claim-verifikasjon kan
+ikke ha en eneste uavklart eller avvikende lenke under seg.
 
 ## 41. Vanlige feil som skal fanges
 

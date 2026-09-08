@@ -31,7 +31,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(35);
+select plan(38);
 
 create temporary table fixture (name text primary key, id uuid not null) on commit drop;
 
@@ -79,6 +79,15 @@ insert into workflow.user_roles
 values
   ('bbbbbbbb-0000-0000-0000-000000000001', 'reviewer', null, now() - interval '1 year',
    (select id from fixture where name = 'verifier'), 'Generell reviewer-rolle.',
+   now() - interval '1 year'),
+  -- Verifikatoren trenger selv reviewer-rollen fra og med migrasjon 005j: en
+  -- claim-verifikasjon krever mandat, og for et menneske er mandatet nettopp
+  -- reviewer-rollen for innholdsområdet (MVP_IMPLEMENTATION_PLAN.md §74.30
+  -- punkt 3). Rollen er ikke det samme som godkjenningsretten — det er
+  -- reviewbeslutningen i workflow.review_decisions som er godkjenningen, og den
+  -- registreres av reviewer-250.
+  ('bbbbbbbb-0000-0000-0000-000000000003', 'reviewer', null, now() - interval '1 year',
+   (select id from fixture where name = 'reviewer_global'), 'Generell reviewer-rolle for verifikatoren.',
    now() - interval '1 year');
 alter table workflow.user_roles enable trigger user_roles_set_row_timestamps;
 
@@ -109,6 +118,31 @@ with inserted as (
   returning id
 )
 insert into fixture (name, id) select 'rev', id from inserted;
+
+-- Registrerer en bekreftet claim-verifikasjon for revisjonen, med avtrykket av
+-- evidenssettet slik det er akkurat nå (migrasjon 005j).
+--
+-- Brukes hver gang fixturen utvider eller bytter ut grunnlaget. G9b krever at
+-- den gjeldende kontrollen gjelder det settet som ville blitt publisert, så uten
+-- en ny kontroll ville G9b felt en test som er skrevet for å felle på G13 — og
+-- da ville G13 stått uprøvd bak den. Rekkefølgen «G9b først, så G13» er derfor
+-- prøvd eksplisitt hvert sted, framfor å bli antatt.
+--
+-- p_at er alltid oppgitt: «den gjeldende kontrollen» er den siste sortert på
+-- verified_at, og inne i én transaksjon gir now() samme tidspunkt hver gang.
+create function pg_temp.verify_claim(p_revision uuid, p_at timestamptz)
+returns void language sql as $$
+  insert into workflow.claim_verifications
+    (claim_revision_id, verified_revision_creator_actor_id, verifier_actor_id, outcome,
+     source_access, source_support, population_match, comparator_match, timeframe_match,
+     direction_and_magnitude, qualifiers_complete, contradictory_evidence_represented,
+     rationale, verified_at)
+  select r.id, r.created_by_actor_id, v.id, 'verified', 'original_source',
+         'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok',
+         'Fornyet kontroll mot det utvidede grunnlaget.', p_at
+  from knowledge.claim_revisions r, fixture v
+  where r.id = p_revision and v.name = 'verifier';
+$$;
 
 -- ---------------------------------------------------------------------------
 -- Gatene, én om gangen
@@ -589,6 +623,19 @@ select r.id, e.id, 'supports', 'direct',
 from fixture r, fixture e
 where r.name = 'fact_rev' and e.name = 'evidence_a';
 
+-- G9b slår ut først: kontrollen gjaldt et smalere sett enn det som nå ville
+-- blitt publisert, og en bekreftelse av et smalere grunnlag er ikke en
+-- bekreftelse av det utvidede (migrasjon 005j).
+select throws_like(
+  $$select knowledge.assert_claim_revision_publishable(
+      (select id from fixture where name = 'fact_rev'))$$,
+  '%endret etter den gjeldende claim-verifikasjonen%',
+  'en utvidelse av evidenssettet gjør den gjeldende claim-verifikasjonen utdatert'
+);
+
+select pg_temp.verify_claim(
+  (select id from fixture where name = 'fact_rev'), now() - interval '9 days');
+
 select throws_like(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'fact_rev'))$$,
@@ -717,6 +764,17 @@ select is(
   'den opprinnelige tidsregelen ville ikke funnet noen lenke registrert etter godkjenningen'
 );
 
+-- Samme rekkefølge som over: kontrollen er utdatert før godkjenningen er det.
+select throws_like(
+  $$select knowledge.assert_claim_revision_publishable(
+      (select id from fixture where name = 'race_rev'))$$,
+  '%endret etter den gjeldende claim-verifikasjonen%',
+  'også her fanger avtrykket at kontrollen gjaldt et annet sett, uansett tidsstempler'
+);
+
+select pg_temp.verify_claim(
+  (select id from fixture where name = 'race_rev'), now() - interval '9 days');
+
 select throws_like(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'race_rev'))$$,
@@ -767,6 +825,16 @@ select is(
   2::bigint,
   'antallet evidenslenker er uendret etter utskiftingen'
 );
+select throws_like(
+  $$select knowledge.assert_claim_revision_publishable(
+      (select id from fixture where name = 'race_rev'))$$,
+  '%endret etter den gjeldende claim-verifikasjonen%',
+  'avtrykket fanger et utskiftet evidenssett selv når antallet er det samme, også for claim-verifikasjonen'
+);
+
+select pg_temp.verify_claim(
+  (select id from fixture where name = 'race_rev'), now() - interval '8 days');
+
 select throws_like(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'race_rev'))$$,
