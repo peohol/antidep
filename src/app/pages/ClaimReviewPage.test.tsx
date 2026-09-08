@@ -391,6 +391,23 @@ describe('Reviewarbeidsflaten — egen påstand', () => {
 })
 
 describe('Reviewarbeidsflaten — avvisninger', () => {
+  it('viser en teknisk feil som en feil, aldri som en publiseringsblokkering', async () => {
+    // Databasen konverterer bare publiseringsgatens egen avvisning til en
+    // blokkering (migrasjon 005p); alt annet feller hele kallet. Flaten må da si
+    // at dette er en teknisk feil og ikke et svar om innholdet — ellers ville en
+    // regresjon i gaten sett ut som en faglig mangel.
+    renderRoute(PATH, {
+      api: {
+        claim_review_workspace: { error: 'internal error i publiseringsgaten' },
+      },
+      auth: { initialUserId: TEST_USER_IDS.a },
+    })
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Dette er en teknisk feil, ikke et svar om at påstanden ikke kan publiseres',
+    )
+    expect(screen.queryByText('Publiseringen er blokkert.')).toBeNull()
+  })
+
   it('viser databasens avvisning som en feil, aldri som et tomt grunnlag', async () => {
     renderRoute(PATH, {
       api: {

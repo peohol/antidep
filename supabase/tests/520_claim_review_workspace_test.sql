@@ -18,7 +18,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(32);
+select plan(36);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -508,6 +508,109 @@ select is(
   '{"status": "passes"}'::jsonb,
   'når begge beslutningene er registrert, slipper publiseringsgaten gjennom'
 );
+
+-- ===========================================================================
+-- Del 7 — Bare gatens egen avvisning er en blokkering
+--
+-- Flaten kaller publiseringsgaten på ekte og gjengir avvisningen ordrett. Det er
+-- riktig for gatens egen avvisning — `restrict_violation`, koden den bruker på
+-- hvert eneste av sine vilkår — og det er feil for alt annet: en regresjon i
+-- gaten, et manglende objekt eller en rettighetsfeil er en teknisk feil, og hvis
+-- den gjengis som «publiseringen er blokkert», skjuler den seg som en
+-- innholdsmangel på nøyaktig den flaten som skal være fasit for om innholdet er
+-- klart (migrasjon 005p).
+--
+-- Prøven er en mutasjon: gatefunksjonen byttes ut med varianter som kaster hver
+-- sin kode, og flaten skal skille dem. Endringene rulles tilbake sammen med
+-- transaksjonen.
+-- ===========================================================================
+create or replace function knowledge.assert_claim_revision_publishable(p_claim_revision_id uuid)
+  returns void
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  raise exception using
+    errcode = 'restrict_violation',
+    message = 'Mutert gate: en ordinær faglig blokkering.',
+    hint = 'Mutert gate: hintet.';
+end;
+$$;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"52000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+insert into workspace select 'mutert blokkering',
+  api.claim_review_workspace('52000000-0000-4000-8000-000000000031');
+reset role;
+
+select is(
+  (select payload #> '{revision,publication_gate}' from workspace where label = 'mutert blokkering'),
+  jsonb_build_object(
+    'status', 'blocked',
+    'sqlstate', '23001',
+    'message', 'Mutert gate: en ordinær faglig blokkering.',
+    'hint', 'Mutert gate: hintet.'
+  ),
+  'gatens egen avvisning gjengis ordrett som en blokkering'
+);
+
+-- En intern feil i gaten. Skal ikke bli en blokkering.
+create or replace function knowledge.assert_claim_revision_publishable(p_claim_revision_id uuid)
+  returns void
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  raise exception using
+    errcode = 'internal_error',
+    message = 'Mutert gate: en intern feil, ikke en faglig mangel.';
+end;
+$$;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"52000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+select throws_ok(
+  $$select api.claim_review_workspace('52000000-0000-4000-8000-000000000031')$$,
+  'XX000', 'Mutert gate: en intern feil, ikke en faglig mangel.',
+  'en teknisk feil i gaten feller hele kallet, framfor å bli presentert som en publiseringsblokkering'
+);
+reset role;
+
+-- En rettighetsfeil. Samme krav: hele kallet feiler.
+create or replace function knowledge.assert_claim_revision_publishable(p_claim_revision_id uuid)
+  returns void
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  raise exception using
+    errcode = 'insufficient_privilege',
+    message = 'Mutert gate: en rettighetsfeil.';
+end;
+$$;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"52000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+select throws_ok(
+  $$select api.claim_review_workspace('52000000-0000-4000-8000-000000000031')$$,
+  '42501', 'Mutert gate: en rettighetsfeil.',
+  'en rettighetsfeil i gaten feller hele kallet, framfor å bli presentert som en publiseringsblokkering'
+);
+reset role;
+
+-- Og køen, som ikke kaller gaten i det hele tatt, er upåvirket av en gate som
+-- kaster: en teknisk feil på én revisjon skal ikke ta ned oversikten.
+select set_config('request.jwt.claims',
+                  '{"sub":"52000000-0000-4000-8000-000000000080"}', true);
+set local role authenticated;
+select lives_ok(
+  $$select api.claim_review_workspace()$$,
+  'arbeidskøen leser ikke gaten, og felles derfor ikke av en gate som kaster'
+);
+reset role;
 
 select finish();
 rollback;

@@ -546,7 +546,10 @@ function ClaimReviewFetch({
     case 'error':
       return (
         <div className="knowledge-notice knowledge-notice--error" role="alert">
-          <p className="knowledge-notice__lead">Antidep fikk ikke hentet grunnlaget.</p>
+          <p className="knowledge-notice__lead">
+            Antidep fikk ikke hentet grunnlaget. Dette er en teknisk feil, ikke et svar om at
+            påstanden ikke kan publiseres — grunnlaget under er ufullstendig eller helt fraværende.
+          </p>
           <p className="knowledge-notice__detail">Teknisk årsak: {review.message}</p>
           <p className="knowledge-notice__caveat">
             Mangler kontoen din reviewer-rollen for dette innholdsområdet, står grunnen i teksten

@@ -1489,7 +1489,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1714 pgTAP-assertions over 53 testfiler.
+Databaselaget teller nå 1718 pgTAP-assertions over 53 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1657,15 +1657,15 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   39 enum-typer, fordelt på de førtién migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   39 enum-typer, fordelt på de førtito migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
-   005m, 005n, 006d og 005o — i
+   005m, 005n, 006d, 005o og 005p — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle førtién ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle førtito ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -5847,6 +5847,7 @@ mot de reelle radene i det hostede prosjektet.
 | 005n | `workflow.assert_reviewer_authorized(uuid)`, `workflow.assert_evidence_set_unchanged(uuid, text)`, `workflow.record_claim_verification(...)` som begge skriveveier deler, og `api.register_human_claim_verification(...)` |
 | 006d | Auditskriver og trigger på `workflow.review_decisions`, og `api.register_publication_approval(...)` |
 | 005o | `api.claim_review_workspace(uuid)` — arbeidsflaten, med publiseringsgaten lest av gaten selv |
+| 005p | Rettelse av et funn i teknisk review; se under |
 
 **To dører som har vært låst innenfra siden migrasjon 005, er åpnet — uten at noen regel er
 myket opp.** Den menneskelige grenen av `workflow.claim_verifier_has_mandate(...)` har vært
@@ -5953,6 +5954,23 @@ registrert gjennom sin egen faktiske skrivevei).
 at kallet fortsatt avvises — av radens egen mandatkontroll og av
 `workflow.enforce_reviewer_qualification()`. Uten dem ville testene bare prøvd at skriveveien
 sier nei, ikke at regelen er sann.
+
+---
+
+**Rettet i teknisk review: en teknisk feil kunne sett ut som en faglig mangel.** 005o fanget
+`when others` rundt publiseringsgaten og gjorde **enhver** feil om til
+`publication_gate.status = 'blocked'`. For gatens egen avvisning var det riktig; for alt annet
+var det stikk motsatt av hensikten. En regresjon i gatefunksjonen, et manglende objekt eller en
+rettighetsfeil ville blitt presentert for revieweren som «publiseringen er blokkert, gaten
+stopper på det første kravet som ikke er oppfylt» — på nøyaktig den flaten som skal være fasit
+for om innholdet er klart. Ingen ville lett etter en teknisk feil der.
+
+005p smalner fangsten til `restrict_violation`, koden gaten avviser med på hvert eneste av sine
+vilkår. Alt annet propagerer, hele kallet feiler, og flaten sier det den skal: at dette er en
+teknisk feil og ikke et svar om innholdet. Prøven er en mutasjon i
+`520_claim_review_workspace_test.sql`: gatefunksjonen byttes ut med varianter som kaster hver
+sin kode, og flaten må skille dem. Feilen er reprodusert først — med `when others` gir begge de
+tekniske mutasjonene «no exception» der testen krever en — og deretter borte.
 
 **Neste steg.** Den menneskelige ekstraksjonskontrollen — speilbildet av 005n for
 `workflow.evidence_verifications` — som egen, senere PR. Den er det siste leddet som mangler
