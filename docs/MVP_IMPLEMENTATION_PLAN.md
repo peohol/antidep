@@ -1386,7 +1386,8 @@ PR G  db: add publication events and gate                                   (#15
       db: add the extraction verification registration write path            (#50)  merget   migrasjon 008d, 005g
       feat: run the extraction verifier from source version to verification (#51)  merget   migrasjon 008e, 007f, 005h
       ops: activate the extraction verifier in the hosted project           (#56)  merget   ingen migrasjon
-      feat: verify claims against their registered evidence                 (#57)  åpen     migrasjon 008f, 005i, 005j, 005k, 006c, 005l
+      feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
+      feat: add the human claim review and publication approval flow        (#59)  åpen     migrasjon 008g, 005m, 005n, 006d, 005o
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1641,6 +1642,15 @@ motstridende evidens mangler. **Det som gjenstår for Milepæl B er derfor forts
 tingene** — en bekreftet ekstraksjonskontroll bak G4/G5, en bekreftet claim-kontroll bak
 G8/G9, og den menneskelige godkjenningen bak G11/G12/G13 — men maskineriet foran alle tre er nå
 bygget, prøvd og kjørt mot reelle rader. Den gjeldende avlesningen står i §74.35.
+
+**Den menneskelige flyten er siden bygget, og den er den ene av de tre som har en vei fram uten
+nytt maskineri.** §74.36 bygger skriveveiene og den redaksjonelle flaten for begge de
+menneskelige beslutningene: kontrollen mot grunnlaget (G8/G9) og publiseringsgodkjenningen
+(G11/G12/G13). Hele kjeden er prøvd mot de reelle radene og passerer gaten når begge
+beslutningene er registrert. Ingen av dem *er* registrert i produksjon, og det er med hensikt:
+begge er faglige vurderinger som hører til revieweren, ikke til en migrasjon eller en
+agentsesjon. Det som gjenstår er dermed ikke lenger maskineri, men to reelle mangler — en
+ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 
 ### 74.5 Beslutninger tatt før migrasjon 007 eksponerte verdier utad
 
@@ -5819,6 +5829,134 @@ tingene §74.4 lister, den menneskelige godkjenningen (G11/G12/G13), står urør
 
 **Neste steg.** Reviewbeslutningen — `workflow.review_decisions` og den redaksjonelle flaten
 for å registrere en `publication_approval` — som egen, senere PR.
+
+---
+
+### 74.36 Den menneskelige reviewen er bygget, og hele kjeden er prøvd mot de reelle radene
+
+§74.35 endte med ett neste steg: reviewbeslutningen som egen PR. Denne leveransen bygger den
+hele veien — begge skriveveiene, den redaksjonelle flaten, og testene — og prøver hele kjeden
+mot de reelle radene i det hostede prosjektet.
+
+**Fem migrasjoner.**
+
+| Migrasjon | Hva den gjør |
+| --- | --- |
+| 008g | `audit.event_operation` får `review_decision_registered`. Alene i sin egen fil, fordi `ALTER TYPE ... ADD VALUE` ikke kan brukes i samme transaksjon som verdien |
+| 005m | `workflow.claim_evidence_dossier(uuid)` — grunnlaget for en påstandskontroll, ett sted. `api.claim_verification_input(...)` bygger svaret sitt av den |
+| 005n | `workflow.assert_reviewer_authorized(uuid)`, `workflow.assert_evidence_set_unchanged(uuid, text)`, `workflow.record_claim_verification(...)` som begge skriveveier deler, og `api.register_human_claim_verification(...)` |
+| 006d | Auditskriver og trigger på `workflow.review_decisions`, og `api.register_publication_approval(...)` |
+| 005o | `api.claim_review_workspace(uuid)` — arbeidsflaten, med publiseringsgaten lest av gaten selv |
+
+**To dører som har vært låst innenfra siden migrasjon 005, er åpnet — uten at noen regel er
+myket opp.** Den menneskelige grenen av `workflow.claim_verifier_has_mandate(...)` har vært
+håndhevet, prøvd og dokumentert siden 005j, men uadresserbar: den eneste veien inn i
+`workflow.claim_verifications` krevde agentlegitimasjon og en åpen agentkjøring. Uten den kan
+ingen påstand noensinne komme forbi G9, fordi den deterministiske kontrollen per konstruksjon
+ikke kan gi `verified` (§74.35). Det samme gjaldt `workflow.review_decisions`, som G11, G12 og
+G13 har lest siden migrasjon 006 uten at noen kunne skrive raden.
+
+Ingen CHECK, constraint, trigger, policy eller grant er fjernet eller svekket, og ingen ny
+direkte tabelltilgang er gitt til `anon` eller `authenticated`. Mandatet er det samme
+uttrykket, dekningskontrollen den samme funksjonen, `verified`-kravet den samme CHECK-en,
+append-only den samme triggeren, og selvverifikasjon og selvgodkjenning de samme
+constraintene.
+
+**Ett nytt vilkår, og bare på de menneskelige veiene.** Begge skriveveiene krever at kalleren
+oppgir avtrykket av det evidenssettet flaten faktisk viste. En menneskelig vurdering tar tid;
+kommer det en evidenslenke til i vinduet, gjelder vurderingen et annet grunnlag enn det som
+ble vurdert — og den nye lenken kan være nettopp den motstridende evidensen kontrollen skulle
+lete etter. Publiseringsgatens G9b og G13 er fortsatt fasiten ved publisering; dette kommer i
+tillegg og sier fra med en gang. Agentveien har ikke vilkåret, fordi lesegrunnlag og
+registrering skjer i samme kjøring.
+
+**Grunnlaget finnes bare i én formulering, og det er den viktigste avgjørelsen i leveransen.**
+Reviewflaten skal vise nøyaktig det claim-verifikatoren arbeider mot. Projeksjonen er derfor
+flyttet ut i `workflow.claim_evidence_dossier(uuid)`, og `api.claim_verification_input(...)`
+bygger svaret sitt av den. To formuleringer ville før eller siden latt mennesket og maskinen
+kontrollere påstanden mot hvert sitt bilde av evidensen — nøyaktig den feilen
+`ANTIDEP_CONSTITUTION.md` §4 og §9 finnes for å hindre. Det samme grepet er gjort for
+registreringen: `workflow.record_claim_verification(...)` er den ene kroppen begge skriveveiene
+går gjennom, slik at den ene ikke kan slippe gjennom det den andre stenger.
+
+**Blokkeringer leses av gaten selv.** `api.claim_review_workspace(uuid)` kaller
+`knowledge.assert_claim_revision_publishable(uuid)` på ekte og returnerer avvisningen ordrett,
+framfor å regne ut «er den klar?» på nytt. Gaten stopper på det første vilkåret som svikter, så
+flaten navngir én blokkering om gangen. Det er prisen for at flaten aldri kan si «klar» om noe
+gaten stenger.
+
+**Flaten har to handlinger, ikke én.** Kontrollen mot grunnlaget (§11) og beslutningen om å
+publisere (§12) er to forskjellige faglige utsagn, lagret som to beslutningsobjekter, og gaten
+krever dem hver for seg. En samlet «godkjenn alt»-knapp ville latt ett museklikk stå for to
+vurderinger som skal kunne skilles i ettertid.
+
+---
+
+**Kjeden er prøvd i produksjon. Dette er avlesningen.**
+
+| Ledd | Avlesning |
+| --- | --- |
+| 1. Deploy | Fem migrasjoner kjørt med `./scripts/deploy-migrations.sh`; etterpå førtién rader mot førtién filer |
+| 2. Agentens lesegrunnlag | `md5` av `revisions` fra `api.claim_verification_input(...)` for begge produksjonsrevisjonene er **uendret** før og etter deploy: `68e07d76…` og `ea05a3a2…`. Legitimasjonen ble utstedt i en transaksjon som ble rullet tilbake, så ingen versjon er rotert |
+| 3. Lesing som redaktør | `api.claim_review_workspace()` gir to revisjoner i køen; oppslaget på én gir ett evidensfunn, én registrert kontroll, GRADE-sikkerhet `very_low` og én kandidat for urepresentert evidens |
+| 4. Hele kjeden | Kjørt mot revisjon `724bc69b…` i én transaksjon som ble rullet tilbake; se tabellen under |
+| 5. Etterkontroll | To claim-verifikasjoner, null `verified`, null reviewbeslutninger, null publiseringer, uendret legitimasjonsversjon, ingen nye agentkjøringer |
+
+| Steg | Svar fra gaten |
+| --- | --- |
+| Slik det står nå | Blokkert av G5: `Evidensfunn med åpent verifikasjonsfunn: 5b98b916…` |
+| Med en syntetisk fullstendig ekstraksjonsbekreftelse | Blokkert av G9: claim-kontrollen konkluderer ikke med `verified` |
+| Menneskelig claim-verifikasjon registrert gjennom skriveveien | Rad `0b58e0ed…`. Den utsatte dekningskontrollen ble tvunget fram **mens rollen var `authenticated`** — samme situasjon commit gir — og passerte |
+| Etter kontrollen | Blokkert av G11: ikke godkjent av en kvalifisert redaktør |
+| Publiseringsgodkjenning registrert gjennom skriveveien | Rad `ac24856a…` |
+| Etter godkjenningen | **Hele publiseringsgaten passerer** |
+| Publisering | `42501: Brukeren har ikke gyldig publisher-rolle for dette innholdsområdet.` |
+
+Det siste leddet er den positive assertionen for G8, G9, G9b, G9c, G10, G11, G12 og G13
+samtidig: alle passerte, og det som stoppet publiseringen var en rettighet, ikke en gate.
+
+**Kontrollen i steg 3 er syntetisk, og det er ikke en formalitet.** Den ble registrert med alle
+sju punktene satt til `ok` for å prøve at skriveveien og gaten virker mot de reelle radene, og
+transaksjonen ble rullet tilbake. Den er ikke en faglig vurdering av innholdet, og ingen
+`verified` claim-verifikasjon er registrert i produksjon. Den vurderingen hører til revieweren
+— å registrere den fra en agentsesjon ville vært å gjøre nøyaktig det
+`ANTIDEP_CONSTITUTION.md` §12 forbyr. Ingen klinisk verdi er endret for å få gaten grønn.
+
+**Hva som fortsatt stopper publisering, og hvorfor sperren står.** To reelle ting, og ingen av
+dem er teknisk:
+
+1. **Ekstraksjonskontrollene konkluderer med `uncertain`** for begge revisjonene, så G5
+   blokkerer. Det er en faglig mangel: den deterministiske kontrollen fant ikke utdragene den
+   trengte for å bekrefte alle feltene funnet påstår noe om (§74.34). En menneskelig
+   ekstraksjonskontroll ville løst den, og den skriveveien finnes ikke ennå — den er
+   speilbildet av 005n for `workflow.evidence_verifications`, og hører til sin egen PR.
+2. **Ingen `publisher`-tildeling finnes.** Kontoen har `editor` og `reviewer`. Å godkjenne og
+   å publisere er forskjellige rettigheter (§16), og den tredje er ikke tildelt. Det er en
+   avgjørelse for prosjekteieren, ikke for en migrasjon.
+
+**Hva som gjenstår for Milepæl B.** G8, G9, G11, G12 og G13 kan nå lukkes for en revisjon ved
+at en kvalifisert reviewer gjør vurderingen i flaten. G4 og G5 kan det ikke: de krever en
+ekstraksjonskontroll som konkluderer, og den finnes verken som resultat eller som menneskelig
+skrivevei. Publisering krever i tillegg en `publisher`-tildeling. Avstanden mellom golden slice
+og Milepæl B er dermed tre ting, og bare den første er kode.
+
+**Testene.** Fire nye pgTAP-filer: `500` (den menneskelige skriveveien inn i
+`workflow.claim_verifications`, med hver autorisasjonsgren, selvverifikasjon, endret
+evidenssett, append-only og direkte omgåelse), `510` (publiseringsgodkjenningen, med de samme
+grenene og vokabularet), `520` (arbeidsflaten, køens avgrensning, og assertionen om at
+agentens lesegrunnlag er *nøyaktig* det samme uttrykket flaten viser) og `530` (hele
+beslutningskjeden fra deterministisk `uncertain` til publisert påstand, med hvert ledd
+registrert gjennom sin egen faktiske skrivevei).
+
+`500` og `510` har hver sin mutasjonstest av den sikkerhetskritiske kontrollen: de bytter ut
+`workflow.assert_reviewer_authorized(uuid)` med en variant som slipper alle gjennom, og krever
+at kallet fortsatt avvises — av radens egen mandatkontroll og av
+`workflow.enforce_reviewer_qualification()`. Uten dem ville testene bare prøvd at skriveveien
+sier nei, ikke at regelen er sann.
+
+**Neste steg.** Den menneskelige ekstraksjonskontrollen — speilbildet av 005n for
+`workflow.evidence_verifications` — som egen, senere PR. Den er det siste leddet som mangler
+før en påstand kan komme helt gjennom på faglig grunnlag alene.
 
 ---
 

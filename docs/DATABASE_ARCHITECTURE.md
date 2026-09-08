@@ -757,13 +757,29 @@ Dette kan ligge i:
 workflow.claim_verifications
 ```
 
-Skriveveien inn i `workflow.claim_verifications` er `api.register_claim_verification(...)`:
-en autentisert agentidentitet i rollen `citation_support_verification`, inne i en åpen
-`provenance.agent_run` i samme rolle. Aktør, rolle og kjøring er ikke parametre kalleren
-oppgir — de utledes av autentiseringen (§49) og av kjøringen selv (§33) — og bindingen mellom
-verifikasjonsraden og kjøringen er deklarativ, med to sammensatte fremmednøkler mot
-`provenance.agent_runs (id, actor_id)` og `(id, agent_role)`, som §33 og §59 beskriver.
-Grunnlaget verifikatoren arbeider fra, leses gjennom `api.claim_verification_input(...)`.
+Det finnes to skriveveier inn i `workflow.claim_verifications`, én per aktørtype mandatet
+under åpner for. Begge registrerer gjennom det samme leddet
+(`workflow.record_claim_verification(...)`), slik at de ikke kan komme i utakt om hvilke
+invarianter som gjelder.
+
+- **Agenten:** `api.register_claim_verification(...)` — en autentisert agentidentitet i rollen
+  `citation_support_verification`, inne i en åpen `provenance.agent_run` i samme rolle. Aktør,
+  rolle og kjøring er ikke parametre kalleren oppgir — de utledes av autentiseringen (§49) og
+  av kjøringen selv (§33) — og bindingen mellom verifikasjonsraden og kjøringen er deklarativ,
+  med to sammensatte fremmednøkler mot `provenance.agent_runs (id, actor_id)` og
+  `(id, agent_role)`, som §33 og §59 beskriver.
+- **Mennesket:** `api.register_human_claim_verification(...)` — den innloggede brukerens egen
+  aktør, med gyldig `reviewer`-rolle for påstandens kliniske tema
+  (`workflow.assert_reviewer_authorized(uuid)`). `agent_run_id` er da NULL: en menneskelig
+  vurdering har ingen agentkjøring. Kalleren må oppgi avtrykket av det evidenssettet flaten
+  faktisk viste; er settet utvidet mens vurderingen pågikk, avvises registreringen framfor å
+  dekke noe revieweren ikke har sett.
+
+Grunnlaget begge arbeider fra, er det samme uttrykket:
+`workflow.claim_evidence_dossier(uuid)`. Agenten leser det gjennom
+`api.claim_verification_input(...)`, mennesket gjennom `api.claim_review_workspace(uuid)`. To
+formuleringer av grunnlaget ville latt mennesket og maskinen kontrollere påstanden mot hvert
+sitt bilde av evidensen.
 
 Tre invarianter ut over de sju kontrollpunktene, alle håndhevet på raden og ikke bare i
 skriveveien:
@@ -811,6 +827,25 @@ created_at
 ```
 
 Dette gjør det mulig å bevare både godkjenninger, avslag og senere omgjøringer.
+
+Skriveveien inn i `workflow.review_decisions` for en publiseringsgodkjenning er
+`api.register_publication_approval(...)`. Reviewer er den innloggede brukerens egen aktør og
+er ikke en parameter; `review_type` er alltid `publication_approval`, `decided_at` er alltid
+`now()`, forfatteren av revisjonen leses fra revisjonen selv, og
+`approved_evidence_set_digest` beregnes av databasen (§38). Kalleren må oppgi avtrykket av det
+evidenssettet flaten faktisk viste, av samme grunn som for claim-verifikasjonen i §30.
+
+Tre invarianter håndheves på raden og ikke bare i skriveveien: reviewer må være en menneskelig
+aktør (deklarativt, med en sammensatt fremmednøkkel mot `provenance.actors (id, actor_type)`
+og en CHECK), reviewer kan ikke være den som formulerte objektet, og rollen må ha vært gyldig
+på beslutningstidspunktet med en tildelingsrad som fantes senest da. Raden er append-only, og
+enhver innsetting etterlater en `review_decision_registered`-rad i `audit.events` (§35), med
+beslutningens egen begrunnelse i `reason`.
+
+Beslutningen om at innholdet kan publiseres, er ikke den samme som kontrollen av at det holder
+mot grunnlaget: de er to beslutningsobjekter i to tabeller, og publiseringsgaten krever dem
+hver for seg. En redaksjonell flate skal derfor ha to atskilte handlinger, ikke én samlet
+godkjenning.
 
 ---
 
