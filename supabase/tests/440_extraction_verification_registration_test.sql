@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(24);
+select plan(26);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -544,8 +544,59 @@ reset role;
 -- Begge forsøkene bruker det tredje funnet, laget av redaktøren: verken
 -- verifikator-aktøren som forsøkes eller den ekte kjøringsaktøren er den samme
 -- som skapte funnet, slik at evidence_verifications_separate_actor_check ikke
--- er det som slår ut — det er nettopp de to nye fremmednøklene fra denne
--- migrasjonen som skal fange forsøket.
+-- er det som slår ut.
+--
+-- Fra migrasjon 005q ligger det et lag til foran de to fremmednøklene:
+-- mandattriggeren, som er BEFORE INSERT og derfor fyrer før constraintene. Delen
+-- prøver derfor begge lagene, i den rekkefølgen de faktisk virker — først at
+-- mandatet avviser, og deretter, med mandatkontrollen byttet ut mot en variant
+-- som slipper alle gjennom, at de to fremmednøklene fortsatt fanger forsøket.
+-- Uten mutasjonen ville filen bare prøvd at *noe* sa nei, ikke at
+-- fremmednøklene fra migrasjon 005g fortsatt er der.
+select throws_ok(
+  $$
+    insert into workflow.evidence_verifications (
+      evidence_item_id, verified_item_creator_actor_id, verifier_actor_id,
+      outcome, source_access, checked_fields, findings, rationale, verified_at, agent_run_id
+    )
+    select '44000000-0000-4000-8000-000000000013',
+           (select id from fixture where name = 'editor'),
+           (select id from fixture where name = 'extractor'),
+           'uncertain', 'verifiable_representation',
+           array['source_locator']::workflow.evidence_check_field[],
+           'Prøve i 440: ikke konkludert.',
+           'Prøve i 440: forsøker å attribuere raden til en annen aktør enn kjøringens egen.',
+           now(), (select id from run where label = 'verifier-open')
+  $$,
+  '42501', 'Verifikatoraktøren hadde ikke mandat til å kontrollere denne ekstraksjonen mot kilden.',
+  'mandatet avviser en rad attribuert til en ekstraksjonsagent, uansett hvilken kjøring den peker på'
+);
+select throws_ok(
+  $$
+    insert into workflow.evidence_verifications (
+      evidence_item_id, verified_item_creator_actor_id, verifier_actor_id,
+      outcome, source_access, checked_fields, findings, rationale, verified_at, agent_run_id
+    )
+    select '44000000-0000-4000-8000-000000000013',
+           (select id from fixture where name = 'editor'),
+           (select id from fixture where name = 'verifier'),
+           'uncertain', 'verifiable_representation',
+           array['source_locator']::workflow.evidence_check_field[],
+           'Prøve i 440: ikke konkludert.',
+           'Prøve i 440: riktig verifikatoraktør, men kjøringen tilhører en annen.',
+           now(), (select id from run where label = 'extractor-open')
+  $$,
+  '23503', null,
+  'en verifikasjon kan ikke peke på en agentkjøring som tilhører en annen aktør enn den raden attribueres til'
+);
+
+-- Mutasjonen: mandatkontrollen byttes ut mot en variant som slipper alle
+-- gjennom. Fremmednøklene skal fortsatt fange begge forsøkene. Transaksjonen
+-- rulles tilbake, så endringen finnes bare her.
+create or replace function workflow.evidence_verifier_has_mandate(
+  p_verifier_actor_id uuid, p_evidence_item_id uuid, p_at timestamptz
+) returns boolean language sql immutable as $mutant$ select true $mutant$;
+
 select throws_ok(
   $$
     insert into workflow.evidence_verifications (

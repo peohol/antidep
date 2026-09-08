@@ -41,6 +41,11 @@ values
    'Systemaktør for immutabilitetstestene.', null, null),
   ('agent', 'agent:immutabilitet', 'Testverifikator',
    'KI-aktør i kontrollrollen for immutabilitetstestene.', null, 'adversarial_review'),
+  -- Ekstraksjonskontrollen krever mandatet fra migrasjon 005q, og for en agent
+  -- er mandatet rollen extraction_verification.
+  ('agent', 'agent:extraksjon-immutabilitet', 'Test ekstraksjonsverifikator',
+   'KI-aktør i ekstraksjonskontrollrollen for immutabilitetstestene.', null,
+   'extraction_verification'),
   -- Claim-verifikasjonen krever mandatet fra migrasjon 005j, og for en agent er
   -- mandatet rollen citation_support_verification.
   ('agent', 'agent:citation-immutabilitet', 'Test claim-verifikator',
@@ -63,7 +68,7 @@ insert into workflow.evidence_verifications (
   evidence_item_id, verified_item_creator_actor_id, verifier_actor_id,
   outcome, source_access, checked_fields, rationale, verified_at
 )
-select e.id, e.created_by_actor_id, pg_temp.actor('agent:immutabilitet'),
+select e.id, e.created_by_actor_id, pg_temp.actor('agent:extraksjon-immutabilitet'),
        'verified', 'original_source',
        array['source_locator', 'estimate']::workflow.evidence_check_field[],
        'Testkontroll av ekstraksjonen.', now()
@@ -263,7 +268,7 @@ insert into workflow.evidence_verifications (
   evidence_item_id, verified_item_creator_actor_id, verifier_actor_id,
   outcome, source_access, checked_fields, rationale, verified_at, created_at
 )
-select e.id, e.created_by_actor_id, pg_temp.actor('agent:immutabilitet'),
+select e.id, e.created_by_actor_id, pg_temp.actor('agent:extraksjon-immutabilitet'),
        'verified', 'original_source',
        array['source_locator']::workflow.evidence_check_field[],
        'Testkontroll med oppgitt registreringstid.',

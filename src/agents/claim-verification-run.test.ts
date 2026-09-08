@@ -115,7 +115,10 @@ function toLinkPayload(link: ClaimEvidenceLink): Record<string, unknown> {
     relevance_note: link.relevanceNote,
     evidence_item: {
       evidence_item_id: link.evidenceItem.evidenceItemId,
+      created_by_actor_id: link.evidenceItem.createdByActorId,
       created_by_actor_key: link.evidenceItem.createdByActorKey,
+      extraction_method: link.evidenceItem.extractionMethod,
+      content_hash: link.evidenceItem.contentHash,
       source: {
         source_id: link.evidenceItem.sourceId,
         source_type: 'journal_article',

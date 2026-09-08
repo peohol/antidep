@@ -19,7 +19,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(17);
+select plan(18);
 
 create temporary table cred(label text primary key, secret text);
 insert into cred
@@ -288,6 +288,48 @@ select lives_ok(
   'en agentaktør i verifikatorrollen kan registrere en verifikasjon av en annen aktørs ekstraksjon'
 );
 
+-- Fra migrasjon 005q ligger mandatkontrollen foran selvverifikasjonsregelen: den
+-- er BEFORE INSERT og fyrer før CHECK-en. De to er forskjellige grenser, og
+-- fiksturen må skille dem — ellers ville den ene skjult den andre.
+select throws_ok(
+  $$
+    insert into workflow.evidence_verifications
+      (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id,
+       outcome, source_access, checked_fields, rationale, verified_at)
+    select ei.id, ei.created_by_actor_id, ei.created_by_actor_id,
+           'verified', 'original_source',
+           array['source_locator']::workflow.evidence_check_field[],
+           'Prøve i 430: ekstraksjonsagenten kontrollerer sin egen ekstraksjon.',
+           now()
+    from knowledge.evidence_items ei
+    order by ei.id
+    limit 1
+  $$,
+  '42501', 'Verifikatoraktøren hadde ikke mandat til å kontrollere denne ekstraksjonen mot kilden.',
+  'en ekstraksjonsagent har ikke mandat til å kontrollere en ekstraksjon i det hele tatt'
+);
+
+-- Et funn laget av verifikatoraktøren selv: her har verifikator mandatet, og
+-- selvverifikasjonsregelen er derfor det som faktisk feller forsøket.
+insert into knowledge.evidence_items (
+  source_id, design_code, population_availability, population_detail,
+  sample_size_availability, intervention_drug_id, comparator_kind,
+  outcome_concept_id, outcome_detail, timepoint_availability,
+  reported_direction, estimate_availability, confidence_interval_availability,
+  source_locator, extraction_method, created_by_actor_id
+)
+select
+  ei.source_id, 'randomized_controlled_trial', 'not_reported',
+  'Testdata i 430; bare til for å prøve selvverifikasjonsregelen.',
+  'not_reported', ei.intervention_drug_id, 'none',
+  ei.outcome_concept_id, 'Testendepunkt i 430.', 'not_reported',
+  'increase', 'not_reported', 'not_reported',
+  'Avsnitt for 430', 'ai_assisted',
+  (select id from provenance.actors where actor_key = 'agent:extraction-verification')
+from knowledge.evidence_items ei
+order by ei.id
+limit 1;
+
 select throws_ok(
   $$
     insert into workflow.evidence_verifications
@@ -299,11 +341,11 @@ select throws_ok(
            'Prøve i 430: aktøren kontrollerer sin egen ekstraksjon.',
            now()
     from knowledge.evidence_items ei
-    order by ei.id
-    limit 1
+    where ei.created_by_actor_id
+          = (select id from provenance.actors where actor_key = 'agent:extraction-verification')
   $$,
   '23514', null,
-  'ingen aktør kan verifisere sin egen ekstraksjon, heller ikke en agent'
+  'ingen aktør kan verifisere sin egen ekstraksjon, heller ikke en agent med mandatet'
 );
 
 select finish();

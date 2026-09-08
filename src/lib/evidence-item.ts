@@ -59,10 +59,13 @@ import {
 } from './claim-effect'
 import {
   CERTAINTY_LEVELS,
+  COMPARATOR_KINDS,
   DATE_PRECISIONS,
   KNOWLEDGE_TYPES,
   DRUG_STATUSES,
   EFFECT_MEASURES,
+  ESTIMATE_UNITS,
+  EVIDENCE_CHECK_FIELDS,
   EVIDENCE_DIRECTNESS_VALUES,
   EVIDENCE_RELATIONSHIP_TYPES,
   EXTRACTION_METHODS,
@@ -78,10 +81,12 @@ import {
   VERIFICATION_SOURCE_ACCESSES,
   VOCABULARY_STATUSES,
   type CertaintyLevel,
+  type ComparatorKind,
   type DatePrecision,
   type DrugStatus,
   type EffectMeasure,
   type EstimateUnit,
+  type EvidenceCheckField,
   type EvidenceDirectness,
   type EvidenceRelationshipType,
   type ExtractionMethod,
@@ -93,6 +98,7 @@ import {
   type SourceStatus,
   type SourceType,
   type StudyDesign,
+  type ValueAvailability,
   type VerificationCheckResult,
   type VerificationOutcome,
   type VerificationSourceAccess,
@@ -201,6 +207,42 @@ export function readVerificationSourceAccess(
   value: string,
 ): VocabularyTerm<VerificationSourceAccess> {
   return readTerm(VERIFICATION_SOURCE_ACCESSES, value)
+}
+
+/**
+ * Ett felt en ekstraksjonskontroll kan ha gått gjennom. En ukjent verdi må ikke
+ * kunne falle sammen med et kjent felt: en flate som gjorde det, ville vist et
+ * felt som kontrollert uten å vite hvilket (DATABASE_ARCHITECTURE.md §29).
+ */
+export function readEvidenceCheckField(value: string): VocabularyTerm<EvidenceCheckField> {
+  return readTerm(EVIDENCE_CHECK_FIELDS, value)
+}
+
+/**
+ * Hvorfor et felt har eller ikke har en verdi. En ukjent verdi må aldri kunne
+ * falle sammen med `reported_value`: en flate som gjorde det, ville vist et
+ * fravær som en registrert verdi (ANTIDEP_CONSTITUTION.md §6).
+ */
+export function readValueAvailability(value: string): VocabularyTerm<ValueAvailability> {
+  return readTerm(VALUE_AVAILABILITIES, value)
+}
+
+/**
+ * Kontrasten i selve funnet. `none` betyr at funnet gjelder én behandlingsarm,
+ * ikke at komparatoren er ukjent, og en ukjent verdi er ingen av delene.
+ */
+export function readComparatorKind(value: string): VocabularyTerm<ComparatorKind> {
+  return readTerm(COMPARATOR_KINDS, value)
+}
+
+/** Effektmålet kilden rapporterte. */
+export function readEffectMeasure(value: string): VocabularyTerm<EffectMeasure> {
+  return readTerm(EFFECT_MEASURES, value)
+}
+
+/** Enheten et estimat er oppgitt i. */
+export function readEstimateUnit(value: string): VocabularyTerm<EstimateUnit> {
+  return readTerm(ESTIMATE_UNITS, value)
 }
 
 /** Utfallet av en menneskelig reviewbeslutning. */

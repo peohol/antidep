@@ -347,6 +347,35 @@ export const VERIFICATION_SOURCE_ACCESSES = [
 export type VerificationSourceAccess = (typeof VERIFICATION_SOURCE_ACCESSES)[number]
 
 /**
+ * Feltene en ekstraksjonskontroll kan ha gått gjennom
+ * (`workflow.evidence_check_field`). Rekkefølgen er den samme som i databasen,
+ * og den er ikke kosmetisk: den følger kolonnene på et evidensfunn, slik at en
+ * flate som lister dem, lister dem i samme rekkefølge som raden er bygget.
+ *
+ * `availability_semantics` er ikke et felt på raden, men kontrollen av at
+ * `not_measured`, `not_reported`, `not_extractable` og `uncertain_extraction` er
+ * brukt riktig — en av de enkleste måtene en ekstraksjon kan være feil på uten
+ * at noe tall ser galt ut (ANTIDEP_CONSTITUTION.md §6).
+ */
+export const EVIDENCE_CHECK_FIELDS = [
+  'population',
+  'sample_size',
+  'intervention_arm',
+  'comparator_arm',
+  'outcome',
+  'timepoint',
+  'reported_direction',
+  'effect_measure',
+  'estimate',
+  'confidence_interval',
+  'availability_semantics',
+  'limitations',
+  'source_locator',
+  'raw_extraction',
+] as const
+export type EvidenceCheckField = (typeof EVIDENCE_CHECK_FIELDS)[number]
+
+/**
  * Utfallet av en menneskelig reviewbeslutning (`workflow.review_outcome`). De
  * tre første gjelder en publiseringsgodkjenning; de to siste gjelder en
  * beslutning om en ekstraksjon, og hører til en annen skrivevei.

@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   accessPath,
   claimEvidencePath,
+  claimReviewPath,
   drugPath,
+  extractionReviewPath,
+  extractionReviewQueuePath,
   homePath,
   newEvidenceItemPath,
   newSourcePath,
@@ -63,6 +66,29 @@ describe('adressene', () => {
     expect(newEvidenceItemPath()).toBe('/evidence/new')
   })
 
+  it('kildekontrollen har sin egen kø, atskilt fra den faglige vurderingen', () => {
+    // To køer og ikke ett filter: de spør om to forskjellige ting om to
+    // forskjellige objekter, og publiseringsgaten krever dem hver for seg.
+    expect(extractionReviewQueuePath()).toBe('/extraction-review')
+  })
+
+  it('adresserer kildekontrollen med evidensfunnets stabile identitet', () => {
+    // evidence_item_id: raden er append-only, så id-en peker for alltid på den
+    // ekstraksjonen som faktisk ble kontrollert. En korrigert ekstraksjon er et
+    // nytt funn med en ny adresse.
+    expect(extractionReviewPath('66666666-6666-4666-8666-111111111111')).toBe(
+      '/extraction-review/66666666-6666-4666-8666-111111111111',
+    )
+  })
+
+  it('adresserer den faglige vurderingen med den eksakte revisjonen', () => {
+    // claim_revision_id og ikke claim_id: en vurdering gjelder nøyaktig den
+    // formuleringen som ble lest (KNOWLEDGE_MODEL.md §19.3).
+    expect(claimReviewPath('33333333-3333-4333-8333-111111111111')).toBe(
+      '/review/33333333-3333-4333-8333-111111111111',
+    )
+  })
+
   it('mønstrene og byggerne beskriver samme adresser', () => {
     // Et mønster som drifter fra byggeren gir lenker ruteren ikke kjenner.
     expect(ROUTE_PATTERNS.drug).toBe('/drugs/:drugSlug')
@@ -71,6 +97,9 @@ describe('adressene', () => {
     expect(ROUTE_PATTERNS.source).toBe('/sources/:sourceId')
     expect(ROUTE_PATTERNS.sourceNew).toBe(newSourcePath())
     expect(ROUTE_PATTERNS.evidenceNew).toBe(newEvidenceItemPath())
+    expect(ROUTE_PATTERNS.claimReview).toBe('/review/:claimRevisionId')
+    expect(ROUTE_PATTERNS.extractionReviewQueue).toBe(extractionReviewQueuePath())
+    expect(ROUTE_PATTERNS.extractionReview).toBe('/extraction-review/:evidenceItemId')
     expect(ROUTE_PATTERNS.access).toBe(accessPath())
     expect(ROUTE_PATTERNS.home).toBe(homePath())
   })

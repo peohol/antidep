@@ -45,7 +45,10 @@ function svarMed(felter: Record<string, string>): string {
     "items": [
       {
         "evidence_item_id": "d3e0f6a0-0000-4000-8000-000000000003",
+        "created_by_actor_id": "d3e0f6a0-0000-4000-8000-000000000009",
         "created_by_actor_key": "agent:evidence-extraction",
+        "extraction_method": "ai_assisted",
+        "content_hash": "sha256-v2:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "source": {
           "source_id": "d3e0f6a0-0000-4000-8000-000000000004",
           "source_type": "journal_article",

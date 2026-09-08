@@ -21,7 +21,10 @@ function link(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     relevance_note: 'Testnotat.',
     evidence_item: {
       evidence_item_id: '66666666-6666-4666-8666-111111111111',
+      created_by_actor_id: '99999999-9999-4999-8999-111111111111',
       created_by_actor_key: 'agent:evidence-extraction',
+      extraction_method: 'ai_assisted',
+      content_hash: `sha256-v2:${'e'.repeat(64)}`,
       source: {
         source_id: '88888888-8888-4888-8888-111111111111',
         source_type: 'journal_article',

@@ -159,7 +159,76 @@ describe('Reviewarbeidsflaten — blokkerende mangler', () => {
   it('viser at gaten passerer når den gjør det, og at publisering er en annen handling', async () => {
     renderReview({ publication_gate: { status: 'passes' } })
     expect(await screen.findByText(/Publiseringsgaten passerer/)).toBeInTheDocument()
-    expect(screen.getByText(/utføres av en publisher/)).toBeInTheDocument()
+    // Både gatepanelet og publiseringsskjemaet sier at publisering krever en
+    // annen rettighet. Begge skal si det: den ene forklarer tilstanden, den
+    // andre står ved selve handlingen.
+    expect(screen.getAllByText(/krever\s+publisher-rollen/)).toHaveLength(2)
+  })
+
+  // Publiseringen er en tredje handling, og den tilbys bare når gaten faktisk
+  // passerer. Tilstanden leses av gaten selv; flaten regner den ikke ut.
+  it('tilbyr publisering bare når publiseringsgaten passerer', async () => {
+    renderReview({ publication_gate: { status: 'passes' } })
+    expect(await screen.findByRole('button', { name: 'Publiser revisjonen' })).toBeInTheDocument()
+  })
+
+  it('tilbyr ikke publisering når gaten blokkerer', async () => {
+    renderReview()
+    expect(await screen.findByText(/Publiseringen er blokkert/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Publiser revisjonen' })).toBeNull()
+  })
+})
+
+describe('Reviewarbeidsflaten — publiseringen', () => {
+  // Publisering er en tredje handling med en tredje rettighet, og den er ikke
+  // en del av godkjenningen (MVP_IMPLEMENTATION_PLAN.md §16).
+  it('sender revisjonen og begrunnelsen til publiseringshandlingen', async () => {
+    const { rpcCalls } = renderRoute(PATH, {
+      api: {
+        claim_review_workspace: {
+          data: claimReviewPayload({ publication_gate: { status: 'passes' } }),
+        },
+      },
+      auth: { initialUserId: TEST_USER_IDS.a },
+    })
+    await screen.findByRole('button', { name: 'Publiser revisjonen' })
+    fireEvent.change(screen.getByLabelText('Begrunnelse for publiseringen'), {
+      target: { value: 'Grunnlaget er kontrollert og godkjent.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Publiser revisjonen' }))
+    await waitFor(() => {
+      expect(rpcCalls).toContainEqual({
+        name: 'publish_claim_revision',
+        args: {
+          p_claim_revision_id: TEST_REVIEW_IDS.revision,
+          p_reason: 'Grunnlaget er kontrollert og godkjent.',
+        },
+      })
+    })
+  })
+
+  it('viser databasens egen avvisning når kalleren mangler publisher-rollen', async () => {
+    renderRoute(PATH, {
+      api: {
+        claim_review_workspace: {
+          data: claimReviewPayload({ publication_gate: { status: 'passes' } }),
+        },
+        publish_claim_revision: {
+          error: 'Brukeren har ikke gyldig publisher-rolle for dette innholdsområdet.',
+        },
+      },
+      auth: { initialUserId: TEST_USER_IDS.a },
+    })
+    await screen.findByRole('button', { name: 'Publiser revisjonen' })
+    fireEvent.change(screen.getByLabelText('Begrunnelse for publiseringen'), {
+      target: { value: 'Prøve.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Publiser revisjonen' }))
+    expect(
+      await screen.findByText(
+        /Brukeren har ikke gyldig publisher-rolle for dette innholdsområdet\./,
+      ),
+    ).toBeInTheDocument()
   })
 })
 

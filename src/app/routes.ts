@@ -38,6 +38,8 @@ export const ROUTE_PATTERNS = {
   evidenceNew: '/evidence/new',
   reviewQueue: '/review',
   claimReview: '/review/:claimRevisionId',
+  extractionReviewQueue: '/extraction-review',
+  extractionReview: '/extraction-review/:evidenceItemId',
   access: '/access',
 } as const
 
@@ -165,4 +167,32 @@ export function reviewQueuePath(): string {
  */
 export function claimReviewPath(claimRevisionId: Uuid): string {
   return `/review/${encodeURIComponent(claimRevisionId)}`
+}
+
+/**
+ * Køen for ekstraksjonskontroll (MVP_IMPLEMENTATION_PLAN.md §15,
+ * ANTIDEP_CONSTITUTION.md §11): hvilke evidensfunn som venter på at et menneske
+ * kontrollerer dem mot kilden.
+ *
+ * En egen adresse og ikke et filter på `/review`. De to køene er to forskjellige
+ * arbeidsoppgaver på to forskjellige objekter: den ene spør «gjengir denne
+ * ekstraksjonen kilden riktig?», den andre «støtter grunnlaget denne påstanden?».
+ * Publiseringsgaten krever dem hver for seg (G5 og G9), og en samlet kø ville
+ * skjult at de er to ledd.
+ */
+export function extractionReviewQueuePath(): string {
+  return '/extraction-review'
+}
+
+/**
+ * Kontrollflaten for ett evidensfunn.
+ *
+ * Adressert med `evidence_item_id`, som er funnets stabile identitet:
+ * `knowledge.evidence_items` er append-only, så id-en peker for alltid på den
+ * ekstraksjonen som faktisk ble kontrollert. En korrigert ekstraksjon er et nytt
+ * funn med en ny adresse, og det er riktig — en kontroll som fulgte med over på
+ * en rettet versjon, ville vært en kontroll av noe annet enn det som ble lest.
+ */
+export function extractionReviewPath(evidenceItemId: Uuid): string {
+  return `/extraction-review/${encodeURIComponent(evidenceItemId)}`
 }

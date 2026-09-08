@@ -195,6 +195,22 @@ else
   fi
 
   # Den andre veien: git er kilden, dokumentet er påstanden.
+  #
+  # En rad er funnet i historikken når ETT av to holder:
+  #
+  #   1. et commit-emne bærer `(#N)`, som en squash-merge normalt legger på, eller
+  #   2. et commit-emne er nøyaktig radens tittel
+  #
+  # Den andre formen finnes fordi squash-mergen av #59 ikke tok med nummeret i
+  # emnet — bare i kroppen, som «Funnet i teknisk review av PR #59». Uten den
+  # ville en rad som faktisk *er* merget, blitt ført som et avvik, og den eneste
+  # veien videre hadde vært å svekke kontrollen eller å lyve i tabellen.
+  #
+  # Tittelformen er ikke en løsere kontroll enn nummerformen: tabellen sier selv
+  # at «titlene er commit-emnene ordrett», så et eksakt treff på emnet er en
+  # sterkere påstand enn et treff på nummeret alene. De eldste radene (PR A til
+  # PR G, #19 og #30) bærer et prefiks i tabellen og treffer derfor bare på
+  # nummeret; de nyeste treffer på begge.
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
     printf '  FEIL     %-26s kontrollen krever et git-arbeidstre\n' "merget mot historikk"
     feil=1
@@ -204,10 +220,16 @@ else
     printf '  FEIL     %-26s historikken er avkortet (shallow clone)\n' "merget mot historikk"
     feil=1
   else
-    historikk=$(git log --format='%s' | grep -oE '\(#[0-9]+\)' | tr -d '(#)' | sort -u)
-    for tidlig in $(printf '%s\n' "$pr_rader" | grep 'merget' | grep -oE '[0-9]+'); do
-      printf '%s\n' "$historikk" | grep -qx "$tidlig" || ufunnet="${ufunnet:-} #$tidlig"
-    done
+    emner=$(git log --format='%s')
+    historikk=$(printf '%s\n' "$emner" | grep -oE '\(#[0-9]+\)' | tr -d '(#)' | sort -u)
+    while IFS= read -r rad; do
+      printf '%s' "$rad" | grep -q 'merget' || continue
+      tidlig=$(printf '%s' "$rad" | grep -oE '\(#[0-9]+\)' | tr -d '(#)')
+      tittel=$(printf '%s' "$rad" | sed -E 's/ *\(#[0-9]+\).*$//; s/^ *//')
+      printf '%s\n' "$historikk" | grep -qx "$tidlig" && continue
+      printf '%s\n' "$emner" | grep -qxF "$tittel" && continue
+      ufunnet="${ufunnet:-} #$tidlig"
+    done <<< "$(grep -E '\(#[0-9]+\) +(merget|åpen)' "$PLAN")"
     if [ -n "${ufunnet:-}" ]; then
       printf '  AVVIK    %-26s ført som merget, men uten commit i historikken:%s\n' \
         "merget mot historikk" "$ufunnet"

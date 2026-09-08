@@ -62,6 +62,7 @@ import {
   VERIFICATION_SOURCE_ACCESS_LABELS,
 } from '../../components/vocabulary-labels'
 import { registerHumanClaimVerification } from '../../lib/register-human-claim-verification'
+import { publishClaimRevision } from '../../lib/publish-claim-revision'
 import { registerPublicationApproval } from '../../lib/register-publication-approval'
 import { fetchClaimReview } from '../../lib/review-workspace'
 import {
@@ -489,6 +490,98 @@ function PublicationApprovalForm({
 }
 
 // ----------------------------------------------------------------------------
+// Skjema 3 — selve publiseringen
+//
+// En tredje handling, med en tredje rettighet. Den tilbys bare når
+// publiseringsgaten faktisk passerer, og den tilstanden leses av gaten selv
+// (`api.claim_review_workspace`) — ikke regnet ut her. Flaten kan derfor aldri
+// tilby en publisering gaten stenger.
+//
+// Motsatt vei er den ikke en garanti: gatens svar kan være foreldet når knappen
+// trykkes, og databasen kjører hele gaten på nytt inne i den transaksjonen som
+// skriver hendelsen. Det er meningen — en forhåndskontroll i klienten ville vært
+// en andre formulering av gaten (DATABASE_ARCHITECTURE.md §38).
+// ----------------------------------------------------------------------------
+
+function PublicationForm({
+  workspace,
+  onRegistered,
+}: {
+  readonly workspace: ClaimReviewWorkspace
+  readonly onRegistered: () => void
+}) {
+  const availability = useAntidepClient()
+  const { dossier, isPublishedRevision } = workspace.revision
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  const reasonId = useId()
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (availability.status !== 'ready') {
+      return
+    }
+    setSubmitting(true)
+    setProblem(null)
+    const result = await publishClaimRevision(availability.client, {
+      claimRevisionId: dossier.claimRevisionId,
+      reason,
+    })
+    setSubmitting(false)
+    if (result.status === 'error') {
+      setProblem(result.message)
+      return
+    }
+    onRegistered()
+  }
+
+  return (
+    <form className="admin-form admin-form--review" onSubmit={(event) => void handleSubmit(event)}>
+      <h3>3. Publiser revisjonen</h3>
+      <p className="admin-form__intro">
+        Publisering er en tredje handling med sin egen rettighet: den krever publisher-rollen, og
+        den rollen er ikke den samme som lar deg godkjenne. Den avgjør heller ikke om innholdet er
+        godt nok — det er vurderingen i steg 2. Har du ikke rollen, avviser databasen forsøket, og
+        avvisningen vises her.
+      </p>
+      {isPublishedRevision ? (
+        <p className="admin-form__hint">
+          Denne revisjonen er allerede den publiserte. En ny publisering av den samme revisjonen
+          endrer ingenting, og databasen avviser den.
+        </p>
+      ) : null}
+
+      <div className="admin-form__field">
+        <label htmlFor={reasonId}>Begrunnelse for publiseringen</label>
+        <textarea
+          id={reasonId}
+          onChange={(event) => setReason(event.target.value)}
+          required
+          rows={3}
+          value={reason}
+        />
+        <p className="admin-form__hint">
+          Begrunnelsen bevares i publiseringshistorikken, slik at det i ettertid er mulig å se
+          hvorfor Antidep begynte å si dette.
+        </p>
+      </div>
+
+      {problem === null ? null : (
+        <p className="admin-form__problem" role="alert">
+          Revisjonen ble ikke publisert. {problem}
+        </p>
+      )}
+
+      <button disabled={submitting} type="submit">
+        {submitting ? 'Publiserer …' : 'Publiser revisjonen'}
+      </button>
+    </form>
+  )
+}
+
+// ----------------------------------------------------------------------------
 // Selve flaten
 // ----------------------------------------------------------------------------
 
@@ -550,6 +643,14 @@ function ReviewWorkspaceView({
           <PublicationApprovalForm onRegistered={onRegistered} workspace={workspace} />
         </>
       )}
+
+      {/* Publiseringen tilbys uavhengig av om kalleren selv formulerte
+          revisjonen: forbudet mot å kontrollere og godkjenne sitt eget arbeid
+          gjelder de to vurderingene, ikke utførelsen av en publisering et annet
+          menneske allerede har gått god for. Gaten avgjør resten. */}
+      {revision.publicationGate.status === 'passes' ? (
+        <PublicationForm onRegistered={onRegistered} workspace={workspace} />
+      ) : null}
     </>
   )
 }
