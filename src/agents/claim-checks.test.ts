@@ -71,13 +71,27 @@ describe('checkClaim — det kontrollen faktisk kan falsifisere', () => {
     expect(report.citations[0]?.relationshipSupported).toBe('deviation')
   })
 
-  it('feller en contradicts-lenke som peker samme vei som påstanden', () => {
+  it('feller ikke en contradicts-lenke som peker samme vei som påstanden', () => {
+    // En lenke kan motsi påstanden på størrelsen framfor på retningen: et funn
+    // som rapporterer «økning», men en langt mindre økning enn påstanden
+    // hevder, er fortsatt motstridende. Retningen alene beviser derfor ikke at
+    // relasjonstypen er feil.
+    //
+    // Den støttende lenken er med for å isolere nettopp det: uten den ville
+    // kontrollen felt på at ingen lenke i det hele tatt underbygger påstanden,
+    // og den regelen er en annen.
     const report = checkClaim(
-      context([claimEvidenceLinkFixture({ relationshipType: 'contradicts' })]),
+      context([
+        claimEvidenceLinkFixture(),
+        claimEvidenceLinkFixture({
+          claimEvidenceLinkId: '53000000-0000-4000-8000-000000000002',
+          relationshipType: 'contradicts',
+        }),
+      ]),
     )
 
-    expect(report.citations[0]?.relationshipSupported).toBe('deviation')
-    expect(report.outcome).toBe('needs_correction')
+    expect(report.citations[1]?.relationshipSupported).toBe('not_assessable')
+    expect(report.outcome).toBe('uncertain')
   })
 
   it('feller en påstand uten en eneste støttende lenke', () => {
@@ -131,15 +145,42 @@ describe('checkClaim — det kontrollen faktisk kan falsifisere', () => {
     expect(report.outcome).toBe('uncertain')
   })
 
-  it('feller en påstand som tallfester en størrelse grunnlaget ikke oppgir', () => {
+  it('feller ikke en påstandsstørrelse som ikke finnes identisk i noe enkelt funn', () => {
+    // En evidenssyntese er nettopp en syntese: størrelsen kan legitimt ligge
+    // mellom flere funn, og at ingen enkeltlenke oppgir nøyaktig verdien beviser
+    // derfor ikke at påstanden er mer presis enn grunnlaget. Samme regel som
+    // ekstraksjonskontrollen bruker for tall (§74.33).
     const report = checkClaim(
       context([claimEvidenceLinkFixture()], {
         claim: { magnitudeMeasure: 'mean_change', magnitudeValue: '2.5', magnitudeUnit: 'kg' },
       }),
     )
 
-    expect(report.checks.directionAndMagnitude).toBe('deviation')
-    expect(report.findings).toContain('mer presis enn grunnlaget')
+    expect(report.checks.directionAndMagnitude).toBe('not_assessable')
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toContain('lar seg ikke avgjøre deterministisk')
+  })
+
+  it('feller ikke en syntetisert størrelse som ligger mellom to funn', () => {
+    const report = checkClaim(
+      context(
+        [
+          claimEvidenceLinkFixture({
+            evidenceItem: { extraction: { estimate: '1.2' } },
+          }),
+          claimEvidenceLinkFixture({
+            claimEvidenceLinkId: '53000000-0000-4000-8000-000000000002',
+            evidenceItem: { extraction: { estimate: '1.8' } },
+          }),
+        ],
+        {
+          claim: { magnitudeMeasure: 'mean_change', magnitudeValue: '1.5', magnitudeUnit: 'kg' },
+        },
+      ),
+    )
+
+    expect(report.outcome).toBe('uncertain')
+    expect(report.checks.directionAndMagnitude).toBe('not_assessable')
   })
 
   it('godtar en tallfestet størrelse som står nøyaktig slik i grunnlaget', () => {
@@ -154,14 +195,27 @@ describe('checkClaim — det kontrollen faktisk kan falsifisere', () => {
     expect(report.checks.directionAndMagnitude).toBe('ok')
   })
 
-  it('feller et manglende forbehold når grunnlaget er indirekte', () => {
+  it('feller et grunnlag der ingen reservasjon står noe sted', () => {
+    // Både `qualifiers` og `uncertainty_summary` kan bære forbeholdet. Bare når
+    // begge er tomme, er det sikkert at ingen reservasjon er registrert.
     const report = checkClaim(
       context([claimEvidenceLinkFixture({ directness: 'indirect' })], {
-        claim: { qualifiers: null },
+        claim: { qualifiers: null, uncertaintySummary: null },
       }),
     )
 
     expect(report.checks.qualifiersComplete).toBe('deviation')
+  })
+
+  it('feller ikke et tomt qualifiers-felt når usikkerheten er beskrevet', () => {
+    const report = checkClaim(
+      context([claimEvidenceLinkFixture({ directness: 'indirect' })], {
+        claim: { qualifiers: null, uncertaintySummary: 'Grunnlaget er indirekte.' },
+      }),
+    )
+
+    expect(report.checks.qualifiersComplete).toBe('not_assessable')
+    expect(report.outcome).toBe('uncertain')
   })
 
   it('feller et utdrag som ikke lenger står ordrett i kildeversjonen', () => {
@@ -178,6 +232,127 @@ describe('checkClaim — det kontrollen faktisk kan falsifisere', () => {
     expect(report.checks.sourceSupport).toBe('deviation')
     expect(report.citations[0]?.relationshipSupported).toBe('deviation')
     expect(report.outcome).toBe('needs_correction')
+  })
+})
+
+describe('checkClaim — bare en lenke som lover samsvar, kan motsies', () => {
+  // `partially_supports` underbygger per definisjon bare deler av påstanden, og
+  // `directness = indirect` treffer den bare indirekte. Hvilken akse som ikke er
+  // dekket, registreres ikke — så en forskjell der er uavklart, ikke feil.
+
+  it('lar en partially_supports-lenke med annen retning stå uavklart', () => {
+    const report = checkClaim(
+      context([
+        claimEvidenceLinkFixture({
+          relationshipType: 'partially_supports',
+          evidenceItem: { extraction: { reportedDirection: 'decrease' } },
+        }),
+      ]),
+    )
+
+    expect(report.checks.directionAndMagnitude).toBe('not_assessable')
+    expect(report.citations[0]?.relationshipSupported).toBe('not_assessable')
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  it('lar en partially_supports-lenke med annen komparator stå uavklart', () => {
+    const report = checkClaim(
+      context([
+        claimEvidenceLinkFixture({
+          relationshipType: 'partially_supports',
+          evidenceItem: { extraction: { comparatorKind: 'placebo' } },
+        }),
+      ]),
+    )
+
+    expect(report.checks.comparatorMatch).toBe('not_assessable')
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  it('lar en indirekte lenke med annen komparator stå uavklart', () => {
+    const report = checkClaim(
+      context([
+        claimEvidenceLinkFixture({
+          directness: 'indirect',
+          evidenceItem: { extraction: { comparatorKind: 'placebo' } },
+        }),
+      ]),
+    )
+
+    expect(report.checks.comparatorMatch).toBe('not_assessable')
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  it('lar en indirekte lenke med tidspunkt utenfor tidsrommet stå uavklart', () => {
+    const report = checkClaim(
+      context(
+        [
+          claimEvidenceLinkFixture({
+            directness: 'indirect',
+            evidenceItem: {
+              extraction: {
+                timepointMin: '7 days',
+                timepointMax: '7 days',
+                timepointAvailability: 'reported_value',
+              },
+            },
+          }),
+        ],
+        { claim: { timeframeMin: '182 days', timeframeMax: '224 days' } },
+      ),
+    )
+
+    expect(report.checks.timeframeMatch).toBe('not_assessable')
+    expect(report.outcome).toBe('uncertain')
+  })
+
+  it('bekrefter fortsatt en akse som stemmer, uansett relasjonstype', () => {
+    // Innstrammingen gjelder avvik, ikke bekreftelser. Stemmer komparatoren, er
+    // den kontrollert også på en indirekte lenke.
+    const report = checkClaim(
+      context([
+        claimEvidenceLinkFixture({
+          relationshipType: 'partially_supports',
+          directness: 'indirect',
+        }),
+      ]),
+    )
+
+    expect(report.checks.comparatorMatch).toBe('ok')
+    expect(report.checks.populationMatch).toBe('ok')
+    expect(report.checks.directionAndMagnitude).toBe('ok')
+  })
+
+  it('feller fortsatt de sikre motsigelsene på en supports/direct-lenke', () => {
+    const direction = checkClaim(
+      context([
+        claimEvidenceLinkFixture({
+          evidenceItem: { extraction: { reportedDirection: 'decrease' } },
+        }),
+      ]),
+    )
+    expect(direction.checks.directionAndMagnitude).toBe('deviation')
+    expect(direction.citations[0]?.relationshipSupported).toBe('deviation')
+
+    const comparator = checkClaim(
+      context([
+        claimEvidenceLinkFixture({ evidenceItem: { extraction: { comparatorKind: 'placebo' } } }),
+      ]),
+    )
+    expect(comparator.checks.comparatorMatch).toBe('deviation')
+
+    const population = checkClaim(
+      context([
+        claimEvidenceLinkFixture({
+          evidenceItem: { extraction: { populationLabel: 'healthy volunteers' } },
+        }),
+      ]),
+    )
+    expect(population.checks.populationMatch).toBe('deviation')
+
+    expect(direction.outcome).toBe('needs_correction')
+    expect(comparator.outcome).toBe('needs_correction')
+    expect(population.outcome).toBe('needs_correction')
   })
 })
 

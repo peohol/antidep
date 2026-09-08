@@ -14,13 +14,20 @@
 # (MVP_IMPLEMENTATION_PLAN.md §49, EVIDENCE_PIPELINE.md §63).
 #
 # ----------------------------------------------------------------------------
-# Hemmeligheten
+# Hemmeligheten — og den ene verdien som ikke er en
 #
 # `ANTIDEP_CLAIM_AGENT_SECRET` er legitimasjonen til
 # `agent-identity:citation-support-verification-01` og skal aldri i repoet. Den
 # ligger som en kryptert GitHub-secret, og arbeidsflyten er inert til noen legger
-# den inn: uten secrets stopper den på kontrollen under, med en setning som sier
-# hva som mangler, framfor på en anonym «kunne ikke autentiseres».
+# den inn: uten den stopper den på kontrollen under, med en setning som sier hva
+# som mangler, framfor på en anonym «kunne ikke autentiseres».
+#
+# **Identitetsnøkkelen er derimot ikke hemmelig.** Den står i klartekst i
+# migrasjon 005i, i `.env.example` og i denne filen, og en kryptert secret for en
+# offentlig, fast verdi ville vært et manuelt oppsettssteg uten sikkerhetsverdi.
+# Den er derfor en konstant her, med `vars` som overstyring for et miljø som
+# kjører en annen identitet — for eksempel et andre uavhengig kontrollag, som
+# ville hatt sin egen aktør og sin egen `-02`-identitet (migrasjon 005f).
 #
 # Nøkkelen er prosjektets publishable key og ikke `service_role`
 # (docs/DATABASE_ARCHITECTURE.md §49): agenten autentiseres av legitimasjonen inne
@@ -58,6 +65,12 @@ on:
 permissions:
   contents: read
 
+env:
+  # Offentlig og fast; se hodekommentaren. `vars` lar et miljø kjøre en annen
+  # identitet uten at verdien må legges inn som en kryptert secret.
+  ANTIDEP_CLAIM_AGENT_IDENTITY_KEY: >-
+    ${{ vars.ANTIDEP_CLAIM_AGENT_IDENTITY_KEY || 'agent-identity:citation-support-verification-01' }}
+
 jobs:
   verify:
     name: Kontroller påstander mot grunnlaget
@@ -85,13 +98,12 @@ jobs:
         env:
           ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
           ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
-          ANTIDEP_CLAIM_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_CLAIM_AGENT_IDENTITY_KEY }}
           ANTIDEP_CLAIM_AGENT_SECRET: ${{ secrets.ANTIDEP_CLAIM_AGENT_SECRET }}
         run: |
           set -euo pipefail
           mangler=""
           for navn in ANTIDEP_SUPABASE_URL ANTIDEP_SUPABASE_PUBLISHABLE_KEY \
-                      ANTIDEP_CLAIM_AGENT_IDENTITY_KEY ANTIDEP_CLAIM_AGENT_SECRET; do
+                      ANTIDEP_CLAIM_AGENT_SECRET; do
             if [ -z "${!navn:-}" ]; then mangler="$mangler $navn"; fi
           done
           if [ -n "$mangler" ]; then
@@ -105,7 +117,6 @@ jobs:
         env:
           ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
           ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
-          ANTIDEP_CLAIM_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_CLAIM_AGENT_IDENTITY_KEY }}
           ANTIDEP_CLAIM_AGENT_SECRET: ${{ secrets.ANTIDEP_CLAIM_AGENT_SECRET }}
           CLAIM_REVISION_ID: ${{ inputs.claim_revision_id }}
           LIMIT: ${{ inputs.limit }}

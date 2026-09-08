@@ -626,13 +626,20 @@ ANTIDEP_CLAIM_AGENT_SECRET=
 ```
 
 Lokalt legges de i `.env.agent.local`, som er gitignorert og leses av
-`npm run agent:verify-extraction` og `npm run agent:verify-claims`. I CI legges de inn som
-krypterte secrets (GitHub: Settings → Secrets and variables → Actions), der arbeidsflytene
-`.github/workflows/extraction-verification.yml` og
-`.github/workflows/claim-verification.yml` leser hver sitt par. **Publishable key, aldri
-`service_role`:** agenten autentiseres av sin egen legitimasjon inne i api-funksjonene, ikke
-av Data API-rollen, og en `service_role`-nøkkel ville omgått RLS og gitt kjøreren alt
-(`docs/DATABASE_ARCHITECTURE.md` §49).
+`npm run agent:verify-extraction` og `npm run agent:verify-claims`.
+
+I CI er det bare hemmelighetene som legges inn som krypterte secrets (GitHub: Settings →
+Secrets and variables → Actions). **Identitetsnøkkelen er ikke en hemmelighet.** Den står i
+klartekst i migrasjon 005i, i `.env.example` og i arbeidsflytfila, og en kryptert secret for
+en offentlig, fast verdi ville vært et manuelt oppsettssteg uten sikkerhetsverdi.
+`.github/workflows/claim-verification.yml` har den derfor som en konstant, med `vars` som
+overstyring for et miljø som kjører en annen identitet. Å kjøre claim-verifikatoren i CI
+krever da bare `ANTIDEP_CLAIM_AGENT_SECRET`, utover Supabase-verdiene arbeidsflytene allerede
+deler.
+
+**Publishable key, aldri `service_role`:** agenten autentiseres av sin egen legitimasjon inne
+i api-funksjonene, ikke av Data API-rollen, og en `service_role`-nøkkel ville omgått RLS og
+gitt kjøreren alt (`docs/DATABASE_ARCHITECTURE.md` §49).
 
 ## Kjøre ekstraksjonsverifikatoren
 

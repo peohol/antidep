@@ -10,8 +10,27 @@
 // ANTIDEP_CONSTITUTION.md §17 ber om determinisme «der det er mulig», og for
 // disse punktene er det mulig for en del av spørsmålet: påstandens strukturerte
 // betydning — populasjon, komparator, tidsrom, retning og størrelse — kan
-// sammenlignes felt for felt med det registrerte evidensgrunnlaget, og hvert
-// avvik er et faktisk avvik.
+// sammenlignes felt for felt med det registrerte evidensgrunnlaget.
+//
+// ----------------------------------------------------------------------------
+// Et avvik krever at lenken faktisk lovet samsvar
+//
+// Den ene garantien kontrollen hviler på, er at **hvert `deviation` den melder,
+// er et faktisk avvik**. En kontroll som anklager en korrekt påstand, er verre
+// enn ingen kontroll (§74.33), og konsekvensen her er `needs_correction` på
+// klinisk innhold som ikke feiler noe.
+//
+// Derfor er ikke enhver feltforskjell et avvik. `partially_supports` betyr
+// «underbygger deler av den, for eksempel retningen men ikke størrelsen», og
+// `directness = indirect` betyr at funnet treffer påstandens populasjon,
+// endepunkt, komparator og tidsrom bare indirekte — ingen av dem registrerer
+// *hvilken* akse som ikke er dekket. En forskjell på en slik lenke kan derfor
+// være nettopp det lenken erkjenner, og er uavklart og ikke feil.
+//
+// Bare `supports` + `direct` lover samsvar på hver akse, og bare der kan en
+// forskjell meldes som avvik (`promisesCorrespondence`). Det svekker ingen
+// sperre: `not_assessable` er like blokkerende for publiseringsgaten som
+// `deviation`. Det som faller bort, er anklagen — ikke kontrollen.
 //
 // ----------------------------------------------------------------------------
 // Asymmetrien er den samme som i ekstraksjonskontrollen, og strengere
@@ -48,6 +67,10 @@
 // felles for at den «peker feil vei» — den peker feil vei med hensikt, og
 // ANTIDEP_CONSTITUTION.md §9 krever at den bevares. De øvrige punktene, og
 // kontrollen av hver enkelt lenkes egen relasjonstype, gjelder alle lenkene.
+//
+// **Å telle med er ikke det samme som å kunne felles.** En bekreftelse på en
+// akse gjelder uansett hvilken lenke det er; et *avvik* krever i tillegg at
+// lenken faktisk lovet samsvar på den aksen. Se `promisesCorrespondence`.
 //
 // ----------------------------------------------------------------------------
 // Hva som ikke gjøres her
@@ -115,6 +138,52 @@ export interface ClaimCheckContext {
 
 /** Relasjonstypene som betyr at lenken underbygger påstanden. */
 const SUPPORTING = new Set(['supports', 'partially_supports'])
+
+/**
+ * Om lenken *lover* at påstanden svarer til funnet på hver strukturelle akse.
+ *
+ * Bare `supports` + `direct` gjør det. De to andre verdiene erklærer selv at de
+ * ikke gjør det, og vokabularene sier det med rene ord:
+ *
+ *   `partially_supports`  «underbygger deler av den, for eksempel retningen men
+ *                          ikke størrelsen» — hvilken del som ikke er dekket,
+ *                          registreres ikke noe sted
+ *   `directness = indirect`  «treffer påstandens populasjon, endepunkt,
+ *                          komparator og tidsrom» bare indirekte
+ *
+ * Et strukturelt avvik på en slik lenke er derfor ikke et bevist avvik: det kan
+ * være nettopp grunnen til at lenken er merket som den er. Å melde det som
+ * `deviation` ville gjort en korrekt påstand til `needs_correction`, og
+ * ødelagt den ene garantien denne kontrollen hviler på — at hvert avvik den
+ * melder, er et faktisk avvik (§74.33: en verifikator som roper ulv, er verre
+ * enn ingen verifikator).
+ *
+ * Merk hva predikatet *ikke* gjør: det svekker ingen bekreftelse. Stemmer
+ * aksen, er den kontrollert uansett hvilken lenke det gjelder — det er bare et
+ * *avvik* som krever at lenken faktisk lovet samsvar.
+ */
+function promisesCorrespondence(link: ClaimEvidenceLink): boolean {
+  return link.relationshipType === 'supports' && link.directness === 'direct'
+}
+
+/**
+ * Utfallet av en akse som ikke stemmer.
+ *
+ * Ett sted, fordi regelen er den samme for populasjon, komparator, tidsrom og
+ * retning — og fordi en regel skrevet fire ganger er fire steder å glemme den.
+ */
+function mismatch(checked: CheckedLink, findings: Findings, note: string): CheckResult {
+  if (promisesCorrespondence(checked.link)) {
+    findings.add(note)
+    return 'deviation'
+  }
+  findings.add(
+    `${note} Lenken er ført som ${checked.link.relationshipType}/${checked.link.directness}, ` +
+      'og lover derfor ikke samsvar på denne aksen — avviket kan være nettopp det den erkjenner. ' +
+      'Om det er akseptabelt, er en faglig vurdering denne kontrollen ikke gjør.',
+  )
+  return 'not_assessable'
+}
 
 // ----------------------------------------------------------------------------
 // Tidsrom
@@ -254,20 +323,12 @@ function checkPopulation(context: ClaimCheckContext, findings: Findings): CheckR
     if (extraction.populationLabel === claimPopulation) {
       return 'ok'
     }
-    if (checked.link.directness === 'indirect') {
-      findings.add(
-        `Lenke ${checked.link.claimEvidenceLinkId} gjelder populasjonen ` +
-          `«${String(extraction.populationLabel)}», mens påstanden gjelder ` +
-          `«${claimPopulation}». Lenken er ført som indirekte, så avviket er erkjent — om ` +
-          'indirektheten er akseptabel, er en faglig vurdering denne kontrollen ikke gjør.',
-      )
-      return 'not_assessable'
-    }
-    findings.add(
-      `Lenke ${checked.link.claimEvidenceLinkId} er ført som direkte, men gjelder populasjonen ` +
+    return mismatch(
+      checked,
+      findings,
+      `Lenke ${checked.link.claimEvidenceLinkId} gjelder populasjonen ` +
         `«${String(extraction.populationLabel)}», mens påstanden gjelder «${claimPopulation}».`,
     )
-    return 'deviation'
   })
 
   return combine(results)
@@ -287,12 +348,13 @@ function checkComparator(context: ClaimCheckContext, findings: Findings): CheckR
     if (found === wanted) {
       return 'ok'
     }
-    findings.add(
+    return mismatch(
+      checked,
+      findings,
       `Lenke ${checked.link.claimEvidenceLinkId} har komparator «${found}», mens påstanden ` +
         `gjelder «${wanted}». En kontrast mellom to armer er ikke det samme som en endring ` +
         'fra behandlingsstart.',
     )
-    return 'deviation'
   })
 
   return combine(results)
@@ -330,11 +392,12 @@ function checkTimeframe(context: ClaimCheckContext, findings: Findings): CheckRe
       return 'ok'
     }
     if (itemSpan.max < claimSpan.min || itemSpan.min > claimSpan.max) {
-      findings.add(
+      return mismatch(
+        checked,
+        findings,
         `Lenke ${checked.link.claimEvidenceLinkId} måler et tidspunkt som ligger helt utenfor ` +
           'tidsrommet påstanden gjelder for.',
       )
-      return 'deviation'
     }
     findings.add(
       `Tidsrommet i påstanden og tidspunktet i lenke ${checked.link.claimEvidenceLinkId} ` +
@@ -364,11 +427,14 @@ function checkDirectionAndMagnitude(context: ClaimCheckContext, findings: Findin
         )
         results.push('not_assessable')
       } else if (reported !== claim.direction) {
-        findings.add(
-          `Lenke ${checked.link.claimEvidenceLinkId} er ført som støttende, men rapporterer ` +
-            `retningen «${reported}», mens påstanden konkluderer med «${claim.direction}».`,
+        results.push(
+          mismatch(
+            checked,
+            findings,
+            `Lenke ${checked.link.claimEvidenceLinkId} er ført som støttende, men rapporterer ` +
+              `retningen «${reported}», mens påstanden konkluderer med «${claim.direction}».`,
+          ),
         )
-        results.push('deviation')
       } else {
         results.push('ok')
       }
@@ -390,13 +456,29 @@ function checkDirectionAndMagnitude(context: ClaimCheckContext, findings: Findin
     if (matched) {
       results.push('ok')
     } else {
+      // Uavklart, aldri et avvik.
+      //
+      // En påstandsstørrelse trenger ikke være identisk med ett enkelt
+      // kildeestimat: en `evidence_synthesis` er nettopp en syntese, og en
+      // størrelse kan legitimt ligge mellom flere funn. At ingen enkeltlenke
+      // oppgir nøyaktig verdien, beviser derfor ikke at påstanden er mer presis
+      // enn grunnlaget — det beviser bare at den ikke lar seg bekrefte
+      // deterministisk.
+      //
+      // Det er samme regel som ekstraksjonskontrollen alt bruker for tall
+      // (§74.33): et manglende talltreff gir `uncertain` og ikke et avvik, fordi
+      // tallet kan stå skrevet på en form kontrollen ikke gjenkjenner. Funnet
+      // står oppført uansett, og `not_assessable` blokkerer publiseringsgaten
+      // like effektivt som et avvik ville gjort — det som faller bort, er
+      // anklagen, ikke sperren.
       findings.add(
         `Påstanden tallfester størrelsen som ${String(claim.magnitudeValue)} ` +
-          `${String(claim.magnitudeUnit ?? '')} (${claim.magnitudeMeasure}), men ingen støttende ` +
-          'evidenslenke oppgir nøyaktig den verdien med det målet og den enheten. En påstand ' +
-          'skal ikke være mer presis enn grunnlaget under den (ANTIDEP_CONSTITUTION.md §4, §6).',
+          `${String(claim.magnitudeUnit ?? '')} (${claim.magnitudeMeasure}), men ingen enkelt ` +
+          'støttende evidenslenke oppgir nøyaktig den verdien med det målet og den enheten. ' +
+          'Om størrelsen er en forsvarlig syntese av grunnlaget, eller er mer presis enn det ' +
+          '(ANTIDEP_CONSTITUTION.md §4, §6), lar seg ikke avgjøre deterministisk.',
       )
-      results.push('deviation')
+      results.push('not_assessable')
     }
   }
 
@@ -411,18 +493,35 @@ function checkQualifiers(context: ClaimCheckContext, findings: Findings): CheckR
       checked.link.relationshipType === 'contradicts',
   )
 
-  if (weakened.length > 0 && context.revision.claim.qualifiers === null) {
+  if (weakened.length === 0) {
     findings.add(
-      'Grunnlaget inneholder indirekte, delvis støttende eller motstridende lenker ' +
-        `(${weakened.map((checked) => checked.link.claimEvidenceLinkId).join(', ')}), mens ` +
-        'påstanden ikke oppgir et eneste forbehold.',
+      'Om påstanden mangler vesentlige forbehold, krever språkforståelse og er ikke avgjort av ' +
+        'denne kontrollen.',
+    )
+    return 'not_assessable'
+  }
+
+  const claim = context.revision.claim
+  const listed = weakened.map((checked) => checked.link.claimEvidenceLinkId).join(', ')
+
+  // Avvik bare når *ingen* av de to feltene som kan bære et forbehold, er fylt
+  // ut. Et forbehold kan stå i `qualifiers` eller i `uncertainty_summary`, og
+  // en tom `qualifiers` alene beviser derfor ingenting: teksten kan like gjerne
+  // ligge i usikkerhetsvurderingen. Er begge tomme, står det ingen reservasjon
+  // noe sted i den strukturerte påstanden, og det er en sikker motsigelse.
+  if (claim.qualifiers === null && claim.uncertaintySummary === null) {
+    findings.add(
+      `Grunnlaget inneholder indirekte, delvis støttende eller motstridende lenker (${listed}), ` +
+        'mens påstanden verken oppgir forbehold eller en usikkerhetsvurdering. Da står det ' +
+        'ingen reservasjon noe sted (ANTIDEP_CONSTITUTION.md §6).',
     )
     return 'deviation'
   }
 
   findings.add(
-    'Om påstanden mangler vesentlige forbehold, krever språkforståelse og er ikke avgjort av ' +
-      'denne kontrollen.',
+    `Grunnlaget inneholder indirekte, delvis støttende eller motstridende lenker (${listed}). ` +
+      'Påstanden oppgir en reservasjon, men om den dekker nettopp det grunnlaget svekker, ' +
+      'krever språkforståelse og er ikke avgjort av denne kontrollen.',
   )
   return 'not_assessable'
 }
@@ -493,29 +592,30 @@ function checkCitation(checked: CheckedLink, claimDirection: string | null): Cla
   const reported = link.evidenceItem.extraction.reportedDirection
   const directional = claimDirection !== null && reported !== 'not_stated'
 
-  if (directional && SUPPORTING.has(link.relationshipType) && reported !== claimDirection) {
+  // Bare en lenke som *lover* samsvar kan motsies av retningen. En
+  // `partially_supports`-lenke støtter per definisjon bare deler av påstanden,
+  // og en indirekte lenke treffer den bare indirekte — en annen retning der kan
+  // være nettopp det lenken erkjenner.
+  if (directional && promisesCorrespondence(link) && reported !== claimDirection) {
     return {
       claimEvidenceLinkId: link.claimEvidenceLinkId,
       sourceVersionId: version.sourceVersionId,
       checkedContentHash: version.contentHash,
       relationshipSupported: 'deviation',
       finding:
-        `Lenken er registrert som ${link.relationshipType}, men evidensfunnet rapporterer ` +
-        `retningen «${reported}», mens påstanden konkluderer med «${String(claimDirection)}».`,
+        `Lenken er registrert som supports/direct, men evidensfunnet rapporterer retningen ` +
+        `«${reported}», mens påstanden konkluderer med «${String(claimDirection)}».`,
     }
   }
 
-  if (directional && link.relationshipType === 'contradicts' && reported === claimDirection) {
-    return {
-      claimEvidenceLinkId: link.claimEvidenceLinkId,
-      sourceVersionId: version.sourceVersionId,
-      checkedContentHash: version.contentHash,
-      relationshipSupported: 'deviation',
-      finding:
-        'Lenken er registrert som contradicts, men evidensfunnet rapporterer den samme ' +
-        'retningen som påstanden konkluderer med.',
-    }
-  }
+  // Funnteksten sier bare det kontrollen faktisk gjorde. På en lenke som ikke
+  // lover samsvar, ble retningen ikke prøvd som en motsigelse i det hele tatt,
+  // og «ikke motsagt» ville vært en påstand kontrollen ikke har dekning for.
+  const directionNote = promisesCorrespondence(link)
+    ? `og relasjonstypen ${link.relationshipType}/${link.directness} er ikke motsagt av den ` +
+      'registrerte retningen.'
+    : `men lenken er ført som ${link.relationshipType}/${link.directness} og lover ikke samsvar ` +
+      'på retningen, så retningen er ikke prøvd som en motsigelse.'
 
   return {
     claimEvidenceLinkId: link.claimEvidenceLinkId,
@@ -523,10 +623,9 @@ function checkCitation(checked: CheckedLink, claimDirection: string | null): Cla
     checkedContentHash: version.contentHash,
     relationshipSupported: 'not_assessable',
     finding:
-      `Utdragene i evidensfunnet står ordrett i kildeversjonen, og relasjonstypen ` +
-      `${link.relationshipType} er ikke motsagt av den registrerte retningen. Om kilden faktisk ` +
-      'støtter denne formuleringen, krever språkforståelse og er ikke avgjort her ' +
-      '(EVIDENCE_PIPELINE.md §39).',
+      `Utdragene i evidensfunnet står ordrett i kildeversjonen, ${directionNote} ` +
+      'Om kilden faktisk støtter denne formuleringen, krever språkforståelse og er ikke avgjort ' +
+      'her (EVIDENCE_PIPELINE.md §39).',
   }
 }
 

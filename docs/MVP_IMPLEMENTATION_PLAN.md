@@ -5698,9 +5698,21 @@ av en eldre bekreftelse.
 **Kjøreren er deterministisk, og kan ikke bekrefte — med hensikt.** Den henter hver
 evidenslenkes kildeversjon på nytt, reproduserer fingeravtrykket, kontrollerer at utdragene
 ekstraksjonen bygger på fortsatt står ordrett i representasjonen, og sammenligner påstandens
-strukturerte betydning felt for felt med grunnlaget. Hvert avvik den melder, er et faktisk
-avvik: en støttende lenke som peker motsatt vei, en komparator som er en annen, et tidspunkt
-helt utenfor påstandens tidsrom, en tallfestet størrelse ingen lenke oppgir.
+strukturerte betydning felt for felt med grunnlaget.
+
+**Hvert avvik den melder, er et faktisk avvik — og det er derfor bare lenker som lover samsvar,
+som kan felles.** `partially_supports` betyr at funnet underbygger deler av påstanden, og
+`directness = indirect` at det treffer populasjon, endepunkt, komparator og tidsrom bare
+indirekte; ingen av dem registrerer *hvilken* akse som ikke er dekket. En forskjell på en slik
+lenke kan derfor være nettopp det lenken erkjenner. Bare `supports` + `direct` lover samsvar på
+hver akse, og bare der meldes en forskjell som `deviation` — en støttende lenke som peker
+motsatt vei, en komparator som er en annen, et tidspunkt helt utenfor påstandens tidsrom. På de
+andre lenkene blir den samme forskjellen `not_assessable`, med funnet skrevet ut. En tallfestet
+størrelse ingen enkeltlenke oppgir, er alltid `not_assessable`: for en evidenssyntese kan
+størrelsen legitimt være syntesens egen, og §74.33 slo allerede fast at et tall som ikke lar
+seg gjenfinne, gir `uncertain` og ikke en anklage. Sperren er den samme uansett —
+`not_assessable` blokkerer publiseringsgaten nøyaktig som `deviation`; det som faller bort, er
+anklagen mot innholdet.
 
 Men tre av de sju punktene kan aldri bli `ok` herfra. To krever språkforståelse — om ordlyden
 er dekket, og om vesentlige forbehold mangler. Det tredje kan ikke besvares fra basen i det
@@ -5788,12 +5800,16 @@ og ikke publisering — de er de neste leddene i §15 og hører til hver sin PR.
 klinisk innhold for å få en kontroll til å passere, og den svekker ingen eksisterende kontroll:
 ingen CHECK, ingen policy, ingen grant og ingen gate er fjernet eller myknet opp.
 
-**Én ting gjenstår, og den krever tilgang denne sesjonen ikke har.** GitHub Actions-secretene
-for `.github/workflows/claim-verification.yml` er ikke satt, av samme grunn som §74.34 fant for
-ekstraksjonsarbeidsflyten: sesjonens GitHub-proxy svarer `403` på `actions/secrets`.
-Arbeidsflyten er inert til noen legger dem inn, og stopper da på vaktposten som lister opp hva
-som mangler. Kjøringene over ble gjort med kjøreren lokalt i sesjonen, mot det hostede
-prosjektet — samme kode arbeidsflyten kjører, samme database og samme identitet.
+**Én ting gjenstår, og den krever tilgang denne sesjonen ikke har.** GitHub Actions-secreten
+`ANTIDEP_CLAIM_AGENT_SECRET` for `.github/workflows/claim-verification.yml` er ikke satt, av
+samme grunn som §74.34 fant for ekstraksjonsarbeidsflyten: sesjonens GitHub-proxy svarer `403`
+på `actions/secrets`. Det er den eneste nye verdien arbeidsflyten trenger, utover
+Supabase-verdiene arbeidsflytene allerede deler. Identitetsnøkkelen er ikke en hemmelighet —
+den står i klartekst i migrasjon 005i og i `.env.example` — og ligger derfor som en konstant i
+arbeidsflytfila, med `vars` som overstyring for et miljø som kjører en annen identitet.
+Arbeidsflyten er inert til noen legger hemmeligheten inn, og stopper da på vaktposten som
+lister opp hva som mangler. Kjøringene over ble gjort med kjøreren lokalt i sesjonen, mot det
+hostede prosjektet — samme kode arbeidsflyten kjører, samme database og samme identitet.
 
 **Hva som gjenstår for Milepæl B.** G8 og G9 kan nå lukkes for en revisjon ved å kjøre
 kjøreren mot den — men er ikke lukket for noen av de to, fordi begge står som `uncertain`, og

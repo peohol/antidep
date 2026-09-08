@@ -767,17 +767,25 @@ påstandens strukturerte betydning felt for felt med det registrerte grunnlaget.
 Asymmetrien er den samme som for ekstraksjonskontrollen (§25.1), og strengere: **kontrollen kan
 falsifisere, men aldri bekrefte.**
 
+**Et avvik krever at lenken lovet samsvar.** En strukturell forskjell meldes bare som
+`deviation` når lenken er ført som `supports` **og** `direct`. `partially_supports` betyr
+«underbygger deler av den», og `directness = indirect` at funnet treffer påstandens populasjon,
+endepunkt, komparator og tidsrom bare indirekte — og ingen av dem registrerer *hvilken* akse som
+ikke er dekket. En forskjell på en slik lenke kan derfor være nettopp det lenken erkjenner, og
+føres som `not_assessable` med funnet skrevet ut. Sperren er den samme: `not_assessable`
+blokkerer publiseringsgaten som `deviation`. Det som faller bort, er anklagen mot innholdet.
+
 | Funn | Utfall | Hvorfor |
 | --- | --- | --- |
 | Ingen lenke er ført som `supports` eller `partially_supports` | `deviation` på kildestøtte | En påstand uten en eneste støttende lenke er ikke etterprøvbar slik den er formulert (§4) |
 | Et utdrag ekstraksjonen bygger på står ikke lenger ordrett i kildeversjonen | `deviation` | Grunnlaget påstanden hviler på lar seg ikke etterprøve mot kilden |
-| En støttende lenke rapporterer en annen retning enn påstanden konkluderer med | `deviation` | En «støttende» kilde som peker motsatt vei, støtter ikke |
-| En `contradicts`-lenke rapporterer den samme retningen som påstanden | `deviation` | Relasjonstypen er motsagt av grunnlaget (§40) |
-| Komparatoren i grunnlaget er en annen enn påstandens | `deviation` | En kontrast mellom to armer er ikke en endring fra behandlingsstart |
-| En lenke ført som `direct` gjelder en annen populasjon enn påstanden | `deviation` | Lenken hevder en direkthet den ikke har. Er lenken ført som `indirect`, er avviket erkjent, og utfallet er uavklart framfor et avvik |
-| Grunnlaget måler et tidspunkt helt utenfor påstandens tidsrom | `deviation` | Delvis overlapp gir derimot `not_assessable`: om grunnlaget dekker hele tidsrommet, er en faglig vurdering |
-| Påstanden tallfester en størrelse ingen støttende lenke oppgir med samme mål og enhet | `deviation` | En påstand skal ikke være mer presis enn grunnlaget under den (§4, §6) |
-| Grunnlaget er indirekte, delvis støttende eller motstridende, og påstanden har ingen forbehold | `deviation` | Det ene falsifiserbare tilfellet av «mangler vesentlige forbehold» |
+| En `supports`/`direct`-lenke rapporterer en annen retning enn påstanden konkluderer med | `deviation` | En kilde som lover samsvar og peker motsatt vei, støtter ikke |
+| En `supports`/`direct`-lenke har en annen komparator enn påstanden | `deviation` | En kontrast mellom to armer er ikke en endring fra behandlingsstart |
+| En `supports`/`direct`-lenke gjelder en annen populasjon enn påstanden | `deviation` | Lenken hevder en direkthet den ikke har |
+| En `supports`/`direct`-lenke måler et tidspunkt helt utenfor påstandens tidsrom | `deviation` | Delvis overlapp gir derimot `not_assessable`: om grunnlaget dekker hele tidsrommet, er en faglig vurdering |
+| Den samme forskjellen på en `partially_supports`- eller `indirect`-lenke | `not_assessable` | Lenken lover ikke samsvar på aksen, og forskjellen kan være nettopp det den erkjenner |
+| Påstanden tallfester en størrelse ingen støttende lenke oppgir med samme mål og enhet | `not_assessable` | For en `evidence_synthesis` kan størrelsen legitimt være syntesens egen. Samme regel som for tall i ekstraksjonskontrollen (§25.1): et manglende talltreff gir uavklart, ikke et avvik |
+| Grunnlaget er indirekte, delvis støttende eller motstridende, og påstanden har verken forbehold eller usikkerhetsvurdering | `deviation` | Det ene falsifiserbare tilfellet av «mangler vesentlige forbehold»: står reservasjonen i ett av de to feltene, er utfallet uavklart |
 | Alt over holder | `uncertain` | Se under |
 
 Tre av de sju kontrollpunktene kan aldri bli `ok` fra denne kontrollen: om ordlyden faktisk er
