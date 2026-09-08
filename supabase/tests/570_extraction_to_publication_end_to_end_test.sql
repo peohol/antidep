@@ -27,7 +27,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(24);
+select plan(27);
 
 -- ===========================================================================
 -- Fikstur
@@ -298,6 +298,40 @@ select throws_like(
       '57000000-0000-4000-8000-000000000031')$$,
   '%ingen registrert claim-verifikasjon%',
   'G4, G5, G5b og G5c er passert, og G8 står igjen: ekstraksjonen er kontrollert, påstanden ikke'
+);
+
+-- Og reviewflaten for påstanden viser den nye kontrollen som den gjeldende, etter
+-- ny henting. De to flatene leser den samme raden med den samme rekkefølgen, så
+-- en kontroll registrert på ekstraksjonsflaten kan ikke bli usynlig på den andre.
+create temporary table workspace (label text primary key, payload jsonb) on commit drop;
+grant insert, select on workspace to authenticated;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"57000000-0000-4000-8000-0000000000a0"}', true);
+set local role authenticated;
+insert into workspace select 'etter ekstraksjonskontroll',
+  api.claim_review_workspace('57000000-0000-4000-8000-000000000031');
+reset role;
+
+select is(
+  (select payload #>> '{revision,links,0,current_extraction_verification,outcome}'
+   from workspace where label = 'etter ekstraksjonskontroll'),
+  'verified',
+  'claim-reviewflaten viser den menneskelige ekstraksjonskontrollen som den gjeldende'
+);
+select is(
+  (select payload #>> '{revision,links,0,current_extraction_verification,evidence_verification_id}'
+   from workspace where label = 'etter ekstraksjonskontroll'),
+  (select ev.id::text from workflow.evidence_verifications ev
+   where ev.evidence_item_id = '57000000-0000-4000-8000-000000000011'
+   order by ev.verified_at desc, ev.created_at desc, ev.id desc limit 1),
+  'og det er nøyaktig den raden publiseringsgaten leser som den gjeldende'
+);
+select alike(
+  (select payload #>> '{revision,approval_readiness,message}'
+   from workspace where label = 'etter ekstraksjonskontroll'),
+  '%ingen registrert claim-verifikasjon%',
+  'forutsetningene før godkjenningen har flyttet seg fra ekstraksjonen til påstanden'
 );
 
 -- ===========================================================================
