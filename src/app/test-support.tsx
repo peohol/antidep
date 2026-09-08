@@ -64,6 +64,19 @@ export interface FakeApi {
   readonly create_evidence_item?: FakeRpcOutcome<string>
   /** Kildeversjoner (migrasjon 007f, issue #44): `api.create_source_version(...)`. */
   readonly create_source_version?: FakeRpcOutcome<string>
+  /**
+   * Reviewflaten (migrasjon 005o): `api.claim_review_workspace(uuid)`.
+   *
+   * To nøkler for én funksjon, fordi den svarer på to spørsmål avhengig av om
+   * den får en revisjons-ID: uten den er svaret arbeidskøen, med den er svaret
+   * arbeidsflaten for én revisjon. Faken dispatcher på argumentet, slik den
+   * ekte funksjonen gjør.
+   */
+  readonly claim_review_queue?: FakeRpcOutcome<unknown>
+  readonly claim_review_workspace?: FakeRpcOutcome<unknown>
+  /** De to beslutningene (migrasjon 005n og 006d). */
+  readonly register_human_claim_verification?: FakeRpcOutcome<string>
+  readonly register_publication_approval?: FakeRpcOutcome<string>
 }
 
 interface RecordedQuery {
@@ -80,7 +93,7 @@ function outcomeFor(api: FakeApi, view: string): FakeOutcome<Record<string, unkn
 /** Standardsvaret fra en skrivevei fiksturen ikke sier noe om: den lyktes. */
 const DEFAULT_RPC_ID = '00000000-0000-4000-8000-999999999999'
 
-function fakeRpcOutcome(api: FakeApi, name: string): FakeRpcOutcome<string> {
+function fakeRpcOutcome(api: FakeApi, name: string, args: unknown): FakeRpcOutcome<unknown> {
   switch (name) {
     case 'create_source':
       return api.create_source ?? { data: DEFAULT_RPC_ID }
@@ -88,6 +101,20 @@ function fakeRpcOutcome(api: FakeApi, name: string): FakeRpcOutcome<string> {
       return api.create_evidence_item ?? { data: DEFAULT_RPC_ID }
     case 'create_source_version':
       return api.create_source_version ?? { data: DEFAULT_RPC_ID }
+    case 'claim_review_workspace': {
+      // Samme dispatch som den ekte funksjonen: uten en revisjons-ID er svaret
+      // køen, med den er svaret arbeidsflaten.
+      const revisionId = (args as { p_claim_revision_id?: string | null } | undefined)
+        ?.p_claim_revision_id
+      if (revisionId == null) {
+        return api.claim_review_queue ?? { data: reviewQueuePayload([]) }
+      }
+      return api.claim_review_workspace ?? { data: claimReviewPayload() }
+    }
+    case 'register_human_claim_verification':
+      return api.register_human_claim_verification ?? { data: DEFAULT_RPC_ID }
+    case 'register_publication_approval':
+      return api.register_publication_approval ?? { data: DEFAULT_RPC_ID }
     default:
       throw new Error(`fakeClient.rpc(): ukjent funksjon «${name}».`)
   }
@@ -209,7 +236,7 @@ export function fakeClient(
     // vellykket registrering.
     rpc(name: string, args: unknown) {
       rpcCalls.push({ name, args })
-      const outcome = fakeRpcOutcome(api, name)
+      const outcome = fakeRpcOutcome(api, name, args)
       return Promise.resolve(
         'error' in outcome
           ? { data: null, error: { message: outcome.error } }
@@ -568,6 +595,277 @@ export function editorEvidenceItemRow(
     source_locator: 'Tabell 3, side 118',
     extraction_method: 'manual',
     created_at: '2026-09-04T08:00:00Z',
+    ...overrides,
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Reviewflaten (migrasjon 005m, 005n, 005o, 006d)
+//
+// Fiksturene bygger jsonb-svaret slik `api.claim_review_workspace(uuid)` faktisk
+// gir det — med snake_case-nøklene fra migrasjonen — og ikke den parsede formen.
+// Det er med hensikt: da er det den virkelige leseren i
+// `lib/review-workspace.ts` som kjøres i sidetesten, og et felt som forsvinner
+// fra kontrakten blir synlig som en feil framfor som en tom visning.
+//
+// Som resten av fiksturene: syntetisk innhold, ikke ekte kilder.
+// ----------------------------------------------------------------------------
+
+const REVIEW_REVISION = '33333333-3333-4333-8333-222222222222'
+const REVIEW_CLAIM = '22222222-2222-4222-8222-444444444444'
+const REVIEW_LINK = '55555555-5555-4555-8555-222222222222'
+const REVIEW_EVIDENCE_ITEM = '66666666-6666-4666-8666-333333333333'
+const REVIEW_SOURCE_VERSION = '88888888-8888-4888-8888-444444444444'
+const REVIEW_SYNTHESIS_ACTOR = '00000000-0000-4000-8000-222222222222'
+const REVIEW_REVIEWER_ACTOR = '00000000-0000-4000-8000-333333333333'
+
+export const TEST_REVIEW_IDS = {
+  revision: REVIEW_REVISION,
+  claim: REVIEW_CLAIM,
+  link: REVIEW_LINK,
+  evidenceItem: REVIEW_EVIDENCE_ITEM,
+  sourceVersion: REVIEW_SOURCE_VERSION,
+  synthesisActor: REVIEW_SYNTHESIS_ACTOR,
+  reviewerActor: REVIEW_REVIEWER_ACTOR,
+} as const
+
+/** Én kørad, slik køen gir den. */
+export function reviewQueueItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    claim_revision_id: REVIEW_REVISION,
+    claim_id: REVIEW_CLAIM,
+    revision_number: 1,
+    knowledge_type: 'evidence_synthesis',
+    created_at: '2026-09-01T08:00:00Z',
+    created_by_actor_id: REVIEW_SYNTHESIS_ACTOR,
+    created_by_actor_key: 'agent:claim-synthesis',
+    statement: 'Testpåstand til vurdering: virkestoff a er assosiert med vektøkning.',
+    subject_drug_name: 'virkestoff a',
+    topic_label: 'vektendring',
+    topic_concept_id: TOPIC_WEIGHT,
+    evidence_link_count: 1,
+    is_published_revision: false,
+    current_claim_verification_outcome: null,
+    current_publication_decision: null,
+    ...overrides,
+  }
+}
+
+/** Hele køsvaret. */
+export function reviewQueuePayload(
+  items: readonly Record<string, unknown>[] = [reviewQueueItem()],
+): Record<string, unknown> {
+  return { reviewer_actor_id: REVIEW_REVIEWER_ACTOR, queue: items }
+}
+
+/** Én evidenslenke i grunnlaget, slik dossieret gir den. */
+export function reviewLink(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    claim_evidence_link_id: REVIEW_LINK,
+    relationship_type: 'supports',
+    directness: 'direct',
+    relevance_note: 'Testnotat: funnet måler samme endepunkt i samme populasjon.',
+    evidence_item: {
+      evidence_item_id: REVIEW_EVIDENCE_ITEM,
+      created_at: '2026-08-30T08:00:00Z',
+      created_by_actor_id: '00000000-0000-4000-8000-444444444444',
+      created_by_actor_key: 'agent:evidence-extraction',
+      created_by_actor_type: 'agent',
+      extraction_method: 'ai_assisted',
+      content_hash: `sha256-v2:${'e'.repeat(64)}`,
+      source: {
+        source_id: SOURCE_A,
+        source_type: 'journal_article',
+        title: 'Testkilde A: vektendring ved åtte uker',
+        authors_or_issuer: 'Testforfatter m.fl.',
+        publisher_or_journal: 'Testtidsskrift',
+        publication_date: '2019-03-01',
+        publication_date_precision: 'month',
+        source_status: 'active',
+        status_note: null,
+      },
+      source_version: {
+        source_version_id: REVIEW_SOURCE_VERSION,
+        retrieved_at: '2026-09-01T09:00:00Z',
+        retrieved_from: 'https://eksempel.invalid/testkilde-a',
+        external_version: null,
+        content_hash: `sha256:${'a'.repeat(64)}`,
+        has_storage_reference: false,
+      },
+      extraction: {
+        design_code: 'randomized_controlled_trial',
+        population_id: null,
+        population_label: 'voksne med depresjon',
+        population_availability: 'reported_value',
+        population_detail: 'Voksne 18–65 år i poliklinisk behandling.',
+        sample_size: 240,
+        sample_size_availability: 'reported_value',
+        intervention_drug_id: DRUG_A,
+        intervention_drug_name: 'virkestoff a',
+        intervention_detail: null,
+        comparator_kind: 'placebo',
+        comparator_drug_id: null,
+        comparator_drug_name: null,
+        comparator_detail: null,
+        outcome_concept_id: TOPIC_WEIGHT,
+        outcome_label: 'vektendring',
+        outcome_detail: 'Endring i kroppsvekt fra baseline.',
+        timepoint_min: '56 days',
+        timepoint_max: '56 days',
+        timepoint_availability: 'reported_value',
+        reported_direction: 'increase',
+        effect_measure: 'mean_difference',
+        estimate: '1.7',
+        estimate_unit: 'kg',
+        estimate_availability: 'reported_value',
+        ci_lower: '0.9',
+        ci_upper: '2.5',
+        ci_level_percent: '95',
+        confidence_interval_availability: 'reported_value',
+        limitations_text: null,
+        source_locator: 'Tabell 2, side 114',
+        raw_extraction: null,
+      },
+    },
+    current_extraction_verification: {
+      evidence_verification_id: '77777777-7777-4777-8777-333333333333',
+      outcome: 'verified',
+      source_access: 'original_source',
+      checked_fields: ['estimate', 'reported_direction'],
+      verified_at: '2026-09-02T10:00:00Z',
+    },
+    ...overrides,
+  }
+}
+
+/** Hele svaret på et oppslag av én revisjon. */
+export function claimReviewPayload(
+  revisionOverrides: Record<string, unknown> = {},
+  reviewerActorId: string = REVIEW_REVIEWER_ACTOR,
+): Record<string, unknown> {
+  return {
+    reviewer_actor_id: reviewerActorId,
+    revision: {
+      claim_revision_id: REVIEW_REVISION,
+      claim_id: REVIEW_CLAIM,
+      revision_number: 1,
+      knowledge_type: 'evidence_synthesis',
+      created_at: '2026-09-01T08:00:00Z',
+      created_by_actor_id: REVIEW_SYNTHESIS_ACTOR,
+      created_by_actor_key: 'agent:claim-synthesis',
+      created_by_actor_type: 'agent',
+      content_hash: `sha256-v2:${'f'.repeat(64)}`,
+      claim_retired_at: null,
+      topic_concept_id: TOPIC_WEIGHT,
+      topic_label: 'vektendring',
+      subject_drug_id: DRUG_A,
+      subject_drug_name: 'virkestoff a',
+      evidence_set_digest: `sha256-v1:${'d'.repeat(64)}`,
+      claim: {
+        statement: 'Testpåstand til vurdering: virkestoff a er assosiert med vektøkning.',
+        scope: 'Voksne, korttidsbehandling ved depresjon',
+        population_id: null,
+        population_label: null,
+        timeframe_min: '56 days',
+        timeframe_max: '56 days',
+        comparator_kind: 'placebo',
+        comparator_drug_id: null,
+        comparator_drug_name: null,
+        direction: 'increase',
+        magnitude_measure: null,
+        magnitude_value: null,
+        magnitude_unit: null,
+        qualifiers: null,
+        uncertainty_summary: 'Få studier, og kort oppfølgingstid.',
+      },
+      links: [reviewLink()],
+      unlinked_related_evidence: [],
+      current_claim_verification_id: null,
+      claim_verifications: [],
+      current_review_decision_id: null,
+      review_decisions: [],
+      evidence_assessment: {
+        evidence_assessment_id: '99999999-9999-4999-8999-333333333333',
+        framework: 'grade',
+        certainty_level: 'low',
+        risk_of_bias: 'serious',
+        inconsistency: 'not_assessable',
+        indirectness: 'not_serious',
+        imprecision: 'serious',
+        publication_bias: 'not_assessable',
+        other_considerations: null,
+        rationale: 'Testbegrunnelse for sikkerhetsgraden.',
+        evidence_gap: null,
+        assessed_at: '2026-09-02T12:00:00Z',
+      },
+      is_published_revision: false,
+      publication_gate: {
+        status: 'blocked',
+        sqlstate: '23001',
+        message: 'Revisjon har ingen registrert claim-verifikasjon.',
+        hint: 'En separat kontrollfase skal ha forsøkt å falsifisere påstanden.',
+      },
+      ...revisionOverrides,
+    },
+  }
+}
+
+/** Én registrert claim-verifikasjon, slik historikken gir den. */
+export function reviewVerificationRecord(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    claim_verification_id: '11111111-1111-4111-8111-333333333333',
+    outcome: 'uncertain',
+    source_access: 'verifiable_representation',
+    verified_at: '2026-09-03T10:00:00Z',
+    created_at: '2026-09-03T10:00:00Z',
+    verifier_actor_id: '00000000-0000-4000-8000-555555555555',
+    verifier_actor_key: 'agent:citation-support-verification',
+    verifier_actor_type: 'agent',
+    verifier_display_name: 'Claim-verifikator',
+    agent_run_id: '11111111-1111-4111-8111-444444444444',
+    verified_evidence_set_digest: `sha256-v1:${'d'.repeat(64)}`,
+    checks: {
+      source_support: 'not_assessable',
+      population_match: 'ok',
+      comparator_match: 'ok',
+      timeframe_match: 'ok',
+      direction_and_magnitude: 'ok',
+      qualifiers_complete: 'not_assessable',
+      contradictory_evidence_represented: 'not_assessable',
+    },
+    findings: 'Ordlyd og forbehold krever språkforståelse.',
+    rationale: 'Deterministisk kontroll uten avvik, men uten mulighet til å konkludere.',
+    citations: [
+      {
+        claim_evidence_link_id: REVIEW_LINK,
+        evidence_item_id: REVIEW_EVIDENCE_ITEM,
+        source_access: 'verifiable_representation',
+        source_version_id: REVIEW_SOURCE_VERSION,
+        checked_content_hash: `sha256:${'a'.repeat(64)}`,
+        relationship_supported: 'not_assessable',
+        finding: 'Relasjonstypen lot seg ikke bedømme deterministisk.',
+      },
+    ],
+    ...overrides,
+  }
+}
+
+/** Én registrert publiseringsbeslutning. */
+export function reviewDecisionRecord(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    review_decision_id: '11111111-1111-4111-8111-555555555555',
+    decision: 'approved',
+    decided_at: '2026-09-04T10:00:00Z',
+    created_at: '2026-09-04T10:00:00Z',
+    reviewer_actor_id: REVIEW_REVIEWER_ACTOR,
+    reviewer_actor_key: 'human:testreviewer',
+    reviewer_display_name: 'Test Reviewer',
+    rationale: 'Går god for at påstanden kan publiseres på dette grunnlaget.',
+    approved_evidence_set_digest: `sha256-v1:${'d'.repeat(64)}`,
     ...overrides,
   }
 }

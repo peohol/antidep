@@ -116,7 +116,17 @@ function toLinkPayload(link: ClaimEvidenceLink): Record<string, unknown> {
     evidence_item: {
       evidence_item_id: link.evidenceItem.evidenceItemId,
       created_by_actor_key: link.evidenceItem.createdByActorKey,
-      source: { source_id: link.evidenceItem.sourceId, title: link.evidenceItem.sourceTitle },
+      source: {
+        source_id: link.evidenceItem.sourceId,
+        source_type: 'journal_article',
+        title: link.evidenceItem.sourceTitle,
+        authors_or_issuer: 'Testforfatter m.fl.',
+        publisher_or_journal: 'Testtidsskrift',
+        publication_date: '2024-01-01',
+        publication_date_precision: 'day',
+        source_status: 'active',
+        status_note: null,
+      },
       source_version:
         version === null
           ? null

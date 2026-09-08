@@ -898,3 +898,145 @@ header nav a {
   color: var(--color-text-muted);
   font-size: 0.9375rem;
 }
+
+/* ==========================================================================
+   Reviewflaten: køen og arbeidsflaten for én påstandsrevisjon
+
+   To regler går igjen, og begge er de samme som i klinikerflaten:
+
+     * Farge er aldri eneste bærer (§2, WCAG). Hver tilstand står med ord;
+       kantstrek og innrykk er tillegg for øyet.
+     * Fravær ser ikke ut som en verdi. .review-absent er dempet og kursivert
+       nettopp for at «ingen registrert kontroll» ikke skal kunne leses i
+       forbifarten som «kontrollen var i orden» (ANTIDEP_CONSTITUTION.md §17).
+   ========================================================================== */
+
+.review-queue {
+  margin: 1.5rem 0;
+  padding: 0;
+  max-width: 48rem;
+  list-style: none;
+}
+
+.review-queue__item {
+  margin-block-end: 1.25rem;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--color-border);
+}
+
+.review-queue__item h3 {
+  margin: 0 0 0.25rem;
+  font-size: 1.0625rem;
+}
+
+.review-queue__meta,
+.review-queue__status {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}
+
+.review-panel {
+  margin: 1.5rem 0;
+  max-width: 48rem;
+}
+
+.review-panel__lead {
+  max-width: 40rem;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}
+
+/* Påstanden ordrett. Sitatformen er semantisk: dette er formuleringen som
+   vurderes, ikke Antideps beskrivelse av den. */
+.review-statement {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border-inline-start: 4px solid var(--color-text);
+  background: var(--color-surface, transparent);
+  font-size: 1.0625rem;
+}
+
+.review-link,
+.review-record {
+  margin-block: 1rem;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--color-border);
+}
+
+.review-link h4,
+.review-record h4 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.review-record__current {
+  font-weight: 400;
+}
+
+.review-record__meta {
+  margin: 0 0 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.review-record__rationale,
+.review-record__findings {
+  margin: 0.5rem 0;
+  max-width: 40rem;
+}
+
+.review-record__citations,
+.review-unlinked,
+.review-decisions {
+  margin: 0.5rem 0;
+  padding-inline-start: 1.25rem;
+  font-size: 0.9375rem;
+}
+
+/* De sju kontrollpunktene som par av navn og resultat. Alltid alle sju, også
+   når de er like: et punkt som ikke vises, er et punkt leseren ikke kan se at
+   ble bedømt (ANTIDEP_CONSTITUTION.md §11). */
+.review-checkpoints {
+  margin: 0.5rem 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9375rem;
+}
+
+.review-checkpoints li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-block: 0.125rem;
+}
+
+.review-checkpoints__label {
+  min-width: 12rem;
+  color: var(--color-text-muted);
+}
+
+.review-absent {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Reviewskjemaene er bredere enn registreringsskjemaene: de står ved siden av
+   grunnlaget de gjelder, og et 28rem-skjema under en 48rem-flate leses som en
+   annen side. */
+.admin-form--review {
+  max-width: 48rem;
+}
+
+/* Én evidenslenke inne i kontrollskjemaet. Innrykket knytter feltene til
+   lenken de gjelder, slik at to lenker ikke kan blandes sammen. */
+.admin-form__group {
+  margin-block: 1rem;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--color-border);
+}
+
+.admin-form__group h4 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}

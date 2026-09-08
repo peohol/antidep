@@ -37,9 +37,9 @@ select enum_has_labels(
     'evidence_item_created', 'agent_identity_registered',
     'agent_identity_credential_issued', 'agent_identity_revoked',
     'evidence_verification_registered', 'source_version_registered',
-    'claim_verification_registered'
+    'claim_verification_registered', 'review_decision_registered'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon og kildeversjoner'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner og den menneskelige reviewbeslutningen'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -100,10 +100,21 @@ select is_empty(
         -- 470_claim_verification_registration_test.sql og
         -- 480_claim_verification_input_test.sql.
         'api.claim_verification_input(text,text,uuid,uuid)',
-        'api.register_claim_verification(text,text,uuid,uuid,text,text,text,text,text,text,text,text,jsonb,text,text)'
+        'api.register_claim_verification(text,text,uuid,uuid,text,text,text,text,text,text,text,text,jsonb,text,text)',
+        -- Migrasjon 005n, 005o og 006d. Den menneskelige reviewflyten: to
+        -- skriveveier og én lesevei, alle tre bare for authenticated, og alle
+        -- tre autoriserer kalleren på sitt eget kall
+        -- (workflow.assert_reviewer_authorized). Hvilke roller som faktisk har
+        -- EXECUTE, kontrolleres i
+        -- 500_human_claim_verification_test.sql,
+        -- 510_publication_approval_test.sql og
+        -- 520_claim_review_workspace_test.sql.
+        'api.register_human_claim_verification(uuid,text,text,text,text,text,text,text,text,text,jsonb,text,text)',
+        'api.register_publication_approval(uuid,text,text,text)',
+        'api.claim_review_workspace(uuid)'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de ni kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de tolv kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$

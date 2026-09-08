@@ -50,7 +50,7 @@ function svarMed(felter: Record<string, string>): string {
           "source_id": "d3e0f6a0-0000-4000-8000-000000000004",
           "source_type": "journal_article",
           "title": "Testkilde",
-          "authors_or_issuer": null,
+          "authors_or_issuer": "Testforfatter m.fl.",
           "publisher_or_journal": null,
           "publication_date": null,
           "publication_date_precision": "unknown",

@@ -73,6 +73,26 @@ export interface VerificationItem {
   readonly createdByActorKey: string
   readonly sourceId: string
   readonly sourceTitle: string
+  /**
+   * Dokumenttypen kilden har. Egen akse fra studiedesignet på funnet: én artikkel
+   * kan rapportere flere design, og en retningslinje leses ikke som en
+   * primærstudie.
+   */
+  readonly sourceType: string
+  readonly sourceAuthorsOrIssuer: string
+  readonly sourcePublisherOrJournal: string | null
+  /** Alltid avkortet til presisjonen under. `null` = ingen dato er registrert. */
+  readonly sourcePublicationDate: string | null
+  readonly sourcePublicationDatePrecision: string | null
+  /**
+   * Kildens status. `retracted` og `withdrawn` blokkerer publisering
+   * (publiseringsgatens G7), og en flate som ikke viste den, ville latt en
+   * reviewer gå god for en påstand som hviler på en tilbaketrukket kilde
+   * (ANTIDEP_CONSTITUTION.md §14).
+   */
+  readonly sourceStatus: string
+  /** `null` betyr «ingen begrunnelse er registrert», ikke «statusen er normal». */
+  readonly sourceStatusNote: string | null
   readonly sourceVersion: VerificationSourceVersion | null
   readonly extraction: VerificationExtraction
   readonly verificationsByThisActor: number
@@ -235,6 +255,16 @@ export function parseVerificationItem(value: unknown): VerificationItem {
     createdByActorKey: asString(record['created_by_actor_key'], 'items[].created_by_actor_key'),
     sourceId: asString(source['source_id'], 'items[].source.source_id'),
     sourceTitle: asString(source['title'], 'items[].source.title'),
+    sourceType: asString(source['source_type'], 'items[].source.source_type'),
+    sourceAuthorsOrIssuer: asString(
+      source['authors_or_issuer'],
+      'items[].source.authors_or_issuer',
+    ),
+    sourcePublisherOrJournal: asOptionalString(source['publisher_or_journal']),
+    sourcePublicationDate: asOptionalString(source['publication_date']),
+    sourcePublicationDatePrecision: asOptionalString(source['publication_date_precision']),
+    sourceStatus: asString(source['source_status'], 'items[].source.source_status'),
+    sourceStatusNote: asOptionalString(source['status_note']),
     sourceVersion: parseSourceVersion(record['source_version']),
     extraction: parseExtraction(record['extraction']),
     verificationsByThisActor: typeof byThisActor === 'number' ? byThisActor : 0,

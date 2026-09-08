@@ -68,7 +68,17 @@ function toPayload(item: VerificationItem): Record<string, unknown> {
     created_by_actor_key: item.createdByActorKey,
     created_at: '2026-09-01T00:00:00+00:00',
     verifications_by_this_actor: item.verificationsByThisActor,
-    source: { source_id: item.sourceId, title: item.sourceTitle },
+    source: {
+      source_id: item.sourceId,
+      source_type: 'journal_article',
+      title: item.sourceTitle,
+      authors_or_issuer: 'Testforfatter m.fl.',
+      publisher_or_journal: 'Testtidsskrift',
+      publication_date: '2024-01-01',
+      publication_date_precision: 'day',
+      source_status: 'active',
+      status_note: null,
+    },
     source_version:
       item.sourceVersion === null
         ? null

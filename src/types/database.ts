@@ -195,6 +195,59 @@ export type Database = {
         }
         Returns: Uuid
       }
+      // De tre neste er den menneskelige reviewflyten (migrasjon 005n, 005o og
+      // 006d). Lesegrunnlaget og de to beslutningene er tre kall og ikke ett:
+      // den faglige kontrollen mot grunnlaget og godkjenningen av at påstanden
+      // kan publiseres er to forskjellige faglige utsagn, og publiseringsgaten
+      // krever dem hver for seg (ANTIDEP_CONSTITUTION.md §11 og §12).
+      //
+      // Svaret fra lesegrunnlaget er `unknown` og ikke en form: det er jsonb, og
+      // en jsonb-form har ingen kolonnetyper PostgREST kan håndheve. Den leses
+      // av `lib/review-workspace.ts`, som avviser et svar uten den formen
+      // kontrakten dokumenterer framfor å gjette.
+      claim_review_workspace: {
+        Args: {
+          p_claim_revision_id?: Uuid | null
+        }
+        Returns: unknown
+      }
+      // `p_seen_evidence_set_digest` er avtrykket flaten faktisk viste, sendt
+      // tilbake uendret. Databasen sammenligner det med settet slik det er nå og
+      // avviser hvis en evidenslenke er kommet til mens vurderingen pågikk.
+      register_human_claim_verification: {
+        Args: {
+          p_claim_revision_id: Uuid
+          p_seen_evidence_set_digest: string
+          p_outcome: string
+          p_source_support: string
+          p_population_match: string
+          p_comparator_match: string
+          p_timeframe_match: string
+          p_direction_and_magnitude: string
+          p_qualifiers_complete: string
+          p_contradictory_evidence_represented: string
+          p_citations: readonly {
+            claim_evidence_link_id: Uuid
+            source_access: string
+            source_version_id: Uuid | null
+            checked_content_hash: string | null
+            relationship_supported: string
+            finding: string | null
+          }[]
+          p_rationale: string
+          p_findings?: string | null
+        }
+        Returns: Uuid
+      }
+      register_publication_approval: {
+        Args: {
+          p_claim_revision_id: Uuid
+          p_seen_evidence_set_digest: string
+          p_decision: string
+          p_rationale: string
+        }
+        Returns: Uuid
+      }
     }
   }
 }

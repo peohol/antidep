@@ -20,18 +20,24 @@
 
 import type { EvidenceStance, VocabularyTerm } from '../lib/evidence-item'
 import type {
+  CertaintyLevel,
   ComparatorKind,
   DrugStatus,
   EffectMeasure,
   EstimateUnit,
   EvidenceRelationshipType,
   ExtractionMethod,
+  GradeDomainRating,
   KnowledgeType,
   ReportedDirection,
+  ReviewOutcome,
   SourceStatus,
   SourceType,
   StudyDesign,
   ValueAvailability,
+  VerificationCheckResult,
+  VerificationOutcome,
+  VerificationSourceAccess,
   VocabularyStatus,
 } from '../types/api'
 
@@ -199,6 +205,97 @@ export const DRUG_STATUS_LABELS: Record<DrugStatus, string> = {
 }
 
 /** Status for en oppføring i et kontrollert vokabular. */
+/**
+ * De sju kontrollpunktene i en claim-verifikasjon, i den rekkefølgen
+ * DATABASE_ARCHITECTURE.md §30 lister dem, med spørsmålet hvert punkt faktisk
+ * svarer på. Rekkefølgen er kontraktens og ikke visningens: en flate som stokket
+ * om på dem, ville vist en annen kontroll enn den som er registrert.
+ */
+export const CLAIM_CHECKPOINTS = [
+  {
+    key: 'sourceSupport',
+    label: 'Kildestøtte',
+    question: 'Støtter det registrerte grunnlaget faktisk ordlyden i påstanden?',
+  },
+  {
+    key: 'populationMatch',
+    label: 'Populasjon',
+    question: 'Svarer populasjonen påstanden gjelder for til den grunnlaget dekker?',
+  },
+  {
+    key: 'comparatorMatch',
+    label: 'Komparator',
+    question: 'Er komparatoren i påstanden den samme som i grunnlaget?',
+  },
+  {
+    key: 'timeframeMatch',
+    label: 'Tidsrom',
+    question: 'Er tidsrommet i påstanden dekket av grunnlaget?',
+  },
+  {
+    key: 'directionAndMagnitude',
+    label: 'Retning og størrelse',
+    question: 'Er retning og eventuelle tallstørrelser gjengitt riktig, uten falsk presisjon?',
+  },
+  {
+    key: 'qualifiersComplete',
+    label: 'Forbehold',
+    question: 'Mangler det vesentlige forbehold i påstanden?',
+  },
+  {
+    key: 'contradictoryEvidenceRepresented',
+    label: 'Motstridende evidens',
+    question: 'Finnes det relevant motstridende evidens som ikke er representert?',
+  },
+] as const
+
+export type ClaimCheckpointKey = (typeof CLAIM_CHECKPOINTS)[number]['key']
+
+export const VERIFICATION_OUTCOME_LABELS: Record<VerificationOutcome, string> = {
+  verified: 'Bekreftet',
+  needs_correction: 'Må rettes',
+  rejected: 'Avvist',
+  uncertain: 'Uavklart',
+}
+
+export const VERIFICATION_CHECK_RESULT_LABELS: Record<VerificationCheckResult, string> = {
+  ok: 'Holder',
+  deviation: 'Avvik',
+  // Ikke «ukjent» og ikke «ikke relevant»: punktet ble forsøkt bedømt og lot seg
+  // ikke bedømme, og det er en registrert usikkerhet (ANTIDEP_CONSTITUTION.md §6).
+  not_assessable: 'Lot seg ikke bedømme',
+}
+
+export const VERIFICATION_SOURCE_ACCESS_LABELS: Record<VerificationSourceAccess, string> = {
+  original_source: 'Originalkilden',
+  verifiable_representation: 'Etterprøvbar representasjon',
+  derived_summary: 'Sammendrag fra et annet ledd',
+}
+
+export const REVIEW_OUTCOME_LABELS: Record<ReviewOutcome, string> = {
+  approved: 'Godkjent for publisering',
+  rejected: 'Avslått',
+  changes_requested: 'Endringer bedt om',
+  extraction_withdrawn: 'Ekstraksjon trukket tilbake',
+  extraction_upheld: 'Ekstraksjon opprettholdt',
+}
+
+export const CERTAINTY_LEVEL_LABELS: Record<CertaintyLevel, string> = {
+  high: 'Høy sikkerhet',
+  moderate: 'Moderat sikkerhet',
+  low: 'Lav sikkerhet',
+  very_low: 'Svært lav sikkerhet',
+  // En egen systemtilstand, ikke bunnen av skalaen (ANTIDEP_CONSTITUTION.md §6).
+  no_assessable_evidence: 'Ingen vurderbar evidens',
+}
+
+export const GRADE_DOMAIN_LABELS: Record<GradeDomainRating, string> = {
+  not_serious: 'Ikke alvorlig',
+  serious: 'Alvorlig',
+  very_serious: 'Svært alvorlig',
+  not_assessable: 'Lot seg ikke vurdere',
+}
+
 export const VOCABULARY_STATUS_LABELS: Record<VocabularyStatus, string> = {
   active: 'I bruk',
   deprecated: 'Utfaset',

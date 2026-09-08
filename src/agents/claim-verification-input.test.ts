@@ -68,7 +68,17 @@ function link(overrides: Record<string, unknown> = {}): Record<string, unknown> 
       created_by_actor_type: 'agent',
       extraction_method: 'ai_assisted',
       content_hash: `sha256-v2:${'e'.repeat(64)}`,
-      source: { source_id: '10000000-0000-4000-8000-000000000001', title: 'Testkilde' },
+      source: {
+        source_id: '10000000-0000-4000-8000-000000000001',
+        source_type: 'journal_article',
+        title: 'Testkilde',
+        authors_or_issuer: 'Testforfatter m.fl.',
+        publisher_or_journal: 'Testtidsskrift',
+        publication_date: '2024-01-01',
+        publication_date_precision: 'day',
+        source_status: 'active',
+        status_note: null,
+      },
       source_version: {
         source_version_id: '10000000-0000-4000-8000-000000000002',
         retrieved_at: '2026-09-01T00:00:00+00:00',

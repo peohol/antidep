@@ -109,7 +109,12 @@ export interface ClaimVerificationInput {
   readonly revisions: readonly ClaimRevisionInput[]
 }
 
-const SOURCE = 'api.claim_verification_input'
+// Grunnlaget har samme form uansett hvem som spør: migrasjon 005m flyttet
+// projeksjonen til workflow.claim_evidence_dossier(uuid), som både
+// api.claim_verification_input (agenten) og api.claim_review_workspace
+// (mennesket) bygger svaret sitt av. Feilmeldingene navngir derfor grunnlaget og
+// ikke den ene av de to flatene.
+const SOURCE = 'grunnlaget fra databasen'
 
 function asRecord(value: unknown, where: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -261,7 +266,20 @@ function parseUnlinked(value: unknown): UnlinkedRelatedEvidence {
   }
 }
 
-function parseRevision(value: unknown): ClaimRevisionInput {
+/**
+ * Én påstandsrevisjon med hele grunnlaget sitt, slik
+ * `workflow.claim_evidence_dossier(uuid)` bygger den.
+ *
+ * Eksportert fordi den menneskelige reviewflaten leser nøyaktig den samme
+ * formen (`src/lib/review-workspace.ts`). To lesere av samme form ville før
+ * eller siden lest den forskjellig, og da ville mennesket og maskinen kontrollert
+ * påstanden mot hvert sitt bilde av evidensen — den samme grunnen migrasjon 005m
+ * gir for at det bare finnes én projeksjon i databasen.
+ *
+ * `verifications_by_this_actor` og `verifications_total` hører til agentens kø og
+ * finnes ikke på reviewflatens form; de blir 0 der.
+ */
+export function parseClaimRevisionDossier(value: unknown): ClaimRevisionInput {
   const record = asRecord(value, 'revisions[]')
   const links = asArray(record['links'], 'revisions[].links')
   const unlinked = asArray(
@@ -301,6 +319,6 @@ export function parseClaimVerificationInput(payload: unknown): ClaimVerification
   return {
     agentRunId: asString(record['agent_run_id'], 'agent_run_id'),
     verifierActorId: asString(record['verifier_actor_id'], 'verifier_actor_id'),
-    revisions: revisions.map(parseRevision),
+    revisions: revisions.map(parseClaimRevisionDossier),
   }
 }

@@ -309,6 +309,70 @@ export type EffectMeasure = (typeof EFFECT_MEASURES)[number]
 export const ESTIMATE_UNITS = ['kg', 'percent'] as const
 export type EstimateUnit = (typeof ESTIMATE_UNITS)[number]
 
+/**
+ * Utfallet av en kontroll av en påstand eller en ekstraksjon mot grunnlaget
+ * (`workflow.verification_outcome`). `uncertain` er ikke et mildere `verified`:
+ * det er en kontroll som ikke lot seg konkludere, og publiseringsgaten
+ * blokkerer på den nøyaktig som på et avvik (ANTIDEP_CONSTITUTION.md §6, §11).
+ */
+export const VERIFICATION_OUTCOMES = [
+  'verified',
+  'needs_correction',
+  'rejected',
+  'uncertain',
+] as const
+export type VerificationOutcome = (typeof VERIFICATION_OUTCOMES)[number]
+
+/**
+ * Resultatet av ett enkelt kontrollpunkt (`workflow.verification_check_result`).
+ * `not_assessable` er ikke det samme som `ok`: et punkt som ikke lot seg
+ * bedømme er nettopp den usikkerheten §11 skal fram i lyset, og en bekreftelse
+ * krever at alle punktene er `ok`.
+ */
+export const VERIFICATION_CHECK_RESULTS = ['ok', 'deviation', 'not_assessable'] as const
+export type VerificationCheckResult = (typeof VERIFICATION_CHECK_RESULTS)[number]
+
+/**
+ * Hva kontrollen faktisk hadde tilgang til
+ * (`workflow.verification_source_access`). Rekkefølgen er fra sterkest til
+ * svakest, og den er ikke kosmetisk: en samlet kontroll er aldri sterkere enn
+ * sitt svakeste ledd, og et sammendrag laget av et annet ledd kan ikke bære en
+ * bekreftelse (ANTIDEP_CONSTITUTION.md §11).
+ */
+export const VERIFICATION_SOURCE_ACCESSES = [
+  'original_source',
+  'verifiable_representation',
+  'derived_summary',
+] as const
+export type VerificationSourceAccess = (typeof VERIFICATION_SOURCE_ACCESSES)[number]
+
+/**
+ * Utfallet av en menneskelig reviewbeslutning (`workflow.review_outcome`). De
+ * tre første gjelder en publiseringsgodkjenning; de to siste gjelder en
+ * beslutning om en ekstraksjon, og hører til en annen skrivevei.
+ */
+export const REVIEW_OUTCOMES = [
+  'approved',
+  'rejected',
+  'changes_requested',
+  'extraction_withdrawn',
+  'extraction_upheld',
+] as const
+export type ReviewOutcome = (typeof REVIEW_OUTCOMES)[number]
+
+/**
+ * Vurderingen av ett GRADE-domene (`knowledge.grade_domain_rating`).
+ * `not_assessable` betyr at domenet ikke lot seg vurdere — ikke at det er
+ * uproblematisk (ANTIDEP_CONSTITUTION.md §6).
+ */
+export const GRADE_DOMAIN_RATINGS = [
+  'not_serious',
+  'serious',
+  'very_serious',
+  'not_assessable',
+] as const
+export type GradeDomainRating = (typeof GRADE_DOMAIN_RATINGS)[number]
+
 // ----------------------------------------------------------------------------
 // api.published_drugs
 // ----------------------------------------------------------------------------

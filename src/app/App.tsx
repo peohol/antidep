@@ -34,12 +34,14 @@ import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router'
 import { AntidepClientProvider, resolveAntidepClient } from './antidep-client'
 import { AccessPage } from './pages/AccessPage'
 import { ClaimEvidencePage } from './pages/ClaimEvidencePage'
+import { ClaimReviewPage } from './pages/ClaimReviewPage'
 import { CreateEvidenceItemPage } from './pages/CreateEvidenceItemPage'
 import { CreateSourcePage } from './pages/CreateSourcePage'
 import { CreateSourceVersionPage } from './pages/CreateSourceVersionPage'
 import { DrugPage } from './pages/DrugPage'
 import { HomePage } from './pages/HomePage'
 import { NotFoundPage } from './pages/NotFoundPage'
+import { ReviewQueuePage } from './pages/ReviewQueuePage'
 import { SourcePage } from './pages/SourcePage'
 import { TopicPage } from './pages/TopicPage'
 import {
@@ -49,6 +51,7 @@ import {
   newEvidenceItemPath,
   newSourcePath,
   newSourceVersionPath,
+  reviewQueuePath,
 } from './routes'
 
 const MAIN_ID = 'hovedinnhold'
@@ -111,6 +114,11 @@ export function AppLayout() {
           <Link to={newSourcePath()}>Opprett kilde</Link>
           <Link to={newSourceVersionPath()}>Registrer kildeversjon</Link>
           <Link to={newEvidenceItemPath()}>Registrer evidensfunn</Link>
+          {/* Steg 4 (§15): den faglige vurderingen. Lenken står sammen med de tre
+              registreringsstegene fordi den er neste ledd i den samme kjeden —
+              men handlingen er en annen rolles: å registrere innhold og å gå god
+              for det er forskjellige rettigheter (MVP_IMPLEMENTATION_PLAN.md §16). */}
+          <Link to={reviewQueuePath()}>Faglig vurdering</Link>
         </nav>
       </header>
       {/* tabIndex -1 gjør hovedområdet fokuserbart programmatisk, ikke med tab. */}
@@ -123,6 +131,8 @@ export function AppLayout() {
           <Route element={<CreateSourcePage />} path={ROUTE_PATTERNS.sourceNew} />
           <Route element={<CreateSourceVersionPage />} path={ROUTE_PATTERNS.sourceVersionNew} />
           <Route element={<CreateEvidenceItemPage />} path={ROUTE_PATTERNS.evidenceNew} />
+          <Route element={<ReviewQueuePage />} path={ROUTE_PATTERNS.reviewQueue} />
+          <Route element={<ClaimReviewPage />} path={ROUTE_PATTERNS.claimReview} />
           <Route element={<SourcePage />} path={ROUTE_PATTERNS.source} />
           <Route element={<AccessPage />} path={ROUTE_PATTERNS.access} />
           <Route element={<NotFoundPage />} path="*" />
