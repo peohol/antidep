@@ -223,7 +223,7 @@ function ExtractionVerificationForm({
           ))}
         </select>
         <p className="admin-form__hint">
-          «Uavklart» er ikke et mildere «Bekreftet»: publiseringsgaten blokkerer på begge de tre
+          «Uavklart» er ikke et mildere «Bekreftet»: publiseringsgaten blokkerer på alle de tre
           andre utfallene, og det er meningen.
         </p>
       </div>
