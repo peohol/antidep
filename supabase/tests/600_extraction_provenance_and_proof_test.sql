@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(30);
+select plan(33);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -498,6 +498,135 @@ select (select id from registered where name = 'item'),
 select ok(
   not workflow.grounding_machine_proved((select id from registered where name = 'item')),
   'endres forankringen, gjelder ikke beviset lenger'
+);
+
+-- ===========================================================================
+-- Del 9 — Et nyere avvik underkjenner et eldre bevis
+--
+-- Beviset skal være det *gjeldende*, ikke bare et som en gang fantes. Uten
+-- denne regelen ville en maskinkontroll som fant et avvik på det samme
+-- grunnlaget, latt det gamle beviset stå — og den menneskelige feltkontrollen
+-- ville fortsatt åpnet.
+-- ===========================================================================
+-- Nytt funn, med sin egen kjøring og sin egen forankring, slik at Del 8 ikke
+-- forstyrrer sekvensen.
+set local role anon;
+insert into run select 'extract-b', api.begin_agent_run(
+  p_identity_key := 'agent-identity:evidence-extraction-01',
+  p_secret := (select secret from cred where label = 'extractor'),
+  p_agent_role := 'evidence_extraction',
+  p_provider := 'testleverandør', p_model := 'testmodell',
+  p_model_version := '2026-09-12', p_prompt_template_version := 'evidence-extraction/1',
+  p_pipeline_version := 'antidep-evidence/1',
+  p_input_source_version_id := '60000000-0000-4000-8000-000000000022',
+  p_input_manifest := '{"mode": "test-600-b"}'::jsonb);
+
+insert into registered select 'item-b', api.register_agent_extraction(
+  p_identity_key := 'agent-identity:evidence-extraction-01',
+  p_secret := (select secret from cred where label = 'extractor'),
+  p_agent_run_id := (select id from run where label = 'extract-b'),
+  p_source_id := '60000000-0000-4000-8000-000000000001',
+  p_source_version_id := '60000000-0000-4000-8000-000000000022',
+  p_design_code := 'randomized_controlled_trial',
+  p_population_availability := 'not_reported',
+  p_population_detail := 'Andre prøve i 600.',
+  p_sample_size_availability := 'not_reported',
+  p_intervention_drug_id := (select id from fixture where name = 'sertralin'),
+  p_comparator_kind := 'none',
+  p_outcome_concept_id := (select id from fixture where name = 'weight'),
+  p_outcome_detail := 'Andre funn for 600.',
+  p_timepoint_availability := 'not_reported',
+  p_reported_direction := 'increase',
+  p_estimate_availability := 'not_reported',
+  p_confidence_interval_availability := 'not_reported',
+  p_source_locator := 'Avsnitt B for 600',
+  p_field_groundings := jsonb_build_array(
+    jsonb_build_object('check_field', 'intervention_arm', 'source_excerpt', 'Patients received sertraline.',
+                       'source_locator', 'Metode', 'justification', 'Armen står i metodeavsnittet.'),
+    jsonb_build_object('check_field', 'outcome', 'source_excerpt', 'Weight change was the outcome.',
+                       'source_locator', 'Metode', 'justification', 'Endepunktet står i metodeavsnittet.'),
+    jsonb_build_object('check_field', 'reported_direction', 'source_excerpt', 'Weight increased.',
+                       'source_locator', 'Resultater', 'justification', 'Retningen står i resultatavsnittet.'),
+    jsonb_build_object('check_field', 'availability_semantics', 'source_excerpt', 'No numeric estimate was given.',
+                       'source_locator', 'Resultater', 'justification', 'Feltene uten verdi er ført som ikke rapportert.')));
+
+-- Maskinen beviser venstresiden.
+insert into run select 'verify-b', api.begin_agent_run(
+  p_identity_key := 'agent-identity:extraction-verification-01',
+  p_secret := (select secret from cred where label = 'verifier'),
+  p_agent_role := 'extraction_verification',
+  p_provider := 'testleverandør', p_model := 'testmodell',
+  p_model_version := '2026-09-12', p_prompt_template_version := 'extraction-verification/1',
+  p_pipeline_version := 'antidep-evidence/1',
+  p_input_manifest := '{"mode": "test-600-b"}'::jsonb);
+select api.register_extraction_verification(
+  'agent-identity:extraction-verification-01',
+  (select secret from cred where label = 'verifier'),
+  (select id from run where label = 'verify-b'),
+  (select id from registered where name = 'item-b'),
+  'uncertain', 'verifiable_representation',
+  array['raw_extraction', 'source_locator'],
+  'Prøve i 600: utdragene ble gjenfunnet ordrett.',
+  'Tallene lot seg ikke bedømme maskinelt.');
+reset role;
+
+select ok(
+  workflow.grounding_machine_proved((select id from registered where name = 'item-b')),
+  'beviset står etter den første maskinkontrollen'
+);
+
+-- …og en senere kontroll finner et avvik på det samme grunnlaget.
+--
+-- now() er transaksjonens starttidspunkt, og verified_at kan ikke ligge fram i
+-- tid (evidence_verifications_verified_at_not_future_check). Den første
+-- kontrollen dyttes derfor en time bakover, slik en reell kjøring får det av at
+-- hver registrering er sin egen transaksjon. Samme grep som i 490, 530, 570 og
+-- 590.
+set local session_replication_role = replica;
+update workflow.evidence_verifications
+set verified_at = verified_at - interval '1 hour',
+    created_at = created_at - interval '1 hour'
+where evidence_item_id = (select id from registered where name = 'item-b');
+set local session_replication_role = origin;
+
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, findings, rationale, verified_at,
+   agent_run_id, verified_grounding_digest)
+select e.id, e.created_by_actor_id,
+       (select id from provenance.actors where actor_key = 'agent:extraction-verification'),
+       'needs_correction', 'verifiable_representation',
+       array['source_locator']::workflow.evidence_check_field[],
+       'Utdraget for endepunktet står ikke i representasjonen likevel.',
+       'Fornyet deterministisk kontroll.',
+       now(),
+       (select id from run where label = 'verify-b'),
+       workflow.evidence_grounding_digest(e.id)
+from knowledge.evidence_items e
+where e.id = (select id from registered where name = 'item-b');
+
+select ok(
+  not workflow.grounding_machine_proved((select id from registered where name = 'item-b')),
+  'et nyere avvik underkjenner det eldre beviset'
+);
+
+-- ===========================================================================
+-- Del 10 — Kjøringens kildeversjon er et uforanderlig premiss
+-- ===========================================================================
+select throws_ok(
+  format(
+    $$update provenance.agent_runs
+      set status = 'aborted',
+          completed_at = now(),
+          failure_reason = 'Prøve i 600.',
+          input_source_version_id = %L
+      where id = %L$$,
+    '60000000-0000-4000-8000-000000000021',
+    (select id from run where label = 'extract-b')
+  ),
+  '23001',
+  null,
+  'kildeversjonen kan ikke skrives om, heller ikke sammen med en gyldig statusovergang'
 );
 
 select finish();

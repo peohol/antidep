@@ -59,6 +59,12 @@ jobs:
       # du faktisk så» holder revisjonslåsen (migrasjon 006f).
       - name: Samtidighetsprøve (to forbindelser)
         run: npm run db:test:lock
+      # pgTAP prøver SQL, og vitest prøver TypeScript med doble for databasen.
+      # Grensen mellom dem — at parameternavnene agentporten sender, er nøyaktig
+      # de api-funksjonene tar imot — er ikke prøvd av noen av dem. Denne kjører
+      # de ekte kjørerne mot den ekte stacken, hele veien til publisering.
+      - name: Kjedeprøve (ekte kjørere mot ekte database)
+        run: npm run db:test:chain
       - name: Stopp stacken
         if: always()
         run: npx supabase stop

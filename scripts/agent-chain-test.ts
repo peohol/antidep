@@ -1,0 +1,545 @@
+// ============================================================================
+// Ende-til-ende: den ekte ekstraksjonskjøringen, mot den ekte databasen
+//
+//   npm run db:test:chain                       # mot den lokale stacken
+//   npm run db:test:chain -- --db-url <url> --api-url <url> --anon-key <key>
+//
+// ----------------------------------------------------------------------------
+// Hvorfor dette ikke er en vitest-fil, og ikke en pgTAP-fil
+//
+// pgTAP-filene kjører i én transaksjon som rulles tilbake, og kan bare prøve
+// SQL. Vitest-filene kjører uten database, og må derfor bruke doble for
+// databaseflaten. Grensen mellom dem — at parameternavnene `agent-api.ts`
+// sender, er nøyaktig de `api`-funksjonene tar imot, og at det TypeScript-koden
+// tror den skrev, faktisk er det som står i basen — er ikke prøvd av noen av
+// dem. Det er den grensen denne filen finnes for.
+//
+// Alt som rører nettet er fortsatt fikstur: kildeteksten leveres av en injisert
+// `retrieve`. Alt annet er ekte — PostgREST, `api`-funksjonene, constraintene,
+// triggerne og publiseringsgaten.
+//
+// ----------------------------------------------------------------------------
+// Kjeden som prøves
+//
+//   api.begin_agent_run                     ekstraksjonskjøringen åpnes
+//   api.register_agent_extraction           forankret evidensfunn registreres
+//   api.extraction_verification_input       verifikatoren leser grunnlaget
+//   api.register_extraction_verification    maskinbeviset registreres
+//   api.register_human_extraction_verification   mennesket bedømmer semantikken
+//   api.register_human_claim_verification    påstanden kontrolleres
+//   api.register_publication_approval        publiseringsbeslutningen
+//   api.publish_claim_revision               publiseringen
+//
+// De to første og de to neste går gjennom de ekte kjørerne
+// (`runEvidenceExtraction`, `runExtractionVerification`) med de ekte portene
+// (`createEvidenceExtractionApi`, `createExtractionVerificationApi`). De
+// menneskelige leddene kalles som en innlogget bruker, med en JWT signert med
+// den lokale stackens egen nøkkel.
+// ============================================================================
+
+import { execFileSync } from 'node:child_process'
+import { createHmac } from 'node:crypto'
+
+import { createClient } from '@supabase/supabase-js'
+
+import {
+  createAgentClient,
+  createEvidenceExtractionApi,
+  createExtractionVerificationApi,
+} from '../src/agents/agent-api.ts'
+import { agentSecret } from '../src/agents/agent-credential.ts'
+import { sourceVersionContentHash } from '../src/agents/content-hash.ts'
+import { parseExtractionProposal } from '../src/agents/extraction-proposal.ts'
+import { runEvidenceExtraction } from '../src/agents/extraction-run.ts'
+import { runExtractionVerification } from '../src/agents/extraction-verification-run.ts'
+import type { RetrieveLike } from '../src/agents/extraction-verification-run.ts'
+import {
+  EVIDENCE_EXTRACTION_PREMISES,
+  EXTRACTION_VERIFICATION_PREMISES,
+} from '../src/agents/pipeline-version.ts'
+
+// ----------------------------------------------------------------------------
+// Miljøet
+// ----------------------------------------------------------------------------
+
+interface Config {
+  readonly dbUrl: string
+  readonly apiUrl: string
+  readonly anonKey: string
+  readonly jwtSecret: string
+}
+
+const DEFAULTS = {
+  dbUrl: 'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+  apiUrl: 'http://127.0.0.1:54321',
+  // Den lokale stackens faste utviklingsnøkkel. Ingen hemmelighet: den står i
+  // Supabase CLI-ens egen dokumentasjon og gjelder bare `supabase start`.
+  jwtSecret: 'super-secret-jwt-token-with-at-least-32-characters-long',
+}
+
+function readConfig(argv: readonly string[]): Config {
+  const flags = new Map<string, string>()
+  for (let i = 0; i < argv.length; i += 2) {
+    const flag = argv[i]
+    const value = argv[i + 1]
+    if (flag === undefined || value === undefined || !flag.startsWith('--')) {
+      throw new Error(`Ukjent argument: ${String(flag)}`)
+    }
+    flags.set(flag.slice(2), value)
+  }
+
+  const anonKey = flags.get('anon-key') ?? process.env['ANTIDEP_LOCAL_ANON_KEY'] ?? localAnonKey()
+  return {
+    dbUrl: flags.get('db-url') ?? DEFAULTS.dbUrl,
+    apiUrl: flags.get('api-url') ?? DEFAULTS.apiUrl,
+    anonKey,
+    jwtSecret: flags.get('jwt-secret') ?? DEFAULTS.jwtSecret,
+  }
+}
+
+/** Henter publishable key fra CLI-en, som er det eneste stedet den finnes. */
+function localAnonKey(): string {
+  const output = execFileSync('npx', ['supabase', 'status', '-o', 'env'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit'],
+  })
+  const match = /^ANON_KEY="?([^"\n]+)"?$/m.exec(output)
+  if (match?.[1] === undefined) {
+    throw new Error('Fant ikke ANON_KEY i `supabase status -o env`. Er den lokale stacken startet?')
+  }
+  return match[1]
+}
+
+function psql(config: Config, sql: string): string {
+  return execFileSync('psql', [config.dbUrl, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sql], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit'],
+  }).trim()
+}
+
+/**
+ * En JWT for en innlogget bruker.
+ *
+ * De menneskelige skriveveiene leser `auth.uid()`, altså `sub` i tokenet
+ * PostgREST fikk. Den lokale stacken signerer med en fast utviklingsnøkkel, så
+ * tokenet lages her framfor å gå veien om GoTrue — prøven gjelder
+ * skriveveiene, ikke innloggingen.
+ */
+function userToken(config: Config, userId: string): string {
+  const base64url = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url')
+  const now = Math.floor(Date.now() / 1000)
+  const head = base64url({ alg: 'HS256', typ: 'JWT' })
+  const body = base64url({
+    sub: userId,
+    role: 'authenticated',
+    aud: 'authenticated',
+    iat: now,
+    exp: now + 3600,
+  })
+  const signature = createHmac('sha256', config.jwtSecret)
+    .update(`${head}.${body}`)
+    .digest('base64url')
+  return `${head}.${body}.${signature}`
+}
+
+// ----------------------------------------------------------------------------
+// Fiksturen
+// ----------------------------------------------------------------------------
+
+const SOURCE = 'c0000000-0000-4000-8000-000000000001'
+const VERSION = 'c0000000-0000-4000-8000-000000000021'
+const REVIEWER_USER = 'c0000000-0000-4000-8000-0000000000c0'
+const REVIEWER_ACTOR = 'c0000000-0000-4000-8000-0000000000c1'
+const PUBLISHER_USER = 'c0000000-0000-4000-8000-0000000000d0'
+const PUBLISHER_ACTOR = 'c0000000-0000-4000-8000-0000000000d1'
+
+const KILDETEKST = [
+  '<PubmedArticle>',
+  '  <AbstractText Label="METHODS">Sertraline patients were randomised for 8 weeks.</AbstractText>',
+  '  <AbstractText Label="RESULTS">Sertraline weight change increased from baseline.</AbstractText>',
+  '</PubmedArticle>',
+].join('\n')
+
+function retrieve(hash: string): RetrieveLike {
+  return (url) =>
+    Promise.resolve({
+      status: 'ok',
+      representation: {
+        url,
+        status: 200,
+        contentType: 'text/xml',
+        content: KILDETEKST,
+        byteLength: Buffer.byteLength(KILDETEKST, 'utf8'),
+        contentHash: hash,
+        bytesAreUtf8: true,
+      },
+    })
+}
+
+function q(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+/**
+ * Setter opp fiksturen, og river den ned igjen først.
+ *
+ * Kjøringen skriver i en ekte database som ikke rulles tilbake, så prøven må
+ * kunne kjøres om igjen. Alt den lager, har id-er med `c0000000`-prefiks, og
+ * ryddes i motsatt rekkefølge av fremmednøklene.
+ */
+function seed(config: Config): { secret: string; verifierSecret: string } {
+  psql(
+    config,
+    `
+    set local session_replication_role = replica;
+    delete from audit.events where object_id in (
+      select id from workflow.evidence_verifications where evidence_item_id in (
+        select id from knowledge.evidence_items where source_id = ${q(SOURCE)}));
+    delete from workflow.claim_verifications cv using knowledge.claim_revisions r
+      where cv.claim_revision_id = r.id and r.id::text like 'c0000000%';
+    delete from workflow.review_decisions rd using knowledge.claim_revisions r
+      where rd.claim_revision_id = r.id and r.id::text like 'c0000000%';
+    delete from workflow.evidence_verifications where evidence_item_id in (
+      select id from knowledge.evidence_items where source_id = ${q(SOURCE)});
+    update knowledge.claims set current_published_revision_id = null
+      where id::text like 'c0000000%';
+    delete from knowledge.claim_evidence_links where claim_revision_id::text like 'c0000000%';
+    delete from knowledge.evidence_assessments where claim_revision_id::text like 'c0000000%';
+    delete from knowledge.claim_revisions where id::text like 'c0000000%';
+    delete from knowledge.claims where id::text like 'c0000000%';
+    delete from knowledge.evidence_field_groundings where evidence_item_id in (
+      select id from knowledge.evidence_items where source_id = ${q(SOURCE)});
+    delete from knowledge.evidence_items where source_id = ${q(SOURCE)};
+    delete from provenance.agent_runs where input_source_version_id = ${q(VERSION)};
+    delete from knowledge.source_versions where id = ${q(VERSION)};
+    delete from knowledge.sources where id = ${q(SOURCE)};
+    delete from workflow.user_roles where user_id in (${q(REVIEWER_USER)}, ${q(PUBLISHER_USER)});
+    delete from provenance.actors where id in (${q(REVIEWER_ACTOR)}, ${q(PUBLISHER_ACTOR)});
+    delete from auth.users where id in (${q(REVIEWER_USER)}, ${q(PUBLISHER_USER)});
+    `,
+  )
+
+  psql(
+    config,
+    `
+    insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+    values (${q(SOURCE)}, 'journal_article', 'Kjedeprøve', 'Testforfatter',
+            (select id from provenance.actors where actor_key = 'human:peder-holman'));
+
+    insert into knowledge.source_versions
+      (id, source_id, retrieved_at, retrieved_from, content_hash, representation,
+       retrieved_by_actor_id)
+    values (${q(VERSION)}, ${q(SOURCE)}, now(), 'https://example.test/kjede',
+            knowledge.source_version_content_hash(${q(KILDETEKST)}), 'abstract',
+            (select id from provenance.actors where actor_key = 'human:peder-holman'));
+
+    insert into auth.users (id, instance_id, aud, role, email)
+    values (${q(REVIEWER_USER)}, '00000000-0000-0000-0000-000000000000',
+            'authenticated', 'authenticated', 'kjede-reviewer@example.test'),
+           (${q(PUBLISHER_USER)}, '00000000-0000-0000-0000-000000000000',
+            'authenticated', 'authenticated', 'kjede-publisher@example.test');
+
+    insert into provenance.actors
+      (id, actor_key, actor_type, display_name, description, auth_user_id)
+    values (${q(REVIEWER_ACTOR)}, 'human:kjede-reviewer', 'human', 'Kjedeprøvens reviewer',
+            'Bare for scripts/agent-chain-test.ts.', ${q(REVIEWER_USER)}),
+           (${q(PUBLISHER_ACTOR)}, 'human:kjede-publisher', 'human', 'Kjedeprøvens publisher',
+            'Bare for scripts/agent-chain-test.ts.', ${q(PUBLISHER_USER)});
+
+    insert into workflow.user_roles
+      (user_id, role_code, scope_id, valid_from, granted_by_actor_id, grant_reason)
+    values (${q(REVIEWER_USER)}, 'reviewer', null, now() - interval '1 day',
+            (select id from provenance.actors where actor_key = 'human:peder-holman'),
+            'Kjedeprøve.'),
+           (${q(PUBLISHER_USER)}, 'publisher', null, now() - interval '1 day',
+            (select id from provenance.actors where actor_key = 'human:peder-holman'),
+            'Kjedeprøve.');
+    `,
+  )
+
+  return {
+    secret: psql(
+      config,
+      `select provenance.issue_agent_identity_credential(
+         'agent-identity:evidence-extraction-01', 'human:peder-holman')`,
+    ),
+    verifierSecret: psql(
+      config,
+      `select provenance.issue_agent_identity_credential(
+         'agent-identity:extraction-verification-01', 'human:peder-holman')`,
+    ),
+  }
+}
+
+function check(name: string, condition: boolean, detail = ''): void {
+  if (condition) {
+    console.log(`  ok   ${name}`)
+    return
+  }
+  console.error(`  FEIL ${name}${detail === '' ? '' : `: ${detail}`}`)
+  process.exitCode = 1
+}
+
+async function main(): Promise<void> {
+  const config = readConfig(process.argv.slice(2))
+  console.log('Kjeden fra ekstraksjonskjøring til publiserbar dekning, mot ekte database.\n')
+
+  const { secret, verifierSecret } = seed(config)
+  const contentHash = await sourceVersionContentHash(KILDETEKST)
+  const client = createAgentClient({ url: config.apiUrl, publishableKey: config.anonKey })
+
+  // ---- Ledd 1: ekstraksjonen, gjennom den ekte porten -----------------------
+  const extraction = await runEvidenceExtraction({
+    api: createEvidenceExtractionApi(client, {
+      identityKey: 'agent-identity:evidence-extraction-01',
+      secret: agentSecret(secret),
+    }),
+    premises: EVIDENCE_EXTRACTION_PREMISES,
+    proposal: parseExtractionProposal({
+      source_id: SOURCE,
+      source_version_id: VERSION,
+      retrieved_from: 'https://example.test/kjede',
+      content_hash: contentHash,
+      extraction: {
+        design_code: 'randomized_controlled_trial',
+        population_availability: 'not_reported',
+        population_detail: 'Voksne.',
+        sample_size_availability: 'not_reported',
+        intervention_drug_id: psql(
+          config,
+          `select id from catalog.drugs where canonical_name = 'sertralin'`,
+        ),
+        comparator_kind: 'none',
+        outcome_concept_id: psql(
+          config,
+          `select id from catalog.clinical_concepts where canonical_label = 'vektendring'`,
+        ),
+        outcome_detail: 'Vektendring.',
+        timepoint_availability: 'not_reported',
+        reported_direction: 'increase',
+        estimate_availability: 'not_reported',
+        confidence_interval_availability: 'not_reported',
+        source_locator: 'Sammendrag',
+      },
+      field_groundings: [
+        {
+          check_field: 'intervention_arm',
+          source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+          source_locator: 'METHODS',
+          justification: 'Armen står i metodeavsnittet.',
+        },
+        {
+          check_field: 'outcome',
+          source_excerpt: 'Sertraline weight change increased from baseline.',
+          source_locator: 'RESULTS',
+          justification: 'Endepunktet står i resultatavsnittet.',
+        },
+        {
+          check_field: 'reported_direction',
+          source_excerpt: 'Sertraline weight change increased from baseline.',
+          source_locator: 'RESULTS',
+          justification: 'Retningen står i resultatavsnittet.',
+        },
+        {
+          check_field: 'availability_semantics',
+          source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+          source_locator: 'METHODS',
+          justification: 'Feltene uten verdi er ført som ikke rapportert.',
+        },
+      ],
+    }),
+    retrieve: retrieve(contentHash),
+  })
+
+  check('ekstraksjonen registrerte et evidensfunn', extraction.decision === 'registered')
+  const itemId = extraction.evidenceItemId ?? ''
+  check(
+    'funnet er bundet til kjøringen og til kildeversjonen den leste',
+    psql(
+      config,
+      `select count(*) from knowledge.evidence_items e
+       join provenance.agent_runs r
+         on r.id = e.agent_run_id and r.input_source_version_id = e.source_version_id
+       where e.id = ${q(itemId)}`,
+    ) === '1',
+  )
+  check(
+    'forankringen dekker hvert semantisk felt',
+    psql(
+      config,
+      `select cardinality(workflow.semantic_check_fields(${q(itemId)}))
+              = cardinality(workflow.grounded_check_fields(${q(itemId)}))`,
+    ) === 't',
+  )
+  check(
+    'og ingenting er bevist ennå',
+    psql(config, `select workflow.grounding_machine_proved(${q(itemId)})`) === 'f',
+  )
+
+  // ---- Ledd 2: den deterministiske kontrollen, gjennom den ekte porten ------
+  const verification = await runExtractionVerification({
+    api: createExtractionVerificationApi(client, {
+      identityKey: 'agent-identity:extraction-verification-01',
+      secret: agentSecret(verifierSecret),
+    }),
+    premises: EXTRACTION_VERIFICATION_PREMISES,
+    evidenceItemId: itemId,
+    retrieve: retrieve(contentHash),
+  })
+
+  check(
+    'verifikatoren registrerte sin kontroll',
+    verification.items[0]?.decision === 'registered',
+    JSON.stringify(verification.items[0]),
+  )
+  check(
+    'og maskinbeviset gjelder nå',
+    psql(config, `select workflow.grounding_machine_proved(${q(itemId)})`) === 't',
+  )
+
+  // ---- Ledd 3–6: de menneskelige leddene, som innlogget bruker --------------
+  const revision = psql(
+    config,
+    `
+    with c as (
+      insert into knowledge.claims
+        (id, knowledge_type, topic_concept_id, subject_drug_id, created_by_actor_id)
+      select 'c0000000-0000-4000-8000-000000000031', 'evidence_synthesis',
+             (select id from catalog.clinical_concepts where canonical_label = 'vektendring'),
+             (select id from catalog.drugs where canonical_name = 'sertralin'),
+             (select id from provenance.actors where actor_key = 'agent:claim-synthesis')
+      returning id, knowledge_type, subject_drug_id, created_by_actor_id
+    ), r as (
+      insert into knowledge.claim_revisions
+        (id, claim_id, revision_number, knowledge_type, subject_drug_id,
+         statement, scope, comparator_kind, direction, uncertainty_summary, created_by_actor_id)
+      select 'c0000000-0000-4000-8000-000000000041', c.id, 1, c.knowledge_type, c.subject_drug_id,
+             'Kjedeprøvens påstand.', 'Bare testdata.', 'none', 'increase',
+             'Testusikkerhet.', c.created_by_actor_id
+      from c returning id
+    ), l as (
+      insert into knowledge.claim_evidence_links
+        (id, claim_revision_id, evidence_item_id, relationship_type, directness,
+         relevance_note, created_by_actor_id)
+      select 'c0000000-0000-4000-8000-000000000051', r.id, ${q(itemId)}, 'supports', 'direct',
+             'Kjedeprøvens lenke.',
+             (select id from provenance.actors where actor_key = 'agent:claim-synthesis')
+      from r returning id
+    )
+    insert into knowledge.evidence_assessments
+      (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
+       risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
+       rationale, assessed_at, created_by_actor_id)
+    select 'c0000000-0000-4000-8000-000000000041', 'evidence_synthesis', 'grade', 'low',
+           'serious', 'not_assessable', 'not_serious', 'serious', 'not_assessable',
+           'Kjedeprøve.', now(),
+           (select id from provenance.actors where actor_key = 'agent:claim-synthesis')
+    from l
+    returning claim_revision_id
+    `,
+  )
+
+  // De menneskelige leddene kalles som en innlogget bruker. Agentklienten har
+  // med vilje ingen sesjon (`agent-api.ts`), så tokenet settes her, på en klient
+  // som bare denne prøven bruker.
+  const asUser = (userId: string) =>
+    createClient(config.apiUrl, config.anonKey, {
+      db: { schema: 'api' },
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${userToken(config, userId)}` } },
+    })
+
+  const extractionDigest = psql(config, `select workflow.evidence_extraction_digest(${q(itemId)})`)
+  const human = await asUser(REVIEWER_USER).rpc('register_human_extraction_verification', {
+    p_evidence_item_id: itemId,
+    p_seen_extraction_digest: extractionDigest,
+    p_outcome: 'verified',
+    p_source_access: 'original_source',
+    // Nøyaktig det mennesket bedømte. Provenansfeltene dekkes av maskinens rad.
+    p_checked_fields: [
+      'intervention_arm',
+      'outcome',
+      'reported_direction',
+      'availability_semantics',
+    ],
+    p_rationale: 'Kjedeprøve: bedømte de semantiske feltene mot hvert felts eget kildeutdrag.',
+  })
+  check('mennesket bekreftet ekstraksjonen', human.error === null, human.error?.message ?? '')
+
+  check(
+    'de to radene dekker til sammen det gaten krever',
+    psql(
+      config,
+      `select count(*) from (
+         select unnest(workflow.required_check_fields(${q(itemId)}))::text
+         except
+         select unnest(workflow.covered_check_fields(${q(itemId)}))::text) as mangler`,
+    ) === '0',
+  )
+  check(
+    'og menneskets rad påstår ikke provenansfeltene',
+    psql(
+      config,
+      `select count(*) from workflow.evidence_verifications ev
+       where ev.evidence_item_id = ${q(itemId)} and ev.agent_run_id is null
+         and ('source_locator' = any (ev.checked_fields)
+              or 'raw_extraction' = any (ev.checked_fields))`,
+    ) === '0',
+  )
+
+  const setDigest = psql(config, `select knowledge.claim_evidence_set_digest(${q(revision)})`)
+  const claimCheck = await asUser(REVIEWER_USER).rpc('register_human_claim_verification', {
+    p_claim_revision_id: revision,
+    p_seen_evidence_set_digest: setDigest,
+    p_outcome: 'verified',
+    p_source_support: 'ok',
+    p_population_match: 'ok',
+    p_comparator_match: 'ok',
+    p_timeframe_match: 'ok',
+    p_direction_and_magnitude: 'ok',
+    p_qualifiers_complete: 'ok',
+    p_contradictory_evidence_represented: 'ok',
+    p_citations: [
+      {
+        claim_evidence_link_id: 'c0000000-0000-4000-8000-000000000051',
+        source_access: 'verifiable_representation',
+        source_version_id: VERSION,
+        checked_content_hash: contentHash,
+        relationship_supported: 'ok',
+      },
+    ],
+    p_rationale: 'Kjedeprøve: kontrollert punkt for punkt mot grunnlaget.',
+  })
+  check('påstanden er kontrollert', claimCheck.error === null, claimCheck.error?.message ?? '')
+
+  const approval = await asUser(REVIEWER_USER).rpc('register_publication_approval', {
+    p_claim_revision_id: revision,
+    p_seen_evidence_set_digest: psql(
+      config,
+      `select knowledge.claim_evidence_set_digest(${q(revision)})`,
+    ),
+    p_decision: 'approved',
+    p_rationale: 'Kjedeprøve: godkjent etter fullført kontroll.',
+  })
+  check('publiseringen er godkjent', approval.error === null, approval.error?.message ?? '')
+
+  const published = await asUser(PUBLISHER_USER).rpc('publish_claim_revision', {
+    p_claim_revision_id: revision,
+    p_reason: 'Kjedeprøve: publisert etter fullført kontroll.',
+  })
+  check('påstanden er publisert', published.error === null, published.error?.message ?? '')
+  check(
+    'og står som gjeldende publiserte revisjon',
+    psql(
+      config,
+      `select c.current_published_revision_id::text from knowledge.claims c
+       join knowledge.claim_revisions r on r.claim_id = c.id where r.id = ${q(revision)}`,
+    ) === revision,
+  )
+
+  console.log(
+    process.exitCode === 1 ? '\nMinst én påstand slo feil.' : '\nHele kjeden gikk gjennom.',
+  )
+}
+
+await main()
