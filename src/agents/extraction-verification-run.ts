@@ -92,22 +92,24 @@ export interface RunOptions {
   readonly retrieve?: RetrieveLike
   readonly retrieveOptions?: RetrieveOptions
   /**
-   * Et snevrere utvalg av arbeidskøen enn `evidenceItemId` kan uttrykke.
+   * Et snevrere utvalg av inndataen enn `evidenceItemId` alene gir.
    *
-   * `evidenceItemId` krever at kalleren *kjenner* id-en. Re-ekstraksjonen gjør
-   * ikke alltid det: har en tidligere kjøring rukket å registrere funnet før den
-   * døde, avviser databasen den nye registreringen som en dublett og gir ingen
-   * id tilbake. Da må funnet gjenfinnes i køen på noe kalleren faktisk har —
-   * kildeversjonen og forankringen — for at kjeden skal kunne fullføres uten å
-   * dra hele køen med seg.
+   * Hvilken rad kjøringen gjelder, avgjøres av `evidenceItemId`, og ingenting
+   * annet: re-ekstraksjonen får id-en fra registreringen, eller — når den samme
+   * ekstraksjonen alt var registrert — fra dublettavvisningen, som navngir raden
+   * etter den samme kanoniske identiteten som UNIQUE-regelen bruker (migrasjon
+   * 007h). Utvalget her gjenfinner altså ingenting; det avgjør bare hva som
+   * faktisk skal kontrolleres av det kalleren allerede har pekt på.
    *
-   * Hele køen sendes inn, ikke ett funn om gangen, slik at kalleren kan se hva
-   * som *fantes* og ikke bare hva som ble valgt. Forskjellen er nettopp det
-   * re-ekstraksjonen trenger: en kø uten funnet betyr at det allerede er
-   * kontrollert, mens en kø med et funn som ikke passer, betyr noe annet.
+   * Re-ekstraksjonen trenger det til to ting. Et funn som allerede bærer et
+   * gjeldende maskinbevis, skal ikke kontrolleres om igjen — en ny kontroll ville
+   * vært en ny rad uten et nytt svar, og den samme filen kjørt om igjen skal ikke
+   * skrive noe. Og kalleren må kunne se raden som faktisk lå der, for å kunne
+   * sammenligne forankringen på nettopp den.
    *
-   * Filtreringen skjer på kjørerens side og gjør ingen kontroll løsere: køen er
-   * den samme, og hvert funn som slipper gjennom, kontrolleres nøyaktig som før.
+   * Inndataen sendes derfor inn som den er, ikke som et ja eller nei. Ingen
+   * kontroll blir løsere av det: hvert funn som slipper gjennom, kontrolleres
+   * nøyaktig som før.
    */
   readonly select?: (items: readonly VerificationItem[]) => readonly VerificationItem[]
   readonly log?: (line: string) => void

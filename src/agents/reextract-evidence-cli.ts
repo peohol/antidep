@@ -196,9 +196,8 @@ async function main(): Promise<number> {
     }
 
     // En rettet forankring er ikke det samme som «allerede gjort», og skal ikke
-    // se slik ut. Kjøringen vet forskjellen: forslagets forankring finnes ikke i
-    // arbeidskøen, mens et annet forankret funn på den samme kildeversjonen står
-    // ukontrollert der.
+    // se slik ut. Kjøringen vet forskjellen: databasen navngir raden dubletten
+    // gjaldt, og forankringen på nettopp den raden er en annen enn forslagets.
     for (const result of report.results) {
       if (result.groundingConflict !== undefined) {
         console.error(`\n${result.label}: ${result.groundingConflict}`)

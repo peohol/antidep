@@ -136,8 +136,10 @@ deterministiske kontrollen på hvert nytt funn med det samme. Dette er veien for
 siden av** det gamle, og det gamle røres ikke.
 
 Ble en tidligere kjøring avbrutt mellom registreringen og kontrollen, fullfører
-den neste kjøringen kontrollen framfor å skrive en ny rad. Den gjenfinner funnet
-på kildeversjonen og forankringen, og lar resten av arbeidskøen stå.
+den neste kjøringen kontrollen framfor å skrive en ny rad. Databasen navngir da
+raden forslaget kolliderte med, etter det samme fingeravtrykket som avviste
+dubletten, og kontrollen gjøres på nøyaktig den raden. Resten av arbeidskøen
+står urørt.
 
 Kommandoen avslutter med feil dersom noe funn står uten registrert maskinbevis.
 Da er kjeden ikke komplett, og kontrolløkten i UI-et vil stoppe på funnet.

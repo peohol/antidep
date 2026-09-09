@@ -6606,10 +6606,9 @@ prosessen, og to roller kan ikke dele ett variabelnavn — rollen er rettighetsg
 **Re-ekstraksjonen kan fullføre en avbrutt kjøring, og lyver ikke om kontrollen.** Funnet i
 teknisk review. Registreringen og kontrollen er to skrivinger i to transaksjoner; dør
 prosessen mellom dem, finnes raden uten maskinbevis, og en ny kjøring med det samme forslaget
-får bare «dublett» tilbake — uten en id å kontrollere. Kjøringen gjenfinner nå funnet i
-verifikatorens arbeidskø på kildeversjonen og forankringen. Utvalget er strengere enn
-databasens dublettregel — en legacy-rad uten forankring treffer aldri — så gjenopptakelsen
-rører nøyaktig det forslaget beskriver og lar resten av køen stå. Kjøringen teller i tillegg
+får bare «dublett» tilbake. Avvisningen navngir nå raden (se nedenfor), så kjøringen har en
+id å kontrollere, og fullfører kontrollen på nøyaktig den raden framfor å skrive en ny.
+Resten av køen står urørt. Kjøringen teller i tillegg
 funn som står uten registrert maskinbevis, og kommandoen avslutter med feil framfor å si at
 kjeden er komplett: en kontroll som ikke lot seg gjennomføre, er ikke en kontroll (§11).
 
