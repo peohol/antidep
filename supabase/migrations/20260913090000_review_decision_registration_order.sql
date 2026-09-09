@@ -173,8 +173,15 @@ begin
   -- motsatt rekkefølge av skrivingene.
   --
   -- review_decisions_single_object_check garanterer at nøyaktig én peker er
-  -- satt. Den tredje grenen finnes likevel: en framtidig objekttype skal ikke
-  -- kunne få et nummer uten en lås ved å bli lagt til i CHECK-en alene.
+  -- satt, og den CHECK-en er fasiten for hvilke rader som kan finnes. En rad
+  -- uten objektpeker avvises derfor av den, ikke av en RAISE her: en trigger som
+  -- rakk å avvise først, ville byttet ut constraintens egen avvisning med en
+  -- annen SQLSTATE og gjort det uklart hvilken regel som faktisk sviktet.
+  --
+  -- Nummeret tildeles likevel i det tilfellet, slik at raden ikke i stedet
+  -- feiler på NOT NULL. Sekvenshullet er uten betydning: raden blir ikke til.
+  -- At det bare finnes to objekttyper å låse, er en påstand pgTAP 610 holder
+  -- fast — en tredje peker må ta stilling til sin egen lås her.
   if new.claim_revision_id is not null then
     perform 1
     from knowledge.claim_revisions r
@@ -185,11 +192,6 @@ begin
     from knowledge.evidence_items e
     where e.id = new.evidence_item_id
     for update;
-  else
-    raise exception using
-      errcode = 'invalid_parameter_value',
-      message = 'Reviewbeslutningen peker ikke på noe objekt, og kan ikke få en plass i registreringsrekkefølgen.',
-      hint = 'Registreringsnummeret tildeles på innsiden av radlåsen på objektet beslutningen gjelder (migrasjon 006i). En ny objekttype må ta stilling til sin egen lås her før den kan registreres.';
   end if;
 
   new.registration_ordinal :=
@@ -200,7 +202,7 @@ end;
 $$;
 
 comment on function workflow.set_review_decision_registration_ordinal() is
-  'Gir databasen eierskap til registreringsrekkefølgen på en reviewbeslutning, og tildeler nummeret på innsiden av radlåsen på objektet beslutningen gjelder — påstandsrevisjonen ved en publiseringsgodkjenning, evidensfunnet ved en tilbaketrekking av en ekstraksjon — slik at det følger den rekkefølgen radene faktisk skrives i (migrasjon 006i). Begge variantene låses, og ikke bare den ene workflow.set_review_evidence_set_digest() allerede låser: begge trenger en entydig gjeldende beslutning, og en garanti som hviler på en annen triggers navn er ingen garanti. Overskriver enhver verdi kalleren måtte ha oppgitt: en verdi kalleren kunne valgt, ville vært nøyaktig den påstanden kolonnen finnes for å binde. SECURITY DEFINER fordi knowledge har RLS med default deny; funksjonen leser bare og skriver bare til raden som settes inn.';
+  'Gir databasen eierskap til registreringsrekkefølgen på en reviewbeslutning, og tildeler nummeret på innsiden av radlåsen på objektet beslutningen gjelder — påstandsrevisjonen ved en publiseringsgodkjenning, evidensfunnet ved en tilbaketrekking av en ekstraksjon — slik at det følger den rekkefølgen radene faktisk skrives i (migrasjon 006i). Begge variantene låses, og ikke bare den ene workflow.set_review_evidence_set_digest() allerede låser: begge trenger en entydig gjeldende beslutning, og en garanti som hviler på en annen triggers navn er ingen garanti. Funksjonen avviser ingenting: en rad uten objektpeker er review_decisions_single_object_check sin avvisning, og den skal være den kalleren ser. Overskriver enhver verdi kalleren måtte ha oppgitt: en verdi kalleren kunne valgt, ville vært nøyaktig den påstanden kolonnen finnes for å binde. SECURITY DEFINER fordi knowledge har RLS med default deny; funksjonen leser bare og skriver bare til raden som settes inn.';
 
 revoke execute on function workflow.set_review_decision_registration_ordinal() from public;
 

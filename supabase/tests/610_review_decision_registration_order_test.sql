@@ -32,7 +32,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(27);
+select plan(29);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -109,6 +109,27 @@ select matches(
   'from knowledge\.evidence_items e\s+where e\.id = new\.evidence_item_id\s+for update',
   'nummeret på en tilbaketrekking tildeles på innsiden av låsen på evidensfunnet'
 );
+
+-- Vaktposten under de to over: triggeren låser nøyaktig de objekttypene som
+-- finnes. Kommer det en tredje objektpeker på tabellen, feiler denne
+-- assertionen, og den som legger den til må ta stilling til sin egen lås —
+-- framfor at raden stille får et nummer uten en.
+select set_eq(
+  $$
+    select a.attname::text
+    from pg_constraint c
+    join pg_attribute a
+      on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
+    where c.conrelid = 'workflow.review_decisions'::regclass
+      and c.contype = 'f'
+      and array_length(c.conkey, 1) = 1
+      and c.confrelid in ('knowledge.claim_revisions'::regclass,
+                          'knowledge.evidence_items'::regclass)
+  $$,
+  $$values ('claim_revision_id'), ('evidence_item_id')$$,
+  'beslutningen peker på nøyaktig to objekttyper, og triggeren låser begge'
+);
+
 
 -- ===========================================================================
 -- Fikstur
@@ -290,6 +311,25 @@ create function pg_temp.newest_by_clock(p_claim_revision_id uuid) returns text l
   order by rd.decided_at desc, rd.created_at desc, rd.id desc
   limit 1;
 $$;
+
+-- Triggeren avviser ingenting selv: en rad uten objektpeker er
+-- review_decisions_single_object_check sin avvisning, og den skal være den
+-- kalleren ser. En trigger som rakk å avvise først, ville byttet ut
+-- constraintens SQLSTATE med en annen, og gjort det uklart hvilken regel som
+-- faktisk sviktet. Assertionen står her og ikke i del 1, fordi en beslutning
+-- først må komme forbi kvalifikasjonskontrollen for å nå CHECK-ene i det hele
+-- tatt — og revieweren finnes fra fiksturen over.
+select throws_ok(
+  $$
+    insert into workflow.review_decisions
+      (review_type, decision, rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
+    values ('publication_approval', 'approved', 'Prøve i 610: ingen objektpeker.',
+            '61000000-0000-4000-8000-0000000000a1', 'human', now())
+  $$,
+  '23514',
+  null,
+  'en beslutning uten objektpeker avvises av constrainten, ikke av triggeren'
+);
 
 -- ===========================================================================
 -- Del 2 — En godkjenning skrevet sist gjelder, også med det eldste tidsstempelet
