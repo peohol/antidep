@@ -158,14 +158,22 @@ export async function runEvidenceExtraction(
   } = options
 
   const groundedFields = proposal.fieldGroundings.map((grounding) => grounding.checkField)
-  const agentRunId = await api.beginRun(premises, {
-    source_id: proposal.sourceId,
-    source_version_id: proposal.sourceVersionId,
-    retrieved_from: proposal.retrievedFrom,
-    content_hash: proposal.contentHash,
-    grounded_fields: groundedFields,
-    dry_run: dryRun,
-  })
+  // Kildeversjonen oppgis strukturert, ikke bare i manifestet: den binder
+  // evidensfunnet til nøyaktig den utgaven kjøringen leste, deklarativt
+  // (evidence_items_agent_run_source_version_fkey, migrasjon 005z). Manifestet
+  // er fortsatt dokumentasjonen av hva kjøringen fikk.
+  const agentRunId = await api.beginRun(
+    premises,
+    {
+      source_id: proposal.sourceId,
+      source_version_id: proposal.sourceVersionId,
+      retrieved_from: proposal.retrievedFrom,
+      content_hash: proposal.contentHash,
+      grounded_fields: groundedFields,
+      dry_run: dryRun,
+    },
+    proposal.sourceVersionId,
+  )
   log(`Kjøring ${agentRunId} åpnet for kildeversjon ${proposal.sourceVersionId}.`)
 
   try {

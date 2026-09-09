@@ -375,7 +375,7 @@ select has_trigger(
 
 select ok(
   (select p.prosecdef from pg_proc p
-   where p.oid = 'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb)'::regprocedure),
+   where p.oid = 'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb,uuid)'::regprocedure),
   'api.begin_agent_run() er SECURITY DEFINER (DATABASE_ARCHITECTURE.md §50)'
 );
 select ok(
@@ -398,7 +398,7 @@ select ok(
 select ok(
   has_function_privilege(
     'anon',
-    'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb)'::regprocedure,
+    'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb,uuid)'::regprocedure,
     'execute'
   ),
   'anon har EXECUTE på api.begin_agent_run(), fordi en agent ikke har brukerkonto'
@@ -407,7 +407,7 @@ select is_empty(
   $$
     select f.fn || ':' || r.role_name
     from (values
-      ('api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb)'),
+      ('api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb,uuid)'),
       ('api.complete_agent_run(text,text,uuid,text,jsonb,text)')) as f(fn)
     cross join (values ('service_role'), ('public')) as r(role_name)
     where has_function_privilege(r.role_name, f.fn::regprocedure, 'execute')

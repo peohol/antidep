@@ -808,6 +808,9 @@ export function reviewLink(overrides: Record<string, unknown> = {}): Record<stri
       field_groundings: TEST_FIELD_GROUNDINGS,
       semantic_check_fields: TEST_SEMANTIC_FIELDS,
       grounded_check_fields: TEST_SEMANTIC_FIELDS,
+      // Maskinen har prøvd utdragene mot kilden. Uten dette stopper økten før
+      // feltskuffene (migrasjon 005x, 005æ).
+      grounding_machine_proved: true,
       extraction: {
         design_code: 'randomized_controlled_trial',
         population_id: null,

@@ -173,6 +173,7 @@ export function verificationItemFixture(
     fieldGroundings: groundings,
     semanticCheckFields: semanticFieldsFor(built),
     groundedCheckFields: groundings.map((grounding) => grounding.checkField),
+    groundingMachineProved: false,
     evidenceItemId: '3422c284-31eb-428e-b1a0-bebf3f616ffc',
     createdByActorId: '99999999-9999-4999-8999-999999999999',
     createdByActorKey: 'agent:evidence-extraction',

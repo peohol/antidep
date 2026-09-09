@@ -65,6 +65,7 @@ export type AgentDatabase = {
           p_prompt_template_version: string
           p_pipeline_version: string
           p_input_manifest: Record<string, unknown>
+          p_input_source_version_id?: Uuid | null
         }
         Returns: Uuid
       }
@@ -247,7 +248,19 @@ export interface RegisterClaimVerificationArgs {
 
 /** Kjøringen, som er den samme mekanismen for hvert agentledd. */
 export interface AgentRunApi {
-  beginRun(premises: AgentRunPremises, inputManifest: Record<string, unknown>): Promise<Uuid>
+  /**
+   * Åpner kjøringen.
+   *
+   * `inputSourceVersionId` er kildeversjonen kjøringen skal lese, og er
+   * påkrevd for rollen `evidence_extraction`: evidensfunnet kjøringen
+   * registrerer, bindes deklarativt til nettopp den (migrasjon 005z).
+   * Verifikatorleddene leser en arbeidskø og lar den stå.
+   */
+  beginRun(
+    premises: AgentRunPremises,
+    inputManifest: Record<string, unknown>,
+    inputSourceVersionId?: Uuid | null,
+  ): Promise<Uuid>
   completeRun(
     agentRunId: Uuid,
     status: 'succeeded' | 'failed' | 'aborted',
@@ -311,7 +324,7 @@ function identityOf(credential: AgentCredential): Identity {
  */
 function createAgentRunApi(client: AgentClient, identity: Identity, role: string): AgentRunApi {
   return {
-    async beginRun(premises, inputManifest) {
+    async beginRun(premises, inputManifest, inputSourceVersionId = null) {
       const { data, error } = await client.rpc('begin_agent_run', {
         ...identity,
         p_agent_role: role,
@@ -321,6 +334,7 @@ function createAgentRunApi(client: AgentClient, identity: Identity, role: string
         p_prompt_template_version: premises.promptTemplateVersion,
         p_pipeline_version: premises.pipelineVersion,
         p_input_manifest: inputManifest,
+        p_input_source_version_id: inputSourceVersionId,
       })
       if (error !== null) {
         fail('api.begin_agent_run', error.message)

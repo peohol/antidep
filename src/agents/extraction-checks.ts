@@ -1626,9 +1626,13 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   const quotesFound = quotesChecked && missingQuotes.length === 0
 
   if (!quotesChecked) {
-    noteUnresolved(
-      'Funnet har ingen ordrett gjengivelse fra kilden (raw_extraction), så ' +
-        'sitatkontrollen kunne ikke gjennomføres.',
+    // Ikke et hinder, og derfor ikke en uavklart merknad: kolonnen er valgfri,
+    // og fra agentkontrakten er kildeforankringen kontrollgrunnlaget.
+    // `workflow.required_check_fields` krever ikke feltet av en rad som ikke
+    // har det (migrasjon 005y).
+    notes.push(
+      'Funnet har ingen ordrett gjengivelse i raw_extraction. Kolonnen er valgfri, og ' +
+        'kontrollgrunnlaget er kildeforankringen, som er kontrollert for seg.',
     )
   } else {
     checked.push('raw_extraction')
@@ -1686,13 +1690,27 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     )
   }
 
-  // 3. Kildepekeren. Se hodekommentaren for hva som gjør den korroborert.
-  if (representationReproduced && quotesFound) {
+  // 3. Kildepekeren, som er maskinbeviset. Se hodekommentaren.
+  //
+  // Feltet føres opp under nøyaktig tre vilkår samtidig: representasjonen er
+  // reprodusert, forankringen er komplett, og hvert forankret utdrag ble
+  // gjenfunnet ordrett. Da — og bare da — er venstresiden bevist, og databasen
+  // leser feltet som nettopp det beviset
+  // (`workflow.grounding_machine_proved`, migrasjon 005y).
+  //
+  // `raw_extraction` inngår ikke i vilkåret. Kolonnen er valgfri, og fra
+  // agentkontrakten er den ikke kontrollgrunnlaget — forankringen er. Et krav
+  // om den ville gjort en helt gyldig agentekstraksjon uten `source_quote`
+  // umulig å bevise, og dermed umulig å menneskebekrefte.
+  const groundingProved =
+    groundings.length > 0 && unfoundFields.size === 0 && groundingGap.length === 0
+  if (representationReproduced && groundingProved) {
     checked.push('source_locator')
-  } else if (!quotesFound) {
+  } else if (!groundingProved && groundingGap.length === 0) {
     noteUnresolved(
-      `Kildepekeren «${item.extraction.sourceLocator}» kunne ikke korroboreres uten et ` +
-        'sitat å finne igjen i representasjonen, og er derfor ikke ført opp som kontrollert.',
+      `Kildepekeren «${item.extraction.sourceLocator}» kunne ikke korroboreres uten en ` +
+        'kildeforankring å finne igjen ordrett i representasjonen, og er derfor ikke ført ' +
+        'opp som kontrollert.',
     )
   }
 
@@ -1940,8 +1958,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
         'kildeversjonen, så kontrollen gjelder ikke den utgaven ekstraksjonen ble gjort fra.',
     )
   } else if (
-    !quotesFound ||
-    groundingGap.length > 0 ||
+    !groundingProved ||
     unmatchedNumbers.length > 0 ||
     ambiguousNumbers.length > 0 ||
     confidenceIntervalUnresolved ||

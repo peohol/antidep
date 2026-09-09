@@ -1389,7 +1389,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
       feat: add the human claim review and publication approval flow        (#59)  merget   migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
       feat: add the human extraction check and make publication operational (#61)  merget   migrasjon 005q, 005r, 005s, 005t, 006g, 006h
-      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x
+      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1491,7 +1491,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1945 pgTAP-assertions over 60 testfiler.
+Databaselaget teller nå 1956 pgTAP-assertions over 60 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1659,16 +1659,17 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de femtiåtte migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de sekstién migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
-   007g, 003b, 005v, 005w, 003c og 005x — i
+   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z og 005æ — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0
+   og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle femtiåtte ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle sekstién ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -6252,7 +6253,7 @@ den eksplisitte publiseringsbeslutningen, og publiseringen. Bare det aktive steg
 et ferdig steg lukkes, markeres med svaret sitt og kan åpnes igjen. Hele dossieret ligger
 bak «Tekniske detaljer» og er ute av den kliniske arbeidsflyten.
 
-**Åtte migrasjoner, og den bærende beslutningen er hvem som lager kontrollgrunnlaget.**
+**Elleve migrasjoner, og den bærende beslutningen er hvem som lager kontrollgrunnlaget.**
 
 | Migrasjon | Hva den gjør |
 | --- | --- |
@@ -6264,6 +6265,9 @@ bak «Tekniske detaljer» og er ute av den kliniske arbeidsflyten.
 | 005w | Ekstraksjonsagenten får sin identitet i `provenance.agent_identities` |
 | 003c | Golden slicens kildeversjoner får representasjonstypen `abstract`, og kolonnen fryses |
 | 005x | `workflow.evidence_grounding_digest`, `grounding_machine_proved`, og kravet om maskinbevis før en menneskelig bekreftelse |
+| 005y | Dekningen er unionen av kontroller: radkravet om kildepekeren er flyttet til gaten, og en uavklart kontroll teller nå med sine egne felter |
+| 005z | `provenance.agent_runs.input_source_version_id`, og den sammensatte fremmednøkkelen som binder ekstraksjonen til kildeversjonen kjøringen leste |
+| 005æ | Grunnlaget bærer `grounding_machine_proved`, så kontrolløkten kan stoppe før feltskuffene |
 
 **Koblingen mellom felt og kilde fantes ikke som data, og det var den egentlige feilen.**
 Kontrollflaten kunne bare stille ett spørsmål — «stemmer denne raden med kilden?» — fordi
@@ -6364,16 +6368,47 @@ en kontrollør ser at noen andre har registrert en kontroll — men da ville et 
 vært foreldet i samme øyeblikk det ble skrevet. Det snevre avtrykket dekker ekstraksjonen,
 kildeversjonen og settet av forankringer, og ikke mer.
 
-Konsekvensen for `checked_fields` er verdt å skrive ut, fordi reviewen stilte spørsmål ved
-den: en menneskelig bekreftelse fører fortsatt opp `raw_extraction` og `source_locator`, men
-det er ikke lenger en påstand flaten gjør på egen hånd. Databasen slipper ikke gjennom en
-bekreftelse uten at nettopp de to tingene er bevist for nettopp dette grunnlaget, i den
-samme arbeidsflyten. `rationale` sier hvem som gjorde hva: mennesket bedømte de semantiske
-feltene, maskinen beviste utdragene.
+**Ingen rad påstår mer enn sin egen operasjon.** Menneskets `checked_fields` inneholder nå
+bare de semantiske feltene kontrolløren faktisk svarte «ja» på — ikke feltene hen ikke kunne
+avgjøre, og ikke de to provenansfeltene økten aldri stilte spørsmål om. Det krevde to
+endringer, fordi de gamle reglene gjorde den ærlige raden umulig:
 
-**Ekstraksjonen er bundet til sin kjøring.** `knowledge.evidence_items` har fått
-`agent_run_id` og en generert `agent_run_role`, med to sammensatte fremmednøkler mot
-`provenance.agent_runs` — den ene binder kjøringen til aktøren, den andre til rollen.
+* `evidence_verifications_locator_checked_check` krevde `source_locator` i *enhver*
+  bekreftelse. Kravet er flyttet til gaten: G5b krever fortsatt at feltet er dekket, men
+  dekningen kan komme fra den kontrollen som faktisk gjorde jobben.
+* `covered_check_fields(uuid)` telte bare `verified`-rader og nullstilte ved enhver senere
+  rad som ikke var det. Den deterministiske kontrollen ender normalt på `uncertain`, så
+  maskinen kunne aldri bidra med dekning uansett hva den hadde bevist. Regelen er nå delt i
+  to, som den alltid mente: et **avvik** nullstiller dekningen fra alt som ligger foran, en
+  **uavklart** kontroll gjør det ikke — den motsier ingenting, og feltene den førte opp,
+  gikk den faktisk gjennom.
+
+G5 er urørt, og er det som hindrer at en uavklart kontroll blir en bekreftelse: den *siste*
+registrerte kontrollen må fortsatt være `verified`. Unionen sier hva som er dekket; G5 sier
+at noen konkluderte.
+
+**Maskinbeviset hviler ikke på `raw_extraction`.** Beviset er `source_locator` i maskinens
+`checked_fields`, og den deterministiske kontrollen fører opp nettopp det feltet bare når
+representasjonen lot seg reprodusere, forankringen er komplett, og hvert forankret utdrag ble
+gjenfunnet ordrett. Fram til 005y krevdes også `raw_extraction`, som gjorde den valgfrie
+legacy-kolonnen til en skjult forutsetning: en helt gyldig agentekstraksjon uten
+`source_quote` kunne aldri bli bevist, og dermed aldri menneskebekreftes. Av samme grunn
+fører `required_check_fields` nå opp `raw_extraction` bare for rader som faktisk har en.
+
+**Rekkefølgen er maskinbevis → menneskelig semantikk.** 005x håndhevet kravet ved lagring,
+men flaten visste ingenting: en kontrollør kunne gå gjennom alle feltene og først få
+avvisningen til slutt. Grunnlaget bærer nå `grounding_machine_proved` (005æ), og
+kontrolløkten stopper før feltskuffene med én kort beskjed når beviset mangler eller er
+foreldet.
+
+**Ekstraksjonen er bundet til sin kjøring, og kjøringen til det den leste.**
+`knowledge.evidence_items` har fått `agent_run_id` og en generert `agent_run_role`, med to
+sammensatte fremmednøkler mot `provenance.agent_runs` — den ene binder kjøringen til
+aktøren, den andre til rollen. En tredje binder ekstraksjonen til kildeversjonen kjøringen
+faktisk ble åpnet for (`input_source_version_id`, 005z): uten den kunne en kjøring åpnes for
+én utgave og registrere en ekstraksjon mot en annen. Koblingen er en fremmednøkkel og ikke
+en nøkkel i `input_manifest`, fordi manifestet er fri jsonb skrevet av klienten — en regel
+som leste en nøkkel derfra, ville vært en regel som stolte på en klientkonvensjon.
 Aktørattribusjon alene sa *hvilken agent*, ikke *hvilken kjøring*, og dermed ikke hvilken
 modell, modellversjon, prompt-versjon eller pipeline-versjon verdiene kom fra. Mønsteret er
 det `workflow.evidence_verifications` allerede brukte, kopiert ord for ord. `content_hash`
@@ -6444,7 +6479,16 @@ verifikatoren har kjørt, at en menneskelig bekreftelse da avvises av databasen 
 etterlater noe, at det finnes etterpå, og at det slutter å gjelde når forankringen endres).
 Agentkjøringen har egne tester uten database og uten nett: at den registrerer og lukker
 kjøringen, at forankringen sendes videre uendret, at kjøringen sier hva den bygde på, og de
-fire tilfellene der den nekter å registrere noe. Frontenden har fått nye testfiler for de rene
+fire tilfellene der den nekter å registrere noe.
+
+`src/agents/extraction-chain.test.ts` krysser grensen mellom leddene med ekte kode i hvert:
+den ekte ekstraksjonskjøringen skriver, det den skrev oversettes til det leseflaten ville
+gitt, den ekte verifikatorkjøringen leser og prøver utdragene mot den samme kildeteksten, og
+menneskets rad utledes av delsvarene. Til slutt regnes G5b ut som ren mengdelære over de to
+radene. Bare de to ytterste punktene er fikstur — kildeteksten og forslaget. Selve
+skriveveien er SQL og prøves i `590` og `600`, som går den samme kjeden gjennom
+`api.register_agent_extraction`, `api.register_extraction_verification`,
+`api.register_human_extraction_verification` og publiseringsgaten. Frontenden har fått nye testfiler for de rene
 modulene — utledningen av utfallene, utsagnene per felt, avtrykkene per steg, den
 menneskelige kildelenken og grunnlaget for hvert kontrollpunkt — og de to sidetestene er
 skrevet om til å beskrive arbeidsmodellen: at bare det aktive steget vises, at lenken går til

@@ -60,9 +60,11 @@ describe('deriveExtractionVerification', () => {
       answers: allYes(),
     })
     expect(derived.outcome).toBe('verified')
-    // Nøyaktig de feltene gaten krever, og ingen flere: dekningen skal si det
-    // den gir inntrykk av å si.
-    expect([...derived.checkedFields].sort()).toEqual([...REQUIRED].sort())
+    // Nøyaktig de feltene mennesket faktisk bekreftet, og ingen flere. De to
+    // provenansfeltene dekkes av maskinens egen rad; gatens G5b leser unionen.
+    expect([...derived.checkedFields].sort()).toEqual([...SEMANTIC].sort())
+    expect(derived.checkedFields).not.toContain('raw_extraction')
+    expect(derived.checkedFields).not.toContain('source_locator')
     expect(derived.findings).toBeNull()
     expect(derived.rationale).toContain('3 av 3 delkontroller besvart')
   })
@@ -80,7 +82,10 @@ describe('deriveExtractionVerification', () => {
     expect(derived.rationale).toContain('deterministiske ekstraksjonskontrollen')
   })
 
-  it('lover ingenting om maskinbeviset når kontrollen ikke er en bekreftelse', () => {
+  // Et felt kontrolløren ikke kunne avgjøre, er ikke kontrollert. Fra migrasjon
+  // 005y teller en uavklart kontrolls `checked_fields` mot gatens dekning, så
+  // et gjennomgått-men-uavklart felt ville gitt falsk dekning.
+  it('fører ikke opp et felt som ikke lot seg avgjøre', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
       semanticFields: SEMANTIC,
@@ -88,7 +93,18 @@ describe('deriveExtractionVerification', () => {
       answers: { ...allYes(), outcome: { answer: 'cannot_determine', note: '' } },
     })
     expect(derived.outcome).not.toBe('verified')
-    expect(derived.rationale).not.toContain('deterministiske ekstraksjonskontrollen')
+    expect(derived.checkedFields).not.toContain('outcome')
+    expect(derived.checkedFields).toContain('intervention_arm')
+  })
+
+  it('fører ikke opp et felt kontrolløren fant et avvik på', () => {
+    const derived = deriveExtractionVerification({
+      requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
+      sourceAccess: 'original_source',
+      answers: { ...allYes(), outcome: { answer: 'no', note: 'Feil endepunkt.' } },
+    })
+    expect(derived.checkedFields).not.toContain('outcome')
   })
 
   // evidence_verifications_source_access_check: en bekreftelse kan ikke hvile på

@@ -91,8 +91,21 @@ function toPayload(item: VerificationItem): Record<string, unknown> {
             retrieved_from: item.sourceVersion.retrievedFrom,
             external_version: item.sourceVersion.externalVersion,
             content_hash: item.sourceVersion.contentHash,
+            representation: item.sourceVersion.representation,
             has_storage_reference: item.sourceVersion.hasStorageReference,
           },
+    // Kontrollgrunnlaget: forankringen og de to feltsettene kontrollen leser.
+    field_groundings: item.fieldGroundings.map((grounding) => ({
+      field_grounding_id: grounding.fieldGroundingId,
+      check_field: grounding.checkField,
+      source_excerpt: grounding.sourceExcerpt,
+      source_locator: grounding.sourceLocator,
+      justification: grounding.justification,
+      created_at: grounding.createdAt,
+      created_by_actor_id: grounding.createdByActorId,
+    })),
+    semantic_check_fields: item.semanticCheckFields,
+    grounded_check_fields: item.groundedCheckFields,
     extraction: {
       design_code: e.designCode,
       population_label: e.populationLabel,

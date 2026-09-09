@@ -287,6 +287,34 @@ export function buildExtractionSteps({
     return steps
   }
 
+  // Rekkefølgen er maskinbevis → menneskelig semantikk, ikke omvendt. Uten
+  // beviset har ingen prøvd at utdragene i det hele tatt står i kilden, og en
+  // kontrollør som gikk gjennom alle feltene, ville fått avvisningen først ved
+  // lagring (migrasjon 005x). Økten stopper derfor her.
+  if (!dossier.groundingMachineProved) {
+    steps.push({
+      id: extractionCommitStepId(evidenceItemId),
+      title: `${prefix}Kildeutdragene er ikke kontrollert mot kilden ennå`,
+      answerSummary: null,
+      isComplete: false,
+      countsTowardProgress: false,
+      content: (
+        <div className="knowledge-notice knowledge-notice--absence" role="note">
+          <p className="knowledge-notice__lead">
+            Ingen maskinell kontroll har ennå prøvd at kildeutdragene står ordrett i denne utgaven
+            av kilden.
+          </p>
+          <p className="knowledge-notice__caveat">
+            Du skal bare vurdere om Antideps tolkning følger av utdraget — ikke om utdraget finnes.
+            Den kontrollen gjøres av ekstraksjonsverifikatoren, og må være kjørt før du kan bekrefte
+            noe. Er grunnlaget endret etter at den kjørte, må den kjøres på nytt.
+          </p>
+        </div>
+      ),
+    })
+    return steps
+  }
+
   if (!includeFieldSteps) {
     steps.push({
       id: extractionCommitStepId(evidenceItemId),

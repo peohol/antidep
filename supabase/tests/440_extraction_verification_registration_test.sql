@@ -274,6 +274,7 @@ select 'extractor-open', api.begin_agent_run(
   p_provider := 'testleverandør', p_model := 'testmodell',
   p_model_version := '2026-09-06', p_prompt_template_version := 'evidence-extraction/1',
   p_pipeline_version := 'antidep-evidence/1',
+  p_input_source_version_id := '44000000-0000-4000-8000-000000000021',
   p_input_manifest := jsonb_build_object('source_ids', array['44000000-0000-4000-8000-000000000001'])
 );
 select api.complete_agent_run(

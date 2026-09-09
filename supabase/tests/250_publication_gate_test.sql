@@ -344,18 +344,24 @@ select lives_ok(
   'en nyere bekreftelse opphever det tidligere avviket'
 );
 
--- G5b har samme gjeldende-semantikk som G5.
+-- G5b har samme gjeldende-semantikk som G5 for *avvik*.
 --
 -- Uten den kunne et avvik forsvinne uten å bli avklart: en delkontroll som
 -- aldri så på det omstridte feltet, ville sluppet gjennom G5 (siste utfall er
 -- verified) og gjennom G5b (dekningen for feltet hentes fra en *eldre*
 -- bekreftelse, den avviket nettopp underkjente).
+--
+-- Fra migrasjon 005y er det bare et avvik som nullstiller. En uavklart kontroll
+-- motsier ingenting, og feltene den førte opp, gikk den faktisk gjennom — det
+-- er nettopp arbeidsdelingen mellom maskinen, som beviser provenansfeltene, og
+-- mennesket, som bedømmer de semantiske. At noen konkluderte, er fortsatt G5
+-- sin oppgave.
 insert into workflow.evidence_verifications
   (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
    source_access, checked_fields, findings, rationale, verified_at)
-select e.id, e.created_by_actor_id, v.id, 'uncertain', 'original_source',
+select e.id, e.created_by_actor_id, v.id, 'needs_correction', 'original_source',
        array['source_locator']::workflow.evidence_check_field[],
-       'Kontrollen konkluderte ikke: tidspunktet i kilden lar seg ikke lese entydig.',
+       'Tidspunktet i kilden er et annet enn det raden oppgir.',
        'Fornyet gjennomgang av sammendraget.', now() - interval '7 days 3 hours'
 from knowledge.evidence_items e, fixture v
 where e.id = (select id from fixture where name = 'evidence_a') and v.name = 'verifier';

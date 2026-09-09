@@ -261,33 +261,27 @@ function joinFindings(sentences: readonly string[]): string | null {
 /**
  * Ekstraksjonskontrollen, utledet av delsvarene.
  *
- * `checkedFields` er feltene kontrolløren faktisk gikk gjennom — også de hen
- * ikke kunne avgjøre. Det er ikke en oppmyking: `workflow.covered_check_fields`
- * teller bare felter fra kontroller med utfallet `verified`, så et gjennomgått
- * felt i en uavklart kontroll gir ingen dekning. Å utelate det ville derimot
- * skjult hva kontrolløren faktisk så på.
- *
  * ----------------------------------------------------------------------------
- * De to provenansfeltene føres opp uten å ha vært egne spørsmål
+ * `checkedFields` er nøyaktig det mennesket bekreftet — aldri mer
  *
- * `requiredFields` er publiseringsgatens krav og inneholder `raw_extraction` og
- * `source_locator`. De er ikke kliniske påstander en lege bedømmer som egne
- * beslutninger — «er noe bevart ordrett?» og «hvor i dokumentet står funnet som
- * helhet?» — og som egne trekkspillskuffer var de spørsmål uten klinisk
- * innhold.
+ * Raden er et auditobjekt for én operasjon, og den skal aldri påstå større
+ * dekning enn operasjonen faktisk hadde (DATABASE_ARCHITECTURE.md §29). Derfor
+ * står bare de semantiske feltene kontrolløren svarte «ja» på: ikke feltene hen
+ * ikke kunne avgjøre, og ikke de to provenansfeltene økten aldri stilte
+ * spørsmål om.
  *
- * At de likevel føres opp i en bekreftelse, er ikke en påstand denne modulen
- * gjør på egen hånd. Fra migrasjon 005x avviser databasen en menneskelig
- * bekreftelse med mindre en *maskinell* kontroll har bevist nøyaktig de to
- * tingene for nøyaktig dette grunnlaget: at representasjonen lot seg
- * reprodusere, og at hvert forankret utdrag står ordrett i den
- * (`workflow.grounding_machine_proved`). En bekreftelse kan altså ikke bli til
- * uten at de to feltene faktisk er kontrollert i den samme arbeidsflyten.
+ * `raw_extraction` og `source_locator` dekkes av maskinens egen rad. Den
+ * deterministiske kontrollen fører opp `source_locator` når representasjonen
+ * lot seg reprodusere, forankringen er komplett og hvert forankret utdrag ble
+ * gjenfunnet ordrett — og `raw_extraction` når radens rå gjengivelse ble
+ * gjenfunnet. Publiseringsgatens G5b leser unionen over funnets kontroller
+ * (`workflow.covered_check_fields`, migrasjon 005y), så de to leddene dekker
+ * til sammen det raden påstår, uten at noen av dem overdriver.
  *
- * Dekningen er derfor sann, og `rationale` sier hvem som kontrollerte hva:
- * mennesket bedømte de semantiske feltene, maskinen beviste utdragene. Er
- * kontrollen ikke en bekreftelse, føres de ikke opp, og gatens G5b ser da ingen
- * dekning i det hele tatt.
+ * At maskinen faktisk har gjort sin del, er ikke et håp: fra migrasjon 005x
+ * avviser databasen en menneskelig bekreftelse uten et maskinbevis som gjelder
+ * nøyaktig dette grunnlaget, og kontrolløkten stopper før feltskuffene når
+ * beviset mangler.
  */
 export function deriveExtractionVerification(input: {
   /** Publiseringsgatens krav: `workflow.required_check_fields(uuid)`. */
@@ -310,27 +304,23 @@ export function deriveExtractionVerification(input: {
       `${String(counts.answered)} av ${String(counts.total)} delkontroller besvart: ` +
       `${String(counts.confirmed)} bekreftet, ${String(counts.deviations)} avvik, ` +
       `${String(counts.unresolved)} kunne ikke avgjøres.` +
-      (outcome === 'verified'
-        ? ' Kontrolløren bedømte de semantiske feltene mot hvert felts eget kildeutdrag. ' +
-          'At utdragene står ordrett i den registrerte kildeversjonen, og at kildepekeren ' +
-          'lar seg korroborere, er bevist av den deterministiske ekstraksjonskontrollen, ' +
-          'som databasen krever før en bekreftelse kan registreres.'
-        : ''),
+      ' Kontrolløren bedømte de semantiske feltene mot hvert felts eget kildeutdrag. ' +
+      'At utdragene står ordrett i den registrerte kildeversjonen, er bevist av den ' +
+      'deterministiske ekstraksjonskontrollen, som er et eget kontrollobjekt med sin egen ' +
+      'dekning.',
   )
 
-  const answeredSemanticFields = input.semanticFields.filter(
-    (field) => input.answers[field] !== undefined,
+  // Bare det som faktisk ble bekreftet. Et felt kontrolløren ikke kunne
+  // avgjøre, er ikke kontrollert, og et provenansfelt hen aldri ble spurt om,
+  // er det heller ikke.
+  const confirmedFields = input.semanticFields.filter(
+    (field) => input.answers[field]?.answer === 'yes',
   )
 
   if (outcome === 'verified') {
-    // De to provenansfeltene er de i gatens krav som ikke er semantiske. Se
-    // hodekommentaren for hvorfor de dekkes av de bekreftede delkontrollene.
-    const provenanceFields = input.requiredFields.filter(
-      (field) => !input.semanticFields.includes(field),
-    )
     return {
       outcome,
-      checkedFields: [...answeredSemanticFields, ...provenanceFields],
+      checkedFields: confirmedFields,
       rationale,
       findings: null,
     }
@@ -343,7 +333,7 @@ export function deriveExtractionVerification(input: {
 
   return {
     outcome,
-    checkedFields: answeredSemanticFields,
+    checkedFields: confirmedFields,
     rationale,
     // Utfallet er ikke `verified`, så databasen krever et funn. Er ingen
     // delkontroll åpen, er det kildetilgangen som er grunnen, og setningen over

@@ -77,7 +77,7 @@ select is_empty(
         -- faktisk har EXECUTE på hvilken funksjon, kontrolleres i
         -- 410_agent_identity_structure_test.sql; her er poenget at listen er
         -- uttømmende.
-        'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb)',
+        'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb,uuid)',
         'api.complete_agent_run(text,text,uuid,text,jsonb,text)',
         -- Migrasjon 005g. Samme begrunnelse som de to over: en autentisert
         -- ekstraksjonsverifikator kaller den som anon, og den rører ingenting

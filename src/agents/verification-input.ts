@@ -177,6 +177,16 @@ export interface VerificationItem {
   readonly semanticCheckFields: readonly string[]
   /** Feltene forankringen faktisk dekker. Differansen mot settet over er det som mangler. */
   readonly groundedCheckFields: readonly string[]
+  /**
+   * Om maskinen har bevist venstresiden for nøyaktig dette grunnlaget.
+   *
+   * `workflow.grounding_machine_proved(uuid)`: det finnes en maskinell
+   * ekstraksjonskontroll som gjelder det grunnlaget raden har nå, og som fant
+   * hvert forankret utdrag ordrett i en reprodusert representasjon. Uten den
+   * kan ingen menneskelig bekreftelse registreres (migrasjon 005x), og
+   * kontrolløkten skal si det før noen begynner å bedømme semantikken.
+   */
+  readonly groundingMachineProved: boolean
   readonly extraction: VerificationExtraction
   readonly verificationsByThisActor: number
 }
@@ -440,6 +450,7 @@ export function parseVerificationItem(value: unknown): VerificationItem {
       record['semantic_check_fields'],
       'semantic_check_fields',
     ),
+    groundingMachineProved: record['grounding_machine_proved'] === true,
     groundedCheckFields: parseCheckFieldList(
       record['grounded_check_fields'],
       'grounded_check_fields',

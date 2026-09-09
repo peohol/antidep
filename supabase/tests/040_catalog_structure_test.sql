@@ -106,7 +106,8 @@ select set_eq(
   $$values ('id'), ('agent_identity_id'), ('actor_id'), ('agent_role'),
            ('provider'), ('model'), ('model_version'),
            ('prompt_template_version'), ('pipeline_version'),
-           ('status'), ('input_manifest'), ('output_manifest'),
+           ('status'), ('input_manifest'), ('input_source_version_id'),
+           ('output_manifest'),
            ('failure_reason'), ('started_at'), ('completed_at'),
            ('created_at'), ('updated_at')$$,
   'provenance.agent_runs bærer rolle, identitet, modell- og pipelineversjon, input, output og tidspunkter (DATABASE_ARCHITECTURE.md §33)'

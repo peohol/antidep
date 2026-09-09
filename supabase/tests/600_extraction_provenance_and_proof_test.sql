@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(20);
+select plan(30);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -50,8 +50,9 @@ select set_eq(
       and c.confrelid = 'provenance.agent_runs'::regclass
   $$,
   $$values ('evidence_items_agent_run_actor_fkey'),
-           ('evidence_items_agent_run_role_fkey')$$,
-  'kjøringen er bundet både til aktøren og til rollen, deklarativt'
+           ('evidence_items_agent_run_role_fkey'),
+           ('evidence_items_agent_run_source_version_fkey')$$,
+  'kjøringen er bundet til aktøren, rollen og kildeversjonen den leste, deklarativt'
 );
 
 select has_function(
@@ -114,6 +115,7 @@ insert into run select 'extract', api.begin_agent_run(
   p_provider := 'testleverandør', p_model := 'testmodell',
   p_model_version := '2026-09-12', p_prompt_template_version := 'evidence-extraction/1',
   p_pipeline_version := 'antidep-evidence/1',
+  p_input_source_version_id := '60000000-0000-4000-8000-000000000021',
   p_input_manifest := '{"mode": "test-600"}'::jsonb);
 insert into run select 'verify', api.begin_agent_run(
   p_identity_key := 'agent-identity:extraction-verification-01',
@@ -326,8 +328,166 @@ select ok(
   'og da er venstresiden bevist for nøyaktig dette grunnlaget'
 );
 
--- Beviset overlever at andre kontroller registreres, men ikke at grunnlaget
--- endres. En ny forankring er en endring av grunnlaget.
+-- ===========================================================================
+-- Del 6 — Kjøringen er bundet til kildeversjonen den ble åpnet for
+-- ===========================================================================
+select is(
+  (select r.input_source_version_id from provenance.agent_runs r
+   where r.id = (select id from run where label = 'extract')),
+  '60000000-0000-4000-8000-000000000021'::uuid,
+  'ekstraksjonskjøringen sier hvilken kildeversjon den ble åpnet for'
+);
+
+-- En kjøring som ikke sier hva den skal lese, er ikke en ekstraksjonskjøring.
+set local role anon;
+select throws_ok(
+  $$
+    select api.begin_agent_run(
+      p_identity_key := 'agent-identity:evidence-extraction-01',
+      p_secret := (select secret from cred where label = 'extractor'),
+      p_agent_role := 'evidence_extraction',
+      p_provider := 'testleverandør', p_model := 'testmodell',
+      p_model_version := '2026-09-12', p_prompt_template_version := 'evidence-extraction/1',
+      p_pipeline_version := 'antidep-evidence/1',
+      p_input_manifest := '{"mode": "uten kildeversjon"}'::jsonb)
+  $$,
+  '22023',
+  'En ekstraksjonskjøring må åpnes for den kildeversjonen den skal lese.',
+  'en ekstraksjonskjøring uten kildeversjon avvises'
+);
+reset role;
+
+-- Verifikatorkjøringene leser en arbeidskø, ikke én versjon, og kravet gjelder
+-- dem ikke.
+select is(
+  (select r.input_source_version_id from provenance.agent_runs r
+   where r.id = (select id from run where label = 'verify')),
+  null::uuid,
+  'en verifikatorkjøring trenger ingen kildeversjon, og har ingen'
+);
+
+-- Den sammensatte fremmednøkkelen: et evidensfunn kan ikke vise til en annen
+-- kildeversjon enn den kjøringen ble åpnet for. Regelen er deklarativ, så
+-- ingen skrivevei kan omgå den.
+insert into knowledge.source_versions
+  (id, source_id, retrieved_at, retrieved_from, content_hash, representation, retrieved_by_actor_id)
+values ('60000000-0000-4000-8000-000000000022', '60000000-0000-4000-8000-000000000001',
+        now(), 'https://example.test/600-b', 'sha256:' || repeat('c', 64), 'abstract',
+        (select id from fixture where name = 'editor'));
+
+select throws_ok(
+  format(
+    $$
+      insert into knowledge.evidence_items (
+        source_id, source_version_id, design_code, population_availability,
+        population_detail, sample_size_availability, intervention_drug_id,
+        comparator_kind, outcome_concept_id, outcome_detail,
+        timepoint_availability, reported_direction, estimate_availability,
+        confidence_interval_availability, source_locator, extraction_method,
+        created_by_actor_id, agent_run_id
+      )
+      values (
+        '60000000-0000-4000-8000-000000000001',
+        '60000000-0000-4000-8000-000000000022',
+        'randomized_controlled_trial', 'not_reported', 'Feil kildeversjon, 600.',
+        'not_reported', %L, 'none', %L, 'Feil kildeversjon, 600.',
+        'not_reported', 'increase', 'not_reported', 'not_reported',
+        'Avsnitt for 600', 'ai_assisted', %L, %L
+      )
+    $$,
+    (select id from fixture where name = 'sertralin'),
+    (select id from fixture where name = 'weight'),
+    (select id from fixture where name = 'extractor'),
+    (select id from run where label = 'extract')
+  ),
+  '23503',
+  null,
+  'et evidensfunn kan ikke peke på en annen kildeversjon enn den kjøringen leste'
+);
+
+-- ===========================================================================
+-- Del 7 — Dekningen er unionen, og ingen rad påstår mer enn sin operasjon
+-- ===========================================================================
+-- Maskinens rad dekker provenansfeltene; den er `uncertain` fordi tallene og
+-- begrepene ikke lot seg bedømme maskinelt. Fram til migrasjon 005y ville den
+-- ikke telt i det hele tatt.
+select set_eq(
+  format(
+    $$select unnest(workflow.covered_check_fields(%L::uuid))::text$$,
+    (select id from registered where name = 'item')
+  ),
+  $$values ('raw_extraction'), ('source_locator')$$,
+  'en uavklart maskinkontroll gir dekning for nøyaktig de feltene den bekreftet'
+);
+
+-- …og gaten er ikke tilfredsstilt av den alene.
+select isnt_empty(
+  format(
+    $$select unnest(workflow.required_check_fields(%L::uuid))::text
+      except select unnest(workflow.covered_check_fields(%L::uuid))::text$$,
+    (select id from registered where name = 'item'),
+    (select id from registered where name = 'item')
+  ),
+  'maskinen alene dekker ikke det raden påstår: de semantiske feltene står igjen'
+);
+
+-- Mennesket registrerer sin rad med bare de semantiske feltene det bedømte, og
+-- til sammen dekker de to radene nøyaktig det gaten krever.
+select pg_temp.refresh_digest();
+select set_config('request.jwt.claims',
+                  '{"sub":"60000000-0000-4000-8000-0000000000c0"}', true);
+set local role authenticated;
+select lives_ok(
+  $$
+    select api.register_human_extraction_verification(
+      (select id from registered where name = 'item'),
+      (select value from digest where label = 'e'),
+      'verified', 'original_source',
+      array['intervention_arm', 'outcome', 'reported_direction', 'availability_semantics'],
+      'Prøve i 600: bedømte de semantiske feltene mot hvert felts eget kildeutdrag.')
+  $$,
+  'mennesket bekrefter med bare de feltene det faktisk bedømte'
+);
+reset role;
+
+select is_empty(
+  format(
+    $$select unnest(workflow.required_check_fields(%L::uuid))::text
+      except select unnest(workflow.covered_check_fields(%L::uuid))::text$$,
+    (select id from registered where name = 'item'),
+    (select id from registered where name = 'item')
+  ),
+  'og de to radene dekker til sammen nøyaktig det gaten krever'
+);
+
+-- Ingen av dem påstår mer enn sin egen operasjon.
+select is_empty(
+  format(
+    $$
+      select ev.id::text
+      from workflow.evidence_verifications ev
+      where ev.evidence_item_id = %L::uuid
+        and ev.agent_run_id is null
+        and ('source_locator' = any (ev.checked_fields)
+             or 'raw_extraction' = any (ev.checked_fields))
+    $$,
+    (select id from registered where name = 'item')
+  ),
+  'menneskets rad fører ikke opp provenansfeltene den aldri ble spurt om'
+);
+
+-- ===========================================================================
+-- Del 8 — Beviset gjelder grunnlaget, ikke tidspunktet
+--
+-- Det overlever at andre kontroller registreres — menneskets rad over er selv
+-- en slik — men ikke at grunnlaget endres. En ny forankring er en endring av
+-- grunnlaget.
+-- ===========================================================================
+select ok(
+  workflow.grounding_machine_proved((select id from registered where name = 'item')),
+  'beviset står selv etter at en annen kontroll er registrert'
+);
+
 insert into knowledge.evidence_field_groundings
   (evidence_item_id, created_by_actor_id, check_field,
    source_excerpt, source_locator, justification)

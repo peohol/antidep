@@ -370,6 +370,40 @@ describe('Kontrolløkten — feltkontrollen', () => {
   })
 })
 
+// ----------------------------------------------------------------------------
+// Rekkefølgen: maskinbevis først, semantikk etterpå
+//
+// Uten beviset har ingen prøvd at utdragene i det hele tatt står i kilden, og
+// en kontrollør som gikk gjennom alle feltene, ville fått avvisningen først ved
+// lagring (migrasjon 005x).
+// ----------------------------------------------------------------------------
+describe('Kontrolløkten — maskinbeviset kommer først', () => {
+  it('stopper før feltskuffene når ingen maskinell kontroll har prøvd utdragene', async () => {
+    renderExtractionControl({ grounding_machine_proved: false })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    const step = within(openStep())
+    expect(
+      await step.findByText(
+        'Ingen maskinell kontroll har ennå prøvd at kildeutdragene står ordrett i denne utgaven av kilden.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Behandlingsarmen', { selector: '.control-step__title' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Lagre og fortsett' })).not.toBeInTheDocument()
+  })
+
+  it('sier at kontrolløren bare skal vurdere tolkningen, ikke lete etter utdraget', async () => {
+    renderExtractionControl({ grounding_machine_proved: false })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    expect(
+      await screen.findByText(/Du skal bare vurdere om Antideps tolkning følger av utdraget/),
+    ).toBeInTheDocument()
+  })
+})
+
 describe('Kontrolløkten — utfallet utledes', () => {
   it('har verken utfallsmeny, metodefelt eller et samlet funnfelt', async () => {
     renderExtractionControl()
@@ -400,11 +434,12 @@ describe('Kontrolløkten — utfallet utledes', () => {
     expect(args['p_source_access']).toBe('original_source')
     expect(args['p_findings']).toBeNull()
     expect(args['p_seen_extraction_digest']).toBe(TEST_EXTRACTION_IDS.digest)
-    // Gaten krever de tretten feltene dekket; de elleve kontrolløren svarte på
-    // pluss de to provenansfeltene en bekreftelse fører opp.
-    expect([...(args['p_checked_fields'] as string[])].sort()).toContain('raw_extraction')
-    expect([...(args['p_checked_fields'] as string[])].sort()).toContain('source_locator')
-    expect((args['p_checked_fields'] as string[]).length).toBe(13)
+    // Nøyaktig de elleve feltene kontrolløren faktisk bekreftet. De to
+    // provenansfeltene dekkes av maskinens egen rad; gatens G5b leser unionen
+    // (migrasjon 005y).
+    expect(args['p_checked_fields']).not.toContain('raw_extraction')
+    expect(args['p_checked_fields']).not.toContain('source_locator')
+    expect((args['p_checked_fields'] as string[]).length).toBe(11)
     expect(args['p_rationale']).toContain('11 av 11 delkontroller besvart')
   })
 
