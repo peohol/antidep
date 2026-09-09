@@ -169,15 +169,38 @@ async function main(): Promise<number> {
     console.log(
       `\n${String(report.registered)} nye forankrede evidensfunn, ` +
         `${String(report.alreadyRegistered)} allerede registrert, ` +
-        `${String(report.skipped)} ikke registrert.`,
+        `${String(report.skipped)} ikke registrert, ` +
+        `${String(report.unverified)} uten maskinbevis.`,
     )
-    if (report.registered > 0) {
+
+    // Setningen under er en påstand om at kjeden er komplett, og skal bare stå
+    // når den er sann. Et funn uten registrert maskinbevis er ikke
+    // deterministisk kontrollert, uansett hvor mange som er det
+    // (ANTIDEP_CONSTITUTION.md §11).
+    if (report.unverified > 0) {
+      console.error(
+        `\n${String(report.unverified)} funn står uten registrert maskinbevis. Kontrollen ` +
+          'lot seg ikke gjennomføre — kilden svarte ikke, fingeravtrykket stemte ikke, eller ' +
+          'registreringen ble avvist. Rett årsaken og kjør kommandoen om igjen; den skriver ' +
+          'ingen ny rad, men fullfører kontrollen.',
+      )
+    } else if (report.registered > 0 || report.alreadyRegistered > 0) {
       console.log(
-        'De nye funnene er registrert og deterministisk kontrollert. Å lenke dem til en ' +
+        'Funnene er registrert og deterministisk kontrollert. Å lenke dem til en ' +
           'påstandsrevisjon er en faglig vurdering og gjøres av en kvalifisert redaktør.',
       )
     }
-    return report.skipped > 0 ? 1 : 0
+
+    if (report.alreadyRegistered > 0) {
+      console.log(
+        `\n${String(report.alreadyRegistered)} forslag var registrert fra før. Fingeravtrykket ` +
+          'databasen sammenligner, dekker de strukturerte verdiene og ikke forankringen: et ' +
+          'forslag som bare retter et utdrag, en peker eller en begrunnelse, er den samme ' +
+          'ekstraksjonen for databasen og kan ikke registreres på nytt.',
+      )
+    }
+
+    return report.skipped > 0 || report.unverified > 0 ? 1 : 0
   } catch (cause) {
     // Alt som skrives ut, går gjennom redact: en feilmelding fra PostgREST kan
     // i prinsippet gjengi det som ble sendt, og det som ble sendt inneholder

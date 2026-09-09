@@ -101,6 +101,13 @@ forankringen ikke dekker hvert semantiske felt raden påstår noe om.
 
 Kjøringen er idempotent: den samme filen kjørt om igjen skriver ingenting.
 
+**Én ting kan ikke rettes ved å kjøre på nytt.** Fingeravtrykket databasen
+sammenligner mot, dekker de strukturerte verdiene på funnet — ikke forankringen,
+som ligger i sin egen tabell. Et forslag som bare retter et utdrag, en peker
+eller en begrunnelse, er derfor den samme ekstraksjonen for databasen og avvises
+som en dublett. Skal en forankring rettes, må noe i `extraction` også være et
+annet; ellers står den gamle forankringen. Se issue [#66].
+
 ## 6. Den deterministiske kontrollen etterpå
 
 ```bash
@@ -122,6 +129,13 @@ Kjører alle `.json`-forslagene i katalogen i navnerekkefølge, og kjører den
 deterministiske kontrollen på hvert nytt funn med det samme. Dette er veien for
 å re-ekstrahere de gamle evidensfunnene: det nye, forankrede funnet kommer **ved
 siden av** det gamle, og det gamle røres ikke.
+
+Ble en tidligere kjøring avbrutt mellom registreringen og kontrollen, fullfører
+den neste kjøringen kontrollen framfor å skrive en ny rad. Den gjenfinner funnet
+på kildeversjonen og forankringen, og lar resten av arbeidskøen stå.
+
+Kommandoen avslutter med feil dersom noe funn står uten registrert maskinbevis.
+Da er kjeden ikke komplett, og kontrolløkten i UI-et vil stoppe på funnet.
 
 Å lenke et nytt funn til en påstand er en faglig vurdering og gjøres av en
 kvalifisert redaktør i adminflyten — ikke av en kommando.

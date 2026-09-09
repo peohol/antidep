@@ -672,9 +672,18 @@ verdier, er ikke bygget; forslagene lages i dag utenfor Antidep, av et menneske 
 ChatGPT, og leveres som filer. Formen er den samme uansett hvem som skrev den, og
 kontrolleres like strengt (`docs/ANTIDEP_CONSTITUTION.md` §20).
 
-**Kjøringen er idempotent.** `evidence_items_content_hash_key` dekker hele radens faglige
-innhold, så det samme forslaget kjørt om igjen skriver ingenting og rapporteres som
-`already_registered`.
+**Kjøringen er idempotent.** `evidence_items_content_hash_key` dekker de strukturerte verdiene
+på raden, så det samme forslaget kjørt om igjen skriver ingenting og rapporteres som
+`already_registered`. Avtrykket dekker ikke forankringen, som ligger i sin egen tabell: et
+forslag som bare retter et utdrag, en peker eller en begrunnelse, er den samme ekstraksjonen
+for databasen og kan ikke registreres på nytt (issue #66).
+
+**En avbrutt kjøring kan fullføres.** Registreringen og kontrollen er to skrivinger. Dør
+prosessen mellom dem, finnes raden uten maskinbevis, og en ny kjøring med det samme forslaget
+får bare «dublett» tilbake — uten en id å kontrollere. Kjøringen gjenfinner da funnet i
+verifikatorens arbeidskø på kildeversjonen og forankringen, fullfører kontrollen, og lar
+resten av køen stå. Står et funn likevel uten maskinbevis når kjøringen er ferdig, avslutter
+kommandoen med feil framfor å si at kjeden er komplett.
 
 **Re-ekstraksjonen røres ikke ved gamle rader.** `npm run agent:reextract-evidence` er veien
 fra et gammelt, uforankret evidensfunn til et nytt, forankret ett: det nye kommer _ved siden

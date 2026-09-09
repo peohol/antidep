@@ -598,7 +598,7 @@ async function main(): Promise<void> {
      returning id`,
   )
 
-  const reProposal = parseExtractionProposal({
+  const reProposalInput = {
     proposal_version: EXTRACTION_PROPOSAL_VERSION,
     source_id: SOURCE,
     source_version_id: VERSION,
@@ -651,7 +651,8 @@ async function main(): Promise<void> {
         justification: 'Feltene uten verdi er ført som ikke rapportert.',
       },
     ],
-  })
+  }
+  const reProposal = parseExtractionProposal(JSON.parse(JSON.stringify(reProposalInput)))
 
   const reextractionPorts = {
     extractionApi: createEvidenceExtractionApi(client, {
@@ -717,6 +718,56 @@ async function main(): Promise<void> {
        where source_id = ${q(SOURCE)}
          and outcome_detail = 'Vektendring, re-ekstrahert med forankring.'`,
     ) === '1',
+  )
+
+  // ---- Ledd 6: en avbrutt kjøring skal kunne fullføres ---------------------
+  //
+  // Registreringen og kontrollen er to skrivinger, i to transaksjoner. Dør
+  // prosessen mellom dem, finnes raden uten maskinbevis, og en ny kjøring får
+  // bare «dublett» tilbake — uten en id å kontrollere. Her simuleres det ved å
+  // kjøre ekstraksjonen alene, og deretter re-ekstraksjonen med det samme
+  // forslaget.
+  const avbruttForslag = parseExtractionProposal({
+    ...JSON.parse(JSON.stringify(reProposalInput)),
+    extraction: {
+      ...JSON.parse(JSON.stringify(reProposalInput)).extraction,
+      outcome_detail: 'Vektendring, avbrutt kjøring.',
+    },
+  })
+
+  const avbrutt = await runEvidenceExtraction({
+    api: reextractionPorts.extractionApi,
+    premises: EVIDENCE_EXTRACTION_PREMISES,
+    proposal: avbruttForslag,
+    retrieve: retrieve(contentHash),
+  })
+  check('en ekstraksjon uten kontroll er registrert', avbrutt.decision === 'registered')
+  const avbruttItem = avbrutt.evidenceItemId ?? ''
+  check(
+    'og står uten maskinbevis',
+    psql(config, `select workflow.grounding_machine_proved(${q(avbruttItem)})::text`) === 'false',
+  )
+
+  const gjenopptatt = await runReextraction({
+    ...reextractionPorts,
+    proposals: [{ label: 'avbrutt.json', proposal: avbruttForslag }],
+  })
+  check(
+    'den nye kjøringen skriver ingen ny rad',
+    gjenopptatt.registered === 0 && gjenopptatt.alreadyRegistered === 1,
+  )
+  check(
+    'men fullfører kontrollen av den raden som allerede fantes',
+    gjenopptatt.unverified === 0 &&
+      psql(config, `select workflow.grounding_machine_proved(${q(avbruttItem)})::text`) === 'true',
+  )
+  check(
+    'og lot det gamle funnet på den samme kildeversjonen stå ukontrollert',
+    psql(
+      config,
+      `select count(*) from workflow.evidence_verifications
+       where evidence_item_id = ${q(legacyItem)}`,
+    ) === '0',
   )
 
   check(

@@ -91,6 +91,20 @@ export interface RunOptions {
   readonly limit?: number | null
   readonly retrieve?: RetrieveLike
   readonly retrieveOptions?: RetrieveOptions
+  /**
+   * Et snevrere utvalg av arbeidskøen enn `evidenceItemId` kan uttrykke.
+   *
+   * `evidenceItemId` krever at kalleren *kjenner* id-en. Re-ekstraksjonen gjør
+   * ikke alltid det: har en tidligere kjøring rukket å registrere funnet før den
+   * døde, avviser databasen den nye registreringen som en dublett og gir ingen
+   * id tilbake. Da må funnet gjenfinnes i køen på noe kalleren faktisk har —
+   * kildeversjonen og forankringen — for at kjeden skal kunne fullføres uten å
+   * dra hele køen med seg.
+   *
+   * Filtreringen skjer på kjørerens side og gjør ingen kontroll løsere: køen er
+   * den samme, og hvert funn som slipper gjennom, kontrolleres nøyaktig som før.
+   */
+  readonly select?: (item: VerificationItem) => boolean
   readonly log?: (line: string) => void
 }
 
@@ -209,7 +223,11 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     options.retrieve ?? ((url) => retrieveRepresentation(url, options.retrieveOptions ?? {}))
 
   const inputManifest: Record<string, unknown> = {
-    mode: evidenceItemId === null ? 'queue' : 'single',
+    // `selected` sier at kjøringen arbeidet på et utvalg av køen, ikke på hele
+    // den. Uten det ville manifestet påstått «queue» om en kjøring som bevisst
+    // lot resten av køen stå.
+    mode:
+      evidenceItemId === null ? (options.select === undefined ? 'queue' : 'selected') : 'single',
     evidence_item_id: evidenceItemId,
     dry_run: dryRun,
     limit,
@@ -223,10 +241,17 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
 
   try {
     const input = parseVerificationInput(await api.readInput(agentRunId, evidenceItemId))
-    const queue = limit === null ? input.items : input.items.slice(0, limit)
+    const selected = options.select === undefined ? input.items : input.items.filter(options.select)
+    const queue = limit === null ? selected : selected.slice(0, limit)
     log(
       `${String(input.items.length)} evidensfunn i grunnlaget, ${String(queue.length)} tas i denne kjøringen.`,
     )
+    if (options.select !== undefined) {
+      log(
+        `Utvalget er avgrenset til funn som svarer til forslaget: ` +
+          `${String(selected.length)} av ${String(input.items.length)}.`,
+      )
+    }
 
     for (const item of queue) {
       const evaluation = await evaluateItem(item, retrieve)

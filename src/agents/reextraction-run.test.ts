@@ -20,8 +20,14 @@ import { AgentApiError } from './agent-api'
 import { sourceVersionContentHash } from './content-hash'
 import { EXTRACTION_PROPOSAL_VERSION, parseExtractionProposal } from './extraction-proposal'
 import type { RetrieveLike } from './extraction-run'
-import { runReextraction } from './reextraction-run'
-import { FIXTURE_SOURCE_TEXT } from './test-support'
+import { matchesProposal, runReextraction } from './reextraction-run'
+import {
+  FIXTURE_SOURCE_TEXT,
+  sourceVersionFixture,
+  verificationItemFixture,
+  verificationItemPayload,
+} from './test-support'
+import type { VerificationItem } from './verification-input'
 import type { Uuid } from '../types/api'
 
 const EXTRACTION_PREMISES: AgentRunPremises = {
@@ -98,17 +104,26 @@ interface Spy {
   readonly verificationApi: ExtractionVerificationApi
   readonly registered: unknown[]
   readonly readInputFor: (Uuid | null)[]
+  readonly verified: Uuid[]
   readonly completions: { readonly run: Uuid; readonly status: string }[]
 }
 
-function spies(options: { readonly duplicate?: boolean } = {}): Spy {
+interface SpyOptions {
+  readonly duplicate?: boolean
+  /** Køen api.extraction_verification_input svarer med. Tom hvis utelatt. */
+  readonly queue?: readonly VerificationItem[]
+}
+
+function spies(options: SpyOptions = {}): Spy {
   const registered: unknown[] = []
   const readInputFor: (Uuid | null)[] = []
+  const verified: Uuid[] = []
   const completions: { run: Uuid; status: string }[] = []
 
   return {
     registered,
     readInputFor,
+    verified,
     completions,
     extractionApi: {
       beginRun: () => Promise.resolve(EXTRACTION_RUN_ID),
@@ -138,16 +153,19 @@ function spies(options: { readonly duplicate?: boolean } = {}): Spy {
       },
       readInput: (_runId, evidenceItemId) => {
         readInputFor.push(evidenceItemId)
-        // Tom kø: kontrollen av selve kontrollen ligger i
-        // extraction-verification-run.test.ts og i kjedeprøven. Det som prøves
-        // her, er at den kjøres på riktig funn.
+        // Køen er tom hvis testen ikke oppgir noe: kontrollen av selve
+        // kontrollen ligger i extraction-verification-run.test.ts og i
+        // kjedeprøven. Det som prøves her, er hvilket funn den kjøres på.
         return Promise.resolve({
           agent_run_id: VERIFICATION_RUN_ID,
           verifier_actor_id: VERIFIER_ACTOR_ID,
-          items: [],
+          items: (options.queue ?? []).map(verificationItemPayload),
         })
       },
-      registerVerification: () => Promise.resolve(VERIFICATION_RUN_ID),
+      registerVerification: (args) => {
+        verified.push(args.evidenceItemId)
+        return Promise.resolve(VERIFICATION_RUN_ID)
+      },
     },
   }
 }
@@ -187,9 +205,12 @@ describe('runReextraction', () => {
 
     expect(report.registered).toBe(0)
     expect(report.alreadyRegistered).toBe(1)
+    expect(report.unverified).toBe(0)
     expect(spy.registered).toHaveLength(0)
-    expect(spy.readInputFor).toEqual([])
-    expect(spy.completions).toEqual([{ run: EXTRACTION_RUN_ID, status: 'aborted' }])
+    // Køen leses, men er tom for dette funnet: det står allerede med et bevis,
+    // og da er det ingenting igjen å gjøre.
+    expect(spy.readInputFor).toEqual([null])
+    expect(spy.verified).toEqual([])
   })
 
   it('skriver ingenting i en tørrkjøring', async () => {
@@ -210,6 +231,84 @@ describe('runReextraction', () => {
     expect(report.results[0]?.extraction.decision).toBe('previewed')
     // Også en tørrkjøring er sporbar: kjøringen registreres og lukkes.
     expect(spy.completions).toEqual([{ run: EXTRACTION_RUN_ID, status: 'aborted' }])
+  })
+
+  // Registreringen og kontrollen er to skrivinger. Dør prosessen mellom dem,
+  // finnes raden uten maskinbevis, og en ny kjøring får bare «dublett» tilbake —
+  // uten en id å kontrollere. Da må funnet gjenfinnes i køen, ellers kan den
+  // idempotente kjøringen aldri fullføre kjeden.
+  it('fullfører kjeden når en tidligere kjøring rakk å registrere men ikke å kontrollere', async () => {
+    const forslag = await proposal()
+    const spy = spies({
+      duplicate: true,
+      queue: [
+        verificationItemFixture({
+          evidenceItemId: ITEM_ID,
+          // Kildeversjonen må bære det avtrykket kilden faktisk gir, ellers
+          // stopper kontrollen på fingeravtrykket og registrerer ingenting.
+          sourceVersion: sourceVersionFixture({
+            contentHash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
+          }),
+          fieldGroundings: forslag.fieldGroundings.map((grounding, index) => ({
+            fieldGroundingId: `9000000${String(index)}-0000-4000-8000-000000000001`,
+            checkField: grounding.checkField,
+            sourceExcerpt: grounding.sourceExcerpt,
+            sourceLocator: grounding.sourceLocator,
+            justification: grounding.justification,
+            createdAt: '2026-09-01T00:00:00+00:00',
+            createdByActorId: '99999999-9999-4999-8999-999999999999',
+          })),
+        }),
+        // Et funn på den samme kildeversjonen som forslaget ikke gjelder. Det
+        // skal ikke dras med: utvalget er strengere enn databasens dublettregel.
+        verificationItemFixture({
+          evidenceItemId: '77777777-7777-4777-8777-777777777777',
+          fieldGroundings: [],
+        }),
+      ],
+    })
+
+    const report = await runReextraction({
+      extractionApi: spy.extractionApi,
+      verificationApi: spy.verificationApi,
+      extractionPremises: EXTRACTION_PREMISES,
+      verificationPremises: VERIFICATION_PREMISES,
+      proposals: [{ label: 'fava.json', proposal: forslag }],
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.registered).toBe(0)
+    expect(report.alreadyRegistered).toBe(1)
+    expect(report.unverified).toBe(0)
+    // Køen leses uten id-filter, og utvalget treffer nøyaktig det ene funnet.
+    expect(spy.readInputFor).toEqual([null])
+    expect(spy.verified).toEqual([ITEM_ID])
+  })
+
+  // Et funn uten registrert maskinbevis er ikke deterministisk kontrollert, og
+  // kjøringen skal ikke rapportere at kjeden er komplett.
+  it('rapporterer et funn uten maskinbevis som ukontrollert', async () => {
+    const spy = spies({
+      queue: [
+        // Uten kildeversjon kan kontrollen ikke gjennomføres, og den registrerer
+        // ingenting. Det er en utgang runExtractionVerification har med vilje.
+        verificationItemFixture({ evidenceItemId: ITEM_ID, sourceVersion: null }),
+      ],
+    })
+
+    const report = await runReextraction({
+      extractionApi: spy.extractionApi,
+      verificationApi: spy.verificationApi,
+      extractionPremises: EXTRACTION_PREMISES,
+      verificationPremises: VERIFICATION_PREMISES,
+      proposals: [{ label: 'fava.json', proposal: await proposal() }],
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.registered).toBe(1)
+    expect(report.unverified).toBe(1)
+    expect(report.results[0]?.verified).toBe(false)
+    expect(spy.verified).toEqual([])
   })
 
   it('lar de andre forslagene gå videre når ett ikke holder mål', async () => {
@@ -261,5 +360,75 @@ describe('runReextraction', () => {
     expect(report.skipped).toBe(1)
     expect(report.registered).toBe(1)
     expect(report.results.map((result) => result.label)).toEqual(['daarlig.json', 'godt.json'])
+  })
+})
+
+describe('matchesProposal', () => {
+  it('treffer funnet som bærer nøyaktig forslagets forankring', async () => {
+    const forslag = await proposal()
+    const item = verificationItemFixture({
+      fieldGroundings: forslag.fieldGroundings.map((grounding) => ({
+        fieldGroundingId: '90000000-0000-4000-8000-000000000001',
+        checkField: grounding.checkField,
+        sourceExcerpt: grounding.sourceExcerpt,
+        sourceLocator: grounding.sourceLocator,
+        justification: grounding.justification,
+        createdAt: '2026-09-01T00:00:00+00:00',
+        createdByActorId: '99999999-9999-4999-8999-999999999999',
+      })),
+    })
+    expect(matchesProposal(item, forslag)).toBe(true)
+  })
+
+  // En legacy-rad har ingen forankring, og skal aldri kunne bli tatt for å være
+  // det forslaget beskriver.
+  it('treffer aldri et funn uten forankring', async () => {
+    expect(
+      matchesProposal(verificationItemFixture({ fieldGroundings: [] }), await proposal()),
+    ).toBe(false)
+  })
+
+  it('treffer ikke et funn fra en annen kildeversjon', async () => {
+    const forslag = await proposal()
+    const item = verificationItemFixture({
+      sourceVersion: {
+        sourceVersionId: '51000000-0000-4000-8000-000000000099',
+        retrievedAt: '2026-09-01T00:00:00+00:00',
+        retrievedFrom: 'https://eksempel.invalid/annen',
+        externalVersion: null,
+        contentHash: `sha256:${'b'.repeat(64)}`,
+        representation: 'abstract',
+        hasStorageReference: false,
+      },
+      fieldGroundings: forslag.fieldGroundings.map((grounding) => ({
+        fieldGroundingId: '90000000-0000-4000-8000-000000000001',
+        checkField: grounding.checkField,
+        sourceExcerpt: grounding.sourceExcerpt,
+        sourceLocator: grounding.sourceLocator,
+        justification: grounding.justification,
+        createdAt: '2026-09-01T00:00:00+00:00',
+        createdByActorId: '99999999-9999-4999-8999-999999999999',
+      })),
+    })
+    expect(matchesProposal(item, forslag)).toBe(false)
+  })
+
+  // Et rettet utdrag er en annen forankring. At databasen likevel avviser det
+  // som en dublett, er en begrensning i avtrykket — ikke noe utvalget her skal
+  // late som om det ikke finnes.
+  it('treffer ikke et funn der et utdrag er et annet', async () => {
+    const forslag = await proposal()
+    const item = verificationItemFixture({
+      fieldGroundings: forslag.fieldGroundings.map((grounding) => ({
+        fieldGroundingId: '90000000-0000-4000-8000-000000000001',
+        checkField: grounding.checkField,
+        sourceExcerpt: `${grounding.sourceExcerpt} (rettet)`,
+        sourceLocator: grounding.sourceLocator,
+        justification: grounding.justification,
+        createdAt: '2026-09-01T00:00:00+00:00',
+        createdByActorId: '99999999-9999-4999-8999-999999999999',
+      })),
+    })
+    expect(matchesProposal(item, forslag)).toBe(false)
   })
 })

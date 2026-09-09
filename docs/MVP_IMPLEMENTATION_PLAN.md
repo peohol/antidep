@@ -6602,6 +6602,24 @@ gjøres av en kvalifisert redaktør i adminflyten (§12, §15).
 av verifikatorens `ANTIDEP_AGENT_*`. Re-ekstraksjonen kjører begge leddene i den samme
 prosessen, og to roller kan ikke dele ett variabelnavn — rollen er rettighetsgrensen.
 
+**Re-ekstraksjonen kan fullføre en avbrutt kjøring, og lyver ikke om kontrollen.** Funnet i
+teknisk review. Registreringen og kontrollen er to skrivinger i to transaksjoner; dør
+prosessen mellom dem, finnes raden uten maskinbevis, og en ny kjøring med det samme forslaget
+får bare «dublett» tilbake — uten en id å kontrollere. Kjøringen gjenfinner nå funnet i
+verifikatorens arbeidskø på kildeversjonen og forankringen. Utvalget er strengere enn
+databasens dublettregel — en legacy-rad uten forankring treffer aldri — så gjenopptakelsen
+rører nøyaktig det forslaget beskriver og lar resten av køen stå. Kjøringen teller i tillegg
+funn som står uten registrert maskinbevis, og kommandoen avslutter med feil framfor å si at
+kjeden er komplett: en kontroll som ikke lot seg gjennomføre, er ikke en kontroll (§11).
+
+**Avtrykket dekker verdiene, ikke forankringen, og det sies nå i klartekst.** Også et funn fra
+review. `content_hash` beregnes av kolonnene på `knowledge.evidence_items`; forankringen ligger
+i sin egen tabell. Et forslag som bare retter et utdrag, en peker eller en begrunnelse, er
+derfor den samme ekstraksjonen for databasen og avvises som en dublett — den rettede
+forankringen blir aldri registrert. Det er en begrensning i datamodellen og ikke i kjørerne, og
+er ført som issue #66. Kjøreren og dokumentasjonen sier det nå framfor å la det se ut som
+«allerede gjort».
+
 **En feil i ekstraksjonskjøringen ble funnet av at kjeden nå prøves mot en ekte database.**
 `agent_runs_status_shape_check` krever en begrunnelse på en kjøring som lukkes som `aborted`.
 Ekstraksjonskjøringen fra §74.38 sendte `null` i alle tre avbruddstilfellene — tørrkjøring,
@@ -6634,12 +6652,15 @@ eksempelet går gjennom den samme kontrollen som et ekte forslag. Re-ekstraksjon
 tester på at kontrollen kjøres på riktig funn, at en dublett verken skriver eller kontrollerer,
 at en tørrkjøring ikke skriver, og at ett dårlig forslag ikke stopper de andre.
 
-`scripts/agent-chain-test.ts` har fått re-ekstraksjonen som et femte ledd, og prøver der de to
-tingene bare en ekte database kan avgjøre: at tørrkjøringen ikke skriver en evidensrad men
-likevel lukker kjøringen sin med en begrunnelse, og at det samme forslaget kjørt om igjen ikke
-skriver noe fordi `evidence_items_content_hash_key` avviser dubletten. Samtidig prøves regelen
-re-ekstraksjonen finnes for: det gamle, uforankrede funnet står urørt ved siden av det nye,
-uten forankring lagt til i etterkant. Det var dette leddet som avdekket avbruddsfeilen over.
+`scripts/agent-chain-test.ts` har fått re-ekstraksjonen som et femte og sjette ledd, og prøver
+der de tingene bare en ekte database kan avgjøre: at tørrkjøringen ikke skriver en evidensrad
+men likevel lukker kjøringen sin med en begrunnelse, at det samme forslaget kjørt om igjen ikke
+skriver noe fordi `evidence_items_content_hash_key` avviser dubletten, og at en ekstraksjon som
+ble registrert uten kontroll — den avbrutte kjøringen — blir kontrollert av den neste kjøringen
+uten at det skrives en ny rad, og uten at det gamle funnet på den samme kildeversjonen røres.
+Samtidig prøves regelen re-ekstraksjonen finnes for: det gamle, uforankrede funnet står urørt
+ved siden av det nye, uten forankring lagt til i etterkant. Det var dette leddet som avdekket
+avbruddsfeilen over.
 
 ---
 
