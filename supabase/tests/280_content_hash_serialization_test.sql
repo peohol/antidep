@@ -153,7 +153,11 @@ select isnt(
 -- fordi fingeravtrykket identifiserer innhold og ikke rad, content_hash fordi
 -- den er resultatet, required_outcome_type fordi den er en teknisk konstant, og
 -- created_by_actor_id fordi kolonnen kom til i migrasjon 005 uten å bli tatt
--- inn i definisjonen. Skal en ny kolonne holdes utenfor, må den føres opp her.
+-- inn i definisjonen, og agent_run_id/agent_run_role fordi fingeravtrykket
+-- identifiserer *innholdet* i ekstraksjonen og ikke hvilken kjøring som
+-- produserte det: to kjøringer som leser samme kilde og kommer fram til samme
+-- verdier, skal fortsatt kollidere som dublett. Skal en ny kolonne holdes
+-- utenfor, må den føres opp her.
 -- ---------------------------------------------------------------------------
 create function pg_temp.utfylt_rad() returns knowledge.evidence_items
   language sql stable as $$
@@ -187,7 +191,7 @@ select is_empty(
       and not a.attisdropped
       and a.attname not in (
         'id', 'content_hash', 'created_at', 'created_by_actor_id',
-        'required_outcome_type'
+        'required_outcome_type', 'agent_run_id', 'agent_run_role'
       )
       and knowledge.evidence_item_content_hash(
             jsonb_populate_record(

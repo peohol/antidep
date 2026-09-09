@@ -250,7 +250,12 @@ begin
     -- Hardkodet, som `manual` er det på editorveien: raden sier hvordan den ble
     -- til, og det er ikke noe kalleren skal kunne påstå fritt.
     'ai_assisted',
-    v_actor_id
+    v_actor_id,
+    -- Kjøringen raden bindes til. Den er kontrollert av
+    -- provenance.assert_agent_run_open(...) over, og de to sammensatte
+    -- fremmednøklene på tabellen håndhever at den tilhører nettopp denne
+    -- aktøren og er i rollen evidence_extraction.
+    p_agent_run_id
   );
 
   -- Etter innsettingen, fordi kravet leses av den ferdige raden. Feiler den,

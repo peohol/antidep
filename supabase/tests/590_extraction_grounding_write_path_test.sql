@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(25);
+select plan(27);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -390,6 +390,7 @@ select isnt_empty(
 -- samme som 570 prøver, og går her på det forankrede funnet:
 --
 --   api.register_agent_extraction
+--     → api.register_extraction_verification   (maskinen beviser utdragene)
 --     → api.register_human_extraction_verification
 --     → api.register_human_claim_verification
 --     → api.register_publication_approval
@@ -474,7 +475,66 @@ select 'ok', jsonb_build_array(jsonb_build_object(
   'relationship_supported', 'ok'));
 grant select on citations to authenticated;
 
--- Ledd 1: den menneskelige ekstraksjonskontrollen. Feltene er de fire
+-- Ledd 1: den deterministiske kontrollen beviser venstresiden. Den fører opp
+-- raw_extraction og source_locator som kontrollert, som den gjør når
+-- representasjonen lot seg reprodusere og hvert forankret utdrag ble gjenfunnet
+-- ordrett. Uten dette leddet avviser migrasjon 005x den menneskelige
+-- bekreftelsen under.
+insert into cred
+select 'verifier', provenance.issue_agent_identity_credential(
+  'agent-identity:extraction-verification-01', 'human:peder-holman'
+);
+
+set local role anon;
+insert into run
+select 'verify', api.begin_agent_run(
+  p_identity_key := 'agent-identity:extraction-verification-01',
+  p_secret := (select secret from cred where label = 'verifier'),
+  p_agent_role := 'extraction_verification',
+  p_provider := 'testleverandør', p_model := 'testmodell',
+  p_model_version := '2026-09-12', p_prompt_template_version := 'extraction-verification/1',
+  p_pipeline_version := 'antidep-evidence/1',
+  p_input_manifest := jsonb_build_object('evidence_item_ids',
+    array[(select id from registered where name = 'grounded')])
+);
+select lives_ok(
+  $$
+    select api.register_extraction_verification(
+      'agent-identity:extraction-verification-01',
+      (select secret from cred where label = 'verifier'),
+      (select id from run where label = 'verify'),
+      (select id from registered where name = 'grounded'),
+      'uncertain', 'verifiable_representation',
+      array['raw_extraction', 'source_locator'],
+      'Prøve i 590: hvert forankret utdrag ble gjenfunnet ordrett i den reproduserte representasjonen.',
+      'Tallene og begrepene lot seg ikke bedømme maskinelt, så kontrollen konkluderte ikke om raden som helhet.')
+  $$,
+  'den deterministiske kontrollen beviser at utdragene står i kilden'
+);
+reset role;
+
+select ok(
+  workflow.grounding_machine_proved((select id from registered where name = 'grounded')),
+  'og beviset gjelder nøyaktig det grunnlaget funnet har nå'
+);
+
+-- now() er transaksjonens starttidspunkt, så to kontroller registrert her ville
+-- fått samme verified_at, og «den siste» ville vært avgjort av en tilfeldig
+-- uuid. Maskinens kontroll dyttes derfor en time bakover, slik en reell kjøring
+-- får det av at hver registrering er sin egen transaksjon. Samme grep og samme
+-- begrunnelse som i 490, 530 og 570.
+set local session_replication_role = replica;
+update workflow.evidence_verifications
+set verified_at = verified_at - interval '1 hour',
+    created_at = created_at - interval '1 hour'
+where evidence_item_id = (select id from registered where name = 'grounded');
+set local session_replication_role = origin;
+
+-- Maskinens kontroll er selv en del av grunnlagsavtrykket: kontrolløren skal
+-- se at den er kommet til. Avtrykkene hentes derfor på nytt.
+select pg_temp.refresh_digests();
+
+-- Ledd 2: den menneskelige ekstraksjonskontrollen. Feltene er de fire
 -- semantiske pluss de to provenansfeltene en bekreftelse fører opp.
 select set_config('request.jwt.claims',
                   '{"sub":"59000000-0000-4000-8000-0000000000c0"}', true);
@@ -500,7 +560,7 @@ select is(
   'og dekningen er komplett: hvert felt funnet påstår noe om, er kontrollert'
 );
 
--- Ledd 2: claim-kontrollen.
+-- Ledd 3: claim-kontrollen.
 select pg_temp.refresh_digests();
 select set_config('request.jwt.claims',
                   '{"sub":"59000000-0000-4000-8000-0000000000c0"}', true);
@@ -517,7 +577,7 @@ select lives_ok(
   'kontrolløren bekrefter påstanden mot det ferdig kontrollerte grunnlaget'
 );
 
--- Ledd 3: publiseringsgodkjenningen, som er en egen beslutning.
+-- Ledd 4: publiseringsgodkjenningen, som er en egen beslutning.
 select lives_ok(
   $$
     select api.register_publication_approval(
@@ -536,7 +596,7 @@ select lives_ok(
   'hele publiseringsgaten passerer'
 );
 
--- Ledd 4: publiseringen, med sin tredje rettighet.
+-- Ledd 5: publiseringen, med sin tredje rettighet.
 select set_config('request.jwt.claims',
                   '{"sub":"59000000-0000-4000-8000-0000000000d0"}', true);
 set local role authenticated;

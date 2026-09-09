@@ -88,6 +88,21 @@ values ('57000000-0000-4000-8000-000000000011', '57000000-0000-4000-8000-0000000
         'not_reported', 'increase', 'not_reported', 'not_reported',
         'Avsnitt 1', 'ai_assisted', (select id from fixture where name = 'extractor'));
 
+-- Kildeforankring for hvert semantisk felt. Fra migrasjon 005x kan en
+-- bekreftelse ikke registreres på en rad uten den: da fantes det ingen
+-- venstreside å ha kontrollert. Utdragene er syntetiske, som resten av
+-- fiksturen — det som prøves her er leseflaten, ikke gjenfinningen.
+insert into knowledge.evidence_field_groundings
+  (evidence_item_id, created_by_actor_id, check_field,
+   source_excerpt, source_locator, justification)
+select e.id, e.created_by_actor_id, f.field,
+       'Utdrag for ' || f.field::text || ' i 570.',
+       'Avsnitt for ' || f.field::text,
+       'Begrunnelse for ' || f.field::text || '.'
+from knowledge.evidence_items e
+cross join unnest(workflow.semantic_check_fields(e.id)) as f(field)
+where e.source_id = '57000000-0000-4000-8000-000000000001';
+
 with c as (
   insert into knowledge.claims
     (knowledge_type, topic_concept_id, subject_drug_id, created_by_actor_id)

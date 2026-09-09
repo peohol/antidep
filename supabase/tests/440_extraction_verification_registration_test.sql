@@ -206,6 +206,21 @@ values (
   'Avsnitt 5', 'ai_assisted', (select id from fixture where name = 'extractor')
 );
 
+-- Kildeforankring for hvert semantisk felt. Fra migrasjon 005x kan en
+-- bekreftelse ikke registreres på en rad uten den: da fantes det ingen
+-- venstreside å ha kontrollert. Utdragene er syntetiske, som resten av
+-- fiksturen — det som prøves her er skriveveien, ikke gjenfinningen.
+insert into knowledge.evidence_field_groundings
+  (evidence_item_id, created_by_actor_id, check_field,
+   source_excerpt, source_locator, justification)
+select e.id, e.created_by_actor_id, f.field,
+       'Utdrag for ' || f.field::text || ' i 440.',
+       'Avsnitt for ' || f.field::text,
+       'Begrunnelse for ' || f.field::text || '.'
+from knowledge.evidence_items e
+cross join unnest(workflow.semantic_check_fields(e.id)) as f(field)
+where e.source_id = '44000000-0000-4000-8000-000000000001';
+
 -- Identiteten i rollen evidence_extraction finnes fra migrasjon 005w og brukes
 -- som den er. Testen registrerte tidligere sin egen, men en aktør kan bare ha
 -- én identitet (agent_identities_actor_key), og den ekte er dessuten den
