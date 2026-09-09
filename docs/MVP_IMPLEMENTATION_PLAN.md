@@ -1389,7 +1389,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
       feat: add the human claim review and publication approval flow        (#59)  merget   migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
       feat: add the human extraction check and make publication operational (#61)  merget   migrasjon 005q, 005r, 005s, 005t, 006g, 006h
-      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø
+      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1491,7 +1491,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1959 pgTAP-assertions over 60 testfiler.
+Databaselaget teller nå 1972 pgTAP-assertions over 60 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1659,17 +1659,17 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de sekstito migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de sekstitre migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
-   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ og 005ø — i
+   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø og 005å — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0
    og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle sekstito ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle sekstitre ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -6253,7 +6253,7 @@ den eksplisitte publiseringsbeslutningen, og publiseringen. Bare det aktive steg
 et ferdig steg lukkes, markeres med svaret sitt og kan åpnes igjen. Hele dossieret ligger
 bak «Tekniske detaljer» og er ute av den kliniske arbeidsflyten.
 
-**Tolv migrasjoner, og den bærende beslutningen er hvem som lager kontrollgrunnlaget.**
+**Tretten migrasjoner, og den bærende beslutningen er hvem som lager kontrollgrunnlaget.**
 
 | Migrasjon | Hva den gjør |
 | --- | --- |
@@ -6269,6 +6269,7 @@ bak «Tekniske detaljer» og er ute av den kliniske arbeidsflyten.
 | 005z | `provenance.agent_runs.input_source_version_id`, og den sammensatte fremmednøkkelen som binder ekstraksjonen til kildeversjonen kjøringen leste |
 | 005æ | Grunnlaget bærer `grounding_machine_proved`, så kontrolløkten kan stoppe før feltskuffene |
 | 005ø | Maskinbeviset er det *gjeldende*: et nyere avvik underkjenner et eldre bevis. Kjøringens kildeversjon er et uforanderlig premiss |
+| 005å | Verifikasjonsradene får et registreringsnummer tildelt på innsiden av radlåsen, og «senere» leses av det framfor av klokka |
 
 **Koblingen mellom felt og kilde fantes ikke som data, og det var den egentlige feilen.**
 Kontrollflaten kunne bare stille ett spørsmål — «stemmer denne raden med kilden?» — fordi
@@ -6456,6 +6457,21 @@ stegene som nå viser noe annet. En forankring som byttes ut, rammer sitt eget f
 kontroll som registreres av en annen i mellomtiden, rammer registreringssteget og ikke
 svarene.
 
+**«Senere» kunne bety «tidligere».** Hele kjeden hviler på at den *siste* kontrollen er den
+gjeldende: publiseringsgatens G5 og G9 leser den, og et senere avvik nullstiller både
+dekningen og maskinbeviset. «Senere» ble avgjort av `verified_at`, som settes med `now()` —
+transaksjonens *starttidspunkt*, ikke tidspunktet raden ble skrevet. To samtidige
+registreringer kan derfor starte i én rekkefølge og skrive i den motsatte, og et reelt avvik
+som ble skrevet sist kunne bære det eldste tidsstempelet og forsvinne bak en bekreftelse som
+ble skrevet før det. Radlåsen serialiserte skrivingene riktig; det var rekkefølgen de ble
+*lest* i som ikke fulgte dem. 005å gir hver verifikasjonsrad et registreringsnummer fra en
+sekvens, tildelt av en trigger på innsiden av den samme radlåsen skriveveien allerede tar, og
+alle lesere — gaten, maskinbeviset, dekningen og de to reviewerflatene — bytter til det
+nummeret samtidig. Tidsstemplene beholdes uendret og leses fortsatt der spørsmålet er *når*
+noe ble gjort, som i mandatkontrollene. `workflow.review_decisions` har samme form på «den
+gjeldende beslutningen» og dermed samme svakhet; den er skilt ut som eget arbeid, fordi en
+retting der trekker den publiserte lesemodellen inn i endringen.
+
 **Ingen regel er myket opp.** Ingen CHECK, constraint, trigger, policy eller grant er fjernet
 eller svekket, og ingen ny direkte tabelltilgang er gitt til `anon` eller `authenticated`.
 `knowledge.evidence_field_groundings` er append-only med RLS og uten klientgrant, og
@@ -6477,7 +6493,8 @@ representasjonstype avvises, at editorveien ikke kan skrive forankring, og hele 
 agentekstraksjon gjennom maskinbeviset til publisert påstand) og `600` (bindingen til
 kjøringen, frysingen av representasjonstypen, og maskinbeviset: at det mangler før
 verifikatoren har kjørt, at en menneskelig bekreftelse da avvises av databasen og ikke
-etterlater noe, at det finnes etterpå, og at det slutter å gjelde når forankringen endres).
+etterlater noe, at det finnes etterpå, at det slutter å gjelde når forankringen endres, og at
+registreringsrekkefølgen — ikke klokka — avgjør hvilken kontroll som er den gjeldende).
 Agentkjøringen har egne tester uten database og uten nett: at den registrerer og lukker
 kjøringen, at forankringen sendes videre uendret, at kjøringen sier hva den bygde på, og de
 fire tilfellene der den nekter å registrere noe.
@@ -6491,6 +6508,13 @@ kjørerne gjennom de ekte portene mot en ekte database: `api.begin_agent_run`,
 TypeScript med doble for databasen; grensen mellom dem — at parameternavnene agentporten
 sender, er nøyaktig de `api`-funksjonene tar imot — var ikke prøvd av noen av dem. Prøven
 kjører i databasejobben, etter migrasjonene og pgTAP, mot den samme stacken.
+
+`scripts/db-lock-test.sh` prøver det pgTAP ikke kan nå: hva som skjer mellom to forbindelser.
+Tre av prøvene viser at en samtidig skriving må vente på radlåsen. Den fjerde er den
+motsatte formen — to registreringer som ikke venter på hverandre i det hele tatt: økt A
+begynner først, økt B skriver og commiter, og A skriver etterpå. Prøven krever at raden som
+faktisk ble skrevet sist er den gjeldende, og at avviket den bærer underkjenner både
+maskinbeviset og dekningen fra bekreftelsen som ble skrevet før det.
 
 `src/agents/extraction-chain.test.ts` krysser den samme grensen uten database, og er
 raskere: den er en del av `npm test` og fanger drift mellom leddene før stacken er startet.

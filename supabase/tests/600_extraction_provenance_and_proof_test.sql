@@ -8,7 +8,12 @@
 --   2. at kildeversjonens representasjonstype er like uforanderlig som resten
 --      av øyeblikksbildet, og
 --   3. at en menneskelig bekreftelse forutsetter at maskinen har bevist at
---      utdragene står ordrett i nettopp denne utgaven av kilden.
+--      utdragene står ordrett i nettopp denne utgaven av kilden, og
+--   4. at «senere» avgjøres av registreringsrekkefølgen og ikke av klokka
+--      (migrasjon 005å). Selve tildelingen — at nummeret følger den rekkefølgen
+--      radene faktisk skrives i — kan bare prøves med to forbindelser, og det
+--      gjør scripts/db-lock-test.sh. Her prøves kontrakten og at leserne
+--      faktisk bruker nummeret.
 --
 -- SQLSTATE 23503 = foreign_key_violation, 22023 = invalid_parameter_value,
 -- 23001 = restrict_violation (fra append-only- og freeze-triggerne).
@@ -16,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(33);
+select plan(46);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -628,6 +633,148 @@ select throws_ok(
   null,
   'kildeversjonen kan ikke skrives om, heller ikke sammen med en gyldig statusovergang'
 );
+
+-- ===========================================================================
+-- Del 11 — Registreringsrekkefølgen er fasiten, ikke klokka (migrasjon 005å)
+-- ===========================================================================
+-- Kontrakten først.
+select col_not_null(
+  'workflow', 'evidence_verifications', 'registration_ordinal',
+  'ekstraksjonskontrollen har alltid en plass i registreringsrekkefølgen'
+);
+select col_not_null(
+  'workflow', 'claim_verifications', 'registration_ordinal',
+  'claim-kontrollen har alltid en plass i registreringsrekkefølgen'
+);
+
+-- Ingen DEFAULT, med vilje: en default evalueres før BEFORE-triggerne fyrer,
+-- altså før radlåsen er tatt, og ville gitt nøyaktig den rekkefølgen migrasjonen
+-- finnes for å unngå.
+select is_empty(
+  $$
+    select t.table_name
+    from (values ('workflow.evidence_verifications'),
+                 ('workflow.claim_verifications')) as t(table_name)
+    join pg_attribute a
+      on a.attrelid = t.table_name::regclass and a.attname = 'registration_ordinal'
+    where a.atthasdef
+  $$,
+  'nummeret har ingen default: det tildeles på innsiden av låsen eller ikke i det hele tatt'
+);
+
+select has_trigger(
+  'workflow', 'evidence_verifications', 'evidence_verifications_set_registration_ordinal',
+  'triggeren som tildeler nummeret finnes på ekstraksjonskontrollen'
+);
+select has_trigger(
+  'workflow', 'claim_verifications', 'claim_verifications_set_registration_ordinal',
+  'triggeren som tildeler nummeret finnes på claim-kontrollen'
+);
+
+-- BEFORE INSERT, ikke AFTER: en AFTER-trigger kan ikke sette en kolonne på raden.
+select is_empty(
+  $$
+    select t.tgname::text
+    from pg_trigger t
+    where t.tgname in ('evidence_verifications_set_registration_ordinal',
+                       'claim_verifications_set_registration_ordinal')
+      and not (t.tgtype & 2 = 2 and t.tgtype & 4 = 4)
+  $$,
+  'begge triggerne er BEFORE INSERT'
+);
+
+-- cache 1 er en del av garantien: en bufret sekvens deler ut blokker per økt, og
+-- to økter kunne da fått numre i motsatt rekkefølge av skrivingene.
+select is_empty(
+  $$
+    select c.relname::text
+    from pg_sequence s
+    join pg_class c on c.oid = s.seqrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'workflow'
+      and c.relname in ('evidence_verification_registration_seq',
+                        'claim_verification_registration_seq')
+      and s.seqcache <> 1
+  $$,
+  'begge sekvensene deler ut ett nummer om gangen'
+);
+
+select set_eq(
+  $$
+    select c.conname::text
+    from pg_constraint c
+    where c.contype = 'u'
+      and c.conrelid in ('workflow.evidence_verifications'::regclass,
+                         'workflow.claim_verifications'::regclass)
+      and c.conname like '%registration_ordinal%'
+  $$,
+  $$values ('evidence_verifications_registration_ordinal_key'),
+           ('claim_verifications_registration_ordinal_key')$$,
+  'nummeret er entydig i begge tabellene'
+);
+
+-- ---------------------------------------------------------------------------
+-- …og at leserne faktisk bruker det.
+--
+-- Avviksraden fra del 9 ble skrevet sist og har derfor det høyeste nummeret.
+-- Klokka dyttes nå bakover på nettopp den raden, slik den ville sett ut om den
+-- var skrevet av en transaksjon som *startet* før bekreftelsen og skrev etterpå:
+-- den nyeste registreringen bærer det eldste tidsstempelet. Sortert på klokka
+-- ville avviket forsvunnet bak bekreftelsen. Det er dette migrasjonen retter.
+-- ---------------------------------------------------------------------------
+create temporary table inverted (label text primary key, id uuid not null) on commit drop;
+insert into inverted
+select 'deviation', ev.id
+from workflow.evidence_verifications ev
+where ev.evidence_item_id = (select id from registered where name = 'item-b')
+  and ev.outcome = 'needs_correction';
+
+set local session_replication_role = replica;
+update workflow.evidence_verifications
+set verified_at = verified_at - interval '3 hours',
+    created_at = created_at - interval '3 hours'
+where id = (select id from inverted where label = 'deviation');
+set local session_replication_role = origin;
+
+select is(
+  (select count(*) from workflow.evidence_verifications ev
+   where ev.evidence_item_id = (select id from registered where name = 'item-b')
+     and ev.verified_at < (select verified_at from workflow.evidence_verifications
+                           where id = (select id from inverted where label = 'deviation'))),
+  0::bigint,
+  'forutsetningen: avviket bærer nå det eldste tidsstempelet på funnet'
+);
+select is(
+  (select count(*) from workflow.evidence_verifications ev
+   where ev.evidence_item_id = (select id from registered where name = 'item-b')
+     and ev.registration_ordinal > (select registration_ordinal
+                                    from workflow.evidence_verifications
+                                    where id = (select id from inverted where label = 'deviation'))),
+  0::bigint,
+  'og det høyeste registreringsnummeret: det ble faktisk skrevet sist'
+);
+
+select is(
+  (select workflow.evidence_verification_history(
+            (select id from registered where name = 'item-b'))
+          ->> 'current_extraction_verification_id'),
+  (select id::text from inverted where label = 'deviation'),
+  'den gjeldende kontrollen er den som ble skrevet sist, ikke den med nyeste klokke'
+);
+
+select ok(
+  not workflow.grounding_machine_proved((select id from registered where name = 'item-b')),
+  'maskinbeviset er fortsatt underkjent når avviket bærer det eldste tidsstempelet'
+);
+
+select is_empty(
+  format(
+    $$select unnest(workflow.covered_check_fields(%L::uuid))::text$$,
+    (select id from registered where name = 'item-b')
+  ),
+  'og dekningen er fortsatt nullstilt av avviket'
+);
+
 
 select finish();
 rollback;
