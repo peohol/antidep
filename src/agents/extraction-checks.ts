@@ -50,6 +50,26 @@
 // (ANTIDEP_CONSTITUTION.md §6, §11).
 //
 // ----------------------------------------------------------------------------
+// Kildeforankringen er den ene siden maskinen skal bevise
+//
+// Fra migrasjon 005u av leverer ekstraksjonen ett ordrett utdrag, én presis
+// peker og én kort begrunnelse per semantisk felt. Utdraget er venstresiden i
+// kontrolløkten, og det er nettopp den maskinen kan avgjøre: står teksten
+// ordrett i den kildeversjonen raden peker på, eller ikke?
+//
+// Arbeidsdelingen er derfor skarp. Maskinen beviser at venstresiden faktisk
+// kommer fra kilden; mennesket vurderer om høyresiden — den strukturerte
+// verdien — følger av venstresiden. Et forankringsutdrag som ikke står i
+// representasjonen, er et avvik av samme slag som et sitat som ikke gjør det:
+// påstanden om ordrett gjengivelse er falsifiserbar, og den er falsifisert.
+//
+// Et *hull* i forankringen er noe annet enn et avvik. Da har kontrolløren
+// ingen venstreside å bedømme det feltet mot, og raden kan ikke bekreftes —
+// verken av maskinen eller av et menneske. Utfallet blir uncertain, og
+// beskjeden sier at funnet må ekstraheres på nytt framfor at noen skal lete
+// fram grunnlaget selv (ANTIDEP_CONSTITUTION.md §6, §8, §11).
+//
+// ----------------------------------------------------------------------------
 // Hva `source_locator` betyr her
 //
 // Kildepekeren er fritekst («Sammendrag (MEDLINE-post)»), og hvilken del av et
@@ -1626,7 +1646,47 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     }
   }
 
-  // 2. Kildepekeren. Se hodekommentaren for hva som gjør den korroborert.
+  // 2. Kildeforankringen. Hvert utdrag skal stå ordrett i nettopp denne
+  //    kildeversjonen; et utdrag som ikke gjør det, er et avvik.
+  const groundings = item.fieldGroundings
+  const foundGroundings = groundings.filter((grounding) =>
+    verbatimOccursIn(projections, grounding.sourceExcerpt),
+  )
+  const unfoundFields = new Set(
+    groundings
+      .filter((grounding) => !verbatimOccursIn(projections, grounding.sourceExcerpt))
+      .map((grounding) => grounding.checkField),
+  )
+  for (const grounding of groundings) {
+    if (unfoundFields.has(grounding.checkField)) {
+      findings.push(
+        `Kildeforankringen for «${grounding.checkField}» oppgir et utdrag som ikke finnes ` +
+          `ordrett i representasjonen som ble hentet fra ` +
+          `${item.sourceVersion?.retrievedFrom ?? 'kilden'}: «${grounding.sourceExcerpt}».`,
+      )
+    }
+  }
+  if (groundings.length > 0 && unfoundFields.size === 0) {
+    notes.push(
+      `${String(groundings.length)} forankrede utdrag ble gjenfunnet ordrett i ` +
+        'representasjonen, ett per felt funnet påstår noe om.',
+    )
+  }
+
+  // Et hull i forankringen er ikke et avvik, men gjør raden ukontrollerbar
+  // felt for felt: det finnes ingen venstreside å bedømme feltet mot.
+  const groundedFields = new Set(item.groundedCheckFields)
+  const groundingGap = item.semanticCheckFields.filter((field) => !groundedFields.has(field))
+  if (groundingGap.length > 0) {
+    noteUnresolved(
+      `Ekstraksjonen mangler kildeforankring for ${String(groundingGap.length)} av feltene den ` +
+        `påstår noe om (${groundingGap.join(', ')}), og kan derfor ikke kontrolleres felt for ` +
+        'felt. Antidep gjetter aldri et utdrag ut av den rå ekstraksjonen. Funnet må ' +
+        'ekstraheres på nytt etter gjeldende protokoll.',
+    )
+  }
+
+  // 3. Kildepekeren. Se hodekommentaren for hva som gjør den korroborert.
   if (representationReproduced && quotesFound) {
     checked.push('source_locator')
   } else if (!quotesFound) {
@@ -1636,7 +1696,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     )
   }
 
-  // 3. Tallene. Et treff bekrefter; et manglende treff konkluderer ikke.
+  // 4. Tallene. Et treff bekrefter; et manglende treff konkluderer ikke.
   //
   // Et felt føres opp som kontrollert bare når *alle* tallene under det ble
   // gjenfunnet. Konfidensintervallet er det som gjør regelen nødvendig: det har
@@ -1683,9 +1743,14 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // Begrepene leses fra funnets egne utdrag av samme grunn: at legemiddelnavnet
   // står *et sted* i artikkelen, sier ingenting om denne raden.
   // --------------------------------------------------------------------------
-  const quoteProjections = quotesFound
-    ? quotes.flatMap((quote) => searchProjections(quote.text))
-    : []
+  //
+  // Fra migrasjon 005u av er de forankrede utdragene også radens egne, ordrette
+  // og nettopp verifisert mot representasjonen. De hører derfor med i den samme
+  // høystakken: mer tekst som beviselig tilhører dette funnet, uten at kravet
+  // om at armen og endepunktet står i samme treff er rørt.
+  const groundedExcerpts = foundGroundings.map((grounding) => grounding.sourceExcerpt)
+  const ownText = [...(quotesFound ? quotes.map((quote) => quote.text) : []), ...groundedExcerpts]
+  const quoteProjections = ownText.flatMap((text) => searchProjections(text))
   // Et utvalg hører til armen; et estimat og et konfidensintervall hører til
   // *ett endepunkt hos den armen*. To korrekte utdrag kan ellers settes sammen
   // til en gal rad:
@@ -1715,9 +1780,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // fleste reelle kilder inntil et ledd som forstår språk finnes. Det er den
   // riktige enden å ta feil i: alternativet er en bekreftelse som bygger på at
   // to sanne setninger om forskjellige ting stod i samme artikkel.
-  const quoteFragments = quotesFound
-    ? quotes.flatMap((quote) => searchProjections(quote.text)).flatMap(sentences)
-    : []
+  const quoteFragments = quoteProjections.flatMap(sentences)
   const claimProjections = quoteFragments.filter((fragment) =>
     termOccursIn([fragment], item.extraction.interventionDrugName),
   )
@@ -1786,13 +1849,13 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   }
 
   for (const field of numericFields) {
-    if (!unresolvedFields.has(field)) {
+    if (!unresolvedFields.has(field) && !unfoundFields.has(field)) {
       checked.push(field)
     }
   }
   if (numericFields.size > 0 && claimProjections.length === 0) {
     noteUnresolved(
-      quotesFound
+      ownText.length > 0
         ? `Ingen av funnets ordrette utdrag navngir intervensjonen «${item.extraction.interventionDrugName}», så ` +
             'tallene hadde ingen tekst som entydig tilhører denne armen å kontrolleres mot. En ' +
             'artikkel beskriver ofte flere armer, og et tall i et utdrag som ikke sier hvilken ' +
@@ -1820,12 +1883,14 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     )
   }
 
-  // 4. Begrepene. Bare bekreftelse teller; se hodekommentaren.
+  // 5. Begrepene. Bare bekreftelse teller; se hodekommentaren.
   const unmatchedTerms: string[] = []
   for (const claim of termClaims(item)) {
-    if (termOccursIn(quoteProjections, claim.term)) {
+    // Et felt hvis eget forankringsutdrag ikke stod i kilden, kan aldri føres
+    // opp som kontrollert: grunnlaget det skulle bedømmes mot, er falsifisert.
+    if (termOccursIn(quoteProjections, claim.term) && !unfoundFields.has(claim.field)) {
       checked.push(claim.field)
-    } else {
+    } else if (!unfoundFields.has(claim.field)) {
       unmatchedTerms.push(`${claim.label} («${claim.term}»)`)
     }
   }
@@ -1859,7 +1924,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     )
   }
 
-  // 5. Utfallet.
+  // 6. Utfallet.
   //
   // Rekkefølgen er ikke tilfeldig: et avvik er sterkere enn en manglende
   // kontroll, og en manglende kontroll er sterkere enn en bekreftelse. En
@@ -1876,6 +1941,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     )
   } else if (
     !quotesFound ||
+    groundingGap.length > 0 ||
     unmatchedNumbers.length > 0 ||
     ambiguousNumbers.length > 0 ||
     confidenceIntervalUnresolved ||
@@ -1917,9 +1983,9 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     (representationReproduced
       ? 'ga samme sha256-fingeravtrykk som den registrerte kildeversjonen'
       : 'ga et annet sha256-fingeravtrykk enn den registrerte kildeversjonen') +
-    '. Hvert ordrett utdrag i raw_extraction ble søkt ordrett, og hvert oppgitt tall ble ' +
-    'søkt som selvstendig tall, i både råsvaret og en taggfri projeksjon av det. Ingen ' +
-    'språkmodell er brukt.'
+    '. Hvert ordrett utdrag i raw_extraction og hvert utdrag i kildeforankringen ble søkt ' +
+    'ordrett, og hvert oppgitt tall ble søkt som selvstendig tall i funnets egne utdrag, i ' +
+    'både råsvaret og en taggfri projeksjon av det. Ingen språkmodell er brukt.'
 
   // `findings` er påkrevd for alt annet enn `verified`
   // (`evidence_verifications_findings_required_check`, migrasjon 005), og

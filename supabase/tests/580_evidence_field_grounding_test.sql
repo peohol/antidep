@@ -327,9 +327,18 @@ select lives_ok(
 -- ===========================================================================
 -- Del 6 — Auditsporet
 -- ===========================================================================
+-- Bare denne filens egne forankringer telles: golden slicen har sine egne fra
+-- migrasjon 003c, og en total ville vært en påstand om seed-dataene.
 select is(
-  (select count(*) from audit.events
-   where operation = 'evidence_field_grounding_recorded'),
+  (select count(*) from audit.events e
+   where e.operation = 'evidence_field_grounding_recorded'
+     and e.object_id in (
+       select g.id from knowledge.evidence_field_groundings g
+       where g.evidence_item_id in (
+         '58000000-0000-4000-8000-000000000011',
+         '58000000-0000-4000-8000-000000000012'
+       )
+     )),
   3::bigint,
   'hver registrert forankring har sin auditrad'
 );

@@ -100,6 +100,91 @@ describe('checkExtraction — den lykkede stien', () => {
   })
 })
 
+// ----------------------------------------------------------------------------
+// Kildeforankringen
+//
+// Arbeidsdelingen mellom maskin og menneske: maskinen beviser at venstresiden —
+// det ordrette utdraget kontrolløren får se — faktisk står i den
+// kildeversjonen raden peker på. Mennesket vurderer om den strukturerte verdien
+// følger av utdraget.
+//
+// Et utdrag som ikke står der, er et avvik. Et *manglende* utdrag er noe annet:
+// da finnes det ingen venstreside, og raden kan ikke kontrolleres felt for felt
+// av noen.
+// ----------------------------------------------------------------------------
+describe('checkExtraction — kildeforankringen', () => {
+  it('kontrollerer hvert forankret utdrag ordrett mot kildeversjonen', () => {
+    const report = check()
+    expect(report.outcome).toBe('verified')
+    expect(report.rationale).toContain('forankrede utdrag ble gjenfunnet ordrett')
+  })
+
+  it('avviser et forankret utdrag som ikke står i representasjonen', () => {
+    const report = check({
+      fieldGroundings: [
+        {
+          fieldGroundingId: '61000000-0000-4000-8000-000000000099',
+          checkField: 'outcome',
+          sourceExcerpt: 'Quality of life was the primary outcome.',
+          sourceLocator: 'Metode, avsnitt 2',
+          justification: 'Endepunktet står i metodeavsnittet.',
+          createdAt: '2026-09-01T00:00:00+00:00',
+          createdByActorId: '99999999-9999-4999-8999-999999999999',
+        },
+      ],
+      groundedCheckFields: ['outcome'],
+    })
+    expect(report.outcome).toBe('needs_correction')
+    expect(report.findings).toContain('Quality of life was the primary outcome.')
+  })
+
+  // Et felt hvis eget grunnlag er falsifisert, kan aldri stå som kontrollert:
+  // det ville sagt at kontrolløren har sammenlignet verdien mot noe som finnes.
+  it('fører ikke opp et felt hvis eget utdrag ikke ble gjenfunnet', () => {
+    const report = check({
+      fieldGroundings: [
+        {
+          fieldGroundingId: '61000000-0000-4000-8000-000000000098',
+          checkField: 'intervention_arm',
+          sourceExcerpt: 'Patients received paroxetine only.',
+          sourceLocator: 'Metode, avsnitt 1',
+          justification: 'Behandlingsarmen står i metodeavsnittet.',
+          createdAt: '2026-09-01T00:00:00+00:00',
+          createdByActorId: '99999999-9999-4999-8999-999999999999',
+        },
+      ],
+      groundedCheckFields: ['intervention_arm'],
+    })
+    expect(report.checkedFields).not.toContain('intervention_arm')
+  })
+
+  // Gamle funn er i nøyaktig denne tilstanden, og de skal ikke kunne se
+  // kontrollerbare ut (ANTIDEP_CONSTITUTION.md §6, §11).
+  it('kan ikke bekrefte et funn med hull i forankringen', () => {
+    const report = check({ fieldGroundings: [], groundedCheckFields: [] })
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toContain('mangler kildeforankring')
+    expect(report.findings).toContain('må ekstraheres på nytt')
+  })
+
+  it('sier hvilke felter som mangler forankring', () => {
+    const report = check({
+      groundedCheckFields: [
+        'intervention_arm',
+        'outcome',
+        'reported_direction',
+        'availability_semantics',
+        'effect_measure',
+        'population',
+        'sample_size',
+        'confidence_interval',
+      ],
+    })
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toContain('estimate')
+  })
+})
+
 describe('checkExtraction — feilsitering', () => {
   it('avviser et sitat som ikke står ordrett i kilden', () => {
     const report = check({
@@ -1307,22 +1392,6 @@ describe('checkExtraction — tallene', () => {
     expect(report.checkedFields).not.toContain('estimate')
     expect(report.rationale).toContain('estimat (-1.5)')
   })
-
-  it('godtar et tall skrevet med komma i kilden', () => {
-    // Norske og engelske kilder skriver desimalskilletegnet ulikt, og tallet er
-    // det samme. Bare estimatet er i spill her; den øvrige teksten er byttet
-    // ut, så de andre kontrollene slår ut som de skal.
-    const report = check(
-      {
-        extraction: {
-          ...UTEN_POPULASJON,
-          estimate: '1.5',
-        },
-      },
-      'Vektendringen var 1,5 kg.',
-    )
-    expect(report.findings).not.toContain('estimat')
-  })
 })
 
 // ----------------------------------------------------------------------------
@@ -2131,6 +2200,13 @@ describe('numberOccursIn', () => {
 
   it('godtar etterfølgende nuller fra numeric', () => {
     expect(numberOccursIn(projections, '1.50')).toBe(true)
+  })
+
+  // Norske og engelske kilder skriver desimalskilletegnet ulikt, og tallet er
+  // det samme. Uten dette ville en norsk kilde aldri kunne bekrefte et
+  // registrert desimaltall.
+  it('godtar et desimaltall skrevet med komma i kilden', () => {
+    expect(numberOccursIn(searchProjections('Vektendringen var 1,5 kg.'), '1.5')).toBe(true)
   })
 
   it('avviser en verdi som ikke er et tall', () => {
