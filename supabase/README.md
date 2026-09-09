@@ -549,9 +549,10 @@ Lagre derfor svaret rett fra nettet (`curl -o`), ikke via utklippstavlen.
 
 ## Legitimasjon til agentidentiteten
 
-Det finnes to agentidentiteter, én per pipelineledd som skriver:
-`agent-identity:extraction-verification-01` (migrasjon 005f) og
-`agent-identity:citation-support-verification-01` (migrasjon 005i). De deler verken aktør,
+Det finnes tre agentidentiteter, én per pipelineledd som skriver:
+`agent-identity:extraction-verification-01` (migrasjon 005f),
+`agent-identity:citation-support-verification-01` (migrasjon 005i) og
+`agent-identity:evidence-extraction-01` (migrasjon 005w). De deler verken aktør,
 rolle eller hemmelighet: rollen er rettighetsgrensen, så en identitet i det ene leddet kan
 ikke utføre operasjonene i det andre (`docs/MVP_IMPLEMENTATION_PLAN.md` §49,
 `docs/EVIDENCE_PIPELINE.md` §61, §63).
@@ -579,10 +580,16 @@ npm run db:start
 ./scripts/issue-agent-credential.sh --management-api --write-env
 
 # Claim-verifikatoren. --env-prefix velger hvilket variabelpar som skrives, slik
-# at begge leddene kan ligge i den samme miljøfila uten å overskrive hverandre.
+# at leddene kan ligge i den samme miljøfila uten å overskrive hverandre.
 ./scripts/issue-agent-credential.sh --management-api --write-env \
   --identity agent-identity:citation-support-verification-01 \
   --env-prefix ANTIDEP_CLAIM_AGENT
+
+# Ekstraksjonsagenten. Re-ekstraksjonen leser dette paret og ekstraksjons-
+# verifikatorens par i den samme prosessen, så begge må være utstedt.
+./scripts/issue-agent-credential.sh --management-api --write-env \
+  --identity agent-identity:evidence-extraction-01 \
+  --env-prefix ANTIDEP_EXTRACTION_AGENT
 ```
 
 `--write-env` håndhever tre ting framfor å love dem, alle funn fra teknisk review:
@@ -640,6 +647,41 @@ deler.
 **Publishable key, aldri `service_role`:** agenten autentiseres av sin egen legitimasjon inne
 i api-funksjonene, ikke av Data API-rollen, og en `service_role`-nøkkel ville omgått RLS og
 gitt kjøreren alt (`docs/DATABASE_ARCHITECTURE.md` §49).
+
+## Kjøre ekstraksjonsagenten
+
+```bash
+npm run agent:extract-evidence -- --schema                              # kontrakten
+npm run agent:extract-evidence -- --proposal <fil> --dry-run            # kontroller, skriv ingenting
+npm run agent:extract-evidence -- --proposal <fil>                      # registrer
+npm run agent:reextract-evidence -- --directory proposals [--dry-run]   # flere, med kontroll etter hvert
+```
+
+Forslaget er en JSON-fil med de strukturerte verdiene og én kildeforankring per semantisk
+felt. Hvordan et forslag lages, hvilken kildeversjon det bindes til, og hvordan filen kjøres,
+står i [`proposals/README.md`](../proposals/README.md). Kontrakten er maskinlesbar i
+`proposals/extraction-proposal.schema.json`, og det commitede eksempelet er malen.
+
+Kjøringen henter kildeversjonen på nytt, krever at fingeravtrykket er den registrerte
+versjonens, prøver hvert utdrag ordrett mot representasjonen, og registrerer gjennom
+`api.register_agent_extraction(...)`. Databasen avviser ekstraksjonen dersom forankringen
+ikke dekker hvert semantiske felt raden påstår noe om.
+
+**Ingen betalt modelleverandør er koblet inn.** Leddet som _leser_ en artikkel og foreslår
+verdier, er ikke bygget; forslagene lages i dag utenfor Antidep, av et menneske eller av
+ChatGPT, og leveres som filer. Formen er den samme uansett hvem som skrev den, og
+kontrolleres like strengt (`docs/ANTIDEP_CONSTITUTION.md` §20).
+
+**Kjøringen er idempotent.** `evidence_items_content_hash_key` dekker hele radens faglige
+innhold, så det samme forslaget kjørt om igjen skriver ingenting og rapporteres som
+`already_registered`.
+
+**Re-ekstraksjonen røres ikke ved gamle rader.** `npm run agent:reextract-evidence` er veien
+fra et gammelt, uforankret evidensfunn til et nytt, forankret ett: det nye kommer _ved siden
+av_ det gamle, og det gamle består som historisk objekt. Ingen forankring legges til
+retroaktivt — ingen vet hvilke utdrag den gamle ekstraksjonen faktisk ble laget av. Å lenke
+et nytt funn til en påstand er en faglig vurdering og gjøres av en kvalifisert redaktør i
+adminflyten, ikke av en kommando.
 
 ## Kjøre ekstraksjonsverifikatoren
 

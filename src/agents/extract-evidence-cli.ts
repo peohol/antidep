@@ -3,6 +3,7 @@
 //
 //   npm run agent:extract-evidence -- --proposal forslag.json --dry-run
 //   npm run agent:extract-evidence -- --proposal forslag.json
+//   npm run agent:extract-evidence -- --schema
 //
 // Forslaget er en JSON-fil med de strukturerte verdiene og én kildeforankring
 // per semantisk felt (`extraction-proposal.ts`). Kjøringen henter
@@ -22,14 +23,13 @@
 // Filen importeres aldri av appen og havner derfor ikke i klientbunten.
 // ============================================================================
 
-import { readFile } from 'node:fs/promises'
-
 import { createAgentClient, createEvidenceExtractionApi } from './agent-api.ts'
-import { readAgentConfig } from './agent-environment.ts'
+import { EVIDENCE_EXTRACTION_CREDENTIAL, readAgentConfig } from './agent-environment.ts'
 import { redact } from './agent-credential.ts'
-import { parseExtractionProposal } from './extraction-proposal.ts'
+import { buildExtractionProposalSchema } from './extraction-proposal-schema.ts'
 import { runEvidenceExtraction } from './extraction-run.ts'
 import { EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version.ts'
+import { readProposalFile } from './proposal-files.ts'
 
 const USAGE = `Bruk:
   npm run agent:extract-evidence -- --proposal <fil> [valg]
@@ -37,6 +37,7 @@ const USAGE = `Bruk:
 Valg:
   --proposal <fil>  JSON-filen med ekstraksjonsforslaget. Påkrevd.
   --dry-run         Hent og kontroller, men registrer ingenting.
+  --schema          Skriv ut JSON Schema-formen av forslaget, og avslutt.
   --help            Vis denne teksten.`
 
 interface Options {
@@ -51,7 +52,7 @@ interface Options {
  * grense, mens dette leddet tar én fil. En felles parser for to ulike former
  * ville vært en parser med to moduser.
  */
-export function parseExtractionArguments(argv: readonly string[]): Options | 'help' {
+export function parseExtractionArguments(argv: readonly string[]): Options | 'help' | 'schema' {
   let proposalPath: string | null = null
   let dryRun = false
 
@@ -59,6 +60,11 @@ export function parseExtractionArguments(argv: readonly string[]): Options | 'he
     const flag = argv[index]
     if (flag === '--help' || flag === '-h') {
       return 'help'
+    }
+    // Skjemaet kan skrives ut uten legitimasjon og uten database: det er
+    // kontrakten, ikke en operasjon mot basen.
+    if (flag === '--schema') {
+      return 'schema'
     }
     if (flag === '--dry-run') {
       dryRun = true
@@ -90,6 +96,10 @@ async function main(): Promise<number> {
       console.log(USAGE)
       return 0
     }
+    if (parsed === 'schema') {
+      console.log(JSON.stringify(buildExtractionProposalSchema(), null, 2))
+      return 0
+    }
     options = parsed
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause))
@@ -97,16 +107,14 @@ async function main(): Promise<number> {
     return 1
   }
 
-  const config = readAgentConfig(process.env)
+  const config = readAgentConfig(process.env, EVIDENCE_EXTRACTION_CREDENTIAL)
   const api = createEvidenceExtractionApi(
     createAgentClient({ url: config.url, publishableKey: config.publishableKey }),
     config.credential,
   )
 
   try {
-    const proposal = parseExtractionProposal(
-      JSON.parse(await readFile(options.proposalPath, 'utf8')) as unknown,
-    )
+    const { proposal } = await readProposalFile(options.proposalPath)
     const report = await runEvidenceExtraction({
       api,
       premises: EVIDENCE_EXTRACTION_PREMISES,

@@ -49,6 +49,7 @@
 
 import type { Uuid } from '../types/api.ts'
 import type { AgentRunPremises, EvidenceExtractionApi } from './agent-api.ts'
+import { isUniqueViolation } from './agent-api.ts'
 import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
 import type { RetrievalResult, RetrieveOptions } from './source-retrieval.ts'
@@ -70,7 +71,14 @@ export interface ExtractionRunOptions {
 export interface ExtractionRunReport {
   readonly agentRunId: Uuid
   readonly runStatus: 'succeeded' | 'aborted' | 'failed'
-  readonly decision: 'registered' | 'previewed' | 'skipped'
+  /**
+   * `already_registered` er ikke en feil. `evidence_items_content_hash_key`
+   * dekker hele radens faglige innhold, så nøyaktig det samme forslaget kjørt
+   * om igjen skriver ingenting — og det er nettopp det som gjør kjøringen
+   * idempotent. En korreksjon av et hvilket som helst felt gir en ny hash og
+   * registreres ved siden av den gamle; ingenting overskrives.
+   */
+  readonly decision: 'registered' | 'already_registered' | 'previewed' | 'skipped'
   readonly evidenceItemId?: Uuid
   /** Feltene forslaget forankrer, i forslagets egen rekkefølge. */
   readonly groundedFields: readonly string[]
@@ -181,7 +189,14 @@ export async function runEvidenceExtraction(
 
     if (verdict.kind === 'skip') {
       log(`Ingenting registrert: ${verdict.reason}`)
-      await api.completeRun(agentRunId, 'aborted', { skipped_reason: verdict.reason }, null)
+      // `aborted` krever en begrunnelse: agent_runs_status_shape_check godtar
+      // ikke en avsluttet kjøring uten et svar på hvorfor den ble stoppet.
+      await api.completeRun(
+        agentRunId,
+        'aborted',
+        { skipped_reason: verdict.reason },
+        verdict.reason.slice(0, 4000),
+      )
       return {
         agentRunId,
         runStatus: 'aborted',
@@ -197,18 +212,44 @@ export async function runEvidenceExtraction(
         agentRunId,
         'aborted',
         { dry_run: true, grounded_fields: groundedFields },
-        null,
+        'Tørrkjøring: forslaget ble kontrollert, men ingen ekstraksjon ble registrert.',
       )
       return { agentRunId, runStatus: 'aborted', decision: 'previewed', groundedFields }
     }
 
-    const evidenceItemId = await api.registerExtraction({
-      agentRunId,
-      sourceId: proposal.sourceId,
-      sourceVersionId: proposal.sourceVersionId,
-      extraction: proposal.extraction,
-      fieldGroundings: proposal.fieldGroundings,
-    })
+    let evidenceItemId: Uuid
+    try {
+      evidenceItemId = await api.registerExtraction({
+        agentRunId,
+        sourceId: proposal.sourceId,
+        sourceVersionId: proposal.sourceVersionId,
+        extraction: proposal.extraction,
+        fieldGroundings: proposal.fieldGroundings,
+      })
+    } catch (cause) {
+      if (!isUniqueViolation(cause)) {
+        throw cause
+      }
+      // Den ene forventede avvisningen: raden finnes allerede, med nøyaktig
+      // det samme innholdet. Kjøringen lukkes som `aborted` fordi den ikke
+      // produserte noe, ikke fordi noe gikk galt — og det gamle funnet står
+      // urørt, som det skal (knowledge.evidence_items er append-only).
+      const reason = cause instanceof Error ? cause.message : String(cause)
+      log('Ingenting registrert: evidensfunnet finnes allerede med nøyaktig dette innholdet.')
+      await api.completeRun(
+        agentRunId,
+        'aborted',
+        { already_registered: true },
+        reason.slice(0, 4000),
+      )
+      return {
+        agentRunId,
+        runStatus: 'aborted',
+        decision: 'already_registered',
+        groundedFields,
+        reason,
+      }
+    }
     log(
       `Evidensfunn ${evidenceItemId} registrert, forankret på ${String(groundedFields.length)} felter.`,
     )

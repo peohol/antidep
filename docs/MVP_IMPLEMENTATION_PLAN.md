@@ -1389,7 +1389,8 @@ PR G  db: add publication events and gate                                   (#15
       feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
       feat: add the human claim review and publication approval flow        (#59)  merget   migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
       feat: add the human extraction check and make publication operational (#61)  merget   migrasjon 005q, 005r, 005s, 005t, 006g, 006h
-      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å
+      feat: rebuild the human control flow as a guided session              (#62)  merget   migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å
+      feat: make the current review decision race-safe                      (#65)  åpen     migrasjon 006i
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1491,7 +1492,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1972 pgTAP-assertions over 60 testfiler.
+Databaselaget teller nå 1999 pgTAP-assertions over 61 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1659,17 +1660,17 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de sekstitre migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de sekstifire migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
-   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø og 005å — i
+   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å og 006i — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0
-   og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+   0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle sekstitre ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle sekstifire ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -6532,6 +6533,113 @@ DOI og aldri til henteadressen, at ingen feltskuffe gjentar lenken, at ingen ste
 `raw_extraction` eller den globale kildepekeren, at et ugrunnet funn stopper økten, at
 avvikstekst festes til riktig delkontroll, at det ikke finnes noen utfallsmeny, og at hele
 kjeden går gjennom uten at noen av de fire beslutningsobjektene slås sammen.
+
+---
+
+### 74.39 «Gjeldende beslutning» er databasens rekkefølge, og forslaget er en kontrakt
+
+§74.38 lukket det samme hullet på de to verifikasjonstabellene og navnga det som stod igjen:
+`workflow.review_decisions` har samme form på «den gjeldende beslutningen», og dermed samme
+svakhet. Denne leveransen lukker den, og gjør samtidig ekstraksjonsforslaget til en form som
+tåler å være den permanente grensen mot et framtidig modell-ledd.
+
+**Én migrasjon.**
+
+| Migrasjon | Hva den gjør |
+| --- | --- |
+| 006i | `workflow.review_decisions` får `registration_ordinal` tildelt på innsiden av radlåsen, og alle sju leserne av «den gjeldende beslutningen» bytter til det |
+
+**Et menneskes nei kunne forsvinne.** «Den gjeldende beslutningen» ble avgjort av
+`decided_at`, som settes med `now()` — transaksjonens *starttidspunkt*, ikke tidspunktet raden
+ble skrevet. To samtidige registreringer kan starte i én rekkefølge og skrive i den motsatte,
+og da bærer raden som faktisk ble skrevet sist det eldste tidsstempelet. En `rejected` skrevet
+sist kunne sorteres bak en `approved` skrevet før den, og publiseringsgatens G12 ville lest
+godkjenningen som gjeldende. Retningen er alvorligere enn på verifikasjonstabellene: der kunne
+et maskinelt avvik forsvinne, her kan et menneskes faglige avvisning gjøre det. Den samme
+formen finnes på tilbaketrekking av en ekstraksjon, der et underkjent evidensfunn kunne stått
+som gyldig evidens i den publiserte lesemodellen.
+
+Rettingen er den samme som 005å: et registreringsnummer fra en sekvens med `cache 1`, uten
+`DEFAULT`, tildelt av en `BEFORE INSERT`-trigger *etter* at radlåsen på objektet er tatt.
+Låsen tas for begge `review_type`-variantene — `knowledge.claim_revisions` for en
+publiseringsgodkjenning, `knowledge.evidence_items` for en tilbaketrekking — og ikke bare for
+den ene `workflow.set_review_evidence_set_digest()` allerede låser. Alle aktive lesere bytter i
+den samme migrasjonen: publiseringsgatens G6, G11 og G12, frysingen av
+godkjenningstidspunktet på publiseringshendelsen, `workflow.claim_review_history`,
+`api.claim_review_workspace`, og de to viewene i den publiserte lesemodellen.
+`decided_at` beholdes uendret og leses fortsatt der spørsmålet er *når* beslutningen ble
+tatt — blant annet i rollekontrollen, som krever at tildelingen fantes på det tidspunktet.
+
+**Forslaget er nå en kontrakt, ikke bare en form.** Leddet som leser en artikkel og foreslår
+strukturerte verdier, er fortsatt ikke bygget, og ingen betalt modelleverandør er koblet inn.
+Det som er gjort, er å gjøre grensen god nok til å være permanent: forslaget bærer sin egen
+kontraktsversjon, ukjente felter avvises framfor å ignoreres, hvert lukket vokabular
+kontrolleres mot `src/types/api.ts`, kildeversjonen må være en uuid og fingeravtrykket ha
+kildeversjonenes egen form, og et kildeutdrag må bære nok kontekst til å være
+kontrollgrunnlag. `raw_extraction` navngis særskilt som noe et forslag ikke skal levere.
+Kontrakten finnes maskinlesbart i `proposals/extraction-proposal.schema.json`, bygget av de
+samme konstantene parseren bruker og prøvd mot dem, med et commitet syntetisk eksempel som mal.
+
+**Forslagene lages utenfor Antidep, og skriver ingenting.** `proposals/` er en lokal,
+gitignorert inndatakatalog med en kort oppskrift: hvordan man finner riktig kildeversjon,
+hvilken representasjon utdragene må stå i, hvordan filen ser ut, og de tre kommandoene —
+tørrkjøring, registrering og den deterministiske kontrollen etterpå. Den som lager forslaget
+har ingen databasetilgang; alt som skrives, skjer i kjøringen, med agentlegitimasjon og under
+de deterministiske kontrollene.
+
+**Re-ekstraksjonen lar de gamle radene stå.** `npm run agent:reextract-evidence` tar ett eller
+flere forslag, kjører hvert gjennom den ordinære ekstraksjonskjøringen, og kjører den
+deterministiske kontrollen på nøyaktig det funnet som ble registrert. Det nye, forankrede
+funnet kommer *ved siden av* det gamle; ingen legacy-rad muteres, og ingen forankring legges
+til retroaktivt — ingen vet hvilke utdrag den gamle ekstraksjonen faktisk ble laget av.
+Kjøringen er idempotent uten lokal bokføring: `evidence_items_content_hash_key` dekker hele
+radens faglige innhold, så det samme forslaget kjørt om igjen skriver ingenting og
+rapporteres som `already_registered`. Kommandoen lenker ikke funnet til en påstand: om et funn
+støtter, motsier eller er indirekte relevant for en formulering er en faglig vurdering, og
+gjøres av en kvalifisert redaktør i adminflyten (§12, §15).
+
+**Ekstraksjonsagenten har fått sitt eget variabelpar.** `ANTIDEP_EXTRACTION_AGENT_*` ved siden
+av verifikatorens `ANTIDEP_AGENT_*`. Re-ekstraksjonen kjører begge leddene i den samme
+prosessen, og to roller kan ikke dele ett variabelnavn — rollen er rettighetsgrensen.
+
+**En feil i ekstraksjonskjøringen ble funnet av at kjeden nå prøves mot en ekte database.**
+`agent_runs_status_shape_check` krever en begrunnelse på en kjøring som lukkes som `aborted`.
+Ekstraksjonskjøringen fra §74.38 sendte `null` i alle tre avbruddstilfellene — tørrkjøring,
+et forslag som ikke holdt mål, og nå dubletten — og ville derfor feilet med en
+constraintbrudd mot en ekte base. Feilen var usynlig fordi bare doble for databasen prøvde de
+stiene. Nettopp `npm run agent:extract-evidence -- --dry-run` er kommandoen som skal brukes
+før hver ekte registrering, så feilen lå i den mest brukte stien. Rettelsen er den samme
+formen verifikatorkjøringen allerede hadde: hvert avbrudd bærer sin egen begrunnelse.
+
+**Ingen regel er myket opp.** Ingen CHECK, constraint, trigger, policy eller grant er fjernet
+eller svekket, og ingen ny tabelltilgang er gitt til `anon` eller `authenticated`. Kolonnen
+føyer seg inn under det tabellvide lesegrantet `workflow.review_decisions` allerede har, og
+radpolicyen som avgrenser klientroller til `extraction_withdrawal` er uendret.
+
+**Testene.** `610` bærer migrasjonen: kontrakten på kolonnen, sekvensen og triggeren, at låsen
+dekker begge `review_type`-variantene, og begge retningene av rettingen — en godkjenning
+skrevet sist med det eldste tidsstempelet slipper gjennom gaten og fryses på
+publiseringshendelsen, en avvisning skrevet sist blokkerer på G12 og står som den gjeldende i
+reviewerflaten og i køen, og en tilbaketrekking skrevet sist slår gjennom i begge viewene i
+den publiserte lesemodellen. `scripts/db-lock-test.sh` har fått prøve 5, som gjør det samme
+med to reelle forbindelser: økt A begynner først, økt B godkjenner og commiter, og A avviser
+etterpå, gjennom den ekte skriveveien `api.register_publication_approval(...)`. Fiksturen
+(`scripts/review-decision-race-fixture.sql`) er egen, idempotent og bygget slik at G1 til G10
+holder, slik at det eneste som avgjør utfallet er beslutningen.
+
+Forslagskontrakten har egne tester uten database: at et ukjent felt er en feil på alle tre
+nivåene, at hvert lukket vokabular avvises utenfor seg selv, at kontraktsversjonen kreves, at
+et for kort utdrag avvises, at skjemafilen er nøyaktig det koden bygger, og at det commitede
+eksempelet går gjennom den samme kontrollen som et ekte forslag. Re-ekstraksjonen har egne
+tester på at kontrollen kjøres på riktig funn, at en dublett verken skriver eller kontrollerer,
+at en tørrkjøring ikke skriver, og at ett dårlig forslag ikke stopper de andre.
+
+`scripts/agent-chain-test.ts` har fått re-ekstraksjonen som et femte ledd, og prøver der de to
+tingene bare en ekte database kan avgjøre: at tørrkjøringen ikke skriver en evidensrad men
+likevel lukker kjøringen sin med en begrunnelse, og at det samme forslaget kjørt om igjen ikke
+skriver noe fordi `evidence_items_content_hash_key` avviser dubletten. Samtidig prøves regelen
+re-ekstraksjonen finnes for: det gamle, uforankrede funnet står urørt ved siden av det nye,
+uten forankring lagt til i etterkant. Det var dette leddet som avdekket avbruddsfeilen over.
 
 ---
 

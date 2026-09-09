@@ -35,6 +35,23 @@
 // (`createEvidenceExtractionApi`, `createExtractionVerificationApi`). De
 // menneskelige leddene kalles som en innlogget bruker, med en JWT signert med
 // den lokale stackens egen nøkkel.
+//
+// ----------------------------------------------------------------------------
+// Re-ekstraksjonen, som er den samme kjeden med to krav til
+//
+// Til slutt kjøres `runReextraction` gjennom de samme portene, og prøver de to
+// tingene bare en ekte database kan avgjøre:
+//
+//   * at en tørrkjøring ikke skriver en evidensrad, men likevel lukker
+//     kjøringen sin med en begrunnelse — `agent_runs_status_shape_check` godtar
+//     ikke en avsluttet kjøring uten det, og en dobbel for databasen ville ikke
+//     merket forskjellen, og
+//   * at det samme forslaget kjørt om igjen ikke skriver noe, fordi
+//     `evidence_items_content_hash_key` avviser dubletten. Idempotensen har
+//     ingen lokal bokføring; fasiten er basen.
+//
+// Samtidig prøves regelen re-ekstraksjonen finnes for: det gamle, uforankrede
+// funnet står urørt ved siden av det nye, uten forankring lagt til i etterkant.
 // ============================================================================
 
 import { execFileSync } from 'node:child_process'
@@ -49,7 +66,10 @@ import {
 } from '../src/agents/agent-api.ts'
 import { agentSecret } from '../src/agents/agent-credential.ts'
 import { sourceVersionContentHash } from '../src/agents/content-hash.ts'
-import { parseExtractionProposal } from '../src/agents/extraction-proposal.ts'
+import {
+  EXTRACTION_PROPOSAL_VERSION,
+  parseExtractionProposal,
+} from '../src/agents/extraction-proposal.ts'
 import { runEvidenceExtraction } from '../src/agents/extraction-run.ts'
 import { runExtractionVerification } from '../src/agents/extraction-verification-run.ts'
 import type { RetrieveLike } from '../src/agents/extraction-verification-run.ts'
@@ -57,6 +77,7 @@ import {
   EVIDENCE_EXTRACTION_PREMISES,
   EXTRACTION_VERIFICATION_PREMISES,
 } from '../src/agents/pipeline-version.ts'
+import { runReextraction } from '../src/agents/reextraction-run.ts'
 
 // ----------------------------------------------------------------------------
 // Miljøet
@@ -310,6 +331,7 @@ async function main(): Promise<void> {
     }),
     premises: EVIDENCE_EXTRACTION_PREMISES,
     proposal: parseExtractionProposal({
+      proposal_version: EXTRACTION_PROPOSAL_VERSION,
       source_id: SOURCE,
       source_version_id: VERSION,
       retrieved_from: 'https://example.test/kjede',
@@ -549,6 +571,163 @@ async function main(): Promise<void> {
       `select c.current_published_revision_id::text from knowledge.claims c
        join knowledge.claim_revisions r on r.claim_id = c.id where r.id = ${q(revision)}`,
     ) === revision,
+  )
+
+  // ---- Ledd 5: re-ekstraksjonen, gjennom de samme ekte portene -------------
+  //
+  // Et gammelt, uforankret evidensfunn skal ikke muteres og skal ikke få
+  // forankring lagt til i etterkant: ingen vet hvilke utdrag det faktisk ble
+  // laget av. Re-ekstraksjonen legger et nytt, forankret funn ved siden av det.
+  //
+  // Idempotensen prøves der den faktisk avgjøres — mot
+  // evidence_items_content_hash_key i en ekte database. Ingen lokal bokføring.
+  const legacyItem = psql(
+    config,
+    `insert into knowledge.evidence_items
+       (source_id, source_version_id, design_code, population_availability, population_detail,
+        sample_size_availability, intervention_drug_id, comparator_kind, outcome_concept_id,
+        outcome_detail, timepoint_availability, reported_direction, estimate_availability,
+        confidence_interval_availability, source_locator, extraction_method, created_by_actor_id)
+     select ${q(SOURCE)}, ${q(VERSION)}, 'randomized_controlled_trial', 'not_reported',
+            'Kjedeprøvens gamle, uforankrede funn.', 'not_reported', d.id, 'none', c.id,
+            'Vektendring, ført opp for hånd.', 'not_reported', 'increase', 'not_reported',
+            'not_reported', 'Sammendrag', 'manual', a.id
+     from catalog.drugs d, catalog.clinical_concepts c, provenance.actors a
+     where d.canonical_name = 'sertralin' and c.canonical_label = 'vektendring'
+       and a.actor_key = 'human:peder-holman'
+     returning id`,
+  )
+
+  const reProposal = parseExtractionProposal({
+    proposal_version: EXTRACTION_PROPOSAL_VERSION,
+    source_id: SOURCE,
+    source_version_id: VERSION,
+    retrieved_from: 'https://example.test/kjede',
+    content_hash: contentHash,
+    extraction: {
+      design_code: 'randomized_controlled_trial',
+      population_availability: 'not_reported',
+      population_detail: 'Voksne, re-ekstrahert.',
+      sample_size_availability: 'not_reported',
+      intervention_drug_id: psql(
+        config,
+        `select id from catalog.drugs where canonical_name = 'sertralin'`,
+      ),
+      comparator_kind: 'none',
+      outcome_concept_id: psql(
+        config,
+        `select id from catalog.clinical_concepts where canonical_label = 'vektendring'`,
+      ),
+      outcome_detail: 'Vektendring, re-ekstrahert med forankring.',
+      timepoint_availability: 'not_reported',
+      reported_direction: 'increase',
+      estimate_availability: 'not_reported',
+      confidence_interval_availability: 'not_reported',
+      source_locator: 'Sammendrag',
+    },
+    field_groundings: [
+      {
+        check_field: 'intervention_arm',
+        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_locator: 'METHODS',
+        justification: 'Armen står i metodeavsnittet.',
+      },
+      {
+        check_field: 'outcome',
+        source_excerpt: 'Sertraline weight change increased from baseline.',
+        source_locator: 'RESULTS',
+        justification: 'Endepunktet står i resultatavsnittet.',
+      },
+      {
+        check_field: 'reported_direction',
+        source_excerpt: 'Sertraline weight change increased from baseline.',
+        source_locator: 'RESULTS',
+        justification: 'Retningen står i resultatavsnittet.',
+      },
+      {
+        check_field: 'availability_semantics',
+        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_locator: 'METHODS',
+        justification: 'Feltene uten verdi er ført som ikke rapportert.',
+      },
+    ],
+  })
+
+  const reextractionPorts = {
+    extractionApi: createEvidenceExtractionApi(client, {
+      identityKey: 'agent-identity:evidence-extraction-01',
+      secret: agentSecret(secret),
+    }),
+    verificationApi: createExtractionVerificationApi(client, {
+      identityKey: 'agent-identity:extraction-verification-01',
+      secret: agentSecret(verifierSecret),
+    }),
+    extractionPremises: EVIDENCE_EXTRACTION_PREMISES,
+    verificationPremises: EXTRACTION_VERIFICATION_PREMISES,
+    proposals: [{ label: 'kjedeprove-reekstraksjon.json', proposal: reProposal }],
+    retrieve: retrieve(contentHash),
+  }
+
+  // Tørrkjøringen først. Den er den kommandoen som faktisk brukes før en ekte
+  // registrering, og den skriver ingen evidensrad — men kjøringen registreres
+  // og lukkes, slik at også en tørrkjøring er sporbar (§74.31).
+  const dryRun = await runReextraction({ ...reextractionPorts, dryRun: true })
+  check(
+    'tørrkjøringen kontrollerte forslaget uten å registrere noe',
+    dryRun.registered === 0 && dryRun.results[0]?.extraction.decision === 'previewed',
+    dryRun.results[0]?.extraction.reason ?? '',
+  )
+  check(
+    'og tørrkjøringen er likevel lukket og sporbar',
+    psql(
+      config,
+      `select status::text || '|' || (failure_reason is not null)::text
+       from provenance.agent_runs
+       where id = ${q(dryRun.results[0]?.extraction.agentRunId ?? '')}`,
+    ) === 'aborted|true',
+  )
+
+  const reextraction = await runReextraction(reextractionPorts)
+  check(
+    're-ekstraksjonen registrerte et nytt forankret funn',
+    reextraction.registered === 1,
+    reextraction.results[0]?.extraction.reason ?? '',
+  )
+  const reextractedItem = reextraction.results[0]?.extraction.evidenceItemId ?? ''
+  check(
+    'og kontrollerte nøyaktig det funnet med det samme',
+    reextraction.results[0]?.verification?.items[0]?.evidenceItemId === reextractedItem,
+  )
+  check(
+    'maskinbeviset gjelder det nye funnet',
+    psql(config, `select workflow.grounding_machine_proved(${q(reextractedItem)})::text`) ===
+      'true',
+  )
+
+  const igjen = await runReextraction(reextractionPorts)
+  check(
+    'kjørt om igjen skriver den ingenting',
+    igjen.registered === 0 && igjen.alreadyRegistered === 1,
+  )
+  check(
+    'og det finnes fortsatt bare ett re-ekstrahert funn',
+    psql(
+      config,
+      `select count(*) from knowledge.evidence_items
+       where source_id = ${q(SOURCE)}
+         and outcome_detail = 'Vektendring, re-ekstrahert med forankring.'`,
+    ) === '1',
+  )
+
+  check(
+    'det gamle funnet står urørt, og har fortsatt ingen forankring',
+    psql(
+      config,
+      `select count(*) from knowledge.evidence_items e
+       where e.id = ${q(legacyItem)} and e.extraction_method = 'manual'
+         and not exists (select 1 from knowledge.evidence_field_groundings g
+                         where g.evidence_item_id = e.id)`,
+    ) === '1',
   )
 
   console.log(

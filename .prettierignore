@@ -7,3 +7,8 @@ node_modules/
 dist/
 coverage/
 package-lock.json
+
+# Generert av `npm run agent:extract-evidence -- --schema`. Prettier ville
+# skrevet den om, og den dokumenterte kommandoen ville da produsert en fil som
+# feiler formatkontrollen.
+proposals/extraction-proposal.schema.json

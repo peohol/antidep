@@ -1,0 +1,103 @@
+{
+  "proposal_version": "antidep/extraction-proposal@1",
+  "source_id": "00000000-0000-4000-8000-000000000001",
+  "source_version_id": "00000000-0000-4000-8000-000000000002",
+  "retrieved_from": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=00000000&retmode=xml",
+  "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "extraction": {
+    "design_code": "randomized_controlled_trial",
+    "population_availability": "not_reported",
+    "population_detail": "Voksne med moderat til alvorlig depressiv lidelse.",
+    "sample_size": 284,
+    "sample_size_availability": "reported_value",
+    "intervention_drug_id": "00000000-0000-4000-8000-00000000000a",
+    "intervention_detail": "Sertralin 50-200 mg daglig.",
+    "comparator_kind": "placebo",
+    "comparator_detail": "Placebo, identisk tablett.",
+    "outcome_concept_id": "00000000-0000-4000-8000-00000000000b",
+    "outcome_detail": "Gjennomsnittlig vektendring fra baseline til uke 8.",
+    "timepoint_min": "56 days",
+    "timepoint_max": "56 days",
+    "timepoint_availability": "reported_value",
+    "reported_direction": "increase",
+    "effect_measure": "mean_difference",
+    "estimate": "1.50",
+    "estimate_unit": "kg",
+    "estimate_availability": "reported_value",
+    "ci_lower": "0.80",
+    "ci_upper": "2.20",
+    "ci_level_percent": "95",
+    "confidence_interval_availability": "reported_value",
+    "limitations_text": "Åpen oppfølging etter uke 8, og vekt var et sekundært endepunkt.",
+    "source_locator": "Results, avsnitt 2 og tabell 2",
+    "source_quote": "Mean weight change at week 8 was 1.50 kg greater with sertraline than with placebo."
+  },
+  "field_groundings": [
+    {
+      "check_field": "intervention_arm",
+      "source_excerpt": "Participants were randomised to sertraline 50-200 mg daily or matching placebo for 8 weeks.",
+      "source_locator": "Methods, avsnitt 1",
+      "justification": "Intervensjonsarmen er sertralin i doseintervallet 50-200 mg daglig."
+    },
+    {
+      "check_field": "comparator_arm",
+      "source_excerpt": "Participants were randomised to sertraline 50-200 mg daily or matching placebo for 8 weeks.",
+      "source_locator": "Methods, avsnitt 1",
+      "justification": "Komparator er placebo, ikke et annet virkestoff, derfor comparator_kind placebo."
+    },
+    {
+      "check_field": "outcome",
+      "source_excerpt": "The secondary outcome was mean change in body weight from baseline to week 8.",
+      "source_locator": "Methods, avsnitt 2",
+      "justification": "Endepunktet er gjennomsnittlig vektendring fra baseline til uke 8."
+    },
+    {
+      "check_field": "sample_size",
+      "source_excerpt": "A total of 284 participants were randomised and included in the analysis.",
+      "source_locator": "Results, avsnitt 1",
+      "justification": "Utvalget er 284 randomiserte deltakere, oppgitt som analysert populasjon."
+    },
+    {
+      "check_field": "timepoint",
+      "source_excerpt": "Participants were randomised to sertraline 50-200 mg daily or matching placebo for 8 weeks.",
+      "source_locator": "Methods, avsnitt 1",
+      "justification": "Måletidspunktet er uke 8, altså 56 dager, som både min og maks."
+    },
+    {
+      "check_field": "reported_direction",
+      "source_excerpt": "Mean weight change at week 8 was 1.50 kg greater with sertraline than with placebo.",
+      "source_locator": "Results, avsnitt 2",
+      "justification": "Kilden rapporterer mer vektoppgang med sertralin, altså retning increase."
+    },
+    {
+      "check_field": "effect_measure",
+      "source_excerpt": "Mean weight change at week 8 was 1.50 kg greater with sertraline than with placebo.",
+      "source_locator": "Results, avsnitt 2",
+      "justification": "Tallet er en forskjell mellom to gjennomsnitt, altså mean_difference i kg."
+    },
+    {
+      "check_field": "estimate",
+      "source_excerpt": "Mean weight change at week 8 was 1.50 kg greater with sertraline than with placebo.",
+      "source_locator": "Results, avsnitt 2",
+      "justification": "Estimatet er 1,50 kg, gjengitt med samme skrivemåte som kilden bruker."
+    },
+    {
+      "check_field": "confidence_interval",
+      "source_excerpt": "The between-group difference was 1.50 kg (95% CI 0.80 to 2.20).",
+      "source_locator": "Results, tabell 2",
+      "justification": "Konfidensintervallet er 0,80 til 2,20 med 95 prosent nivå."
+    },
+    {
+      "check_field": "limitations",
+      "source_excerpt": "Follow-up beyond week 8 was open-label, and weight was a secondary outcome.",
+      "source_locator": "Discussion, avsnitt 4",
+      "justification": "Forbeholdene kilden selv oppgir: åpen oppfølging og sekundært endepunkt."
+    },
+    {
+      "check_field": "availability_semantics",
+      "source_excerpt": "Baseline characteristics beyond age and sex were not reported for the analysed sample.",
+      "source_locator": "Results, avsnitt 1",
+      "justification": "Populasjonen er ikke beskrevet nok til en registrert populasjon, derfor not_reported."
+    }
+  ]
+}

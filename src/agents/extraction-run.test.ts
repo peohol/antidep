@@ -7,13 +7,18 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { AgentApiError } from './agent-api'
 import type {
   AgentRunPremises,
   EvidenceExtractionApi,
   RegisterAgentExtractionArgs,
 } from './agent-api'
 import { sourceVersionContentHash } from './content-hash'
-import { parseExtractionProposal, type ExtractionProposal } from './extraction-proposal'
+import {
+  EXTRACTION_PROPOSAL_VERSION,
+  parseExtractionProposal,
+  type ExtractionProposal,
+} from './extraction-proposal'
 import { runEvidenceExtraction, type RetrieveLike } from './extraction-run'
 import { FIXTURE_SOURCE_TEXT } from './test-support'
 
@@ -82,6 +87,7 @@ async function proposal(
   overrides: { excerpt?: string; hash?: string } = {},
 ): Promise<ExtractionProposal> {
   return parseExtractionProposal({
+    proposal_version: EXTRACTION_PROPOSAL_VERSION,
     source_id: '50000000-0000-4000-8000-000000000001',
     source_version_id: '51000000-0000-4000-8000-000000000001',
     retrieved_from: 'https://eksempel.invalid/kilde',
@@ -191,6 +197,9 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     expect(report.reason).toContain('intervention_arm')
     expect(api.registered).toHaveLength(0)
     expect(api.completions[0]?.status).toBe('aborted')
+    // agent_runs_status_shape_check godtar ikke en avsluttet kjøring uten et
+    // svar på hvorfor den ble stoppet.
+    expect(api.completions[0]?.failureReason).toContain('intervention_arm')
   })
 
   it('registrerer ingenting når representasjonen ikke er den registrerte utgaven', async () => {
@@ -236,6 +245,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     // Også en tørrkjøring er sporbar.
     expect(api.completions[0]?.status).toBe('aborted')
     expect(api.completions[0]?.outputManifest).toMatchObject({ dry_run: true })
+    expect(api.completions[0]?.failureReason).toMatch(/Tørrkjøring/)
   })
 
   // En kjøring som ble stående åpen, ville blokkert den neste.
@@ -253,6 +263,64 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
         retrieve: retrieveFixture(),
       }),
     ).rejects.toThrow('avvist')
+    expect(api.completions[0]?.status).toBe('failed')
+  })
+
+  // Den ene forventede avvisningen: raden finnes allerede, med nøyaktig det
+  // samme innholdet. evidence_items_content_hash_key dekker hele radens
+  // faglige innhold, så det samme forslaget kjørt om igjen skriver ingenting —
+  // og det er nettopp det som gjør kjøringen idempotent.
+  it('rapporterer en dublett som already_registered framfor som en feil', async () => {
+    const api = fakeApi({
+      registerExtraction: () =>
+        Promise.reject(
+          new AgentApiError(
+            'api.register_agent_extraction',
+            'Nøyaktig det samme evidensfunnet er allerede registrert.',
+            '23505',
+          ),
+        ),
+    })
+
+    const report = await runEvidenceExtraction({
+      api,
+      premises: PREMISSER,
+      proposal: await proposal(),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('already_registered')
+    expect(report.runStatus).toBe('aborted')
+    expect(report.evidenceItemId).toBeUndefined()
+    expect(api.completions[0]?.outputManifest).toMatchObject({ already_registered: true })
+    // agent_runs_status_shape_check godtar ikke en avsluttet kjøring uten et
+    // svar på hvorfor den ble stoppet.
+    expect(api.completions[0]?.failureReason).toContain('allerede registrert')
+  })
+
+  // En annen avvisning er fortsatt en feil. Uten dette skillet ville en
+  // fremmednøkkelfeil sett ut som «allerede registrert», og kjøringen ville
+  // rapportert suksess for noe som aldri ble skrevet.
+  it('skiller en dublett fra enhver annen avvisning', async () => {
+    const api = fakeApi({
+      registerExtraction: () =>
+        Promise.reject(
+          new AgentApiError(
+            'api.register_agent_extraction',
+            'Kildeversjonen finnes ikke.',
+            '23503',
+          ),
+        ),
+    })
+
+    await expect(
+      runEvidenceExtraction({
+        api,
+        premises: PREMISSER,
+        proposal: await proposal(),
+        retrieve: retrieveFixture(),
+      }),
+    ).rejects.toThrow('Kildeversjonen finnes ikke')
     expect(api.completions[0]?.status).toBe('failed')
   })
 })
