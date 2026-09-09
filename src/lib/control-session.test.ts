@@ -67,6 +67,30 @@ describe('deriveExtractionVerification', () => {
     expect(derived.rationale).toContain('3 av 3 delkontroller besvart')
   })
 
+  // Begrunnelsen er audittekst. Den skal si hvem som kontrollerte hva, slik at
+  // ingen leser dekningen som at mennesket selv prøvde utdragene mot kilden.
+  it('sier i begrunnelsen at maskinen beviste utdragene og mennesket semantikken', () => {
+    const derived = deriveExtractionVerification({
+      requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
+      sourceAccess: 'original_source',
+      answers: allYes(),
+    })
+    expect(derived.rationale).toContain('bedømte de semantiske feltene')
+    expect(derived.rationale).toContain('deterministiske ekstraksjonskontrollen')
+  })
+
+  it('lover ingenting om maskinbeviset når kontrollen ikke er en bekreftelse', () => {
+    const derived = deriveExtractionVerification({
+      requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
+      sourceAccess: 'original_source',
+      answers: { ...allYes(), outcome: { answer: 'cannot_determine', note: '' } },
+    })
+    expect(derived.outcome).not.toBe('verified')
+    expect(derived.rationale).not.toContain('deterministiske ekstraksjonskontrollen')
+  })
+
   // evidence_verifications_source_access_check: en bekreftelse kan ikke hvile på
   // et avledet sammendrag alene.
   it('kan ikke bekrefte på et sammendrag fra et annet ledd', () => {

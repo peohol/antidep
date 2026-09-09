@@ -1389,7 +1389,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
       feat: add the human claim review and publication approval flow        (#59)  merget   migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
       feat: add the human extraction check and make publication operational (#61)  merget   migrasjon 005q, 005r, 005s, 005t, 006g, 006h
-      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c
+      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1491,7 +1491,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1923 pgTAP-assertions over 59 testfiler.
+Databaselaget teller nå 1945 pgTAP-assertions over 60 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1659,16 +1659,16 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de femtisju migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de femtiåtte migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
-   007g, 003b, 005v, 005w og 003c — i
+   007g, 003b, 005v, 005w, 003c og 005x — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle femtisju ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle femtiåtte ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -1699,7 +1699,9 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
    innsettingen ut i én delt funksjon uten å innføre noe vokabular, 005v tar imot de samme
    vokabularene som `text` og `jsonb` og caster dem i funksjonskroppen som 005k, 005w
    skriver én rad i et register som allerede finnes, og 003c skriver forankringsrader og
-   setter en kolonne som 003b nettopp opprettet.
+   setter en kolonne som 003b nettopp opprettet. 005x er den siste, og innfører heller
+   ingen type: den legger til to kolonner, ett avtrykk og én forutsetning i en skrivevei
+   som allerede fantes.
    Viewene caster enum-kolonner til `text`, så den offentlige kontrakten er en streng
    fra et dokumentert vokabular, ikke PostgreSQL-typen. Et senere bytte til
    oppslagstabeller er dermed ikke en brytende API-endring. Castingen sparer også
@@ -6250,7 +6252,7 @@ den eksplisitte publiseringsbeslutningen, og publiseringen. Bare det aktive steg
 et ferdig steg lukkes, markeres med svaret sitt og kan åpnes igjen. Hele dossieret ligger
 bak «Tekniske detaljer» og er ute av den kliniske arbeidsflyten.
 
-**Sju migrasjoner, og den bærende beslutningen er hvem som lager kontrollgrunnlaget.**
+**Åtte migrasjoner, og den bærende beslutningen er hvem som lager kontrollgrunnlaget.**
 
 | Migrasjon | Hva den gjør |
 | --- | --- |
@@ -6260,7 +6262,8 @@ bak «Tekniske detaljer» og er ute av den kliniske arbeidsflyten.
 | 003b | `knowledge.source_representation` og `source_versions.representation` — hva slags representasjon som faktisk ble hentet |
 | 005v | `api.register_agent_extraction(...)` — ekstraksjonsagentens skrivevei, med komplett forankring som vilkår |
 | 005w | Ekstraksjonsagenten får sin identitet i `provenance.agent_identities` |
-| 003c | Golden slicen får sin forankring og sin representasjonstype |
+| 003c | Golden slicens kildeversjoner får representasjonstypen `abstract`, og kolonnen fryses |
+| 005x | `workflow.evidence_grounding_digest`, `grounding_machine_proved`, og kravet om maskinbevis før en menneskelig bekreftelse |
 
 **Koblingen mellom felt og kilde fantes ikke som data, og det var den egentlige feilen.**
 Kontrollflaten kunne bare stille ett spørsmål — «stemmer denne raden med kilden?» — fordi
@@ -6326,14 +6329,72 @@ konkluderer på samme måte: `uncertain`, aldri `verified`. Antidep gjetter aldr
 av `raw_extraction` — et utdrag gjettet på den måten ville vært å konstruere nettopp det
 grunnlaget kontrollen skal prøve.
 
-Golden slicens to funn er eldre enn 005u og var i akkurat denne tilstanden. 003c forankrer
-dem felt for felt, ført opp i klartekst med den samme forfatterstatusen de seedede radene
-selv har, og setter representasjonstypen `abstract` på de to kildeversjonene: EUtils efetch
-gir MEDLINE-posten, ikke fulltekstartikkelen. Hvert utdrag er en sammenhengende del av
-`raw_extraction`, som selv er ordrett fra den hashede posten, så den deterministiske
-verifikatoren kan bevise hvert av dem. Migrasjonen er ikke en generell tilbakefylling: den
-rører ingen annen rad, og radene identifiseres av kildens PubMed-ID fordi id-ene i
-migrasjon 003 er databasegenererte.
+Golden slicens to funn er eldre enn 005u og står i akkurat denne tilstanden. De blir
+*ikke* forankret i ettertid. Første forsøk gjorde nettopp det, og reviewen fanget hvorfor
+det var galt: forankringen er låst til evidensfunnets egen skaper av en sammensatt
+fremmednøkkel, så retroaktive rader ville sett ut som et produkt av den opprinnelige
+ekstraksjonskjøringen — en kjøring som aldri lagde dem. Legacy blir stående som legacy, og
+veien videre er re-ekstraksjon gjennom agentveien.
+
+003c gjør bare det som ikke er en påstand om noen: den setter representasjonstypen
+`abstract` på de to kildeversjonene. EUtils efetch gir MEDLINE-posten, ikke
+fulltekstartikkelen, og opplysningen har ingen aktørattribusjon — den sier hva dokumentet
+*er*. Radene identifiseres av kildens PubMed-ID fordi id-ene i migrasjon 003 er
+databasegenererte. Rett etterpå legges kolonnen inn i
+`knowledge.freeze_source_version()`: `representation` er historisk metadata om et
+øyeblikksbilde, og en rad som stille kunne endres fra `abstract` til `full_text` ville latt
+en ekstraksjon se ut som om den hvilte på noe annet enn den gjorde.
+
+**Maskinbeviset er ikke lenger bare implementert — det er påkrevd.** Kontrollen fantes,
+men ingenting krevde at den var kjørt. En reviewer kunne åpne et funn der ingen hadde prøvd
+utdragene, svare «Ja» på alt og registrere en bekreftelse som hvilte på at utdraget så
+troverdig ut. Fra 005x avviser `workflow.record_evidence_verification(...)` en menneskelig
+bekreftelse med mindre to ting holder: hvert semantisk felt har forankring, og det finnes en
+maskinell kontroll som gjelder *dette* grunnlaget og som førte opp både `raw_extraction` og
+`source_locator`. Maskinelle kontroller er unntatt fra det andre — de *er* beviset, og et
+krav om at beviset skal ha et bevis ville vært sirkulært. Kontrollene ligger etter
+innsettingen, slik at tabellens egne CHECK-er får avvise først; unntaket ruller
+transaksjonen tilbake.
+
+Det krever at en verifikasjonsrad vet hvilket grunnlag den gjelder, og
+`verified_grounding_digest` settes derfor av skriveveien selv, under radlåsen den allerede
+tar. Avtrykket er `workflow.evidence_grounding_digest(uuid)` og ikke det brede
+`evidence_extraction_digest(uuid)`: det siste dekker settet av verifikasjoner med vilje, så
+en kontrollør ser at noen andre har registrert en kontroll — men da ville et maskinbevis
+vært foreldet i samme øyeblikk det ble skrevet. Det snevre avtrykket dekker ekstraksjonen,
+kildeversjonen og settet av forankringer, og ikke mer.
+
+Konsekvensen for `checked_fields` er verdt å skrive ut, fordi reviewen stilte spørsmål ved
+den: en menneskelig bekreftelse fører fortsatt opp `raw_extraction` og `source_locator`, men
+det er ikke lenger en påstand flaten gjør på egen hånd. Databasen slipper ikke gjennom en
+bekreftelse uten at nettopp de to tingene er bevist for nettopp dette grunnlaget, i den
+samme arbeidsflyten. `rationale` sier hvem som gjorde hva: mennesket bedømte de semantiske
+feltene, maskinen beviste utdragene.
+
+**Ekstraksjonen er bundet til sin kjøring.** `knowledge.evidence_items` har fått
+`agent_run_id` og en generert `agent_run_role`, med to sammensatte fremmednøkler mot
+`provenance.agent_runs` — den ene binder kjøringen til aktøren, den andre til rollen.
+Aktørattribusjon alene sa *hvilken agent*, ikke *hvilken kjøring*, og dermed ikke hvilken
+modell, modellversjon, prompt-versjon eller pipeline-versjon verdiene kom fra. Mønsteret er
+det `workflow.evidence_verifications` allerede brukte, kopiert ord for ord. `content_hash`
+er urørt av kolonnene: fingeravtrykket identifiserer innholdet i ekstraksjonen, ikke hvilken
+kjøring som produserte det, så to kjøringer som kommer fram til samme verdier skal fortsatt
+kollidere som dublett.
+
+**Ekstraksjonsagenten kjører.** Kontrakten fantes i databasen, men ingen agentflyt brukte
+den. Nå finnes hele kjeden: `api.begin_agent_run`, henting av representasjonen over nett,
+krav om at fingeravtrykket er den registrerte kildeversjonens, ordrett kontroll av hvert
+utdrag mot den, `api.register_agent_extraction`, og `api.complete_agent_run`. Kjøringen
+registrerer ingenting den ikke har hentet og kontrollert, og lukkes alltid.
+
+Leddet som *leser* en artikkel og bestemmer at utvalget var 48, er ikke med: det krever en
+språkmodell, og dermed en leverandør og en konto. Det er skilt ut som forslagsformen
+kjøringen tar imot (`src/agents/extraction-proposal.ts`), kontrollert felt for felt. Et
+modell-ledd som skriver den formen, kobles på uten at noe annet i kjeden endres — og går
+gjennom nøyaktig de samme kontrollene. Kontrollen av utdragene i selve kjøringen erstatter
+ikke verifikatoren: den er generatorens egen aktsomhet, så et forslag med et oppdiktet
+utdrag aldri blir en rad noen må avvise senere. Generering og verifikasjon er fortsatt to
+operasjoner, av to aktører.
 
 **Utfallet velges ikke lenger.** Kontrollalgoritmen *er* metoden. Alle obligatoriske felter
 bekreftet og kildetilgangen oppfylt gir `verified`; minst ett konkret avvik gir
@@ -6366,17 +6427,24 @@ forankringen er låst til ekstraksjonens egen skaper av en sammensatt fremmednø
 Grunnlagsavtrykket er blitt strengere, ikke løsere, og agentveien krever to ting editorveien
 ikke gjør: en kildeversjon med kjent representasjonstype, og komplett forankring.
 
-**Det som gjenstår.** Selve ekstraksjonsagenten finnes ikke ennå: kontrakten, skriveveien og
-kravene er bygget og prøvd, men leddet som leser en representasjon og foreslår de
-strukturerte verdiene, er en egen leveranse. Den trenger en modellleverandør, som er en
-kostnads- og kontobeslutning for prosjekteieren.
+**Det som gjenstår.** Modell-leddet som leser en representasjon og foreslår de strukturerte
+verdiene, er en egen leveranse. Den trenger en modelleverandør, som er en kostnads- og
+kontobeslutning for prosjekteieren. Inntil den er tatt, må et forslag skrives for hånd, og
+golden slicen står uforankret — og dermed ukontrollerbar felt for felt, som er den sanne
+tilstanden.
 
-**Testene.** To pgTAP-filer bærer leveransen: `580` (tabellen, rettighetene,
-radinvariantene, append-only, leseren, dossieret, avtrykket og auditsporet) og `590`
+**Testene.** Tre pgTAP-filer bærer leveransen: `580` (tabellen, rettighetene,
+radinvariantene, append-only, leseren, dossieret, avtrykket og auditsporet), `590`
 (agentens skrivevei, at forankringen blir til i samme kall og attribueres til kjøringens egen
 aktør, at et hull i forankringen ikke etterlater noe, at en kildeversjon uten
 representasjonstype avvises, at editorveien ikke kan skrive forankring, og hele kjeden fra
-agentekstraksjon til publisert påstand). Frontenden har fått nye testfiler for de rene
+agentekstraksjon gjennom maskinbeviset til publisert påstand) og `600` (bindingen til
+kjøringen, frysingen av representasjonstypen, og maskinbeviset: at det mangler før
+verifikatoren har kjørt, at en menneskelig bekreftelse da avvises av databasen og ikke
+etterlater noe, at det finnes etterpå, og at det slutter å gjelde når forankringen endres).
+Agentkjøringen har egne tester uten database og uten nett: at den registrerer og lukker
+kjøringen, at forankringen sendes videre uendret, at kjøringen sier hva den bygde på, og de
+fire tilfellene der den nekter å registrere noe. Frontenden har fått nye testfiler for de rene
 modulene — utledningen av utfallene, utsagnene per felt, avtrykkene per steg, den
 menneskelige kildelenken og grunnlaget for hvert kontrollpunkt — og de to sidetestene er
 skrevet om til å beskrive arbeidsmodellen: at bare det aktive steget vises, at lenken går til

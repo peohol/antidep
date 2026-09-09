@@ -276,13 +276,18 @@ function joinFindings(sentences: readonly string[]): string | null {
  * helhet?» — og som egne trekkspillskuffer var de spørsmål uten klinisk
  * innhold.
  *
- * De føres opp som kontrollert nøyaktig når hvert semantiske felt er bekreftet,
- * og det er ikke en snarvei: hver forankring bærer sitt eget ordrette utdrag og
- * sin egen presise peker, så en bekreftet semantisk delkontroll *er* en
- * kontroll av at noe er bevart ordrett og av hvor i kilden det står — for
- * nøyaktig det feltet, framfor for raden under ett. Er kontrollen ikke en
- * bekreftelse, føres de ikke opp, og gatens G5b ser da ingen dekning i det hele
- * tatt.
+ * At de likevel føres opp i en bekreftelse, er ikke en påstand denne modulen
+ * gjør på egen hånd. Fra migrasjon 005x avviser databasen en menneskelig
+ * bekreftelse med mindre en *maskinell* kontroll har bevist nøyaktig de to
+ * tingene for nøyaktig dette grunnlaget: at representasjonen lot seg
+ * reprodusere, og at hvert forankret utdrag står ordrett i den
+ * (`workflow.grounding_machine_proved`). En bekreftelse kan altså ikke bli til
+ * uten at de to feltene faktisk er kontrollert i den samme arbeidsflyten.
+ *
+ * Dekningen er derfor sann, og `rationale` sier hvem som kontrollerte hva:
+ * mennesket bedømte de semantiske feltene, maskinen beviste utdragene. Er
+ * kontrollen ikke en bekreftelse, føres de ikke opp, og gatens G5b ser da ingen
+ * dekning i det hele tatt.
  */
 export function deriveExtractionVerification(input: {
   /** Publiseringsgatens krav: `workflow.required_check_fields(uuid)`. */
@@ -296,12 +301,21 @@ export function deriveExtractionVerification(input: {
   const accessCanConfirm = sourceAccessCanConfirm(input.sourceAccess)
   const outcome = outcomeFrom(counts, accessCanConfirm)
 
+  // Begrunnelsen er audittekst, og skal si hvem som kontrollerte hva. Uten den
+  // siste setningen ville en leser trodd at mennesket også hadde prøvd
+  // utdragene ordrett mot kilden.
   const rationale = withinDatabaseLimit(
     'Kontrollert felt for felt mot kilden i en guidet kontrolløkt. ' +
       `Kildetilgang: ${accessLabel(input.sourceAccess).toLowerCase()}. ` +
       `${String(counts.answered)} av ${String(counts.total)} delkontroller besvart: ` +
       `${String(counts.confirmed)} bekreftet, ${String(counts.deviations)} avvik, ` +
-      `${String(counts.unresolved)} kunne ikke avgjøres.`,
+      `${String(counts.unresolved)} kunne ikke avgjøres.` +
+      (outcome === 'verified'
+        ? ' Kontrolløren bedømte de semantiske feltene mot hvert felts eget kildeutdrag. ' +
+          'At utdragene står ordrett i den registrerte kildeversjonen, og at kildepekeren ' +
+          'lar seg korroborere, er bevist av den deterministiske ekstraksjonskontrollen, ' +
+          'som databasen krever før en bekreftelse kan registreres.'
+        : ''),
   )
 
   const answeredSemanticFields = input.semanticFields.filter(
