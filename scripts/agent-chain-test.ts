@@ -110,11 +110,25 @@ function localAnonKey(): string {
   return match[1]
 }
 
+/**
+ * Kjører SQL og gir tilbake den ene verdien spørringen ga.
+ *
+ * `-q` er ikke pynt: uten den skriver psql kommandostatusen etter radene, så en
+ * `insert ... returning` gir «id» og «INSERT 0 1» på hver sin linje — og
+ * kalleren, som venter én verdi, får to. Første ikke-tomme linje tas i tillegg,
+ * slik at en tom linje foran ikke kan bli til en verdi.
+ */
 function psql(config: Config, sql: string): string {
-  return execFileSync('psql', [config.dbUrl, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sql], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
-  }).trim()
+  const output = execFileSync(
+    'psql',
+    [config.dbUrl, '-q', '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sql],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
+  )
+  const lines = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  return lines[0] ?? ''
 }
 
 /**
