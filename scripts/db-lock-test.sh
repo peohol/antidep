@@ -60,6 +60,16 @@
 # faktisk prøves — rulles tilbake. Fiksturen er egen og gjenbrukes mellom
 # kjøringer: en egen kilde, en egen kildeversjon og et eget evidensfunn som
 # ingen påstand er lenket til, slik at ingen gate og ingen flate påvirkes.
+#
+# ----------------------------------------------------------------------------
+# Prøve 5 er den samme formen, på det stedet konsekvensen er alvorligst
+#
+# Der prøve 4 handler om en maskinell kontroll, handler prøve 5 om et menneskes
+# publiseringsbeslutning: økt A begynner først, økt B godkjenner og commiter, og
+# A avviser etterpå. Prøven krever at avvisningen — raden som faktisk ble skrevet
+# sist — er den gjeldende både i reviewerflaten og i publiseringsgaten, og at
+# gaten stopper på G12 (migrasjon 006i). Fiksturen er egen og bygget slik at G1
+# til G10 holder, slik at det eneste som avgjør utfallet, er beslutningen.
 set -euo pipefail
 
 DB_URL=""
@@ -84,11 +94,15 @@ if [ -z "$DB_URL" ]; then
   exit 1
 fi
 
-# Faste id-er for fiksturen prøve 4 bygger. De står her fordi prøve 1 til 3 skal
-# holde seg til radene migrasjonene seeder, og derfor må kunne se bort fra dem.
+# Faste id-er for fiksturene prøve 4 og 5 bygger. De står her fordi prøve 1 til 3
+# skal holde seg til radene migrasjonene seeder, og derfor må kunne se bort fra
+# dem — også når prøvene kjøres om igjen mot den samme databasen.
 prove_kilde='7a000000-0000-4000-8000-000000000001'
 prove_versjon='7a000000-0000-4000-8000-000000000002'
 prove_funn='7a000000-0000-4000-8000-000000000003'
+prove_kilde5='7b000000-0000-4000-8000-000000000001'
+prove_revisjon='7b000000-0000-4000-8000-000000000005'
+prove_konto='7b000000-0000-4000-8000-0000000000a0'
 
 arbeid=$(mktemp -d)
 trap 'rm -rf "$arbeid"; [ -n "${okt_a_pid:-}" ] && kill "$okt_a_pid" 2>/dev/null || true' EXIT
@@ -172,14 +186,16 @@ SQL
 # fått 23001 fra forseglingskontrollen som ligger *etter* låsen i den samme
 # triggeren. 55P03 betyr «måtte vente», 23001 betyr «slapp forbi».
 # ----------------------------------------------------------------------------
-revisjon=$(les "select r.id from knowledge.claim_revisions r order by r.id limit 1")
+revisjon=$(les "select r.id from knowledge.claim_revisions r
+                where r.id <> '$prove_revisjon' order by r.id limit 1")
 if [ -z "$revisjon" ]; then
   printf 'Fant ingen påstandsrevisjon i databasen. Kjør migrasjonene først (npm run db:reset).\n' >&2
   exit 1
 fi
 avtrykk=$(les "select knowledge.claim_evidence_set_digest('$revisjon')")
 funn=$(les "select e.id from knowledge.evidence_items e
-             where e.source_id <> '$prove_kilde' order by e.id limit 1")
+             where e.source_id not in ('$prove_kilde', '$prove_kilde5')
+             order by e.id limit 1")
 forfatter=$(les "select r.created_by_actor_id from knowledge.claim_revisions r where r.id = '$revisjon'")
 
 printf 'Revisjon: %s\n' "$revisjon"
@@ -430,6 +446,166 @@ else
   printf '         Uten en registreringsrekkefølge kan et avvik som ble skrevet sist bære det eldste tidsstempelet, og forsvinne bak en bekreftelse (migrasjon 005å).\n' >&2
   printf '         Svaret fra økt A:\n' >&2
   sed 's/^/         /' "$a4_log" >&2
+  exit 1
+fi
+
+# ----------------------------------------------------------------------------
+# Prøve 5 — den gjeldende *reviewbeslutningen* følger skrivingene, ikke klokka
+#
+# Samme form som prøve 4, på det stedet konsekvensen er alvorligst: en
+# publiseringsgodkjenning. Økt A begynner først, økt B skriver `approved` og
+# commiter, og A skriver `rejected` etterpå. A sin rad bærer da det eldste
+# decided_at, fordi now() er transaksjonens starttidspunkt.
+#
+# Prøven krever at avvisningen — raden som faktisk ble skrevet sist — er den
+# gjeldende både i reviewerflaten og i publiseringsgaten, og at gaten stopper på
+# G12 og ikke slipper gjennom godkjenningen som ble skrevet før den.
+#
+# Fiksturen er egen (scripts/review-decision-race-fixture.sql) og bygget slik at
+# G1 til G10 holder. Uten det ville gaten stoppet på et tidligere vilkår, og
+# prøven ville ikke sagt noe om hvilken beslutning som gjelder. Revisjonen er
+# aldri publisert og leses ikke av noen flate.
+#
+# Begge skrivingene går gjennom den ekte skriveveien
+# api.register_publication_approval(...), som `authenticated` med reviewerens
+# egen brukerkonto — ikke ved direkte innsetting. Beslutningen skal komme dit den
+# faktisk kommer fra.
+# ----------------------------------------------------------------------------
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -f "$(dirname "$0")/review-decision-race-fixture.sql"
+
+prove_avtrykk=$(les "select knowledge.claim_evidence_set_digest('$prove_revisjon')")
+
+if [ -z "$prove_avtrykk" ]; then
+  printf 'Fikk ikke satt opp fiksturen for prøve 5. Kjør migrasjonene først (npm run db:reset).\n' >&2
+  exit 1
+fi
+
+a5_log="$arbeid/a5.log"
+styr5="$arbeid/styr5.$$"
+rm -f "$styr5"
+mkfifo "$styr5"
+
+# Økt A begynner først, og fester bare transaksjonens klokke. Ingen lås tas:
+# dette er ikke en låseprøve, men en prøve på hva «senere» betyr.
+(
+  printf "begin;\n"
+  printf "select 1;\n"
+  printf "\\\\echo A5_STARTET\n"
+  cat "$styr5"
+) | psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$a5_log" 2>&1 &
+okt_a_pid=$!
+exec 9>"$styr5"
+
+for i in $(seq 1 100); do
+  grep -q 'A5_STARTET' "$a5_log" 2>/dev/null && break
+  sleep 0.1
+done
+if ! grep -q 'A5_STARTET' "$a5_log" 2>/dev/null; then
+  printf 'Økt A kom ikke i gang i prøve 5:\n' >&2
+  cat "$a5_log" >&2
+  exec 9>&-
+  exit 1
+fi
+
+sleep 0.3
+
+# Økt B godkjenner og commiter mens økt A står åpen.
+if ! psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 >"$arbeid/b5.log" 2>&1 <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$prove_konto"}', true);
+set local role authenticated;
+select api.register_publication_approval(
+  '$prove_revisjon'::uuid, '$prove_avtrykk', 'approved',
+  'Samtidighetsprøve: godkjenning skrevet av økt B, som begynte sist.');
+reset role;
+commit;
+SQL
+then
+  printf 'Økt B fikk ikke registrert godkjenningen sin i prøve 5:\n' >&2
+  cat "$arbeid/b5.log" >&2
+  exec 9>&-
+  exit 1
+fi
+
+# …og økt A avviser etterpå, med det eldre tidsstempelet.
+cat >&9 <<SQL
+do \$p\$
+begin
+  perform knowledge.assert_claim_revision_publishable('$prove_revisjon');
+exception
+  when others then
+    raise exception 'Forutsetningen mangler: godkjenningen fra økt B gjør ikke revisjonen publiserbar (%). Prøven kan ikke vise at en avvisning blokkerer den.', sqlerrm;
+end
+\$p\$;
+
+select set_config('request.jwt.claims', '{"sub":"$prove_konto"}', true);
+set local role authenticated;
+select api.register_publication_approval(
+  '$prove_revisjon'::uuid, '$prove_avtrykk', 'rejected',
+  'Samtidighetsprøve: avvisning skrevet av økt A, som begynte først og skrev sist.');
+reset role;
+
+do \$p\$
+declare
+  v_a workflow.review_decisions;
+  v_b workflow.review_decisions;
+  v_gjeldende text;
+  v_blokkert boolean := false;
+begin
+  select * into v_a from workflow.review_decisions
+  where claim_revision_id = '$prove_revisjon'
+  order by registration_ordinal desc limit 1;
+
+  select * into v_b from workflow.review_decisions
+  where claim_revision_id = '$prove_revisjon' and decision = 'approved'
+  order by registration_ordinal desc limit 1;
+
+  if v_a.decision <> 'rejected' then
+    raise exception 'Raden med høyest registreringsnummer er ikke den økt A skrev.';
+  end if;
+  if not (v_a.decided_at < v_b.decided_at) then
+    raise exception 'Forutsetningen mangler: økt A sin rad bærer ikke et eldre tidsstempel enn økt B sin.';
+  end if;
+  if not (v_a.registration_ordinal > v_b.registration_ordinal) then
+    raise exception 'Raden som ble skrevet sist fikk ikke det høyeste registreringsnummeret.';
+  end if;
+
+  v_gjeldende := workflow.claim_review_history('$prove_revisjon')
+                 ->> 'current_review_decision_id';
+  if v_gjeldende is distinct from v_a.id::text then
+    raise exception 'Den gjeldende beslutningen i reviewerflaten er ikke den som ble skrevet sist.';
+  end if;
+
+  begin
+    perform knowledge.assert_claim_revision_publishable('$prove_revisjon');
+  exception
+    when restrict_violation then
+      v_blokkert := true;
+      if sqlerrm not like '%er rejected, ikke approved%' then
+        raise exception 'Gaten blokkerte, men ikke på den gjeldende beslutningen: %', sqlerrm;
+      end if;
+  end;
+  if not v_blokkert then
+    raise exception 'En avvisning skrevet sist blokkerte ikke publiseringen.';
+  end if;
+end
+\$p\$;
+\echo BESLUTNINGSREKKEFØLGE_BEVIST
+rollback;
+SQL
+
+exec 9>&-
+wait "$okt_a_pid" 2>/dev/null || true
+okt_a_pid=""
+rm -f "$styr5"
+
+if grep -q 'BESLUTNINGSREKKEFØLGE_BEVIST' "$a5_log"; then
+  printf 'ok       en avvisning skrevet sist er den gjeldende og blokkerer publisering\n'
+else
+  printf 'AVVIK    en avvisning skrevet sist er den gjeldende og blokkerer publisering\n' >&2
+  printf '         Uten en registreringsrekkefølge kan et menneskes nei bære det eldste tidsstempelet, og forsvinne bak en godkjenning som ble skrevet før det (migrasjon 006i).\n' >&2
+  printf '         Svaret fra økt A:\n' >&2
+  sed 's/^/         /' "$a5_log" >&2
   exit 1
 fi
 

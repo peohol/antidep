@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antidep.no/schema/extraction-proposal-1.json",
+  "title": "Antidep ExtractionProposal",
+  "description": "Ett forslag om ett evidensfunn, lest ut av én bestemt kildeversjon. Forslaget skriver ingenting: det leses av npm run agent:extract-evidence, som henter kildeversjonen på nytt, krever at fingeravtrykket stemmer, og prøver hvert source_excerpt ordrett mot den før noe registreres. Ukjente felter avvises, og ingenting fylles inn automatisk.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "proposal_version",
+    "source_id",
+    "source_version_id",
+    "retrieved_from",
+    "content_hash",
+    "extraction",
+    "field_groundings"
+  ],
+  "properties": {
+    "proposal_version": {
+      "const": "antidep/extraction-proposal@1",
+      "description": "Versjonen av denne kontrakten. Et forslag med en annen verdi avvises."
+    },
+    "source_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Kilden funnet er hentet fra, slik den er registrert i knowledge.sources."
+    },
+    "source_version_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Den eksakte kildeversjonen som ble lest. Ekstraksjonen bindes til nøyaktig denne utgaven."
+    },
+    "retrieved_from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Den tekniske henteadressen kildeversjonen ble registrert med. Ikke en menneskelig kildelenke: DOI og PubMed-id er det, og de står på kilden."
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Fingeravtrykket kildeversjonen er registrert med. Kjøringen henter adressen på nytt og nekter å registrere noe dersom avtrykket ikke stemmer."
+    },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "De strukturerte verdiene forslaget påstår om studien.",
+      "required": [
+        "design_code",
+        "population_availability",
+        "population_detail",
+        "sample_size_availability",
+        "intervention_drug_id",
+        "comparator_kind",
+        "outcome_concept_id",
+        "outcome_detail",
+        "timepoint_availability",
+        "reported_direction",
+        "estimate_availability",
+        "confidence_interval_availability",
+        "source_locator"
+      ],
+      "properties": {
+        "design_code": {
+          "type": "string",
+          "enum": [
+            "randomized_controlled_trial"
+          ],
+          "description": "Studiedesignen funnet er hentet fra."
+        },
+        "population_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "Den registrerte populasjonen i catalog.populations, når en av dem passer. Utelates når ingen gjør det."
+        },
+        "population_availability": {
+          "type": "string",
+          "enum": [
+            "reported_value",
+            "not_measured",
+            "not_reported",
+            "not_applicable",
+            "not_extractable",
+            "uncertain_extraction"
+          ],
+          "description": "Hvorfor population_id eventuelt mangler. En tom verdi skal aldri kunne leses som en nullverdi."
+        },
+        "population_detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Populasjonen slik kilden beskriver den, kort og på norsk."
+        },
+        "sample_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Antall deltakere, når kilden oppgir det."
+        },
+        "sample_size_availability": {
+          "type": "string",
+          "enum": [
+            "reported_value",
+            "not_measured",
+            "not_reported",
+            "not_applicable",
+            "not_extractable",
+            "uncertain_extraction"
+          ],
+          "description": "Hvorfor sample_size eventuelt mangler."
+        },
+        "intervention_drug_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "Virkestoffet som ble gitt, fra catalog.drugs."
+        },
+        "intervention_detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Dose, form eller annen presisering av intervensjonsarmen."
+        },
+        "comparator_kind": {
+          "type": "string",
+          "enum": [
+            "drug",
+            "placebo",
+            "none"
+          ],
+          "description": "Hva funnet sammenlignes mot. none betyr at det ikke finnes en komparator, ikke at den er ukjent."
+        },
+        "comparator_drug_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "Komparatorvirkestoffet, når comparator_kind er drug."
+        },
+        "comparator_detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Presisering av komparatorarmen."
+        },
+        "outcome_concept_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "Endepunktet, fra catalog.clinical_concepts."
+        },
+        "outcome_detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Endepunktet slik kilden måler det, kort og på norsk."
+        },
+        "timepoint_min": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Tidligste måletidspunkt, som PostgreSQL-intervall, for eksempel «56 days»."
+        },
+        "timepoint_max": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Seneste måletidspunkt, som PostgreSQL-intervall."
+        },
+        "timepoint_availability": {
+          "type": "string",
+          "enum": [
+            "reported_value",
+            "not_measured",
+            "not_reported",
+            "not_applicable",
+            "not_extractable",
+            "uncertain_extraction"
+          ],
+          "description": "Hvorfor tidspunktet eventuelt mangler."
+        },
+        "reported_direction": {
+          "type": "string",
+          "enum": [
+            "increase",
+            "decrease",
+            "no_clear_difference",
+            "not_stated"
+          ],
+          "description": "Retningen kilden selv rapporterer. not_stated er noe annet enn no_clear_difference."
+        },
+        "effect_measure": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "mean_change",
+            "mean_difference",
+            "standardised_mean_difference",
+            "risk_ratio",
+            "odds_ratio",
+            null
+          ],
+          "description": "Effektmålet estimatet er uttrykt i. Et tall uten sitt mål er ikke tolkbart."
+        },
+        "estimate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Estimatet, som tekst, ordrett slik kilden skriver det."
+        },
+        "estimate_unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "kg",
+            "percent",
+            null
+          ],
+          "description": "Enheten. Påkrevd for mean_change og mean_difference, forbudt for de dimensjonsløse målene."
+        },
+        "estimate_availability": {
+          "type": "string",
+          "enum": [
+            "reported_value",
+            "not_measured",
+            "not_reported",
+            "not_applicable",
+            "not_extractable",
+            "uncertain_extraction"
+          ],
+          "description": "Hvorfor estimatet eventuelt mangler."
+        },
+        "ci_lower": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Nedre konfidensgrense, som tekst."
+        },
+        "ci_upper": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Øvre konfidensgrense, som tekst."
+        },
+        "ci_level_percent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Konfidensnivået i prosent, som tekst, for eksempel «95»."
+        },
+        "confidence_interval_availability": {
+          "type": "string",
+          "enum": [
+            "reported_value",
+            "not_measured",
+            "not_reported",
+            "not_applicable",
+            "not_extractable",
+            "uncertain_extraction"
+          ],
+          "description": "Hvorfor konfidensintervallet eventuelt mangler."
+        },
+        "limitations_text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Forbehold kilden selv oppgir."
+        },
+        "source_locator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hvor i dokumentet funnet som helhet står, for eksempel «Results, avsnitt 2»."
+        },
+        "source_quote": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Ett ordrett sitat for funnet som helhet. Forankringen per felt er field_groundings."
+        }
+      }
+    },
+    "field_groundings": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Én forankring per semantisk felt raden påstår noe om. Databasen avviser en ekstraksjon som ikke forankrer dem alle, og ingen forankring fylles inn automatisk.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "check_field",
+          "source_excerpt",
+          "source_locator",
+          "justification"
+        ],
+        "properties": {
+          "check_field": {
+            "type": "string",
+            "enum": [
+              "population",
+              "sample_size",
+              "intervention_arm",
+              "comparator_arm",
+              "outcome",
+              "timepoint",
+              "reported_direction",
+              "effect_measure",
+              "estimate",
+              "confidence_interval",
+              "availability_semantics",
+              "limitations",
+              "source_locator",
+              "raw_extraction"
+            ],
+            "description": "Hvilket kontrollfelt forankringen gjelder. Hvert felt kan forankres én gang."
+          },
+          "source_excerpt": {
+            "type": "string",
+            "minLength": 24,
+            "description": "Det ordrette kildeutdraget, med nok kontekst til å være kontrollgrunnlag. Må stå ordrett i kildeversjonen; kjøringen prøver det."
+          },
+          "source_locator": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Den presise pekeren for nettopp dette utdraget, for eksempel «Results, tabell 2»."
+          },
+          "justification": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Kort og eksplisitt: hvordan utdraget ble til den strukturerte verdien. Ikke en tankerekke."
+          }
+        }
+      }
+    }
+  }
+}

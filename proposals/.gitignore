@@ -1,0 +1,8 @@
+# Forslagsfiler er lokal inndata, ikke faglig innhold. De skal ikke commites:
+# et forslag er en påstand om hva som står i en kilde, og den påstanden skal
+# ende som en rad i basen med proveniens — ikke som en fil i repoet.
+#
+# Kontrakten og eksempelet er unntakene. De er kildekode.
+*.json
+!extraction-proposal.schema.json
+!eksempel-syntetisk-forslag.json

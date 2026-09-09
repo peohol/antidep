@@ -13,6 +13,8 @@
 //                                           provenance.issue_agent_identity_credential(text, text)
 //   ANTIDEP_CLAIM_AGENT_IDENTITY_KEY        claim-verifikatorens nøkkel
 //   ANTIDEP_CLAIM_AGENT_SECRET              dens hemmelighet, utstedt på samme måte
+//   ANTIDEP_EXTRACTION_AGENT_IDENTITY_KEY   ekstraksjonsagentens nøkkel
+//   ANTIDEP_EXTRACTION_AGENT_SECRET         dens hemmelighet, utstedt på samme måte
 //
 // ----------------------------------------------------------------------------
 // Hvorfor legitimasjonen har mer enn ett variabelnavn
@@ -57,6 +59,21 @@ export const EXTRACTION_VERIFIER_CREDENTIAL: AgentCredentialVariables = {
 export const CLAIM_VERIFIER_CREDENTIAL: AgentCredentialVariables = {
   identityKey: 'ANTIDEP_CLAIM_AGENT_IDENTITY_KEY',
   secret: 'ANTIDEP_CLAIM_AGENT_SECRET',
+}
+
+/**
+ * Ekstraksjonsagenten (migrasjon 005w).
+ *
+ * Eget par og ikke verifikatorens: re-ekstraksjonen kjører begge leddene i den
+ * samme prosessen — først ekstraksjonen, så den deterministiske kontrollen av
+ * nettopp det funnet — og to roller som deler ett variabelnavn kan ikke det.
+ * Skillet er dessuten rettighetsgrensen selv: identiteten autentiseres for
+ * *rollen* sin, og en ekstraksjonsnøkkel kan ikke registrere en kontroll
+ * (migrasjon 005e, EVIDENCE_PIPELINE.md §61).
+ */
+export const EVIDENCE_EXTRACTION_CREDENTIAL: AgentCredentialVariables = {
+  identityKey: 'ANTIDEP_EXTRACTION_AGENT_IDENTITY_KEY',
+  secret: 'ANTIDEP_EXTRACTION_AGENT_SECRET',
 }
 
 export interface AgentConfig {

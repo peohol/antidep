@@ -91,6 +91,27 @@ export interface RunOptions {
   readonly limit?: number | null
   readonly retrieve?: RetrieveLike
   readonly retrieveOptions?: RetrieveOptions
+  /**
+   * Et snevrere utvalg av inndataen enn `evidenceItemId` alene gir.
+   *
+   * Hvilken rad kjøringen gjelder, avgjøres av `evidenceItemId`, og ingenting
+   * annet: re-ekstraksjonen får id-en fra registreringen, eller — når den samme
+   * ekstraksjonen alt var registrert — fra dublettavvisningen, som navngir raden
+   * etter den samme kanoniske identiteten som UNIQUE-regelen bruker (migrasjon
+   * 007h). Utvalget her gjenfinner altså ingenting; det avgjør bare hva som
+   * faktisk skal kontrolleres av det kalleren allerede har pekt på.
+   *
+   * Re-ekstraksjonen trenger det til to ting. Et funn som allerede bærer et
+   * gjeldende maskinbevis, skal ikke kontrolleres om igjen — en ny kontroll ville
+   * vært en ny rad uten et nytt svar, og den samme filen kjørt om igjen skal ikke
+   * skrive noe. Og kalleren må kunne se raden som faktisk lå der, for å kunne
+   * sammenligne forankringen på nettopp den.
+   *
+   * Inndataen sendes derfor inn som den er, ikke som et ja eller nei. Ingen
+   * kontroll blir løsere av det: hvert funn som slipper gjennom, kontrolleres
+   * nøyaktig som før.
+   */
+  readonly select?: (items: readonly VerificationItem[]) => readonly VerificationItem[]
   readonly log?: (line: string) => void
 }
 
@@ -209,7 +230,11 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     options.retrieve ?? ((url) => retrieveRepresentation(url, options.retrieveOptions ?? {}))
 
   const inputManifest: Record<string, unknown> = {
-    mode: evidenceItemId === null ? 'queue' : 'single',
+    // `selected` sier at kjøringen arbeidet på et utvalg av køen, ikke på hele
+    // den. Uten det ville manifestet påstått «queue» om en kjøring som bevisst
+    // lot resten av køen stå.
+    mode:
+      evidenceItemId === null ? (options.select === undefined ? 'queue' : 'selected') : 'single',
     evidence_item_id: evidenceItemId,
     dry_run: dryRun,
     limit,
@@ -223,10 +248,17 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
 
   try {
     const input = parseVerificationInput(await api.readInput(agentRunId, evidenceItemId))
-    const queue = limit === null ? input.items : input.items.slice(0, limit)
+    const selected = options.select === undefined ? input.items : options.select(input.items)
+    const queue = limit === null ? selected : selected.slice(0, limit)
     log(
       `${String(input.items.length)} evidensfunn i grunnlaget, ${String(queue.length)} tas i denne kjøringen.`,
     )
+    if (options.select !== undefined) {
+      log(
+        `Utvalget er avgrenset til funn som svarer til forslaget: ` +
+          `${String(selected.length)} av ${String(input.items.length)}.`,
+      )
+    }
 
     for (const item of queue) {
       const evaluation = await evaluateItem(item, retrieve)

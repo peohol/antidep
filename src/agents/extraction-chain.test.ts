@@ -36,7 +36,11 @@ import type {
   RegisterVerificationArgs,
 } from './agent-api'
 import { sourceVersionContentHash } from './content-hash'
-import { parseExtractionProposal, type ExtractionProposal } from './extraction-proposal'
+import {
+  EXTRACTION_PROPOSAL_VERSION,
+  parseExtractionProposal,
+  type ExtractionProposal,
+} from './extraction-proposal'
 import { runEvidenceExtraction } from './extraction-run'
 import { runExtractionVerification } from './extraction-verification-run'
 import type { RetrieveLike } from './extraction-verification-run'
@@ -102,6 +106,7 @@ const SEMANTIC_FIELDS = REQUIRED_FIELDS.filter(
 
 async function proposal(): Promise<ExtractionProposal> {
   return parseExtractionProposal({
+    proposal_version: EXTRACTION_PROPOSAL_VERSION,
     source_id: SOURCE_ID,
     source_version_id: VERSION_ID,
     retrieved_from: RETRIEVED_FROM,

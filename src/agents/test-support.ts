@@ -195,6 +195,97 @@ export function verificationItemFixture(
   }
 }
 
+/**
+ * Ett evidensfunn tilbake til formen `api.extraction_verification_input(...)`
+ * leverer det i.
+ *
+ * Fiksturene over er den *typede* formen, som er den kjørerne arbeider med. En
+ * test som vil gi kjøreren et grunnlag, må gi den råformen, fordi kjøreren
+ * alltid leser den gjennom `parseVerificationInput` — og det er nettopp den
+ * lesningen som skal prøves med. Serialiseringen står her og ikke i hver test,
+ * slik at nøkkelnavnene finnes ett sted.
+ */
+export function verificationItemPayload(item: VerificationItem): Record<string, unknown> {
+  const e = item.extraction
+  return {
+    evidence_item_id: item.evidenceItemId,
+    created_by_actor_id: item.createdByActorId,
+    created_by_actor_key: item.createdByActorKey,
+    extraction_method: item.extractionMethod,
+    content_hash: item.contentHash,
+    verifications_by_this_actor: item.verificationsByThisActor,
+    grounding_machine_proved: item.groundingMachineProved,
+    semantic_check_fields: item.semanticCheckFields,
+    grounded_check_fields: item.groundedCheckFields,
+    source: {
+      source_id: item.sourceId,
+      title: item.sourceTitle,
+      source_type: item.sourceType,
+      authors_or_issuer: item.sourceAuthorsOrIssuer,
+      publisher_or_journal: item.sourcePublisherOrJournal,
+      publication_date: item.sourcePublicationDate,
+      publication_date_precision: item.sourcePublicationDatePrecision,
+      source_status: item.sourceStatus,
+      status_note: item.sourceStatusNote,
+      identifiers: item.sourceIdentifiers.map((identifier) => ({
+        identifier_system: identifier.system,
+        identifier_value: identifier.value,
+      })),
+    },
+    source_version:
+      item.sourceVersion === null
+        ? null
+        : {
+            source_version_id: item.sourceVersion.sourceVersionId,
+            retrieved_at: item.sourceVersion.retrievedAt,
+            retrieved_from: item.sourceVersion.retrievedFrom,
+            external_version: item.sourceVersion.externalVersion,
+            content_hash: item.sourceVersion.contentHash,
+            representation: item.sourceVersion.representation,
+            has_storage_reference: item.sourceVersion.hasStorageReference,
+          },
+    field_groundings: item.fieldGroundings.map((grounding) => ({
+      field_grounding_id: grounding.fieldGroundingId,
+      check_field: grounding.checkField,
+      source_excerpt: grounding.sourceExcerpt,
+      source_locator: grounding.sourceLocator,
+      justification: grounding.justification,
+      created_at: grounding.createdAt,
+      created_by_actor_id: grounding.createdByActorId,
+    })),
+    extraction: {
+      design_code: e.designCode,
+      population_label: e.populationLabel,
+      population_availability: e.populationAvailability,
+      population_detail: e.populationDetail,
+      sample_size: e.sampleSize,
+      sample_size_availability: e.sampleSizeAvailability,
+      intervention_drug_name: e.interventionDrugName,
+      intervention_detail: e.interventionDetail,
+      comparator_kind: e.comparatorKind,
+      comparator_drug_name: e.comparatorDrugName,
+      comparator_detail: e.comparatorDetail,
+      outcome_label: e.outcomeLabel,
+      outcome_detail: e.outcomeDetail,
+      timepoint_min: e.timepointMin,
+      timepoint_max: e.timepointMax,
+      timepoint_availability: e.timepointAvailability,
+      reported_direction: e.reportedDirection,
+      effect_measure: e.effectMeasure,
+      estimate: e.estimate,
+      estimate_unit: e.estimateUnit,
+      estimate_availability: e.estimateAvailability,
+      ci_lower: e.ciLower,
+      ci_upper: e.ciUpper,
+      ci_level_percent: e.ciLevelPercent,
+      confidence_interval_availability: e.confidenceIntervalAvailability,
+      limitations_text: e.limitationsText,
+      source_locator: e.sourceLocator,
+      raw_extraction: e.rawExtraction,
+    },
+  }
+}
+
 // ----------------------------------------------------------------------------
 // Claim-verifikasjonen
 //

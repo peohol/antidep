@@ -53,6 +53,19 @@ npm run db:reset     # gjenskap lokal database (kjører migrasjoner når de finn
 npm run db:stop      # stopp lokal Supabase-stack
 ```
 
+Agentkjørerne (krever legitimasjon, se `supabase/README.md`):
+
+```bash
+npm run agent:extract-evidence -- --schema                       # kontrakten for et forslag
+npm run agent:extract-evidence -- --proposal <fil> --dry-run     # kontroller, skriv ingenting
+npm run agent:extract-evidence -- --proposal <fil>               # registrer ett forankret funn
+npm run agent:reextract-evidence -- --directory proposals        # flere forslag, med kontroll etter hvert
+npm run agent:verify-extraction                                  # den deterministiske kontrollen
+npm run agent:verify-claims                                      # claim-verifikatoren
+```
+
+Forslagsfilene og hvordan de lages, er beskrevet i `proposals/README.md`.
+
 CI (GitHub Actions, `.github/workflows/ci.yml`) kjører lint, formatkontroll, typecheck,
 tester og produksjonsbygg på alle pull requests og på `main`, og verifiserer i en egen jobb
 at den lokale Supabase-stacken booter fra clean checkout.

@@ -1,5 +1,5 @@
 // ============================================================================
-// Ekstraksjonsforslaget: det ett agentledd foreslår om én studie
+// Ekstraksjonsforslaget: den permanente grensen mellom forslagsleddet og Antidep
 //
 // Et forslag er ikke en ekstraksjon. Det er inndata til den, og det blir en
 // ekstraksjon først når det er registrert gjennom `api.register_agent_extraction`
@@ -10,14 +10,24 @@
 // Hvorfor forslaget er sin egen modul, og leses fra en fil
 //
 // Leddet som *leser* en artikkel og foreslår strukturerte verdier, krever en
-// språkmodell, og dermed en leverandør og en konto — en beslutning som ikke er
-// teknisk (issue #63). Alt det andre i kjeden er deterministisk og skal ikke
-// vente på den: hentingen, den ordrette kontrollen av hvert utdrag, kjøringens
-// proveniens og selve registreringen.
+// språkmodell, og dermed en leverandør og en konto (issue #63). Alt det andre i
+// kjeden er deterministisk og skal ikke vente på den: hentingen, den ordrette
+// kontrollen av hvert utdrag, kjøringens proveniens og selve registreringen.
 //
-// Forslaget er derfor grenseflaten mellom de to. Et modell-ledd som skriver
-// denne formen, kan kobles på uten at noe annet i kjeden endres — og formen
-// kontrolleres like strengt uansett hvem som skrev den.
+// Forslaget er derfor grenseflaten mellom de to, og den er skrevet for å være
+// permanent (ANTIDEP_CONSTITUTION.md §20). Formen er den samme enten den er
+// skrevet av et menneske, av ChatGPT utenfor Antidep, eller en dag av et
+// innebygd modell-ledd — og den kontrolleres like strengt uansett hvem som
+// skrev den. Et framtidig modelladapter er derfor et nytt ledd foran denne
+// filen, ikke en endring av den.
+//
+// ----------------------------------------------------------------------------
+// Hva forslagsprodusenten *ikke* kan
+//
+// Den kan ikke skrive til databasen. Den produserer en fil; alt som rører basen
+// skjer etterpå, i kjøringen, med agentlegitimasjon og under de deterministiske
+// kontrollene. Det er ikke en konvensjon, men en konsekvens av at forslaget er
+// data: det finnes ingen skrivevei som tar imot et forslag.
 //
 // ----------------------------------------------------------------------------
 // Hvorfor formen kontrolleres her og ikke bare av databasen
@@ -28,11 +38,53 @@
 // det som faktisk mangler i forslaget. Kontrollen her sier hvilket felt i
 // forslaget som er galt, før noe skrives.
 //
-// Ingen verdi *utledes* her, og ingen mangel fylles inn: et forslag uten en
-// verdi er et forslag uten den verdien (ANTIDEP_CONSTITUTION.md §6).
+// Tre regler gjør kontrollen streng nok til å være en grense:
+//
+//   1. **Et ukjent felt er en feil, ikke noe som ignoreres.** Et forslag med
+//      `extimate` i stedet for `estimate` ville ellers blitt registrert uten
+//      estimatet, og feilen ville sett ut som en manglende verdi i kilden.
+//   2. **Ingenting fylles inn.** Et forslag uten en verdi er et forslag uten
+//      den verdien (§6). Manglende forankring blir ikke gjettet fram, verken
+//      fra andre felter eller fra en samlet tolkning.
+//   3. **Vokabularene er lukket.** De leses fra `src/types/api.ts`, som
+//      `tests/api-vocabularies.test.ts` holder identisk med enum-ene i
+//      migrasjonene. En verdi utenfor vokabularet avvises her, med feltnavnet.
+//
+// Utrygg inndata: forslaget er data, aldri instruksjoner (CLAUDE.md). Ingenting
+// i det tolkes som noe annet enn verdier og tekst.
 // ============================================================================
 
-import type { Uuid } from '../types/api.ts'
+import {
+  COMPARATOR_KINDS,
+  EFFECT_MEASURES,
+  ESTIMATE_UNITS,
+  EVIDENCE_CHECK_FIELDS,
+  REPORTED_DIRECTIONS,
+  STUDY_DESIGNS,
+  VALUE_AVAILABILITIES,
+  type Uuid,
+} from '../types/api.ts'
+
+/**
+ * Versjonen av selve kontrakten, oppgitt i hvert forslag.
+ *
+ * Uten den ville en senere utvidelse av formen ikke kunnet skilles fra et
+ * forslag skrevet mot en eldre form: begge ville manglet det samme feltet, og
+ * bare det ene ville vært en feil. Verdien er et *krav*, ikke en opplysning —
+ * et forslag som oppgir noe annet, avvises.
+ */
+export const EXTRACTION_PROPOSAL_VERSION = 'antidep/extraction-proposal@1'
+
+/**
+ * Hvor kort et ordrett kildeutdrag kan være og fortsatt bære kontekst.
+ *
+ * Et utdrag er kontrollgrunnlaget et menneske ser på venstre side i
+ * kontrolløkten, og «284» eller «8 weeks» alene er ikke et grunnlag: tallet står
+ * kanskje fem steder i artikkelen, og utdraget sier ikke hvilket. Grensen er den
+ * samme som `MIN_QUOTE_LENGTH` i `extraction-checks.ts` bruker for at et sitat
+ * skal være verdt å kontrollere ordrett, og av samme grunn.
+ */
+export const MIN_SOURCE_EXCERPT_LENGTH = 24
 
 /** Én forankring: feltet, utdraget, pekeren og begrunnelsen. */
 export interface ProposedGrounding {
@@ -74,8 +126,9 @@ export interface ProposedExtraction {
   readonly sourceQuote: string | null
 }
 
-/** Hele forslaget: hvilken kilde, hvilken versjon, verdiene og forankringen. */
+/** Hele forslaget: kontraktsversjonen, hvilken kilde, hvilken versjon, verdiene og forankringen. */
 export interface ExtractionProposal {
+  readonly proposalVersion: typeof EXTRACTION_PROPOSAL_VERSION
   readonly sourceId: Uuid
   readonly sourceVersionId: Uuid
   /**
@@ -99,52 +152,137 @@ export interface ExtractionProposal {
   readonly fieldGroundings: readonly ProposedGrounding[]
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
+
 function problem(where: string, what: string): never {
   throw new Error(`Ekstraksjonsforslaget er ugyldig: ${where} ${what}.`)
 }
 
-function asRecord(value: unknown, where: string): Record<string, unknown> {
+/**
+ * Én oppslagsbok med regnskap over hvilke nøkler som faktisk er lest.
+ *
+ * Regnskapet er hele poenget: uten det ville et felt med skrivefeil vært
+ * usynlig, og forslaget ville blitt registrert uten verdien det trodde det
+ * leverte.
+ */
+interface Fields {
+  readonly where: string
+  readonly record: Record<string, unknown>
+  readonly seen: Set<string>
+}
+
+function fieldsOf(value: unknown, where: string): Fields {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     problem(where, 'er ikke et objekt')
   }
-  return value as Record<string, unknown>
+  return { where, record: value as Record<string, unknown>, seen: new Set() }
 }
 
-function asText(record: Record<string, unknown>, key: string, where: string): string {
-  const value = record[key]
+function raw(fields: Fields, key: string): unknown {
+  fields.seen.add(key)
+  return fields.record[key]
+}
+
+/**
+ * Ingen ukjente felter slipper gjennom.
+ *
+ * `raw_extraction` navngis særskilt. Feltet finnes på raden i basen som
+ * ekstraksjonens egen tolkning, men det er ikke noe et forslag skal levere:
+ * verdiene er de strukturerte kolonnene, og grunnlaget er de ordrette utdragene.
+ * Et forslag som sendte en samlet tolkning ved siden av, ville invitert til at
+ * noen leste verdier ut av den (EVIDENCE_PIPELINE.md §21).
+ */
+function rejectUnknown(fields: Fields): void {
+  const unknown = Object.keys(fields.record)
+    .filter((key) => !fields.seen.has(key))
+    .sort()
+  if (unknown.length === 0) {
+    return
+  }
+  if (unknown.includes('raw_extraction')) {
+    problem(
+      `${fields.where}.raw_extraction`,
+      'hører ikke hjemme i et forslag. De strukturerte verdiene er kolonnene, og grunnlaget er de ordrette utdragene per felt — en samlet tolkning ved siden av ville vært noe å lese verdier ut av',
+    )
+  }
+  problem(fields.where, `har ukjente felter: ${unknown.join(', ')}`)
+}
+
+function asText(fields: Fields, key: string): string {
+  const value = raw(fields, key)
   if (typeof value !== 'string' || value.trim().length === 0) {
-    problem(`${where}.${key}`, 'mangler eller er tom')
+    problem(`${fields.where}.${key}`, 'mangler eller er tom')
   }
   return value
 }
 
-function asOptionalText(
-  record: Record<string, unknown>,
-  key: string,
-  where: string,
-): string | null {
-  const value = record[key]
+function asOptionalText(fields: Fields, key: string): string | null {
+  const value = raw(fields, key)
   if (value === undefined || value === null) {
     return null
   }
   if (typeof value !== 'string') {
-    problem(`${where}.${key}`, 'er ikke tekst')
+    problem(`${fields.where}.${key}`, 'er ikke tekst')
   }
   const trimmed = value.trim()
   return trimmed.length === 0 ? null : value
 }
 
-function asOptionalInteger(
-  record: Record<string, unknown>,
+function inVocabulary(
+  fields: Fields,
   key: string,
-  where: string,
-): number | null {
-  const value = record[key]
+  vocabulary: readonly string[],
+  value: string,
+): string {
+  if (!vocabulary.includes(value)) {
+    problem(
+      `${fields.where}.${key}`,
+      `er ${JSON.stringify(value)}, som ikke er en kjent verdi. Gyldige verdier: ${vocabulary.join(', ')}`,
+    )
+  }
+  return value
+}
+
+function asVocabulary(fields: Fields, key: string, vocabulary: readonly string[]): string {
+  return inVocabulary(fields, key, vocabulary, asText(fields, key))
+}
+
+function asOptionalVocabulary(
+  fields: Fields,
+  key: string,
+  vocabulary: readonly string[],
+): string | null {
+  const value = asOptionalText(fields, key)
+  return value === null ? null : inVocabulary(fields, key, vocabulary, value)
+}
+
+function asUuid(fields: Fields, key: string): Uuid {
+  const value = asText(fields, key)
+  if (!UUID_PATTERN.test(value)) {
+    problem(`${fields.where}.${key}`, 'er ikke en uuid')
+  }
+  return value as Uuid
+}
+
+function asOptionalUuid(fields: Fields, key: string): Uuid | null {
+  const value = asOptionalText(fields, key)
+  if (value === null) {
+    return null
+  }
+  if (!UUID_PATTERN.test(value)) {
+    problem(`${fields.where}.${key}`, 'er ikke en uuid')
+  }
+  return value as Uuid
+}
+
+function asOptionalInteger(fields: Fields, key: string): number | null {
+  const value = raw(fields, key)
   if (value === undefined || value === null) {
     return null
   }
   if (typeof value !== 'number' || !Number.isInteger(value)) {
-    problem(`${where}.${key}`, 'er ikke et heltall')
+    problem(`${fields.where}.${key}`, 'er ikke et heltall')
   }
   return value
 }
@@ -155,86 +293,119 @@ function asOptionalInteger(
  * `1.50` og `1.5` er samme tall, men ikke samme oppgitte verdi, og en tur
  * innom `Number` ville stille endret det som skal kontrolleres mot kilden.
  */
-function asOptionalNumericText(
-  record: Record<string, unknown>,
-  key: string,
-  where: string,
-): string | null {
-  const value = record[key]
+function asOptionalNumericText(fields: Fields, key: string): string | null {
+  const value = raw(fields, key)
   if (value === undefined || value === null) {
     return null
   }
   if (typeof value === 'number') {
     problem(
-      `${where}.${key}`,
+      `${fields.where}.${key}`,
       'er oppgitt som et tall. Tallverdier skal stå som tekst, slik at skrivemåten bevares ordrett',
     )
   }
   if (typeof value !== 'string' || value.trim().length === 0) {
-    problem(`${where}.${key}`, 'er ikke et tall som tekst')
+    problem(`${fields.where}.${key}`, 'er ikke et tall som tekst')
   }
   return value
 }
 
 function parseGrounding(value: unknown, index: number): ProposedGrounding {
-  const where = `field_groundings[${String(index)}]`
-  const record = asRecord(value, where)
-  return {
-    checkField: asText(record, 'check_field', where),
-    sourceExcerpt: asText(record, 'source_excerpt', where),
-    sourceLocator: asText(record, 'source_locator', where),
-    justification: asText(record, 'justification', where),
+  const fields = fieldsOf(value, `field_groundings[${String(index)}]`)
+  const grounding: ProposedGrounding = {
+    checkField: asVocabulary(fields, 'check_field', EVIDENCE_CHECK_FIELDS),
+    sourceExcerpt: asText(fields, 'source_excerpt'),
+    sourceLocator: asText(fields, 'source_locator'),
+    justification: asText(fields, 'justification'),
   }
+  rejectUnknown(fields)
+
+  if (grounding.sourceExcerpt.trim().length < MIN_SOURCE_EXCERPT_LENGTH) {
+    problem(
+      `${fields.where}.source_excerpt`,
+      `er kortere enn ${String(MIN_SOURCE_EXCERPT_LENGTH)} tegn og bærer derfor ikke nok kontekst til å være kontrollgrunnlag. Ta med setningen verdien står i, ordrett`,
+    )
+  }
+  return grounding
 }
 
 function parseExtraction(value: unknown): ProposedExtraction {
-  const where = 'extraction'
-  const record = asRecord(value, where)
-  return {
-    designCode: asText(record, 'design_code', where),
-    populationId: asOptionalText(record, 'population_id', where) as Uuid | null,
-    populationAvailability: asText(record, 'population_availability', where),
-    populationDetail: asText(record, 'population_detail', where),
-    sampleSize: asOptionalInteger(record, 'sample_size', where),
-    sampleSizeAvailability: asText(record, 'sample_size_availability', where),
-    interventionDrugId: asText(record, 'intervention_drug_id', where) as Uuid,
-    interventionDetail: asOptionalText(record, 'intervention_detail', where),
-    comparatorKind: asText(record, 'comparator_kind', where),
-    comparatorDrugId: asOptionalText(record, 'comparator_drug_id', where) as Uuid | null,
-    comparatorDetail: asOptionalText(record, 'comparator_detail', where),
-    outcomeConceptId: asText(record, 'outcome_concept_id', where) as Uuid,
-    outcomeDetail: asText(record, 'outcome_detail', where),
-    timepointMin: asOptionalText(record, 'timepoint_min', where),
-    timepointMax: asOptionalText(record, 'timepoint_max', where),
-    timepointAvailability: asText(record, 'timepoint_availability', where),
-    reportedDirection: asText(record, 'reported_direction', where),
-    effectMeasure: asOptionalText(record, 'effect_measure', where),
-    estimate: asOptionalNumericText(record, 'estimate', where),
-    estimateUnit: asOptionalText(record, 'estimate_unit', where),
-    estimateAvailability: asText(record, 'estimate_availability', where),
-    ciLower: asOptionalNumericText(record, 'ci_lower', where),
-    ciUpper: asOptionalNumericText(record, 'ci_upper', where),
-    ciLevelPercent: asOptionalNumericText(record, 'ci_level_percent', where),
-    confidenceIntervalAvailability: asText(record, 'confidence_interval_availability', where),
-    limitationsText: asOptionalText(record, 'limitations_text', where),
-    sourceLocator: asText(record, 'source_locator', where),
-    sourceQuote: asOptionalText(record, 'source_quote', where),
+  const fields = fieldsOf(value, 'extraction')
+  const extraction: ProposedExtraction = {
+    designCode: asVocabulary(fields, 'design_code', STUDY_DESIGNS),
+    populationId: asOptionalUuid(fields, 'population_id'),
+    populationAvailability: asVocabulary(fields, 'population_availability', VALUE_AVAILABILITIES),
+    populationDetail: asText(fields, 'population_detail'),
+    sampleSize: asOptionalInteger(fields, 'sample_size'),
+    sampleSizeAvailability: asVocabulary(fields, 'sample_size_availability', VALUE_AVAILABILITIES),
+    interventionDrugId: asUuid(fields, 'intervention_drug_id'),
+    interventionDetail: asOptionalText(fields, 'intervention_detail'),
+    comparatorKind: asVocabulary(fields, 'comparator_kind', COMPARATOR_KINDS),
+    comparatorDrugId: asOptionalUuid(fields, 'comparator_drug_id'),
+    comparatorDetail: asOptionalText(fields, 'comparator_detail'),
+    outcomeConceptId: asUuid(fields, 'outcome_concept_id'),
+    outcomeDetail: asText(fields, 'outcome_detail'),
+    timepointMin: asOptionalText(fields, 'timepoint_min'),
+    timepointMax: asOptionalText(fields, 'timepoint_max'),
+    timepointAvailability: asVocabulary(fields, 'timepoint_availability', VALUE_AVAILABILITIES),
+    reportedDirection: asVocabulary(fields, 'reported_direction', REPORTED_DIRECTIONS),
+    effectMeasure: asOptionalVocabulary(fields, 'effect_measure', EFFECT_MEASURES),
+    estimate: asOptionalNumericText(fields, 'estimate'),
+    estimateUnit: asOptionalVocabulary(fields, 'estimate_unit', ESTIMATE_UNITS),
+    estimateAvailability: asVocabulary(fields, 'estimate_availability', VALUE_AVAILABILITIES),
+    ciLower: asOptionalNumericText(fields, 'ci_lower'),
+    ciUpper: asOptionalNumericText(fields, 'ci_upper'),
+    ciLevelPercent: asOptionalNumericText(fields, 'ci_level_percent'),
+    confidenceIntervalAvailability: asVocabulary(
+      fields,
+      'confidence_interval_availability',
+      VALUE_AVAILABILITIES,
+    ),
+    limitationsText: asOptionalText(fields, 'limitations_text'),
+    sourceLocator: asText(fields, 'source_locator'),
+    sourceQuote: asOptionalText(fields, 'source_quote'),
   }
+  rejectUnknown(fields)
+  return extraction
 }
 
 /**
  * Leser og kontrollerer ett forslag.
  *
- * Kontrollen gjelder formen, ikke innholdet: at et felt finnes og har riktig
- * type, aldri at verdien er riktig. Om verdien følger av kilden, avgjøres av
- * den ordrette kontrollen og av mennesket etterpå.
+ * Kontrollen gjelder formen, ikke innholdet: at et felt finnes, har riktig type
+ * og en verdi innenfor sitt vokabular — aldri at verdien er riktig. Om verdien
+ * følger av kilden, avgjøres av den ordrette kontrollen mot representasjonen og
+ * av mennesket etterpå.
  */
 export function parseExtractionProposal(value: unknown): ExtractionProposal {
-  const record = asRecord(value, 'forslaget')
-  const groundings = record['field_groundings']
+  const fields = fieldsOf(value, 'forslaget')
+
+  const version = asText(fields, 'proposal_version')
+  if (version !== EXTRACTION_PROPOSAL_VERSION) {
+    problem(
+      'forslaget.proposal_version',
+      `er ${JSON.stringify(version)}, men denne kjøreren leser ${JSON.stringify(EXTRACTION_PROPOSAL_VERSION)}`,
+    )
+  }
+
+  const sourceId = asUuid(fields, 'source_id')
+  const sourceVersionId = asUuid(fields, 'source_version_id')
+  const retrievedFrom = asText(fields, 'retrieved_from')
+  const contentHash = asText(fields, 'content_hash')
+  if (!CONTENT_HASH_PATTERN.test(contentHash)) {
+    problem(
+      'forslaget.content_hash',
+      'har ikke formen «sha256:» etterfulgt av 64 heksadesimale tegn, som er den kildeversjonene er registrert med',
+    )
+  }
+
+  const extraction = parseExtraction(raw(fields, 'extraction'))
+
+  const groundings = raw(fields, 'field_groundings')
   if (!Array.isArray(groundings) || groundings.length === 0) {
     problem('field_groundings', 'mangler eller er tom')
   }
+  rejectUnknown(fields)
 
   const parsed = groundings.map(parseGrounding)
   const seen = new Set<string>()
@@ -246,11 +417,12 @@ export function parseExtractionProposal(value: unknown): ExtractionProposal {
   }
 
   return {
-    sourceId: asText(record, 'source_id', 'forslaget') as Uuid,
-    sourceVersionId: asText(record, 'source_version_id', 'forslaget') as Uuid,
-    retrievedFrom: asText(record, 'retrieved_from', 'forslaget'),
-    contentHash: asText(record, 'content_hash', 'forslaget'),
-    extraction: parseExtraction(record['extraction']),
+    proposalVersion: EXTRACTION_PROPOSAL_VERSION,
+    sourceId,
+    sourceVersionId,
+    retrievedFrom,
+    contentHash,
+    extraction,
     fieldGroundings: parsed,
   }
 }

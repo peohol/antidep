@@ -305,8 +305,66 @@ export const EVIDENCE_EXTRACTION_ROLE = 'evidence_extraction'
 export const EXTRACTION_VERIFICATION_ROLE = 'extraction_verification'
 export const CITATION_SUPPORT_VERIFICATION_ROLE = 'citation_support_verification'
 
-function fail(operation: string, message: string): never {
-  throw new Error(`${operation} ble avvist: ${message}`)
+/**
+ * En avvisning fra `api`, med databasens egen SQLSTATE bevart.
+ *
+ * Koden er der fordi én avvisning er en *forventet* utgang av et riktig utfylt
+ * forslag: `unique_violation` fra `evidence_items_content_hash_key` betyr at
+ * nøyaktig det samme evidensfunnet allerede er registrert. En kjøring som skal
+ * kunne kjøres om igjen uten å skrive noe nytt, må kunne skille den fra en
+ * reell feil — og en tekstsammenligning på en norsk setning ville vært en
+ * kontrakt ingen har inngått.
+ */
+export class AgentApiError extends Error {
+  readonly code: string | null
+  /**
+   * Databasens `detail` på avvisningen.
+   *
+   * Bærer den ene opplysningen en kaller ikke kan utlede selv:
+   * `knowledge.record_evidence_item` navngir raden som kolliderte ved en
+   * dublett (migrasjon 007h), slått opp med den samme kanoniske identiteten
+   * UNIQUE-regelen bruker. Uten den måtte en kjøring som vil gjenoppta en
+   * avbrutt registrering, gjette hvilken rad det var.
+   */
+  readonly details: string | null
+
+  constructor(operation: string, message: string, code: string | null, details: string | null) {
+    super(`${operation} ble avvist: ${message}`)
+    this.name = 'AgentApiError'
+    this.code = code
+    this.details = details
+  }
+}
+
+/** SQLSTATE 23505: raden finnes allerede, med nøyaktig det samme innholdet. */
+export const UNIQUE_VIOLATION = '23505'
+
+/** Om avvisningen er «dette er allerede registrert», og ikke en feil. */
+export function isUniqueViolation(cause: unknown): boolean {
+  return cause instanceof AgentApiError && cause.code === UNIQUE_VIOLATION
+}
+
+/**
+ * Evidensfunnet dublettavvisningen navngir, eller `null`.
+ *
+ * Formen er `evidence_item_id=<uuid>` og settes av
+ * `knowledge.record_evidence_item` (migrasjon 007h). `null` når avvisningen
+ * ikke navngir noen rad — databasen sier det da selv i `detail`, og en kaller
+ * skal behandle det som «ukjent», aldri som «ingen rad».
+ */
+export function collidingEvidenceItemId(cause: unknown): Uuid | null {
+  if (!(cause instanceof AgentApiError) || cause.details === null) {
+    return null
+  }
+  const match = /^evidence_item_id=([0-9a-fA-F-]{36})$/.exec(cause.details.trim())
+  return match?.[1] === undefined ? null : (match[1] as Uuid)
+}
+
+function fail(
+  operation: string,
+  error: { readonly message: string; readonly code?: string; readonly details?: string | null },
+): never {
+  throw new AgentApiError(operation, error.message, error.code ?? null, error.details ?? null)
 }
 
 type Identity = { readonly p_identity_key: string; readonly p_secret: string }
@@ -337,7 +395,7 @@ function createAgentRunApi(client: AgentClient, identity: Identity, role: string
         p_input_source_version_id: inputSourceVersionId,
       })
       if (error !== null) {
-        fail('api.begin_agent_run', error.message)
+        fail('api.begin_agent_run', error)
       }
       return data
     },
@@ -351,7 +409,7 @@ function createAgentRunApi(client: AgentClient, identity: Identity, role: string
         p_failure_reason: failureReason,
       })
       if (error !== null) {
-        fail('api.complete_agent_run', error.message)
+        fail('api.complete_agent_run', error)
       }
     },
   }
@@ -380,7 +438,7 @@ export function createExtractionVerificationApi(
         p_evidence_item_id: evidenceItemId,
       })
       if (error !== null) {
-        fail('api.extraction_verification_input', error.message)
+        fail('api.extraction_verification_input', error)
       }
       return data
     },
@@ -397,7 +455,7 @@ export function createExtractionVerificationApi(
         p_findings: args.findings,
       })
       if (error !== null) {
-        fail('api.register_extraction_verification', error.message)
+        fail('api.register_extraction_verification', error)
       }
       return data
     },
@@ -425,7 +483,7 @@ export function createClaimVerificationApi(
         p_claim_revision_id: claimRevisionId,
       })
       if (error !== null) {
-        fail('api.claim_verification_input', error.message)
+        fail('api.claim_verification_input', error)
       }
       return data
     },
@@ -458,7 +516,7 @@ export function createClaimVerificationApi(
         p_findings: args.findings,
       })
       if (error !== null) {
-        fail('api.register_claim_verification', error.message)
+        fail('api.register_claim_verification', error)
       }
       return data
     },
@@ -524,7 +582,7 @@ export function createEvidenceExtractionApi(
         p_source_quote: e.sourceQuote,
       })
       if (error !== null) {
-        fail('api.register_agent_extraction', error.message)
+        fail('api.register_agent_extraction', error)
       }
       return data
     },
