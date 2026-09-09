@@ -163,6 +163,21 @@ values (
   (select id from fixture where name = 'extractor')
 );
 
+-- Kildeforankring for hvert semantisk felt. Fra migrasjon 005x kan en
+-- bekreftelse ikke registreres på en rad uten den: da fantes det ingen
+-- venstreside å ha kontrollert. Utdragene er syntetiske, som resten av
+-- fiksturen — det som prøves her er leseflaten, ikke gjenfinningen.
+insert into knowledge.evidence_field_groundings
+  (evidence_item_id, created_by_actor_id, check_field,
+   source_excerpt, source_locator, justification)
+select e.id, e.created_by_actor_id, f.field,
+       'Utdrag for ' || f.field::text || ' i 460.',
+       'Avsnitt for ' || f.field::text,
+       'Begrunnelse for ' || f.field::text || '.'
+from knowledge.evidence_items e
+cross join unnest(workflow.semantic_check_fields(e.id)) as f(field)
+where e.source_id = '46000000-0000-4000-8000-000000000001';
+
 create temporary table cred (label text primary key, secret text);
 insert into cred
 select 'verifier', provenance.issue_agent_identity_credential(

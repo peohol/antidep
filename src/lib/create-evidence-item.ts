@@ -37,6 +37,19 @@
 //                        gjennom skjemaet ER en menneskelig ekstraksjon
 //   raw_extraction       bygges av `sourceQuote` i databasen, under én
 //                        dokumentert nøkkel
+//
+// ----------------------------------------------------------------------------
+// Denne veien skriver ingen kildeforankring
+//
+// Forankringen — det ordrette utdraget hvert felt ble lest ut av — er
+// ekstraksjonens eget produkt, og lages av ekstraksjonsagenten i den samme
+// transaksjonen som verdiene (`api.register_agent_extraction`, migrasjon 005v).
+//
+// Skrev redaktøren den her, ville venstresiden i kontrolløkten vært noe et
+// menneske hadde skrevet inn ved siden av verdien, og kontrolløren ville
+// kontrollert skjemautfyllingen framfor kilden. Et funn registrert denne veien
+// er nøyaktig så kontrollerbart felt for felt som fraværet av forankring sier:
+// ikke (ANTIDEP_CONSTITUTION.md §6, §8, §11).
 // ============================================================================
 
 import type { AntidepClient } from './supabase'

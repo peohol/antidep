@@ -164,12 +164,13 @@ select results_eq(
     join provenance.actors a on a.id = e.actor_id
     order by e.occurred_at, e.operation::text
   $$,
-  -- De to første radene kommer fra migrasjon 005f og 005i og er migrert
+  -- De tre første radene kommer fra migrasjon 005f, 005i og 005w og er migrert
   -- tilstand, ikke noe denne testen gjør. De står med i assertionen framfor å
   -- filtreres bort: listen er uttømmende, så en uventet auditrad slår fortsatt
   -- ut. Rekkefølgen mellom dem er ikke sortert på her — de er identiske, så
   -- resultatet er det samme uansett hvilken som kom først.
   $$values ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
+           ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
            ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
            ('role_granted', 'workflow', 'user_roles', 'human:peder-holman', 'reviewer')$$,
   'tildelingen legger igjen én auditrad, attribuert til aktøren som tildelte rollen'

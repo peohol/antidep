@@ -22,7 +22,23 @@ export interface VerificationSourceVersion {
   readonly externalVersion: string | null
   /** NULL betyr et sporet besøk uten fingeravtrykk (MVP_IMPLEMENTATION_PLAN.md §74.32). */
   readonly contentHash: string | null
+  /**
+   * Hva slags representasjon som faktisk ble hentet (EVIDENCE_PIPELINE.md §13).
+   *
+   * `null` betyr at opplysningen ikke er registrert — tilstanden alle
+   * kildeversjoner registrert før migrasjon 003b er i — aldri at
+   * representasjonen er ukjent men brukbar. En agentekstraksjon kan ikke bygge
+   * på en versjon uten den.
+   */
+  readonly representation: string | null
   readonly hasStorageReference: boolean
+}
+
+/** En global bibliografisk identifikator for kilden. */
+export interface SourceIdentifier {
+  /** `doi` eller `pmid`. */
+  readonly system: string
+  readonly value: string
 }
 
 /** Ekstraksjonen slik den er registrert, ordrett. */
@@ -68,6 +84,30 @@ export interface VerificationExtraction {
   readonly rawExtraction: unknown
 }
 
+/**
+ * Kildeforankringen av ett kontrollerbart felt (migrasjon 005u).
+ *
+ * Fire ting, og ikke en femte: hvilket felt forankringen gjelder, det ordrette
+ * kildeutdraget verdien er lest ut av, den presise kildepekeren for nettopp det
+ * utdraget, og en kort eksplisitt begrunnelse for hvordan utdraget ble til den
+ * strukturerte verdien.
+ *
+ * Den strukturerte verdien selv står *ikke* her, og det er hele poenget: den er
+ * kolonnen på evidensfunnet, og en kopi ved siden av kunne kommet i utakt med
+ * den. En kontrollør som bekreftet kopien, ville da bekreftet noe annet enn det
+ * databasen holder (ANTIDEP_CONSTITUTION.md §4, §8).
+ */
+export interface EvidenceFieldGrounding {
+  readonly fieldGroundingId: string
+  /** En verdi fra `workflow.evidence_check_field`. */
+  readonly checkField: string
+  readonly sourceExcerpt: string
+  readonly sourceLocator: string
+  readonly justification: string
+  readonly createdAt: string
+  readonly createdByActorId: string
+}
+
 export interface VerificationItem {
   readonly evidenceItemId: string
   readonly createdByActorId: string
@@ -106,7 +146,47 @@ export interface VerificationItem {
   readonly sourceStatus: string
   /** `null` betyr «ingen begrunnelse er registrert», ikke «statusen er normal». */
   readonly sourceStatusNote: string | null
+  /**
+   * Kildens globale identifikatorer.
+   *
+   * Den menneskelige lenken til kilden bygges av disse, ikke av
+   * `sourceVersion.retrievedFrom`: den siste er maskinens eksakte henteadresse
+   * — for et EUtils-kall er den XML — og skal bevares for hashing og proveniens,
+   * men den er ikke artikkelen et menneske skal åpne (`source-links.ts`).
+   */
+  readonly sourceIdentifiers: readonly SourceIdentifier[]
   readonly sourceVersion: VerificationSourceVersion | null
+  /**
+   * Kildeforankringen per kontrollfelt, i vokabularets egen rekkefølge.
+   *
+   * Tom liste betyr at ingen forankring er registrert — tilstanden alle funn
+   * registrert før migrasjon 005u er i. Den skal vises som fravær, aldri fylles
+   * inn fra `rawExtraction`: et utdrag gjettet ut av den rå ekstraksjonen ville
+   * vært å konstruere nettopp det grunnlaget kontrollen skal prøve.
+   */
+  readonly fieldGroundings: readonly EvidenceFieldGrounding[]
+  /**
+   * Feltene funnet påstår noe om studien, og som kontrolleres ett av gangen.
+   *
+   * `workflow.required_check_fields(uuid)` uten `raw_extraction` og
+   * `source_locator`: de to er provenansfelter, ikke kliniske påstander en lege
+   * bedømmer som egne beslutninger. Garantien de bærer er ikke svekket, men
+   * flyttet dit den er sterkere — hver forankring har sitt eget ordrette utdrag
+   * og sin egen presise peker (migrasjon 005v).
+   */
+  readonly semanticCheckFields: readonly string[]
+  /** Feltene forankringen faktisk dekker. Differansen mot settet over er det som mangler. */
+  readonly groundedCheckFields: readonly string[]
+  /**
+   * Om maskinen har bevist venstresiden for nøyaktig dette grunnlaget.
+   *
+   * `workflow.grounding_machine_proved(uuid)`: det finnes en maskinell
+   * ekstraksjonskontroll som gjelder det grunnlaget raden har nå, og som fant
+   * hvert forankret utdrag ordrett i en reprodusert representasjon. Uten den
+   * kan ingen menneskelig bekreftelse registreres (migrasjon 005x), og
+   * kontrolløkten skal si det før noen begynner å bedømme semantikken.
+   */
+  readonly groundingMachineProved: boolean
   readonly extraction: VerificationExtraction
   readonly verificationsByThisActor: number
 }
@@ -189,8 +269,90 @@ function parseSourceVersion(value: unknown): VerificationSourceVersion | null {
     retrievedFrom: asString(record['retrieved_from'], 'source_version.retrieved_from'),
     externalVersion: asOptionalString(record['external_version']),
     contentHash: asOptionalString(record['content_hash']),
+    representation: asOptionalString(record['representation']),
     hasStorageReference: record['has_storage_reference'] === true,
   }
+}
+
+/**
+ * Kildens identifikatorer.
+ *
+ * En manglende nøkkel leses som en tom liste: et svar fra en eldre
+ * projeksjonsversjon har den ikke, og en kilde uten registrerte
+ * identifikatorer har heller ikke noen. Er nøkkelen der, men ikke en liste, er
+ * det et kontraktsbrudd og sier fra.
+ */
+function parseSourceIdentifiers(value: unknown): readonly SourceIdentifier[] {
+  if (value === null || value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    throw new Error('Svaret fra api.extraction_verification_input mangler listen identifiers.')
+  }
+  return value.map((entry, index) => {
+    const record = asRecord(entry, `identifiers[${String(index)}]`)
+    return {
+      system: asString(
+        record['identifier_system'],
+        `identifiers[${String(index)}].identifier_system`,
+      ),
+      value: asString(record['identifier_value'], `identifiers[${String(index)}].identifier_value`),
+    }
+  })
+}
+
+/** En liste med feltnavn, eller en tom liste når nøkkelen ikke finnes. */
+function parseCheckFieldList(value: unknown, where: string): readonly string[] {
+  if (value === null || value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Svaret fra api.extraction_verification_input mangler listen ${where}.`)
+  }
+  return value.map((entry, index) => asString(entry, `${where}[${String(index)}]`))
+}
+
+/**
+ * Én forankringsrad, eller en feil som sier hva som manglet.
+ *
+ * Leses like strengt som resten: en forankring som stille mistet utdraget sitt,
+ * ville vist kontrolløren en tom rute der grunnlaget skulle stått — og en tom
+ * rute ser ut som «ingenting å innvende», ikke som «grunnlaget mangler».
+ */
+function parseFieldGrounding(value: unknown): EvidenceFieldGrounding {
+  const record = asRecord(value, 'field_groundings[]')
+  return {
+    fieldGroundingId: asString(
+      record['field_grounding_id'],
+      'field_groundings[].field_grounding_id',
+    ),
+    checkField: asString(record['check_field'], 'field_groundings[].check_field'),
+    sourceExcerpt: asString(record['source_excerpt'], 'field_groundings[].source_excerpt'),
+    sourceLocator: asString(record['source_locator'], 'field_groundings[].source_locator'),
+    justification: asString(record['justification'], 'field_groundings[].justification'),
+    createdAt: asString(record['created_at'], 'field_groundings[].created_at'),
+    createdByActorId: asString(
+      record['created_by_actor_id'],
+      'field_groundings[].created_by_actor_id',
+    ),
+  }
+}
+
+/**
+ * Forankringslisten.
+ *
+ * Et svar som er eldre enn migrasjon 005u har ingen nøkkel i det hele tatt, og
+ * en manglende nøkkel leses derfor som en tom liste framfor som en feil. Er
+ * nøkkelen der, men ikke en liste, er det et kontraktsbrudd og sier fra.
+ */
+function parseFieldGroundings(value: unknown): readonly EvidenceFieldGrounding[] {
+  if (value === null || value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    throw new Error('Svaret fra api.extraction_verification_input mangler listen field_groundings.')
+  }
+  return value.map(parseFieldGrounding)
 }
 
 function parseExtraction(value: unknown): VerificationExtraction {
@@ -281,7 +443,18 @@ export function parseVerificationItem(value: unknown): VerificationItem {
     sourcePublicationDatePrecision: asOptionalString(source['publication_date_precision']),
     sourceStatus: asString(source['source_status'], 'items[].source.source_status'),
     sourceStatusNote: asOptionalString(source['status_note']),
+    sourceIdentifiers: parseSourceIdentifiers(source['identifiers']),
     sourceVersion: parseSourceVersion(record['source_version']),
+    fieldGroundings: parseFieldGroundings(record['field_groundings']),
+    semanticCheckFields: parseCheckFieldList(
+      record['semantic_check_fields'],
+      'semantic_check_fields',
+    ),
+    groundingMachineProved: record['grounding_machine_proved'] === true,
+    groundedCheckFields: parseCheckFieldList(
+      record['grounded_check_fields'],
+      'grounded_check_fields',
+    ),
     extraction: parseExtraction(record['extraction']),
     verificationsByThisActor: typeof byThisActor === 'number' ? byThisActor : 0,
   }

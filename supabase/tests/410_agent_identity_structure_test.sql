@@ -106,15 +106,18 @@ select throws_ok(
 -- Identitetens rolle er aktørens rolle, ikke en verdi den kan velge selv. En
 -- identitet som kunne oppgi en annen rolle enn aktøren har, ville vært nettopp
 -- den selvtildelte rettigheten hele modellen skal hindre.
+-- Synteseaktøren er valgt fordi den ennå ikke har en registrert identitet:
+-- agent_identities_actor_key ville ellers felt forsøket på unikhet før
+-- rollekravet fikk si noe, og testen ville prøvd en annen regel enn den sier.
 select throws_ok(
   $$
     insert into provenance.agent_identities
       (actor_id, agent_role, identity_key,
        registered_by_actor_id, registered_by_actor_type, registration_reason)
-    select e.id, 'claim_synthesis', 'agent-identity:feil-rolle',
-           h.id, 'human', 'Prøver å gi ekstraksjonsagenten synteserollen.'
+    select e.id, 'evidence_extraction', 'agent-identity:feil-rolle',
+           h.id, 'human', 'Prøver å gi synteseagenten ekstraksjonsrollen.'
     from provenance.actors e, provenance.actors h
-    where e.actor_key = 'agent:evidence-extraction'
+    where e.actor_key = 'agent:claim-synthesis'
       and h.actor_key = 'human:peder-holman'
   $$,
   '23503', null,
@@ -372,7 +375,7 @@ select has_trigger(
 
 select ok(
   (select p.prosecdef from pg_proc p
-   where p.oid = 'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb)'::regprocedure),
+   where p.oid = 'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb,uuid)'::regprocedure),
   'api.begin_agent_run() er SECURITY DEFINER (DATABASE_ARCHITECTURE.md §50)'
 );
 select ok(
@@ -395,7 +398,7 @@ select ok(
 select ok(
   has_function_privilege(
     'anon',
-    'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb)'::regprocedure,
+    'api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb,uuid)'::regprocedure,
     'execute'
   ),
   'anon har EXECUTE på api.begin_agent_run(), fordi en agent ikke har brukerkonto'
@@ -404,7 +407,7 @@ select is_empty(
   $$
     select f.fn || ':' || r.role_name
     from (values
-      ('api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb)'),
+      ('api.begin_agent_run(text,text,text,text,text,text,text,text,jsonb,uuid)'),
       ('api.complete_agent_run(text,text,uuid,text,jsonb,text)')) as f(fn)
     cross join (values ('service_role'), ('public')) as r(role_name)
     where has_function_privilege(r.role_name, f.fn::regprocedure, 'execute')

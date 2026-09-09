@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(67);
+select plan(68);
 
 -- ---------------------------------------------------------------------------
 -- Testdata som bare finnes inne i denne transaksjonen
@@ -507,11 +507,25 @@ select lives_ok(
         "findings": "Kontrollen hadde bare et sammendrag og kunne ikke konkludere."}'::jsonb)$$,
   'et sammendrag er nok til å registrere at kontrollen ikke kunne konkludere'
 );
-select throws_ok(
+-- Kildepekerkravet lå fram til migrasjon 005y på raden, som
+-- evidence_verifications_locator_checked_check. Det tvang enhver bekreftelse
+-- til å føre opp et felt operasjonen kanskje ikke gjorde — mennesket blir
+-- aldri spurt om kildepekeren. Kravet er flyttet til publiseringsgatens G5b,
+-- som leser unionen over funnets kontroller, og er prøvd der (250).
+select lives_ok(
   $$select pg_temp.insert_evidence_verification(
       '{"checked_fields": ["estimate", "population"]}'::jsonb)$$,
-  '23514', null,
-  'en bekreftet ekstraksjon må ha kontrollert kildepekeren'
+  'en bekreftelse kan dekke bare sin egen operasjon, uten kildepekeren'
+);
+
+select is_empty(
+  $$
+    select c.conname::text
+    from pg_constraint c
+    where c.conrelid = 'workflow.evidence_verifications'::regclass
+      and c.conname = 'evidence_verifications_locator_checked_check'
+  $$,
+  'og radkravet finnes ikke lenger: garantien ligger i gaten, ikke i raden'
 );
 -- Utfallet er bevisst ikke verified her. Med verified ville regelen om at
 -- kildepekeren må være kontrollert slått inn først, og assertionen ville

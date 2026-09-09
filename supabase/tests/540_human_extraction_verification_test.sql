@@ -439,12 +439,21 @@ select throws_ok(
   '23514', null,
   'en bekreftelse kan ikke hvile på et avledet sammendrag alene (ANTIDEP_CONSTITUTION.md §11)'
 );
+-- Kildepekerkravet lå fram til migrasjon 005y på raden. Det tvang enhver
+-- bekreftelse til å føre opp et felt operasjonen kanskje ikke gjorde —
+-- mennesket blir aldri spurt om kildepekeren. Kravet er flyttet til
+-- publiseringsgatens G5b, som leser unionen over funnets kontroller, og er
+-- prøvd der (250). Her prøves bare at raden ikke lenger må lyve.
+--
+-- Kontrollen avvises likevel, men av det nye kravet fra 005x: uten et
+-- maskinbevis kan ingen menneskelig bekreftelse registreres.
 select throws_ok(
   pg_temp.registration_sql('54000000-0000-4000-8000-000000000013',
     (select value from digest where label = 'e13'),
     'verified', 'original_source', $q$array['estimate']$q$, 'null'),
-  '23514', null,
-  'en bekreftet ekstraksjon må ha kontrollert kildepekeren'
+  '22023',
+  'Evidensfunnet mangler kildeforankring for intervention_arm, outcome, reported_direction, availability_semantics, og kan ikke bekreftes.',
+  'en bekreftelse uten kildeforankring avvises, og ikke av et radkrav om kildepekeren'
 );
 select throws_ok(
   pg_temp.registration_sql('54000000-0000-4000-8000-000000000013',

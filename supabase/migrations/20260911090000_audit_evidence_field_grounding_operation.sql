@@ -1,0 +1,24 @@
+-- ============================================================================
+-- Migrasjon 008h — audit.event_operation får verdien evidence_field_grounding_recorded
+--
+-- Utvider auditvokabularet fra migrasjon 008 (§25) en niende gang, slik 008a
+-- til 008g gjorde for de foregående skriveveiene, og får derfor neste bokstav.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor denne ene setningen er sin egen migrasjon
+--
+-- Nøyaktig samme grunn som i 008a til 008g: `ALTER TYPE ... ADD VALUE` kan ikke
+-- brukes i samme transaksjon som verdien den legger til, og migrasjonsløperen
+-- sender hver fil som én transaksjon.
+-- `20260911091000_evidence_field_grounding.sql` bygger om CASE-uttrykkene i
+-- audit.events sine genererte kolonner og events_snapshot_shape_check for å
+-- dekke verdien, og kan derfor ikke også innføre den.
+--
+-- Migrasjonen gjør ingenting annet. Fram til neste migrasjon har kjørt, kan
+-- audit.events ikke motta en rad med denne operasjonen: object_schema og
+-- object_table ville gitt NULL og feilet på sin egen NOT NULL, og
+-- events_snapshot_shape_check ville truffet ELSE false. Det er den samme
+-- bevisste uttømmeligheten migrasjon 008 sin kommentar beskriver.
+-- ============================================================================
+
+alter type audit.event_operation add value 'evidence_field_grounding_recorded';

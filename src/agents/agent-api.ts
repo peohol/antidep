@@ -1,7 +1,7 @@
 // ============================================================================
 // Data API-flaten en agentkjører bruker
 //
-// Seks funksjoner, alle i `api`, alle kalt uten brukersesjon: en agent har ingen
+// Sju funksjoner, alle i `api`, alle kalt uten brukersesjon: en agent har ingen
 // brukerkonto, så kalleren er `anon` i Data API-et og legitimasjonen — ikke
 // Data API-rollen — er kontrollen (migrasjon 005e sin hodekommentar).
 //
@@ -11,11 +11,17 @@
 //   api.register_extraction_verification registrerer resultatet av den (005g)
 //   api.claim_verification_input         grunnlaget claim-kontrollen gjøres mot (005k)
 //   api.register_claim_verification      registrerer resultatet av den (005k)
+//   api.register_agent_extraction        registrerer én forankret ekstraksjon (005v)
 //
-// De to første er felles for alle agentledd; de fire andre kommer i par, ett par
-// per rolle. Paret er grenseflaten det enkelte leddet kjenner, og kjøringen som
-// omslutter det er den samme mekanismen i begge tilfeller — derfor er den
-// skrevet én gang, i `createAgentRunApi`.
+// De to første er felles for alle agentledd. De fire neste kommer i par, ett par
+// per verifikatorrolle: grunnlaget leses, resultatet registreres. Paret er
+// grenseflaten det enkelte leddet kjenner, og kjøringen som omslutter det er den
+// samme mekanismen i alle tilfeller — derfor er den skrevet én gang, i
+// `createAgentRunApi`.
+//
+// Ekstraksjonsleddet har ingen leseflate: det leser ikke Antidep, det leser
+// kilden. Grunnlaget er selve representasjonen, hentet over nett, og forslaget
+// om hva som står i den (`extraction-proposal.ts`).
 //
 // ----------------------------------------------------------------------------
 // Hvorfor typene utvider `Database` framfor å være en ny kopi
@@ -40,6 +46,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 import type { Database } from '../types/database.ts'
+import type { ProposedExtraction, ProposedGrounding } from './extraction-proposal.ts'
 import type { Uuid } from '../types/api.ts'
 import type { AgentCredential } from './agent-credential.ts'
 
@@ -58,6 +65,7 @@ export type AgentDatabase = {
           p_prompt_template_version: string
           p_pipeline_version: string
           p_input_manifest: Record<string, unknown>
+          p_input_source_version_id?: Uuid | null
         }
         Returns: Uuid
       }
@@ -125,6 +133,45 @@ export type AgentDatabase = {
           p_checked_fields: readonly string[]
           p_rationale: string
           p_findings?: string | null
+        }
+        Returns: Uuid
+      }
+      register_agent_extraction: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_run_id: Uuid
+          p_source_id: Uuid
+          p_source_version_id: Uuid
+          p_design_code: string
+          p_population_availability: string
+          p_population_detail: string
+          p_sample_size_availability: string
+          p_intervention_drug_id: Uuid
+          p_comparator_kind: string
+          p_outcome_concept_id: Uuid
+          p_outcome_detail: string
+          p_timepoint_availability: string
+          p_reported_direction: string
+          p_estimate_availability: string
+          p_confidence_interval_availability: string
+          p_source_locator: string
+          p_field_groundings: readonly Record<string, string>[]
+          p_population_id?: Uuid | null
+          p_sample_size?: number | null
+          p_intervention_detail?: string | null
+          p_comparator_drug_id?: Uuid | null
+          p_comparator_detail?: string | null
+          p_timepoint_min?: string | null
+          p_timepoint_max?: string | null
+          p_effect_measure?: string | null
+          p_estimate?: string | null
+          p_estimate_unit?: string | null
+          p_ci_lower?: string | null
+          p_ci_upper?: string | null
+          p_ci_level_percent?: string | null
+          p_limitations_text?: string | null
+          p_source_quote?: string | null
         }
         Returns: Uuid
       }
@@ -201,7 +248,19 @@ export interface RegisterClaimVerificationArgs {
 
 /** Kjøringen, som er den samme mekanismen for hvert agentledd. */
 export interface AgentRunApi {
-  beginRun(premises: AgentRunPremises, inputManifest: Record<string, unknown>): Promise<Uuid>
+  /**
+   * Åpner kjøringen.
+   *
+   * `inputSourceVersionId` er kildeversjonen kjøringen skal lese, og er
+   * påkrevd for rollen `evidence_extraction`: evidensfunnet kjøringen
+   * registrerer, bindes deklarativt til nettopp den (migrasjon 005z).
+   * Verifikatorleddene leser en arbeidskø og lar den stå.
+   */
+  beginRun(
+    premises: AgentRunPremises,
+    inputManifest: Record<string, unknown>,
+    inputSourceVersionId?: Uuid | null,
+  ): Promise<Uuid>
   completeRun(
     agentRunId: Uuid,
     status: 'succeeded' | 'failed' | 'aborted',
@@ -216,6 +275,25 @@ export interface ExtractionVerificationApi extends AgentRunApi {
   registerVerification(args: RegisterVerificationArgs): Promise<Uuid>
 }
 
+/**
+ * Én ekstraksjon, slik `api.register_agent_extraction` tar imot den.
+ *
+ * Formen er databasens, ikke kjørerens: parameterlisten er kontrakten
+ * migrasjon 005v dokumenterer.
+ */
+export interface RegisterAgentExtractionArgs {
+  readonly agentRunId: Uuid
+  readonly sourceId: Uuid
+  readonly sourceVersionId: Uuid
+  readonly extraction: ProposedExtraction
+  readonly fieldGroundings: readonly ProposedGrounding[]
+}
+
+/** Kallet ekstraksjonsagenten gjør, som én grenseflate. */
+export interface EvidenceExtractionApi extends AgentRunApi {
+  registerExtraction(args: RegisterAgentExtractionArgs): Promise<Uuid>
+}
+
 /** Kallene claim-verifikatoren gjør, som én grenseflate. */
 export interface ClaimVerificationApi extends AgentRunApi {
   readInput(agentRunId: Uuid, claimRevisionId: Uuid | null): Promise<unknown>
@@ -223,6 +301,7 @@ export interface ClaimVerificationApi extends AgentRunApi {
 }
 
 /** Agentrollene kjøringene handler i (provenance.agent_role). */
+export const EVIDENCE_EXTRACTION_ROLE = 'evidence_extraction'
 export const EXTRACTION_VERIFICATION_ROLE = 'extraction_verification'
 export const CITATION_SUPPORT_VERIFICATION_ROLE = 'citation_support_verification'
 
@@ -245,7 +324,7 @@ function identityOf(credential: AgentCredential): Identity {
  */
 function createAgentRunApi(client: AgentClient, identity: Identity, role: string): AgentRunApi {
   return {
-    async beginRun(premises, inputManifest) {
+    async beginRun(premises, inputManifest, inputSourceVersionId = null) {
       const { data, error } = await client.rpc('begin_agent_run', {
         ...identity,
         p_agent_role: role,
@@ -255,6 +334,7 @@ function createAgentRunApi(client: AgentClient, identity: Identity, role: string
         p_prompt_template_version: premises.promptTemplateVersion,
         p_pipeline_version: premises.pipelineVersion,
         p_input_manifest: inputManifest,
+        p_input_source_version_id: inputSourceVersionId,
       })
       if (error !== null) {
         fail('api.begin_agent_run', error.message)
@@ -379,6 +459,72 @@ export function createClaimVerificationApi(
       })
       if (error !== null) {
         fail('api.register_claim_verification', error.message)
+      }
+      return data
+    },
+  }
+}
+
+/**
+ * Ekstraksjonsagentens port mot en faktisk Supabase-klient.
+ *
+ * Ett kall, og ingen leseflate: leddet leser kilden, ikke Antidep.
+ * Oversettelsen til databasens parameternavn skjer her framfor å la snake_case
+ * lekke inn i resten av kjøreren, som for de to verifikatorene.
+ */
+export function createEvidenceExtractionApi(
+  client: AgentClient,
+  credential: AgentCredential,
+): EvidenceExtractionApi {
+  const identity = identityOf(credential)
+
+  return {
+    ...createAgentRunApi(client, identity, EVIDENCE_EXTRACTION_ROLE),
+
+    async registerExtraction(args) {
+      const e = args.extraction
+      const { data, error } = await client.rpc('register_agent_extraction', {
+        ...identity,
+        p_agent_run_id: args.agentRunId,
+        p_source_id: args.sourceId,
+        p_source_version_id: args.sourceVersionId,
+        p_design_code: e.designCode,
+        p_population_availability: e.populationAvailability,
+        p_population_detail: e.populationDetail,
+        p_sample_size_availability: e.sampleSizeAvailability,
+        p_intervention_drug_id: e.interventionDrugId,
+        p_comparator_kind: e.comparatorKind,
+        p_outcome_concept_id: e.outcomeConceptId,
+        p_outcome_detail: e.outcomeDetail,
+        p_timepoint_availability: e.timepointAvailability,
+        p_reported_direction: e.reportedDirection,
+        p_estimate_availability: e.estimateAvailability,
+        p_confidence_interval_availability: e.confidenceIntervalAvailability,
+        p_source_locator: e.sourceLocator,
+        p_field_groundings: args.fieldGroundings.map((grounding) => ({
+          check_field: grounding.checkField,
+          source_excerpt: grounding.sourceExcerpt,
+          source_locator: grounding.sourceLocator,
+          justification: grounding.justification,
+        })),
+        p_population_id: e.populationId,
+        p_sample_size: e.sampleSize,
+        p_intervention_detail: e.interventionDetail,
+        p_comparator_drug_id: e.comparatorDrugId,
+        p_comparator_detail: e.comparatorDetail,
+        p_timepoint_min: e.timepointMin,
+        p_timepoint_max: e.timepointMax,
+        p_effect_measure: e.effectMeasure,
+        p_estimate: e.estimate,
+        p_estimate_unit: e.estimateUnit,
+        p_ci_lower: e.ciLower,
+        p_ci_upper: e.ciUpper,
+        p_ci_level_percent: e.ciLevelPercent,
+        p_limitations_text: e.limitationsText,
+        p_source_quote: e.sourceQuote,
+      })
+      if (error !== null) {
+        fail('api.register_agent_extraction', error.message)
       }
       return data
     },

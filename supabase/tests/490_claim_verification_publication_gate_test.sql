@@ -306,19 +306,23 @@ select pg_temp.age_earlier_verifications();
 --
 -- Raden får sine egne kontrollrader, slik at den er fullstendig på alle andre
 -- måter: det eneste som skiller den fra en gyldig kontroll, er mandatet.
+-- Registreringsnummeret oppgis av samme grunn som avtrykket: triggeren som
+-- tildeler det (migrasjon 005å) er også slått av, og en rad uten nummer ville
+-- ikke hatt noen plass i rekkefølgen.
 set local session_replication_role = replica;
 with parent as (
   insert into workflow.claim_verifications
     (claim_revision_id, verified_revision_creator_actor_id, verifier_actor_id, outcome,
      source_access, source_support, population_match, comparator_match, timeframe_match,
      direction_and_magnitude, qualifiers_complete, contradictory_evidence_represented,
-     rationale, verified_at, verified_evidence_set_digest)
+     rationale, verified_at, verified_evidence_set_digest, registration_ordinal)
   select '49000000-0000-4000-8000-000000000031',
          (select id from fixture where name = 'synthesis'),
          (select id from fixture where name = 'extractor'),
          'verified', 'original_source', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok',
          'Prøve i 490: kontroll registrert av en aktør uten mandat.', now(),
-         knowledge.claim_evidence_set_digest('49000000-0000-4000-8000-000000000031')
+         knowledge.claim_evidence_set_digest('49000000-0000-4000-8000-000000000031'),
+         nextval('workflow.claim_verification_registration_seq')
   returning id, claim_revision_id
 )
 insert into workflow.claim_verification_citations

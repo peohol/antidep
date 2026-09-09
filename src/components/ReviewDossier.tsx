@@ -52,6 +52,7 @@ import {
 import { formatTimestampWithClock } from '../lib/norwegian-format'
 import type { ClaimEvidenceLink, ClaimRevisionInput } from '../agents/claim-verification-input'
 import type {
+  ClaimReviewRevision,
   ClaimVerificationRecord,
   EvidenceAssessmentRecord,
   PublicationGateState,
@@ -508,5 +509,48 @@ export function PublicationGatePanel({
         som de foregående er på plass.
       </p>
     </div>
+  )
+}
+
+// ----------------------------------------------------------------------------
+// Tekniske detaljer
+//
+// Hele dossieret bak én flate: påstandsteksten med alle feltene, hver
+// evidenslenke med funnet og den gjeldende ekstraksjonskontrollen, registrert
+// evidens som ikke er lenket, evidensvurderingen, kontrollhistorikken,
+// beslutningshistorikken og publiseringsgatens svar.
+//
+// Utenfor den kliniske arbeidsflyten med hensikt. Kontrolløren trenger det ikke
+// for å ta én beslutning om gangen — men den som vil se hele bildet, skal kunne
+// det uten å gå et annet sted (PRODUCT_INFORMATION_ARCHITECTURE.md §50).
+// ----------------------------------------------------------------------------
+
+export function ReviewTechnicalDetails({ revision }: { readonly revision: ClaimReviewRevision }) {
+  const { dossier } = revision
+  return (
+    <details className="technical-details">
+      <summary>Tekniske detaljer</summary>
+      <PublicationGatePanel
+        gate={revision.publicationGate}
+        isPublished={revision.isPublishedRevision}
+      />
+      <ClaimStatementPanel revision={dossier} />
+      <section className="review-panel">
+        <h3>{`Evidensgrunnlaget (${String(dossier.links.length)} lenker)`}</h3>
+        {dossier.links.map((link) => (
+          <EvidenceLinkPanel key={link.claimEvidenceLinkId} link={link} />
+        ))}
+      </section>
+      <UnlinkedEvidencePanel revision={dossier} />
+      <EvidenceAssessmentPanel assessment={revision.evidenceAssessment} />
+      <VerificationHistoryPanel
+        currentId={revision.currentClaimVerificationId}
+        records={revision.claimVerifications}
+      />
+      <DecisionHistoryPanel
+        currentId={revision.currentReviewDecisionId}
+        records={revision.reviewDecisions}
+      />
+    </details>
   )
 }

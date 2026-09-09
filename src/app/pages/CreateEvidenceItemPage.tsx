@@ -588,6 +588,7 @@ interface FormState {
   readonly limitationsText: string
   readonly sourceLocator: string
   readonly sourceQuote: string
+  /** Kildeforankringen per kontrollfelt. Feltene som ikke fylles ut, står tomme. */
 }
 
 const NO_SELECTION = ''
@@ -805,6 +806,7 @@ function EvidenceItemForm({
     ) {
       return
     }
+
     setProblem(null)
 
     setStatus('submitting')

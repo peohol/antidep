@@ -32,6 +32,7 @@ import type {
   KnowledgeType,
   ReportedDirection,
   ReviewOutcome,
+  SourceRepresentation,
   SourceStatus,
   SourceType,
   StudyDesign,
@@ -265,6 +266,23 @@ export const VERIFICATION_CHECK_RESULT_LABELS: Record<VerificationCheckResult, s
   // Ikke «ukjent» og ikke «ikke relevant»: punktet ble forsøkt bedømt og lot seg
   // ikke bedømme, og det er en registrert usikkerhet (ANTIDEP_CONSTITUTION.md §6).
   not_assessable: 'Lot seg ikke bedømme',
+}
+
+/**
+ * Hva slags representasjon av kilden en ekstraksjon faktisk bygde på
+ * (EVIDENCE_PIPELINE.md §13). Formulert så den kan leses inn i en setning:
+ * «Ekstraksjonen bygger på …».
+ *
+ * Dette er en annen opplysning enn `VERIFICATION_SOURCE_ACCESS_LABELS`, som
+ * sier hva *kontrolløren* har foran seg.
+ */
+export const SOURCE_REPRESENTATION_LABELS: Record<SourceRepresentation, string> = {
+  full_text: 'Fullteksten av kilden',
+  abstract: 'Bare sammendraget av kilden',
+  registry_record: 'En registeroppføring om studien',
+  regulatory_summary: 'Et sammendrag fra en legemiddelmyndighet',
+  secondary_report: 'En annen kildes omtale av studien',
+  other_limited: 'Et annet, begrenset grunnlag',
 }
 
 export const VERIFICATION_SOURCE_ACCESS_LABELS: Record<VerificationSourceAccess, string> = {

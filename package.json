@@ -22,8 +22,10 @@
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
     "db:test:lock": "./scripts/db-lock-test.sh",
+    "db:test:chain": "node scripts/agent-chain-test.ts",
     "agent:verify-extraction": "node --env-file-if-exists=.env.agent.local src/agents/verify-extraction-cli.ts",
-    "agent:verify-claims": "node --env-file-if-exists=.env.agent.local src/agents/verify-claims-cli.ts"
+    "agent:verify-claims": "node --env-file-if-exists=.env.agent.local src/agents/verify-claims-cli.ts",
+    "agent:extract-evidence": "node --env-file-if-exists=.env.agent.local src/agents/extract-evidence-cli.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

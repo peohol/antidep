@@ -1,35 +1,61 @@
+// ============================================================================
+// Kontrolløkten for én påstandsrevisjon
+//
+// Testene beskriver hele den menneskelige kjeden i én flyt: påstanden, kilden,
+// feltene, de sju kontrollpunktene, publiseringsbeslutningen og publiseringen.
+// Og de beskriver grensene som ikke er myket opp: fire beslutningsobjekter,
+// ingen «godkjenn alt», og et utfall som utledes framfor å velges.
+// ============================================================================
+
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import {
+  TEST_EXTRACTION_IDS,
   TEST_REVIEW_IDS,
   TEST_USER_IDS,
   claimReviewPayload,
+  extractionReviewPayload,
   renderRoute,
-  reviewDecisionRecord,
-  reviewLink,
-  reviewVerificationRecord,
+  type FakeApi,
 } from '../test-support'
 
 const PATH = `/review/${TEST_REVIEW_IDS.revision}`
 
 /**
- * Panelet under én overskrift.
- *
- * Flere av tekstene finnes med vilje flere steder på flaten — kildetittelen står
- * både i grunnlaget og over feltene som gjelder den lenken, og
- * «Godkjent for publisering» står både i historikken og som et valg i skjemaet.
- * Testene sier derfor hvilket panel de spør i, framfor å be om at teksten er
- * unik.
+ * Feltene kontrolløren får spørsmål om for fiksturens evidensfunn, i den
+ * rekkefølgen `workflow.semantic_check_fields` gir dem.
  */
-function panel(heading: string): HTMLElement {
-  const found = screen.getByRole('heading', { name: heading }).closest('section')
-  if (found === null) {
-    throw new Error(`Fant ingen seksjon rundt overskriften «${heading}».`)
-  }
-  return found
-}
+const SEMANTIC_FIELDS = [
+  'Behandlingsarmen',
+  'Endepunktet',
+  'Retningen kilden rapporterer',
+  'Begrunnelsen for felter uten verdi',
+  'Effektmålet',
+  'Sammenligningsarmen',
+  'Populasjonen funnet gjelder',
+  'Antall deltakere',
+  'Tidspunktet målingen gjelder',
+  'Selve estimatet',
+  'Konfidensintervallet',
+]
 
-function renderReview(revisionOverrides: Record<string, unknown> = {}, reviewerActorId?: string) {
+const CHECKPOINTS = [
+  'Kildestøtte',
+  'Populasjon',
+  'Komparator',
+  'Tidsrom',
+  'Retning og størrelse',
+  'Forbehold',
+  'Motstridende evidens',
+]
+
+const GATE_OPEN = { status: 'passes' } as const
+
+function renderClaimControl(
+  revisionOverrides: Record<string, unknown> = {},
+  reviewerActorId?: string,
+  api: FakeApi = {},
+) {
   return renderRoute(PATH, {
     api: {
       claim_review_workspace: {
@@ -38,12 +64,66 @@ function renderReview(revisionOverrides: Record<string, unknown> = {}, reviewerA
             ? claimReviewPayload(revisionOverrides)
             : claimReviewPayload(revisionOverrides, reviewerActorId),
       },
+      ...api,
     },
     auth: { initialUserId: TEST_USER_IDS.a },
   })
 }
 
-describe('Reviewarbeidsflaten — ikke innlogget', () => {
+function openStep(): HTMLElement {
+  const region = document.querySelector('.control-step[data-state="active"]')
+  if (region === null) {
+    throw new Error('Ingen steg står åpent.')
+  }
+  return region as HTMLElement
+}
+
+function clickAnswer(label: string): void {
+  fireEvent.click(within(openStep()).getByRole('button', { name: label }))
+}
+
+/**
+ * Overskriften på det åpne steget.
+ *
+ * Leses av overskriften og ikke av teksten i steget: tolkningen inne i steget
+ * begynner med det samme feltnavnet («Behandlingsarmen er virkestoff a»), og et
+ * tekstsøk ville truffet begge.
+ */
+function openStepTitle(): string {
+  return openStep().querySelector('.control-step__title')?.textContent ?? ''
+}
+
+async function answerYesThrough(titles: readonly string[]): Promise<void> {
+  for (const title of titles) {
+    await waitFor(() => {
+      expect(openStepTitle()).toContain(title)
+    })
+    clickAnswer('Ja')
+  }
+}
+
+async function startControl(): Promise<void> {
+  fireEvent.click(await screen.findByRole('button', { name: 'Start kontroll' }))
+}
+
+/** Går gjennom kildetilgangen og alle feltene, og lagrer ekstraksjonskontrollen. */
+async function completeExtractionPart(): Promise<void> {
+  await startControl()
+  await waitFor(() => {
+    expect(openStepTitle()).toContain('Hvilken tilgang har du til kilden?')
+  })
+  clickAnswer('Ja')
+  // Tittelen bærer et kildeprefiks når økten dekker flere kildegrunnlag.
+  await answerYesThrough(SEMANTIC_FIELDS)
+  fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
+}
+
+/** Svarer «Ja» på lenken og på alle sju kontrollpunktene. */
+async function completeClaimPart(): Promise<void> {
+  await answerYesThrough(['Grunnlagets rolle', ...CHECKPOINTS])
+}
+
+describe('Kontrolløkten — ikke innlogget', () => {
   it('viser en henvisning til Min tilgang, og spør ikke databasen', async () => {
     const { rpcCalls } = renderRoute(PATH)
     expect(await screen.findByText('Du må logge inn for å vurdere en påstand.')).toBeInTheDocument()
@@ -51,475 +131,317 @@ describe('Reviewarbeidsflaten — ikke innlogget', () => {
   })
 })
 
-describe('Reviewarbeidsflaten — grunnlaget', () => {
-  it('henter grunnlaget for nøyaktig den revisjonen adressen peker på', async () => {
-    const { rpcCalls } = renderReview()
-    await screen.findByRole('heading', { name: 'Påstanden' })
+describe('Kontrolløkten — innledningen', () => {
+  it('viser påstanden som skal kontrolleres, og ingenting mer', async () => {
+    renderClaimControl()
+    // Ordlyden står også i de tekniske detaljene; her spørres det om
+    // innledningssteget, der den er selve spørsmålet.
+    await screen.findByRole('button', { name: 'Start kontroll' })
+    expect(document.querySelector('.control-claim-statement')?.textContent).toBe(
+      'Testpåstand til vurdering: virkestoff a er assosiert med vektøkning.',
+    )
+    // Kildekontrollen begynner ikke før økten er startet.
+    expect(screen.queryByText('Har du tilgang til fullteksten?')).not.toBeInTheDocument()
+  })
+
+  it('henter både påstanden og ekstraksjonsgrunnlaget bak hver lenke', async () => {
+    const { rpcCalls } = renderClaimControl()
+    await screen.findByRole('button', { name: 'Start kontroll' })
     expect(rpcCalls).toEqual([
       {
         name: 'claim_review_workspace',
         args: { p_claim_revision_id: TEST_REVIEW_IDS.revision },
       },
+      {
+        name: 'extraction_review_workspace',
+        args: { p_evidence_item_id: TEST_REVIEW_IDS.evidenceItem },
+      },
     ])
   })
+})
 
-  it('viser påstandens ordlyd og de strukturerte feltene', async () => {
-    renderReview()
+describe('Kontrolløkten — kildegrunnlaget', () => {
+  it('spør om relasjonen mellom funnet og påstanden i naturlig språk', async () => {
+    renderClaimControl()
+    await completeExtractionPart()
+    await waitFor(() => {
+      expect(openStepTitle()).toContain('Grunnlagets rolle')
+    })
+    expect(
+      within(openStep()).getByText('Antidep har registrert at dette funnet støtter påstanden.'),
+    ).toBeInTheDocument()
+  })
+
+  it('går videre til kildetilgangen når kontrollen startes', async () => {
+    renderClaimControl()
+    await startControl()
+    expect(
+      await within(openStep()).findByText('Har du tilgang til fullteksten?'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Åpne kilden' })).toHaveAttribute(
+      'href',
+      'https://doi.org/10.1000/testkilde-a.1',
+    )
+  })
+
+  it('hopper over feltkontrollen når ekstraksjonen allerede er fullt kontrollert', async () => {
+    renderClaimControl({}, undefined, {
+      extraction_review_workspace: {
+        data: extractionReviewPayload({
+          covered_check_fields: (extractionReviewPayload()['item'] as Record<string, unknown>)[
+            'required_check_fields'
+          ],
+        }),
+      },
+    })
+    await startControl()
+    await within(openStep()).findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    const heading = await screen.findByRole('button', {
+      name: /Ekstraksjonen er allerede kontrollert/,
+    })
+    fireEvent.click(heading)
     expect(
       await screen.findByText(
-        'Testpåstand til vurdering: virkestoff a er assosiert med vektøkning.',
+        'Alle feltene dette funnet påstår noe om, er kontrollert mot kilden fra før.',
       ),
     ).toBeInTheDocument()
-    expect(screen.getByText('Voksne, korttidsbehandling ved depresjon')).toBeInTheDocument()
-    expect(screen.getByText('Evidensbasert syntese')).toBeInTheDocument()
-  })
-
-  it('viser evidenslenken med kilde, lokator, kildeversjon og fingeravtrykk', async () => {
-    renderReview()
-    await screen.findByRole('heading', { name: 'Påstanden' })
-    const evidence = within(panel('Evidensgrunnlaget (1 lenker)'))
-    expect(evidence.getByText('Tabell 2, side 114')).toBeInTheDocument()
-    expect(evidence.getByText('https://eksempel.invalid/testkilde-a')).toBeInTheDocument()
-    expect(evidence.getByText(new RegExp(`sha256:${'a'.repeat(64)}`))).toBeInTheDocument()
-  })
-
-  it('viser den gjeldende ekstraksjonsverifikasjonen for hvert funn', async () => {
-    renderReview()
-    await screen.findByRole('heading', { name: 'Påstanden' })
-    expect(
-      within(panel('Evidensgrunnlaget (1 lenker)')).getByText(/Bekreftet · Originalkilden/),
-    ).toBeInTheDocument()
-  })
-
-  it('skiller «ingen registrert ekstraksjonskontroll» fra en negativ kontroll', async () => {
-    renderReview({ links: [reviewLink({ current_extraction_verification: null })] })
-    expect(await screen.findByText(/Ingen ekstraksjonskontroll er registrert/)).toBeInTheDocument()
-  })
-
-  it('viser evidensvurderingen med GRADE-domenene', async () => {
-    renderReview()
-    await screen.findByRole('heading', { name: 'Påstanden' })
-    const assessment = within(panel('Evidensvurdering'))
-    expect(assessment.getByText('Lav sikkerhet')).toBeInTheDocument()
-    // To domener er «Alvorlig» og to «Lot seg ikke vurdere». Det siste er ikke
-    // det samme som «Ikke alvorlig» (ANTIDEP_CONSTITUTION.md §6), og begge
-    // gjengis for hvert domene framfor å slås sammen.
-    expect(assessment.getAllByText('Alvorlig')).toHaveLength(2)
-    expect(assessment.getAllByText('Lot seg ikke vurdere')).toHaveLength(2)
-    expect(assessment.getByText('Ikke alvorlig')).toBeInTheDocument()
-  })
-
-  it('sier at en tom liste over ulenket evidens ikke betyr at det ikke finnes noen', async () => {
-    renderReview()
-    expect(
-      await screen.findByText(/Kontrollpunktet om urepresentert motstridende evidens/),
-    ).toBeInTheDocument()
-  })
-
-  it('viser urepresentert registrert evidens når den finnes', async () => {
-    renderReview({
-      unlinked_related_evidence: [
-        {
-          evidence_item_id: '66666666-6666-4666-8666-999999999999',
-          source_title: 'Ulenket testkilde',
-          source_status: 'active',
-          intervention_drug_name: 'virkestoff a',
-          outcome_label: 'vektendring',
-          reported_direction: 'decrease',
-          effect_measure: null,
-          estimate: null,
-          estimate_unit: null,
-          created_by_actor_key: 'agent:evidence-extraction',
-        },
-      ],
-    })
-    expect(await screen.findByText('Ulenket testkilde')).toBeInTheDocument()
   })
 })
 
-describe('Reviewarbeidsflaten — blokkerende mangler', () => {
-  it('gjengir publiseringsgatens egen setning, uten å regne den ut på nytt', async () => {
-    renderReview()
-    expect(await screen.findByText('Publiseringen er blokkert.')).toBeInTheDocument()
-    expect(
-      screen.getByText('Revisjon har ingen registrert claim-verifikasjon.'),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('En separat kontrollfase skal ha forsøkt å falsifisere påstanden.'),
-    ).toBeInTheDocument()
-  })
-
-  it('sier at gaten stopper på det første kravet, slik at én blokkering ikke leses som den eneste', async () => {
-    renderReview()
-    expect(
-      await screen.findByText(/Gaten stopper på det første kravet som ikke er oppfylt/),
-    ).toBeInTheDocument()
-  })
-
-  it('viser at gaten passerer når den gjør det, og at publisering er en annen handling', async () => {
-    renderReview({ publication_gate: { status: 'passes' } })
-    expect(await screen.findByText(/Publiseringsgaten passerer/)).toBeInTheDocument()
-    // Både gatepanelet og publiseringsskjemaet sier at publisering krever en
-    // annen rettighet. Begge skal si det: den ene forklarer tilstanden, den
-    // andre står ved selve handlingen.
-    expect(screen.getAllByText(/krever\s+publisher-rollen/)).toHaveLength(2)
-  })
-
-  // Publiseringen er en tredje handling, og den tilbys bare når gaten faktisk
-  // passerer. Tilstanden leses av gaten selv; flaten regner den ikke ut.
-  it('tilbyr publisering bare når publiseringsgaten passerer', async () => {
-    renderReview({ publication_gate: { status: 'passes' } })
-    expect(await screen.findByRole('button', { name: 'Publiser revisjonen' })).toBeInTheDocument()
-  })
-
-  it('tilbyr ikke publisering når gaten blokkerer', async () => {
-    renderReview()
-    expect(await screen.findByText(/Publiseringen er blokkert/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Publiser revisjonen' })).toBeNull()
-  })
-})
-
-describe('Reviewarbeidsflaten — publiseringen', () => {
-  // Publisering er en tredje handling med en tredje rettighet, og den er ikke
-  // en del av godkjenningen (MVP_IMPLEMENTATION_PLAN.md §16).
-  it('sender revisjonen og begrunnelsen til publiseringshandlingen', async () => {
-    const { rpcCalls } = renderRoute(PATH, {
-      api: {
-        claim_review_workspace: {
-          data: claimReviewPayload({ publication_gate: { status: 'passes' } }),
-        },
-      },
-      auth: { initialUserId: TEST_USER_IDS.a },
-    })
-    await screen.findByRole('button', { name: 'Publiser revisjonen' })
-    fireEvent.change(screen.getByLabelText('Begrunnelse for publiseringen'), {
-      target: { value: 'Grunnlaget er kontrollert og godkjent.' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Publiser revisjonen' }))
+describe('Kontrolløkten — de sju kontrollpunktene', () => {
+  it('stiller dem ett om gangen, med bare det grunnlaget punktet handler om', async () => {
+    renderClaimControl()
+    await completeExtractionPart()
+    await answerYesThrough(['Grunnlagets rolle'])
     await waitFor(() => {
-      expect(rpcCalls).toContainEqual({
-        name: 'publish_claim_revision',
-        args: {
-          p_claim_revision_id: TEST_REVIEW_IDS.revision,
-          p_reason: 'Grunnlaget er kontrollert og godkjent.',
-        },
-      })
+      expect(openStepTitle()).toContain('Kildestøtte')
     })
+    const step = within(openStep())
+    expect(
+      step.getByText('Støtter det registrerte grunnlaget faktisk ordlyden i påstanden?'),
+    ).toBeInTheDocument()
+    expect(step.getByText('Påstanden')).toBeInTheDocument()
+    expect(step.getByText('Grunnlaget')).toBeInTheDocument()
+    // Neste punkt er ikke framme.
+    expect(
+      screen.queryByText('Svarer populasjonen påstanden gjelder for til den grunnlaget dekker?'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('viser alle sju i tur og orden, med spørsmålet hvert av dem svarer på', async () => {
+    renderClaimControl()
+    await completeExtractionPart()
+    await answerYesThrough(['Grunnlagets rolle'])
+    for (const checkpoint of CHECKPOINTS) {
+      await waitFor(() => {
+        expect(openStepTitle()).toContain(checkpoint)
+      })
+      // Spørsmålet punktet svarer på står i steget, ikke bare etiketten.
+      expect(within(openStep()).getByText(/\?$/)).toBeInTheDocument()
+      clickAnswer('Ja')
+    }
+  })
+
+  it('registrerer kontrollen med de sju punktene, lenkene og et utledet utfall', async () => {
+    const { rpcCalls } = renderClaimControl()
+    await completeExtractionPart()
+    await completeClaimPart()
+    expect(await screen.findByText('Dette blir registrert som: Bekreftet.')).toBeInTheDocument()
+    // Ingen utfallsmeny og ingen retrospektiv fritekst.
+    expect(screen.queryByLabelText('Samlet utfall')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Faglig begrunnelse')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
+    await waitFor(() => {
+      expect(rpcCalls.some((call) => call.name === 'register_human_claim_verification')).toBe(true)
+    })
+    const args = rpcCalls.find((call) => call.name === 'register_human_claim_verification')
+      ?.args as Record<string, unknown>
+    expect(args['p_outcome']).toBe('verified')
+    expect(args['p_source_support']).toBe('ok')
+    expect(args['p_contradictory_evidence_represented']).toBe('ok')
+    expect(args['p_seen_evidence_set_digest']).toBe(`sha256-v1:${'d'.repeat(64)}`)
+    expect(args['p_findings']).toBeNull()
+    const citations = args['p_citations'] as Record<string, unknown>[]
+    expect(citations).toHaveLength(1)
+    expect(citations[0]?.['relationship_supported']).toBe('ok')
+    // Kildetilgangen er den kontrolløren allerede oppga for den kilden.
+    expect(citations[0]?.['source_access']).toBe('original_source')
+    expect(citations[0]?.['source_version_id']).toBe(TEST_EXTRACTION_IDS.sourceVersion)
+  })
+
+  it('utleder «må rettes» av et avvik på ett kontrollpunkt', async () => {
+    renderClaimControl()
+    await completeExtractionPart()
+    await answerYesThrough(['Grunnlagets rolle'])
+    await waitFor(() => {
+      expect(openStepTitle()).toContain('Kildestøtte')
+    })
+    clickAnswer('Nei')
+    fireEvent.change(screen.getByLabelText('Hva er feil, eller hvordan bør dette forstås?'), {
+      target: { value: 'Grunnlaget måler noe annet enn ordlyden sier.' },
+    })
+    await answerYesThrough(CHECKPOINTS.slice(1))
+    expect(await screen.findByText('Dette blir registrert som: Må rettes.')).toBeInTheDocument()
+  })
+})
+
+describe('Kontrolløkten — publiseringsbeslutningen', () => {
+  it('oppsummerer kontrollen, og spør så om påstanden kan publiseres', async () => {
+    renderClaimControl({ approval_readiness: GATE_OPEN })
+    await completeExtractionPart()
+    await completeClaimPart()
+    fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
+
+    expect(
+      await screen.findByText(/19 av 19 nødvendige delkontroller er bekreftet\./),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Ingen åpne avvik\./)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Godkjenn for publisering' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Be om endringer' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Avvis' })).toBeInTheDocument()
+  })
+
+  it('krever ingen fritekst for en godkjenning, og skriver begrunnelsen selv', async () => {
+    const { rpcCalls } = renderClaimControl({ approval_readiness: GATE_OPEN })
+    await completeExtractionPart()
+    await completeClaimPart()
+    fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Godkjenn for publisering' }))
+    expect(
+      screen.queryByLabelText('Hva må endres, eller hvorfor holder ikke påstanden?'),
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lagre beslutningen' }))
+    await waitFor(() => {
+      expect(rpcCalls.some((call) => call.name === 'register_publication_approval')).toBe(true)
+    })
+    const args = rpcCalls.find((call) => call.name === 'register_publication_approval')
+      ?.args as Record<string, unknown>
+    expect(args['p_decision']).toBe('approved')
+    expect(args['p_rationale']).toContain('Godkjent for publisering etter en fullført kontrolløkt')
+  })
+
+  it('krever en konkret begrunnelse for «Be om endringer»', async () => {
+    renderClaimControl({ approval_readiness: GATE_OPEN })
+    await completeExtractionPart()
+    await completeClaimPart()
+    fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Be om endringer' }))
+    const note = await screen.findByLabelText('Hva må endres, eller hvorfor holder ikke påstanden?')
+    expect(screen.getByRole('button', { name: 'Lagre beslutningen' })).toBeDisabled()
+    fireEvent.change(note, { target: { value: 'Forbeholdet om kort oppfølging mangler.' } })
+    expect(screen.getByRole('button', { name: 'Lagre beslutningen' })).toBeEnabled()
+  })
+
+  // Godkjenningen kan ikke gis før grunnlaget er kontrollert. Vilkåret leses av
+  // den samme funksjonen skriveveien bruker, ikke regnet ut på nytt her.
+  it('tilbyr ikke godkjenning når databasen sier at forutsetningene ikke er oppfylt', async () => {
+    renderClaimControl()
+    await completeExtractionPart()
+    await completeClaimPart()
+    fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
+    expect(
+      await screen.findByText(
+        'Du kan ikke gå god for publisering ennå: grunnlaget er ikke ferdig kontrollert.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Godkjenn for publisering' }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Avvis' })).toBeInTheDocument()
+  })
+})
+
+describe('Kontrolløkten — publiseringen', () => {
+  it('er en egen handling, og tilbys bare når publiseringsgaten passerer', async () => {
+    const { rpcCalls } = renderClaimControl({
+      approval_readiness: GATE_OPEN,
+      publication_gate: GATE_OPEN,
+    })
+    await completeExtractionPart()
+    await completeClaimPart()
+    fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Godkjenn for publisering' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Lagre beslutningen' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Publiser påstanden' }))
+    await waitFor(() => {
+      expect(rpcCalls.some((call) => call.name === 'publish_claim_revision')).toBe(true)
+    })
+    const args = rpcCalls.find((call) => call.name === 'publish_claim_revision')?.args as Record<
+      string,
+      unknown
+    >
+    expect(args['p_claim_revision_id']).toBe(TEST_REVIEW_IDS.revision)
+    expect(args['p_reason']).toContain('Publisert etter fullført kontroll')
+  })
+
+  it('viser gatens egen blokkering framfor en publiseringsknapp', async () => {
+    renderClaimControl()
+    await completeExtractionPart()
+    await completeClaimPart()
+    fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
+    // Vent til flyten har gått videre til beslutningen; et manuelt åpnet steg
+    // slipper taket når økten selv går videre.
+    await waitFor(() => {
+      expect(openStepTitle()).toContain('Kan denne påstanden publiseres slik den står?')
+    })
+    // Steget finnes, men det inneholder gatens egen begrunnelse og ingen knapp.
+    fireEvent.click(screen.getByRole('button', { name: /^Publiser påstanden/ }))
+    expect(await screen.findByText('Påstanden kan ikke publiseres ennå.')).toBeInTheDocument()
+    expect(
+      within(openStep()).queryByRole('button', { name: 'Publiser påstanden' }),
+    ).not.toBeInTheDocument()
+    // Gatens egen setning står i steget, med den samme ordlyden databasen ga.
+    // Den står også i de tekniske detaljene, så spørringen navngir steget.
+    expect(
+      within(openStep()).getByText('Revisjon har ingen registrert claim-verifikasjon.'),
+    ).toBeInTheDocument()
   })
 
   it('viser databasens egen avvisning når kalleren mangler publisher-rollen', async () => {
-    renderRoute(PATH, {
-      api: {
-        claim_review_workspace: {
-          data: claimReviewPayload({ publication_gate: { status: 'passes' } }),
-        },
-        publish_claim_revision: {
-          error: 'Brukeren har ikke gyldig publisher-rolle for dette innholdsområdet.',
-        },
+    renderClaimControl({ approval_readiness: GATE_OPEN, publication_gate: GATE_OPEN }, undefined, {
+      publish_claim_revision: {
+        error: 'Kalleren har ikke publisher-rollen som kreves for å publisere.',
       },
-      auth: { initialUserId: TEST_USER_IDS.a },
     })
-    await screen.findByRole('button', { name: 'Publiser revisjonen' })
-    fireEvent.change(screen.getByLabelText('Begrunnelse for publiseringen'), {
-      target: { value: 'Prøve.' },
+    await completeExtractionPart()
+    await completeClaimPart()
+    fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Godkjenn for publisering' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Lagre beslutningen' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Publiser påstanden' }))
+    expect(
+      await screen.findByText(/Kalleren har ikke publisher-rollen som kreves for å publisere\./),
+    ).toBeInTheDocument()
+  })
+})
+
+describe('Kontrolløkten — grensene', () => {
+  it('sier at man ikke kan kontrollere sin egen påstand', async () => {
+    renderClaimControl({}, TEST_REVIEW_IDS.synthesisActor)
+    await startControl()
+    const heading = await screen.findByRole('button', {
+      name: /Du kan ikke kontrollere din egen påstand/,
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Publiser revisjonen' }))
+    fireEvent.click(heading)
     expect(
       await screen.findByText(
-        /Brukeren har ikke gyldig publisher-rolle for dette innholdsområdet\./,
-      ),
-    ).toBeInTheDocument()
-  })
-})
-
-describe('Reviewarbeidsflaten — de to beslutningene', () => {
-  it('har to atskilte skjemaer og ingen «godkjenn alt»-knapp', async () => {
-    renderReview()
-    expect(await screen.findByRole('button', { name: 'Registrer kontrollen' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Registrer beslutningen' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /godkjenn alt/i })).toBeNull()
-  })
-
-  it('viser alle sju kontrollpunktene med spørsmålet hvert av dem svarer på', async () => {
-    renderReview()
-    await screen.findByRole('button', { name: 'Registrer kontrollen' })
-    for (const label of [
-      'Kildestøtte',
-      'Populasjon',
-      'Komparator',
-      'Tidsrom',
-      'Retning og størrelse',
-      'Forbehold',
-      'Motstridende evidens',
-    ]) {
-      expect(screen.getByLabelText(label)).toBeInTheDocument()
-    }
-    expect(
-      screen.getByText('Finnes det relevant motstridende evidens som ikke er representert?'),
-    ).toBeInTheDocument()
-  })
-
-  it('starter med det mest forbeholdne valget, slik at et urørt felt ikke hevder noe', async () => {
-    renderReview()
-    expect(await screen.findByLabelText('Kildestøtte')).toHaveValue('not_assessable')
-    expect(screen.getByLabelText('Samlet utfall')).toHaveValue('uncertain')
-    expect(screen.getByLabelText('Hva hadde du tilgang til?')).toHaveValue('derived_summary')
-  })
-
-  it('sender kontrollen med avtrykket flaten faktisk viste, og med lenkens egen kildeversjon', async () => {
-    const { rpcCalls } = renderReview()
-    await screen.findByRole('button', { name: 'Registrer kontrollen' })
-
-    fireEvent.change(screen.getByLabelText('Hva hadde du tilgang til?'), {
-      target: { value: 'original_source' },
-    })
-    fireEvent.change(screen.getByLabelText('Holder den registrerte relasjonstypen?'), {
-      target: { value: 'ok' },
-    })
-    for (const label of [
-      'Kildestøtte',
-      'Populasjon',
-      'Komparator',
-      'Tidsrom',
-      'Retning og størrelse',
-      'Forbehold',
-      'Motstridende evidens',
-    ]) {
-      fireEvent.change(screen.getByLabelText(label), { target: { value: 'ok' } })
-    }
-    fireEvent.change(screen.getByLabelText('Samlet utfall'), { target: { value: 'verified' } })
-    fireEvent.change(screen.getAllByLabelText('Faglig begrunnelse')[0] as HTMLElement, {
-      target: { value: 'Gikk gjennom ordlyd, forbehold og grunnlaget.' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Registrer kontrollen' }))
-
-    await screen.findByRole('heading', { name: 'Påstanden' })
-    const call = rpcCalls.find((rpc) => rpc.name === 'register_human_claim_verification')
-    expect(call?.args).toMatchObject({
-      p_claim_revision_id: TEST_REVIEW_IDS.revision,
-      p_seen_evidence_set_digest: `sha256-v1:${'d'.repeat(64)}`,
-      p_outcome: 'verified',
-      p_source_support: 'ok',
-      p_contradictory_evidence_represented: 'ok',
-      p_rationale: 'Gikk gjennom ordlyd, forbehold og grunnlaget.',
-      p_findings: null,
-    })
-    expect(call?.args).toMatchObject({
-      p_citations: [
-        {
-          claim_evidence_link_id: TEST_REVIEW_IDS.link,
-          source_access: 'original_source',
-          source_version_id: TEST_REVIEW_IDS.sourceVersion,
-          checked_content_hash: `sha256:${'a'.repeat(64)}`,
-          relationship_supported: 'ok',
-          finding: null,
-        },
-      ],
-    })
-  })
-
-  it('sender ingen kildeversjon når revieweren bare hadde et sammendrag', async () => {
-    // Kildetilgangen er kallerens egen opplysning, men fingeravtrykket er
-    // kildeversjonens: et sammendrag fra et annet ledd er ikke kildeversjonens
-    // registrerte representasjon, og de to kan ikke oppgis samtidig.
-    const { rpcCalls } = renderReview()
-    await screen.findByRole('button', { name: 'Registrer kontrollen' })
-    fireEvent.change(screen.getAllByLabelText('Faglig begrunnelse')[0] as HTMLElement, {
-      target: { value: 'Bare sammendrag var tilgjengelig.' },
-    })
-    fireEvent.change(
-      screen.getByLabelText('Hva fant du? (påkrevd når relasjonstypen ikke holder)'),
-      {
-        target: { value: 'Kunne ikke bedømmes.' },
-      },
-    )
-    fireEvent.change(screen.getByLabelText('Funn (påkrevd når utfallet ikke er «Bekreftet»)'), {
-      target: { value: 'Kontrollen kunne ikke konkludere.' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Registrer kontrollen' }))
-
-    await screen.findByRole('heading', { name: 'Påstanden' })
-    const call = rpcCalls.find((rpc) => rpc.name === 'register_human_claim_verification')
-    expect(call?.args).toMatchObject({
-      p_citations: [
-        {
-          source_access: 'derived_summary',
-          source_version_id: null,
-          checked_content_hash: null,
-        },
-      ],
-    })
-  })
-
-  it('viser databasens avvisning ordrett når kontrollen ikke kan registreres', async () => {
-    const { rpcCalls } = renderRoute(PATH, {
-      api: {
-        claim_review_workspace: { data: claimReviewPayload() },
-        register_human_claim_verification: {
-          error: 'Evidensgrunnlaget er endret etter at du hentet det fram.',
-        },
-      },
-      auth: { initialUserId: TEST_USER_IDS.a },
-    })
-    await screen.findByRole('button', { name: 'Registrer kontrollen' })
-    fireEvent.change(screen.getAllByLabelText('Faglig begrunnelse')[0] as HTMLElement, {
-      target: { value: 'Testbegrunnelse.' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Registrer kontrollen' }))
-
-    expect(
-      await screen.findByText(/Evidensgrunnlaget er endret etter at du hentet det fram/),
-    ).toBeInTheDocument()
-    expect(rpcCalls.some((rpc) => rpc.name === 'register_publication_approval')).toBe(false)
-  })
-
-  it('sender godkjenningen som en egen beslutning, med sitt eget avtrykk', async () => {
-    // Godkjenning tilbys bare når forutsetningene holder (migrasjon 006e).
-    const { rpcCalls } = renderReview({ approval_readiness: { status: 'passes' } })
-    await screen.findByRole('button', { name: 'Registrer beslutningen' })
-    fireEvent.change(screen.getByLabelText('Beslutning'), { target: { value: 'approved' } })
-    fireEvent.change(screen.getAllByLabelText('Faglig begrunnelse')[1] as HTMLElement, {
-      target: { value: 'Går god for publisering.' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Registrer beslutningen' }))
-
-    await screen.findByRole('heading', { name: 'Påstanden' })
-    const calls = rpcCalls.filter((rpc) => rpc.name === 'register_publication_approval')
-    expect(calls).toHaveLength(1)
-    expect(calls[0]?.args).toEqual({
-      p_claim_revision_id: TEST_REVIEW_IDS.revision,
-      p_seen_evidence_set_digest: `sha256-v1:${'d'.repeat(64)}`,
-      p_decision: 'approved',
-      p_rationale: 'Går god for publisering.',
-    })
-    expect(rpcCalls.some((rpc) => rpc.name === 'register_human_claim_verification')).toBe(false)
-  })
-
-  it('starter beslutningen på «endringer bedt om», ikke på godkjent', async () => {
-    renderReview()
-    expect(await screen.findByLabelText('Beslutning')).toHaveValue('changes_requested')
-  })
-
-  it('tilbyr ikke godkjenning før grunnlaget er kontrollert, og sier hvorfor', async () => {
-    // Migrasjon 006e: skriveveien avviser en approved-beslutning før
-    // publiseringsgatens G1-G10 holder. En flate som lot valget stå, ville
-    // tilbudt en handling databasen uansett avviser — og verre: den ville sett
-    // ut som om godkjenning av et ukontrollert utkast var et lovlig steg.
-    renderReview()
-    const decision = await screen.findByLabelText('Beslutning')
-    expect(within(decision).queryByRole('option', { name: 'Godkjent for publisering' })).toBeNull()
-    expect(within(decision).getByRole('option', { name: 'Endringer bedt om' })).toBeInTheDocument()
-    expect(within(decision).getByRole('option', { name: 'Avslått' })).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'Du kan ikke gå god for publisering ennå: grunnlaget er ikke ferdig kontrollert.',
+        'Du formulerte denne revisjonen selv, og kan derfor verken kontrollere eller godkjenne den.',
       ),
     ).toBeInTheDocument()
   })
 
-  it('tilbyr godkjenning når forutsetningene holder', async () => {
-    renderReview({ approval_readiness: { status: 'passes' } })
-    const decision = await screen.findByLabelText('Beslutning')
+  it('legger hele dossieret bak «Tekniske detaljer»', async () => {
+    renderClaimControl()
+    const summaries = await screen.findAllByText('Tekniske detaljer')
+    expect(summaries.length).toBeGreaterThan(0)
+    const details = summaries[0]?.closest('details')
+    expect(details).not.toBeNull()
     expect(
-      within(decision).getByRole('option', { name: 'Godkjent for publisering' }),
+      within(details as HTMLElement).getByText('Publiseringen er blokkert.'),
     ).toBeInTheDocument()
-    expect(
-      screen.queryByText(
-        'Du kan ikke gå god for publisering ennå: grunnlaget er ikke ferdig kontrollert.',
-      ),
-    ).toBeNull()
-  })
-
-  it('henter grunnlaget på nytt etter en registrering', async () => {
-    // Både historikken og publiseringsgatens svar endrer seg av en registrering.
-    // En flate som fortsatte å vise det forrige svaret, ville vist en blokkering
-    // som ikke lenger gjelder — eller skjult en som nettopp oppstod.
-    const { rpcCalls } = renderReview()
-    await screen.findByRole('button', { name: 'Registrer beslutningen' })
-    fireEvent.change(screen.getAllByLabelText('Faglig begrunnelse')[1] as HTMLElement, {
-      target: { value: 'Testbegrunnelse.' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Registrer beslutningen' }))
-
-    await waitFor(() => {
-      expect(rpcCalls.filter((rpc) => rpc.name === 'claim_review_workspace')).toHaveLength(2)
-    })
-  })
-})
-
-describe('Reviewarbeidsflaten — historikken', () => {
-  it('viser den deterministiske kontrollen med alle sju punktene og kontrollradene', async () => {
-    renderReview({
-      current_claim_verification_id: '11111111-1111-4111-8111-333333333333',
-      claim_verifications: [reviewVerificationRecord()],
-    })
-    await screen.findByRole('heading', { name: 'Påstanden' })
-    const scoped = within(panel('Registrerte kontroller mot grunnlaget'))
-    expect(scoped.getByText(/Uavklart — Claim-verifikator/)).toBeInTheDocument()
-    expect(scoped.getByText('(gjeldende)')).toBeInTheDocument()
-    // Alle sju punktene vises, også de like: et punkt som ikke vises, er et
-    // punkt leseren ikke kan se at ble bedømt.
-    expect(scoped.getAllByText('Lot seg ikke bedømme')).toHaveLength(3)
-    expect(scoped.getAllByText('Holder')).toHaveLength(4)
-    expect(
-      scoped.getByText(/Relasjonstypen lot seg ikke bedømme deterministisk/),
-    ).toBeInTheDocument()
-  })
-
-  it('viser en registrert godkjenning med begrunnelsen sin', async () => {
-    renderReview({
-      current_review_decision_id: '11111111-1111-4111-8111-555555555555',
-      review_decisions: [reviewDecisionRecord()],
-    })
-    await screen.findByRole('heading', { name: 'Påstanden' })
-    const decisions = within(panel('Registrerte publiseringsbeslutninger'))
-    expect(decisions.getByText('Godkjent for publisering')).toBeInTheDocument()
-    expect(
-      decisions.getByText('Går god for at påstanden kan publiseres på dette grunnlaget.'),
-    ).toBeInTheDocument()
-  })
-})
-
-describe('Reviewarbeidsflaten — egen påstand', () => {
-  it('viser grunnlaget, men ingen skjemaer, når revieweren selv formulerte revisjonen', async () => {
-    renderReview({}, TEST_REVIEW_IDS.synthesisActor)
-    expect(await screen.findByText(/Du har selv formulert denne revisjonen/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Registrer kontrollen' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Registrer beslutningen' })).toBeNull()
-    expect(screen.getByRole('heading', { name: 'Påstanden' })).toBeInTheDocument()
-  })
-})
-
-describe('Reviewarbeidsflaten — avvisninger', () => {
-  it('viser en teknisk feil som en feil, aldri som en publiseringsblokkering', async () => {
-    // Databasen konverterer bare publiseringsgatens egen avvisning til en
-    // blokkering (migrasjon 005p); alt annet feller hele kallet. Flaten må da si
-    // at dette er en teknisk feil og ikke et svar om innholdet — ellers ville en
-    // regresjon i gaten sett ut som en faglig mangel.
-    renderRoute(PATH, {
-      api: {
-        claim_review_workspace: { error: 'internal error i publiseringsgaten' },
-      },
-      auth: { initialUserId: TEST_USER_IDS.a },
-    })
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Dette er en teknisk feil, ikke et svar om at påstanden ikke kan publiseres',
-    )
-    expect(screen.queryByText('Publiseringen er blokkert.')).toBeNull()
-  })
-
-  it('viser databasens avvisning som en feil, aldri som et tomt grunnlag', async () => {
-    renderRoute(PATH, {
-      api: {
-        claim_review_workspace: {
-          error: 'Brukeren har ikke gyldig reviewer-rolle for dette innholdsområdet.',
-        },
-      },
-      auth: { initialUserId: TEST_USER_IDS.a },
-    })
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Brukeren har ikke gyldig reviewer-rolle for dette innholdsområdet.',
-    )
-    expect(screen.queryByRole('heading', { name: 'Påstanden' })).toBeNull()
   })
 })

@@ -489,3 +489,39 @@ export function LinkedClaimsPanel({
     </section>
   )
 }
+
+// ----------------------------------------------------------------------------
+// Tekniske detaljer
+//
+// Alt grunnlaget som *ikke* trengs for å ta én beslutning, samlet bak én flate.
+// Kontrolløren møter kilden og tolkningen felt for felt i selve økten; her ligger
+// hele den strukturerte ekstraksjonen, den rå gjengivelsen, feltdekningen slik
+// publiseringsgaten regner den, kontrollhistorikken og påstandene funnet bærer.
+//
+// Bevisst utenfor den kliniske arbeidsflyten, og bevisst ikke fjernet: en
+// kontrollør som vil se hele bildet, skal kunne det uten å måtte gå et annet
+// sted — og en som bare skal svare på ett spørsmål, skal slippe å bla forbi det.
+// ----------------------------------------------------------------------------
+
+export function ExtractionTechnicalDetails({
+  item,
+  claimHrefFor,
+}: {
+  readonly item: ExtractionReviewItem
+  readonly claimHrefFor: (revision: LinkedClaimRevision) => string
+}) {
+  return (
+    <details className="technical-details">
+      <summary>Tekniske detaljer</summary>
+      <ExtractionSourcePanel item={item.dossier} />
+      <ExtractionFieldsPanel item={item.dossier} />
+      <RawExtractionPanel raw={item.dossier.extraction.rawExtraction} />
+      <CheckFieldCoveragePanel item={item} />
+      <ExtractionVerificationHistoryPanel
+        currentId={item.currentExtractionVerificationId}
+        records={item.extractionVerifications}
+      />
+      <LinkedClaimsPanel hrefFor={claimHrefFor} revisions={item.linkedClaimRevisions} />
+    </details>
+  )
+}

@@ -53,3 +53,24 @@ export const CLAIM_VERIFICATION_PREMISES: AgentRunPremises = {
   promptTemplateVersion: 'claim-verification/deterministic/1',
   pipelineVersion: 'antidep-evidence/1',
 }
+
+/**
+ * Ekstraksjonsagenten (migrasjon 005v, 005w).
+ *
+ * Leddet som *leser* en artikkel og foreslår strukturerte verdier, krever en
+ * språkmodell — og dermed en leverandør og en konto (issue #63). Kjøringen som
+ * finnes i dag, tar forslaget som inndata og gjør resten deterministisk:
+ * henter representasjonen, prøver hvert utdrag ordrett mot den, og registrerer.
+ *
+ * Premissene sier nøyaktig det. Når modell-leddet kobles på, registrerer det
+ * sin egen leverandør, modell og modellversjon, og de to kjøringene står ved
+ * siden av hverandre framfor å bli forvekslet — som er hele grunnen til at
+ * feltene er fri tekst (ANTIDEP_CONSTITUTION.md §20, EVIDENCE_PIPELINE.md §65).
+ */
+export const EVIDENCE_EXTRACTION_PREMISES: AgentRunPremises = {
+  provider: 'antidep',
+  model: 'proposal-grounded-extraction',
+  modelVersion: '1.0.0',
+  promptTemplateVersion: 'evidence-extraction/proposal/1',
+  pipelineVersion: 'antidep-evidence/1',
+}
