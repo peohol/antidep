@@ -315,6 +315,26 @@ export type EstimateUnit = (typeof ESTIMATE_UNITS)[number]
  * det er en kontroll som ikke lot seg konkludere, og publiseringsgaten
  * blokkerer på den nøyaktig som på et avvik (ANTIDEP_CONSTITUTION.md §6, §11).
  */
+/**
+ * Hva slags representasjon av en kilde som faktisk ble hentet og lest
+ * (`knowledge.source_representation`). Vokabularet er EVIDENCE_PIPELINE.md §13
+ * sin egen liste, ord for ord.
+ *
+ * Verdien beskriver hva *ekstraksjonen* bygger på. Hva en senere kontrollør
+ * hadde tilgang til, er `VERIFICATION_SOURCE_ACCESSES`, og de to er
+ * forskjellige opplysninger: en kliniker med fulltekst kan kontrollere en
+ * ekstraksjon som ble laget av et sammendrag.
+ */
+export const SOURCE_REPRESENTATIONS = [
+  'full_text',
+  'abstract',
+  'registry_record',
+  'regulatory_summary',
+  'secondary_report',
+  'other_limited',
+] as const
+export type SourceRepresentation = (typeof SOURCE_REPRESENTATIONS)[number]
+
 export const VERIFICATION_OUTCOMES = [
   'verified',
   'needs_correction',

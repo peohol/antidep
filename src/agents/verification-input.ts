@@ -22,7 +22,23 @@ export interface VerificationSourceVersion {
   readonly externalVersion: string | null
   /** NULL betyr et sporet besøk uten fingeravtrykk (MVP_IMPLEMENTATION_PLAN.md §74.32). */
   readonly contentHash: string | null
+  /**
+   * Hva slags representasjon som faktisk ble hentet (EVIDENCE_PIPELINE.md §13).
+   *
+   * `null` betyr at opplysningen ikke er registrert — tilstanden alle
+   * kildeversjoner registrert før migrasjon 003b er i — aldri at
+   * representasjonen er ukjent men brukbar. En agentekstraksjon kan ikke bygge
+   * på en versjon uten den.
+   */
+  readonly representation: string | null
   readonly hasStorageReference: boolean
+}
+
+/** En global bibliografisk identifikator for kilden. */
+export interface SourceIdentifier {
+  /** `doi` eller `pmid`. */
+  readonly system: string
+  readonly value: string
 }
 
 /** Ekstraksjonen slik den er registrert, ordrett. */
@@ -130,6 +146,15 @@ export interface VerificationItem {
   readonly sourceStatus: string
   /** `null` betyr «ingen begrunnelse er registrert», ikke «statusen er normal». */
   readonly sourceStatusNote: string | null
+  /**
+   * Kildens globale identifikatorer.
+   *
+   * Den menneskelige lenken til kilden bygges av disse, ikke av
+   * `sourceVersion.retrievedFrom`: den siste er maskinens eksakte henteadresse
+   * — for et EUtils-kall er den XML — og skal bevares for hashing og proveniens,
+   * men den er ikke artikkelen et menneske skal åpne (`source-links.ts`).
+   */
+  readonly sourceIdentifiers: readonly SourceIdentifier[]
   readonly sourceVersion: VerificationSourceVersion | null
   /**
    * Kildeforankringen per kontrollfelt, i vokabularets egen rekkefølge.
@@ -140,6 +165,18 @@ export interface VerificationItem {
    * vært å konstruere nettopp det grunnlaget kontrollen skal prøve.
    */
   readonly fieldGroundings: readonly EvidenceFieldGrounding[]
+  /**
+   * Feltene funnet påstår noe om studien, og som kontrolleres ett av gangen.
+   *
+   * `workflow.required_check_fields(uuid)` uten `raw_extraction` og
+   * `source_locator`: de to er provenansfelter, ikke kliniske påstander en lege
+   * bedømmer som egne beslutninger. Garantien de bærer er ikke svekket, men
+   * flyttet dit den er sterkere — hver forankring har sitt eget ordrette utdrag
+   * og sin egen presise peker (migrasjon 005v).
+   */
+  readonly semanticCheckFields: readonly string[]
+  /** Feltene forankringen faktisk dekker. Differansen mot settet over er det som mangler. */
+  readonly groundedCheckFields: readonly string[]
   readonly extraction: VerificationExtraction
   readonly verificationsByThisActor: number
 }
@@ -222,8 +259,47 @@ function parseSourceVersion(value: unknown): VerificationSourceVersion | null {
     retrievedFrom: asString(record['retrieved_from'], 'source_version.retrieved_from'),
     externalVersion: asOptionalString(record['external_version']),
     contentHash: asOptionalString(record['content_hash']),
+    representation: asOptionalString(record['representation']),
     hasStorageReference: record['has_storage_reference'] === true,
   }
+}
+
+/**
+ * Kildens identifikatorer.
+ *
+ * En manglende nøkkel leses som en tom liste: et svar fra en eldre
+ * projeksjonsversjon har den ikke, og en kilde uten registrerte
+ * identifikatorer har heller ikke noen. Er nøkkelen der, men ikke en liste, er
+ * det et kontraktsbrudd og sier fra.
+ */
+function parseSourceIdentifiers(value: unknown): readonly SourceIdentifier[] {
+  if (value === null || value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    throw new Error('Svaret fra api.extraction_verification_input mangler listen identifiers.')
+  }
+  return value.map((entry, index) => {
+    const record = asRecord(entry, `identifiers[${String(index)}]`)
+    return {
+      system: asString(
+        record['identifier_system'],
+        `identifiers[${String(index)}].identifier_system`,
+      ),
+      value: asString(record['identifier_value'], `identifiers[${String(index)}].identifier_value`),
+    }
+  })
+}
+
+/** En liste med feltnavn, eller en tom liste når nøkkelen ikke finnes. */
+function parseCheckFieldList(value: unknown, where: string): readonly string[] {
+  if (value === null || value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Svaret fra api.extraction_verification_input mangler listen ${where}.`)
+  }
+  return value.map((entry, index) => asString(entry, `${where}[${String(index)}]`))
 }
 
 /**
@@ -357,8 +433,17 @@ export function parseVerificationItem(value: unknown): VerificationItem {
     sourcePublicationDatePrecision: asOptionalString(source['publication_date_precision']),
     sourceStatus: asString(source['source_status'], 'items[].source.source_status'),
     sourceStatusNote: asOptionalString(source['status_note']),
+    sourceIdentifiers: parseSourceIdentifiers(source['identifiers']),
     sourceVersion: parseSourceVersion(record['source_version']),
     fieldGroundings: parseFieldGroundings(record['field_groundings']),
+    semanticCheckFields: parseCheckFieldList(
+      record['semantic_check_fields'],
+      'semantic_check_fields',
+    ),
+    groundedCheckFields: parseCheckFieldList(
+      record['grounded_check_fields'],
+      'grounded_check_fields',
+    ),
     extraction: parseExtraction(record['extraction']),
     verificationsByThisActor: typeof byThisActor === 'number' ? byThisActor : 0,
   }

@@ -72,6 +72,7 @@ import {
   GRADE_DOMAIN_RATINGS,
   REPORTED_DIRECTIONS,
   REVIEW_OUTCOMES,
+  SOURCE_REPRESENTATIONS,
   SOURCE_STATUSES,
   SOURCE_TYPES,
   STUDY_DESIGNS,
@@ -95,6 +96,7 @@ import {
   type PublishedClaimEvidenceRow,
   type ReportedDirection,
   type ReviewOutcome,
+  type SourceRepresentation,
   type SourceStatus,
   type SourceType,
   type StudyDesign,
@@ -181,6 +183,15 @@ export function readVocabularyStatus(value: string): VocabularyTerm<VocabularySt
  */
 export function readSourceStatus(value: string): VocabularyTerm<SourceStatus> {
   return readTerm(SOURCE_STATUSES, value)
+}
+
+/**
+ * Hvilken representasjon av kilden ekstraksjonen faktisk bygde på. En ukjent
+ * verdi må aldri kunne falle sammen med `full_text`: en flate som gjorde det,
+ * ville framstilt et sammendrag som fulltekst (EVIDENCE_PIPELINE.md §13).
+ */
+export function readSourceRepresentation(value: string): VocabularyTerm<SourceRepresentation> {
+  return readTerm(SOURCE_REPRESENTATIONS, value)
 }
 
 /**

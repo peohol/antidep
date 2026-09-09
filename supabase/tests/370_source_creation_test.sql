@@ -87,7 +87,7 @@ select is_empty(
         'api.register_extraction_verification(text,text,uuid,uuid,text,text,text[],text,text)',
         -- Migrasjon 007f. En editorhandling, som de to første: bare
         -- authenticated, og autorisasjonen tas på funksjonens eget kall.
-        'api.create_source_version(uuid,timestamp with time zone,text,text,text,text)',
+        'api.create_source_version(uuid,timestamp with time zone,text,text,text,text,text)',
         -- Migrasjon 005h. Lesegrunnlaget verifikatoren arbeider fra. Kalles av
         -- anon av samme grunn som de tre agentfunksjonene over, og gir
         -- ingenting før legitimasjonen og den åpne kjøringen er kontrollert;
@@ -127,10 +127,16 @@ select is_empty(
         -- avgjøres av knowledge.publish_claim_revision(uuid, uuid, text) inne i
         -- transaksjonen som skriver hendelsen. Hvilke roller som faktisk har
         -- EXECUTE, kontrolleres i 560_publication_action_test.sql.
-        'api.publish_claim_revision(uuid,text)'
+        'api.publish_claim_revision(uuid,text)',
+        -- Migrasjon 005v. Ekstraksjonsagentens skrivevei. Som de øvrige
+        -- agentendepunktene er den kjørbar for anon og authenticated, fordi en
+        -- agent ikke har en brukerkonto: kontrollen er legitimasjonen og den
+        -- eksplisitte rollen, ikke Data API-rollen. Hvilke roller som faktisk
+        -- har EXECUTE, kontrolleres i 600_agent_extraction_test.sql.
+        'api.register_agent_extraction(text,text,uuid,uuid,uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,jsonb,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text)'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de femten kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de seksten kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$

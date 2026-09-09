@@ -21,10 +21,11 @@ import {
 
 const PATH = `/review/${TEST_REVIEW_IDS.revision}`
 
-/** Feltene fiksturens evidensfunn krever kontrollert, i gatens egen rekkefølge. */
-const REQUIRED_FIELDS = [
-  'Den rå ekstraksjonen, ordrett',
-  'Hvor i kilden funnet står',
+/**
+ * Feltene kontrolløren får spørsmål om for fiksturens evidensfunn, i den
+ * rekkefølgen `workflow.semantic_check_fields` gir dem.
+ */
+const SEMANTIC_FIELDS = [
   'Behandlingsarmen',
   'Endepunktet',
   'Retningen kilden rapporterer',
@@ -113,7 +114,7 @@ async function completeExtractionPart(): Promise<void> {
   })
   clickAnswer('Ja')
   // Tittelen bærer et kildeprefiks når økten dekker flere kildegrunnlag.
-  await answerYesThrough(REQUIRED_FIELDS)
+  await answerYesThrough(SEMANTIC_FIELDS)
   fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
 }
 
@@ -179,7 +180,7 @@ describe('Kontrolløkten — kildegrunnlaget', () => {
     ).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Åpne kilden' })).toHaveAttribute(
       'href',
-      'https://eksempel.invalid/testkilde-a',
+      'https://doi.org/10.1000/testkilde-a.1',
     )
   })
 
@@ -294,7 +295,7 @@ describe('Kontrolløkten — publiseringsbeslutningen', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Lagre og fortsett' }))
 
     expect(
-      await screen.findByText(/21 av 21 nødvendige delkontroller er bekreftet\./),
+      await screen.findByText(/19 av 19 nødvendige delkontroller er bekreftet\./),
     ).toBeInTheDocument()
     expect(screen.getByText(/Ingen åpne avvik\./)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Godkjenn for publisering' })).toBeInTheDocument()

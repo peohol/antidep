@@ -11,19 +11,26 @@ import { describe, expect, it } from 'vitest'
 import {
   TEST_EXTRACTION_IDS,
   TEST_FIELD_GROUNDINGS,
+  TEST_SEMANTIC_FIELDS,
   TEST_USER_IDS,
   extractionReviewPayload,
   fieldGrounding,
   renderRoute,
+  reviewSource,
   type FakeApi,
 } from '../test-support'
 
 const PATH = `/extraction-review/${TEST_EXTRACTION_IDS.evidenceItem}`
 
-/** Feltene fiksturen krever kontrollert, i den rekkefølgen gaten oppgir dem. */
-const REQUIRED_FIELDS = [
-  'Den rå ekstraksjonen, ordrett',
-  'Hvor i kilden funnet står',
+/**
+ * Feltene kontrolløren faktisk får spørsmål om, i den rekkefølgen
+ * `workflow.semantic_check_fields` gir dem.
+ *
+ * `raw_extraction` og `source_locator` står ikke her, og skal ikke gjøre det:
+ * de er provenansfelter uten klinisk innhold, og garantien de bar ligger nå i
+ * hver enkelt forankring.
+ */
+const SEMANTIC_FIELDS = [
   'Behandlingsarmen',
   'Endepunktet',
   'Retningen kilden rapporterer',
@@ -73,7 +80,7 @@ function clickAnswer(label: string): void {
 async function answerEverythingYes(): Promise<void> {
   await screen.findByText('Har du tilgang til fullteksten?')
   clickAnswer('Ja')
-  for (const field of REQUIRED_FIELDS) {
+  for (const field of SEMANTIC_FIELDS) {
     await within(openStep()).findByText(field)
     clickAnswer('Ja')
   }
@@ -103,16 +110,60 @@ describe('Kontrolløkten — grunnlaget', () => {
 
   it('teller delkontrollene, og starter på den første', async () => {
     renderExtractionControl()
-    expect(await screen.findByText('Delkontroll: 1 av 13')).toBeInTheDocument()
+    expect(await screen.findByText('Delkontroll: 1 av 11')).toBeInTheDocument()
   })
 })
 
 describe('Kontrolløkten — kildetilgangen', () => {
-  it('gir en trykkbar lenke til kilden, ikke bare adressen som tekst', async () => {
+  it('lenker til artikkelen via DOI, ikke til maskinens henteadresse', async () => {
     renderExtractionControl()
     const link = await screen.findByRole('link', { name: 'Åpne kilden' })
-    expect(link).toHaveAttribute('href', 'https://eksempel.invalid/testkilde-a')
+    expect(link).toHaveAttribute('href', 'https://doi.org/10.1000/testkilde-a.1')
     expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+  })
+
+  // Henteadressen er maskinens eksakte adresse — for et EUtils-kall er den XML
+  // — og hører hjemme i proveniensen, ikke i den kliniske flyten.
+  it('viser henteadressen bare under «Tekniske detaljer»', async () => {
+    renderExtractionControl()
+    await screen.findByText('Har du tilgang til fullteksten?')
+    const address = screen.getByText(/eutils\.eksempel\.invalid/)
+    expect(address.closest('details')).not.toBeNull()
+    expect(
+      within(address.closest('details') as HTMLElement).getByText('Tekniske detaljer'),
+    ).toBeInTheDocument()
+    // Og ingen steg i selve flyten nevner den.
+    expect(
+      document.querySelector('.control-step')?.textContent?.includes('eutils.eksempel.invalid'),
+    ).toBe(false)
+  })
+
+  it('faller tilbake til PubMed-siden når kilden ikke har DOI', async () => {
+    renderExtractionControl({
+      source: reviewSource({
+        identifiers: [{ identifier_system: 'pmid', identifier_value: '10999999' }],
+      }),
+    })
+    const link = await screen.findByRole('link', { name: 'Åpne kilden' })
+    expect(link).toHaveAttribute('href', 'https://pubmed.ncbi.nlm.nih.gov/10999999/')
+  })
+
+  it('sier fra framfor å lenke til noe annet når kilden mangler begge', async () => {
+    renderExtractionControl({
+      source: reviewSource({ identifiers: [] }),
+    })
+    expect(
+      await screen.findByText(
+        'Kilden har ingen registrert DOI eller PubMed-ID, så Antidep kan ikke lage en lenke til artikkelen.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('sier hva slags representasjon ekstraksjonen bygger på', async () => {
+    renderExtractionControl()
+    expect(
+      await screen.findByText('Ekstraksjonen bygger på fullteksten av kilden.'),
+    ).toBeInTheDocument()
   })
 
   it('spør først om fullteksten, og om hva man ellers har bare når svaret er nei', async () => {
@@ -146,6 +197,7 @@ describe('Kontrolløkten — kildetilgangen', () => {
         retrieved_from: 'https://eksempel.invalid/testkilde-a',
         external_version: null,
         content_hash: null,
+        representation: 'abstract',
         has_storage_reference: false,
       },
     })
@@ -164,21 +216,55 @@ describe('Kontrolløkten — feltkontrollen', () => {
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
     // Første felt er åpent …
-    expect(await screen.findByText('Testutdrag for raw_extraction.')).toBeInTheDocument()
+    expect(await screen.findByText('Testutdrag for intervention_arm.')).toBeInTheDocument()
     // … og det neste er ikke.
-    expect(screen.queryByText('Testutdrag for source_locator.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Testutdrag for outcome.')).not.toBeInTheDocument()
   })
 
-  it('viser kildeutdraget, pekeren og Antideps tolkning side om side', async () => {
+  it('viser den ordrette teksten, pekeren og Antideps tolkning side om side', async () => {
     renderExtractionControl()
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
     const step = within(openStep())
-    expect(await step.findByText('Kilden')).toBeInTheDocument()
+    expect(await step.findByText('Ordrett tekst')).toBeInTheDocument()
     expect(step.getByText('Antideps tolkning')).toBeInTheDocument()
-    expect(step.getByText('Testutdrag for raw_extraction.')).toBeInTheDocument()
-    expect(step.getByText('Testkilde A, avsnittet om raw_extraction')).toBeInTheDocument()
-    expect(step.getByText('Stemmer Antideps tolkning med kilden?')).toBeInTheDocument()
+    // Venstresiden er nøyaktig agentens registrerte utdrag, ordrett.
+    expect(step.getByText('Testutdrag for intervention_arm.')).toBeInTheDocument()
+    expect(step.getByText('Testkilde A, avsnittet om intervention_arm')).toBeInTheDocument()
+    // Høyresiden er den strukturerte verdien, som en setning.
+    expect(step.getByText('Behandlingsarmen er virkestoff a.')).toBeInTheDocument()
+    expect(step.getByText('Stemmer Antideps tolkning med teksten?')).toBeInTheDocument()
+  })
+
+  // Skuffen skal inneholde det som trengs for ett svar, og ingenting mer.
+  it('gjentar verken lenken eller adressen i feltskuffen', async () => {
+    renderExtractionControl()
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    const step = within(openStep())
+    await step.findByText('Ordrett tekst')
+    expect(step.queryByRole('link', { name: 'Åpne kilden' })).not.toBeInTheDocument()
+    expect(step.queryByText(/eutils\.eksempel\.invalid/)).not.toBeInTheDocument()
+    expect(step.queryByText(/doi\.org/)).not.toBeInTheDocument()
+  })
+
+  // De to provenansfeltene er ikke kliniske påstander, og skal ikke stjele et
+  // steg fra kontrolløren.
+  it('stiller ingen spørsmål om den rå ekstraksjonen eller den globale pekeren', async () => {
+    renderExtractionControl()
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    for (const field of SEMANTIC_FIELDS) {
+      const title = within(openStep()).getByText(field, { selector: '.control-step__title' })
+      expect(title).toBeInTheDocument()
+      clickAnswer('Ja')
+    }
+    expect(
+      screen.queryByText('Den rå ekstraksjonen, ordrett', { selector: '.control-step__title' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Hvor i kilden funnet står', { selector: '.control-step__title' }),
+    ).not.toBeInTheDocument()
   })
 
   it('legger agentens begrunnelse bak «Hvorfor mener Antidep dette?»', async () => {
@@ -188,7 +274,7 @@ describe('Kontrolløkten — feltkontrollen', () => {
     const step = within(openStep())
     expect(await step.findByText('Hvorfor mener Antidep dette?')).toBeInTheDocument()
     expect(
-      step.getByText('Testbegrunnelse for hvordan utdraget ble til verdien for raw_extraction.'),
+      step.getByText('Testbegrunnelse for hvordan utdraget ble til verdien for intervention_arm.'),
     ).toBeInTheDocument()
   })
 
@@ -197,7 +283,7 @@ describe('Kontrolløkten — feltkontrollen', () => {
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
     // Fram til antall deltakere.
-    for (const field of REQUIRED_FIELDS.slice(0, 9)) {
+    for (const field of SEMANTIC_FIELDS.slice(0, 7)) {
       await within(openStep()).findByText(field)
       clickAnswer('Ja')
     }
@@ -210,17 +296,17 @@ describe('Kontrolløkten — feltkontrollen', () => {
     renderExtractionControl()
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
-    await within(openStep()).findByText('Den rå ekstraksjonen, ordrett')
+    await within(openStep()).findByText('Behandlingsarmen')
     clickAnswer('Ja')
     expect(await screen.findByText('Stemmer')).toBeInTheDocument()
-    expect(await within(openStep()).findByText('Hvor i kilden funnet står')).toBeInTheDocument()
+    expect(await within(openStep()).findByText('Endepunktet')).toBeInTheDocument()
   })
 
   it('lar et tidligere steg åpnes igjen', async () => {
     renderExtractionControl()
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
-    await within(openStep()).findByText('Den rå ekstraksjonen, ordrett')
+    await within(openStep()).findByText('Behandlingsarmen')
     fireEvent.click(screen.getByRole('button', { name: /Hvilken tilgang har du til kilden\?/ }))
     expect(await screen.findByText('Har du tilgang til fullteksten?')).toBeInTheDocument()
   })
@@ -229,7 +315,7 @@ describe('Kontrolløkten — feltkontrollen', () => {
     renderExtractionControl()
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
-    await within(openStep()).findByText('Den rå ekstraksjonen, ordrett')
+    await within(openStep()).findByText('Behandlingsarmen')
     expect(
       screen.queryByLabelText('Hva er feil, eller hvordan bør dette tolkes?'),
     ).not.toBeInTheDocument()
@@ -238,39 +324,49 @@ describe('Kontrolløkten — feltkontrollen', () => {
     expect(note).toBeInTheDocument()
     // Steget står åpent til avviket er beskrevet: teksten hører til nettopp
     // denne delkontrollen, mens kilden er framme.
-    expect(within(openStep()).getByText('Den rå ekstraksjonen, ordrett')).toBeInTheDocument()
-    fireEvent.change(note, { target: { value: 'Sitatet står ikke i kilden.' } })
-    expect(await within(openStep()).findByText('Hvor i kilden funnet står')).toBeInTheDocument()
+    expect(within(openStep()).getByText('Behandlingsarmen')).toBeInTheDocument()
+    fireEvent.change(note, { target: { value: 'Utdraget navngir et annet virkestoff.' } })
+    expect(await within(openStep()).findByText('Endepunktet')).toBeInTheDocument()
   })
 
-  // Gamle funn har ingen forankring, og fraværet skal stå som fravær: Antidep
-  // gjetter aldri et utdrag ut av `raw_extraction`.
-  it('sier tydelig fra når et felt ikke er forankret', async () => {
+  // Et hull i forankringen stopper økten. Alternativet — å be kontrolløren lete
+  // fram utdraget selv — er nøyaktig arbeidsformen forankringen finnes for å
+  // fjerne.
+  it('stopper økten og ber om ny ekstraksjon når ett felt mangler forankring', async () => {
     renderExtractionControl({
       field_groundings: TEST_FIELD_GROUNDINGS.filter(
-        (grounding) => grounding['check_field'] !== 'raw_extraction',
+        (grounding) => grounding['check_field'] !== 'estimate',
       ),
+      grounded_check_fields: TEST_SEMANTIC_FIELDS.filter((field) => field !== 'estimate'),
     })
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
     const step = within(openStep())
     expect(
       await step.findByText(
-        'Ekstraksjonen har ikke registrert hvilket kildeutdrag denne tolkningen bygger på.',
+        'Ekstraksjonen mangler kildeforankring for 1 av feltene den påstår noe om, og kan derfor ikke kontrolleres felt for felt.',
       ),
     ).toBeInTheDocument()
-    expect(step.queryByText('Hvorfor mener Antidep dette?')).not.toBeInTheDocument()
+    expect(step.getByText('Uten forankring: Selve estimatet.')).toBeInTheDocument()
+    // Og ingen feltskuff er tilbudt.
+    expect(
+      screen.queryByText('Behandlingsarmen', { selector: '.control-step__title' }),
+    ).not.toBeInTheDocument()
   })
 
-  it('viser ingen forankring i det hele tatt for et funn registrert før forankringen fantes', async () => {
-    renderExtractionControl({ field_groundings: [] })
+  it('behandler et funn fra før forankringen fantes som ukontrollerbart', async () => {
+    renderExtractionControl({ field_groundings: [], grounded_check_fields: [] })
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
     expect(
       await within(openStep()).findByText(
-        'Ekstraksjonen har ikke registrert hvilket kildeutdrag denne tolkningen bygger på.',
+        'Ekstraksjonen mangler kildeforankring for 11 av feltene den påstår noe om, og kan derfor ikke kontrolleres felt for felt.',
       ),
     ).toBeInTheDocument()
+    expect(
+      screen.getByText(/Funnet må ekstraheres på nytt etter gjeldende protokoll/),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Lagre og fortsett' })).not.toBeInTheDocument()
   })
 })
 
@@ -304,20 +400,24 @@ describe('Kontrolløkten — utfallet utledes', () => {
     expect(args['p_source_access']).toBe('original_source')
     expect(args['p_findings']).toBeNull()
     expect(args['p_seen_extraction_digest']).toBe(TEST_EXTRACTION_IDS.digest)
+    // Gaten krever de tretten feltene dekket; de elleve kontrolløren svarte på
+    // pluss de to provenansfeltene en bekreftelse fører opp.
+    expect([...(args['p_checked_fields'] as string[])].sort()).toContain('raw_extraction')
+    expect([...(args['p_checked_fields'] as string[])].sort()).toContain('source_locator')
     expect((args['p_checked_fields'] as string[]).length).toBe(13)
-    expect(args['p_rationale']).toContain('13 av 13 delkontroller besvart')
+    expect(args['p_rationale']).toContain('11 av 11 delkontroller besvart')
   })
 
   it('utleder «må rettes» av et avvik, og tar avviksteksten med i funnet', async () => {
     const { rpcCalls } = renderExtractionControl()
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
-    await within(openStep()).findByText('Den rå ekstraksjonen, ordrett')
+    await within(openStep()).findByText('Behandlingsarmen')
     clickAnswer('Nei')
     fireEvent.change(screen.getByLabelText('Hva er feil, eller hvordan bør dette tolkes?'), {
-      target: { value: 'Sitatet står ikke i kilden.' },
+      target: { value: 'Utdraget navngir et annet virkestoff.' },
     })
-    for (const field of REQUIRED_FIELDS.slice(1)) {
+    for (const field of SEMANTIC_FIELDS.slice(1)) {
       await within(openStep()).findByText(field)
       clickAnswer('Ja')
     }
@@ -332,7 +432,7 @@ describe('Kontrolløkten — utfallet utledes', () => {
       (candidate) => candidate.name === 'register_human_extraction_verification',
     )?.args as Record<string, unknown>
     expect(args['p_outcome']).toBe('needs_correction')
-    expect(args['p_findings']).toContain('Sitatet står ikke i kilden.')
+    expect(args['p_findings']).toContain('Utdraget navngir et annet virkestoff.')
   })
 
   it('kan ikke lagres før alle delkontrollene er besvart', async () => {

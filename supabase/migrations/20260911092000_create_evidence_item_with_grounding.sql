@@ -24,6 +24,21 @@
 -- eneste operasjonen som kan bytte signatur uten å etterlate to.
 --
 -- ----------------------------------------------------------------------------
+-- Hvorfor innsettingen flyttes ut i én funksjon
+--
+-- Fra migrasjon 005v av finnes det to skriveveier inn i
+-- knowledge.evidence_items: editoren med sesjon og editor-rolle, og
+-- ekstraksjonsagenten med legitimasjon og en åpen kjøring. De skal håndheve
+-- nøyaktig de samme invariantene, og skrevet to ganger kunne de kommet i utakt
+-- — da ville den ene veien sluppet gjennom det den andre stengte. Samme
+-- begrunnelse som 005s gir for workflow.record_evidence_verification(...).
+--
+-- Innsettingen ligger derfor i knowledge.record_evidence_item(...), og begge
+-- inngangspunktene kaller den. Den kjenner ingen sesjon og ingen legitimasjon:
+-- den tar aktøren som allerede er autentisert, og ekstraksjonsmetoden
+-- inngangspunktet står inne for.
+--
+-- ----------------------------------------------------------------------------
 -- Hva som IKKE endres
 --
 -- Autorisasjonen er den samme funksjonen (knowledge.assert_editor_authorized),
@@ -50,8 +65,23 @@ drop function api.create_evidence_item(
   numeric, numeric, text, text
 );
 
-create function api.create_evidence_item(
-  -- Påkrevd: nøyaktig de kolonnene knowledge.evidence_items krever.
+-- ----------------------------------------------------------------------------
+-- 1. knowledge.record_evidence_item(...) — selve innsettingen, ett sted
+--
+-- Fra migrasjon 005v av finnes det to skriveveier inn i
+-- knowledge.evidence_items: editoren med sesjon og editor-rolle, og
+-- ekstraksjonsagenten med legitimasjon og en åpen kjøring. De skal håndheve
+-- nøyaktig de samme invariantene — hvilke vokabularverdier som er lovlige,
+-- hvordan raw_extraction bygges, at forankringen skrives i samme transaksjon og
+-- attribueres til den som laget funnet, og hvordan dubletten oversettes.
+-- Skrevet to ganger ville de kunnet komme i utakt, og da ville den ene veien
+-- sluppet gjennom det den andre stengte. Samme begrunnelse som
+-- workflow.record_evidence_verification(...) har i migrasjon 005s.
+--
+-- Funksjonen kjenner ingen sesjon og ingen legitimasjon: den tar aktøren som
+-- allerede er autentisert, og ekstraksjonsmetoden inngangspunktet står inne for.
+-- ----------------------------------------------------------------------------
+create function knowledge.record_evidence_item(
   p_source_id uuid,
   p_design_code text,
   p_population_availability text,
@@ -66,44 +96,34 @@ create function api.create_evidence_item(
   p_estimate_availability text,
   p_confidence_interval_availability text,
   p_source_locator text,
-  -- Valgfritt. Utelatt betyr NULL, og NULL betyr det den ledsagende
-  -- `*_availability`-kolonnen sier at det betyr — aldri null og aldri
-  -- «ingen effekt» (ANTIDEP_CONSTITUTION.md §6, DATABASE_ARCHITECTURE.md §19.1).
-  p_source_version_id uuid default null,
-  p_population_id uuid default null,
-  p_sample_size integer default null,
-  p_intervention_detail text default null,
-  p_comparator_drug_id uuid default null,
-  p_comparator_detail text default null,
-  p_timepoint_min text default null,
-  p_timepoint_max text default null,
-  p_effect_measure text default null,
-  p_estimate numeric default null,
-  p_estimate_unit text default null,
-  p_ci_lower numeric default null,
-  p_ci_upper numeric default null,
-  p_ci_level_percent numeric default null,
-  p_limitations_text text default null,
-  p_source_quote text default null,
-  -- Kildeforankringen per kontrollfelt (migrasjon 005u). En jsonb-liste der
-  -- hvert element har check_field, source_excerpt, source_locator og
-  -- justification. NULL og tom liste er det samme: ingen forankring registrert.
-  p_field_groundings jsonb default null
+  p_source_version_id uuid,
+  p_population_id uuid,
+  p_sample_size integer,
+  p_intervention_detail text,
+  p_comparator_drug_id uuid,
+  p_comparator_detail text,
+  p_timepoint_min text,
+  p_timepoint_max text,
+  p_effect_measure text,
+  p_estimate numeric,
+  p_estimate_unit text,
+  p_ci_lower numeric,
+  p_ci_upper numeric,
+  p_ci_level_percent numeric,
+  p_limitations_text text,
+  p_source_quote text,
+  p_field_groundings jsonb,
+  p_extraction_method text,
+  p_created_by_actor_id uuid
 )
   returns uuid
   language plpgsql
-  security definer
   set search_path = ''
 as $$
 declare
-  v_actor_id uuid;
   v_evidence_item_id uuid;
   v_duplicate_field text;
 begin
-  -- Endepunktet er innholdsområdet et evidensfunn hører under, og det er derfor
-  -- det en avgrenset editor-tildeling kontrolleres mot.
-  v_actor_id := knowledge.assert_editor_authorized(p_outcome_concept_id);
-
   -- Forankringen kontrolleres på form før noe skrives, slik at en feil form gir
   -- en setning som sier hva som er galt framfor en fremmednøkkel- eller
   -- casting-feil lenger ned.
@@ -175,7 +195,7 @@ begin
     p_confidence_interval_availability::knowledge.value_availability,
     p_limitations_text,
     p_source_locator,
-    'manual'::knowledge.extraction_method,
+    p_extraction_method::knowledge.extraction_method,
     -- Et tomt sitatfelt er et fravær, ikke et tomt sitat. Ingen validering av
     -- innholdet: et sitat er ordrett tekst fra kilden, og det er ikke noe her
     -- som kan avgjøre om det er riktig gjengitt — det er verifikatorens
@@ -184,7 +204,7 @@ begin
       when nullif(btrim(coalesce(p_source_quote, '')), '') is null then null
       else jsonb_build_object('sitat', btrim(p_source_quote))
     end,
-    v_actor_id
+    p_created_by_actor_id
   )
   returning id into v_evidence_item_id;
 
@@ -197,7 +217,7 @@ begin
     )
     select
       v_evidence_item_id,
-      v_actor_id,
+      p_created_by_actor_id,
       (g.value ->> 'check_field')::workflow.evidence_check_field,
       btrim(g.value ->> 'source_excerpt'),
       btrim(g.value ->> 'source_locator'),
@@ -227,6 +247,93 @@ exception
       errcode = 'unique_violation',
       message = 'Nøyaktig det samme evidensfunnet er allerede registrert.',
       hint = 'Et evidensfunn identifiseres av hele sitt faglige innhold. Er dette en korreksjon, skal minst ett felt være endret — da registreres den som et nytt funn ved siden av det gamle, og det gamle består (knowledge.evidence_items er append-only).';
+end;
+$$;
+
+comment on function knowledge.record_evidence_item(
+  uuid, text, text, text, text, uuid, text, uuid, text, text, text, text, text, text,
+  uuid, uuid, integer, text, uuid, text, text, text, text, numeric, text, numeric,
+  numeric, numeric, text, text, jsonb, text, uuid
+) is
+  'Innsettingen av ett evidensfunn med sin kildeforankring, uten autorisasjon. Finnes fordi det fra migrasjon 005v av er to skriveveier inn i knowledge.evidence_items — editoren med sesjon og editor-rolle, og ekstraksjonsagenten med legitimasjon og en åpen kjøring — og de to skal håndheve nøyaktig de samme invariantene: vokabularverdiene, hvordan raw_extraction bygges av ett sitat under én dokumentert nøkkel, at forankringen skrives i samme transaksjon og attribueres til den som laget funnet, og hvordan dubletten oversettes. Kalleren har allerede avgjort hvem aktøren er og hvilken ekstraksjonsmetode raden har; ingen av de to er verdier som kommer fra klienten. content_hash eies av databasen. Ingen feltvalidering er duplisert her: constraintene på knowledge.evidence_items og knowledge.evidence_field_groundings er fasiten, og deres avvisninger propageres uendret.';
+
+revoke execute on function knowledge.record_evidence_item(
+  uuid, text, text, text, text, uuid, text, uuid, text, text, text, text, text, text,
+  uuid, uuid, integer, text, uuid, text, text, text, text, numeric, text, numeric,
+  numeric, numeric, text, text, jsonb, text, uuid
+) from public;
+
+-- ----------------------------------------------------------------------------
+-- 2. api.create_evidence_item(...) — inngangspunktet for en editor
+-- ----------------------------------------------------------------------------
+create function api.create_evidence_item(
+  -- Påkrevd: nøyaktig de kolonnene knowledge.evidence_items krever.
+  p_source_id uuid,
+  p_design_code text,
+  p_population_availability text,
+  p_population_detail text,
+  p_sample_size_availability text,
+  p_intervention_drug_id uuid,
+  p_comparator_kind text,
+  p_outcome_concept_id uuid,
+  p_outcome_detail text,
+  p_timepoint_availability text,
+  p_reported_direction text,
+  p_estimate_availability text,
+  p_confidence_interval_availability text,
+  p_source_locator text,
+  -- Valgfritt. Utelatt betyr NULL, og NULL betyr det den ledsagende
+  -- `*_availability`-kolonnen sier at det betyr — aldri null og aldri
+  -- «ingen effekt» (ANTIDEP_CONSTITUTION.md §6, DATABASE_ARCHITECTURE.md §19.1).
+  p_source_version_id uuid default null,
+  p_population_id uuid default null,
+  p_sample_size integer default null,
+  p_intervention_detail text default null,
+  p_comparator_drug_id uuid default null,
+  p_comparator_detail text default null,
+  p_timepoint_min text default null,
+  p_timepoint_max text default null,
+  p_effect_measure text default null,
+  p_estimate numeric default null,
+  p_estimate_unit text default null,
+  p_ci_lower numeric default null,
+  p_ci_upper numeric default null,
+  p_ci_level_percent numeric default null,
+  p_limitations_text text default null,
+  p_source_quote text default null,
+  -- Kildeforankringen per kontrollfelt (migrasjon 005u). En jsonb-liste der
+  -- hvert element har check_field, source_excerpt, source_locator og
+  -- justification. NULL og tom liste er det samme: ingen forankring registrert.
+  p_field_groundings jsonb default null
+)
+  returns uuid
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+begin
+  -- Endepunktet er innholdsområdet et evidensfunn hører under, og det er derfor
+  -- det en avgrenset editor-tildeling kontrolleres mot.
+  v_actor_id := knowledge.assert_editor_authorized(p_outcome_concept_id);
+
+  return knowledge.record_evidence_item(
+    p_source_id, p_design_code, p_population_availability, p_population_detail,
+    p_sample_size_availability, p_intervention_drug_id, p_comparator_kind,
+    p_outcome_concept_id, p_outcome_detail, p_timepoint_availability,
+    p_reported_direction, p_estimate_availability, p_confidence_interval_availability,
+    p_source_locator, p_source_version_id, p_population_id, p_sample_size,
+    p_intervention_detail, p_comparator_drug_id, p_comparator_detail,
+    p_timepoint_min, p_timepoint_max, p_effect_measure, p_estimate, p_estimate_unit,
+    p_ci_lower, p_ci_upper, p_ci_level_percent, p_limitations_text, p_source_quote,
+    p_field_groundings,
+    -- Hardkodet: en registrering gjennom denne veien *er* en menneskelig
+    -- ekstraksjon. En klientoppgitt verdi ville gjort det mulig å merke en
+    -- håndskrevet rad som maskinelt produsert.
+    'manual',
+    v_actor_id
+  );
 end;
 $$;
 

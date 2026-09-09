@@ -38,7 +38,7 @@ select has_trigger(
 
 select ok(
   (select p.prosecdef from pg_proc p
-   where p.oid = 'api.create_source_version(uuid,timestamptz,text,text,text,text)'::regprocedure),
+   where p.oid = 'api.create_source_version(uuid,timestamptz,text,text,text,text,text)'::regprocedure),
   'api.create_source_version() er SECURITY DEFINER (DATABASE_ARCHITECTURE.md §50)'
 );
 -- Auditskriveren skal aldri være mer privilegert enn operasjonen den
@@ -58,7 +58,7 @@ select is_empty(
     from (values ('anon'), ('authenticated'), ('service_role'), ('public')) as r(role_name)
     where has_function_privilege(
       r.role_name,
-      'knowledge.record_source_version(uuid,timestamptz,text,text,text,text,uuid)'::regprocedure,
+      'knowledge.record_source_version(uuid,timestamptz,text,text,text,text,text,uuid)'::regprocedure,
       'execute'
     )
   $$,
@@ -71,7 +71,7 @@ select is_empty(
     from (values ('anon'), ('service_role'), ('public')) as r(role_name)
     where has_function_privilege(
       r.role_name,
-      'api.create_source_version(uuid,timestamptz,text,text,text,text)'::regprocedure,
+      'api.create_source_version(uuid,timestamptz,text,text,text,text,text)'::regprocedure,
       'execute'
     )
   $$,
@@ -80,7 +80,7 @@ select is_empty(
 select ok(
   has_function_privilege(
     'authenticated',
-    'api.create_source_version(uuid,timestamptz,text,text,text,text)'::regprocedure,
+    'api.create_source_version(uuid,timestamptz,text,text,text,text,text)'::regprocedure,
     'execute'
   ),
   'authenticated har EXECUTE på api.create_source_version()'
@@ -94,7 +94,7 @@ select is_empty(
     select argname
     from pg_proc p
     cross join lateral unnest(p.proargnames) as argname
-    where p.oid = 'api.create_source_version(uuid,timestamptz,text,text,text,text)'::regprocedure
+    where p.oid = 'api.create_source_version(uuid,timestamptz,text,text,text,text,text)'::regprocedure
       and argname in ('p_content_hash', 'p_retrieved_by_actor_id')
   $$,
   'verken hashen eller aktøren kan oppgis av kalleren'

@@ -206,18 +206,12 @@ values (
   'Avsnitt 5', 'ai_assisted', (select id from fixture where name = 'extractor')
 );
 
--- En andre agentidentitet, i rollen evidence_extraction, registrert bare for
--- denne testen. Finnes for å prøve at skriveveien avviser feil rolle, ikke bare
--- at autentiseringsfunksjonen gjør det alene (420 dekker allerede den siste).
-insert into provenance.agent_identities (
-  actor_id, agent_role, identity_key,
-  registered_by_actor_id, registered_by_actor_type, registration_reason
-)
-select
-  (select id from fixture where name = 'extractor'), 'evidence_extraction'::provenance.agent_role,
-  'agent-identity:evidence-extraction-test-440',
-  (select id from fixture where name = 'editor'), 'human',
-  'Prøve i 440: en andre agentidentitet i en annen rolle, for å prøve at skriveveien avviser feil rolle.';
+-- Identiteten i rollen evidence_extraction finnes fra migrasjon 005w og brukes
+-- som den er. Testen registrerte tidligere sin egen, men en aktør kan bare ha
+-- én identitet (agent_identities_actor_key), og den ekte er dessuten den
+-- skriveveien faktisk vil møte. Finnes her for å prøve at skriveveien avviser
+-- feil rolle, ikke bare at autentiseringsfunksjonen gjør det alene (420 dekker
+-- allerede den siste).
 
 create temporary table cred (label text primary key, secret text);
 insert into cred
@@ -226,7 +220,7 @@ select 'verifier', provenance.issue_agent_identity_credential(
 );
 insert into cred
 select 'extractor', provenance.issue_agent_identity_credential(
-  'agent-identity:evidence-extraction-test-440', 'human:peder-holman'
+  'agent-identity:evidence-extraction-01', 'human:peder-holman'
 );
 grant select on cred to anon;
 
@@ -259,7 +253,7 @@ select 'verifier-closed', api.begin_agent_run(
 );
 insert into run
 select 'extractor-open', api.begin_agent_run(
-  p_identity_key := 'agent-identity:evidence-extraction-test-440',
+  p_identity_key := 'agent-identity:evidence-extraction-01',
   p_secret := (select secret from cred where label = 'extractor'),
   p_agent_role := 'evidence_extraction',
   p_provider := 'testleverandør', p_model := 'testmodell',
@@ -345,7 +339,7 @@ set local role anon;
 select throws_ok(
   $$
     select api.register_extraction_verification(
-      p_identity_key := 'agent-identity:evidence-extraction-test-440',
+      p_identity_key := 'agent-identity:evidence-extraction-01',
       p_secret := (select secret from cred where label = 'extractor'),
       p_agent_run_id := (select id from run where label = 'extractor-open'),
       p_evidence_item_id := '44000000-0000-4000-8000-000000000011',

@@ -24,7 +24,12 @@ import {
   type AnsweredLink,
 } from './control-session'
 
-const REQUIRED = ['raw_extraction', 'source_locator', 'intervention_arm', 'outcome']
+// Feltene gaten krever dekket (`workflow.required_check_fields`) og de
+// feltene kontrolløren faktisk får spørsmål om
+// (`workflow.semantic_check_fields`). De to provenansfeltene stilles ikke som
+// egne spørsmål; de føres opp som kontrollert når kontrollen ble bekreftet.
+const REQUIRED = ['raw_extraction', 'source_locator', 'intervention_arm', 'outcome', 'population']
+const SEMANTIC = ['intervention_arm', 'outcome', 'population']
 
 function answers(entries: Record<string, AnsweredCheck['answer']>): Record<string, AnsweredCheck> {
   return Object.fromEntries(
@@ -33,7 +38,7 @@ function answers(entries: Record<string, AnsweredCheck['answer']>): Record<strin
 }
 
 function allYes(): Record<string, AnsweredCheck> {
-  return answers(Object.fromEntries(REQUIRED.map((field) => [field, 'yes' as const])))
+  return answers(Object.fromEntries(SEMANTIC.map((field) => [field, 'yes' as const])))
 }
 
 describe('svaralternativene', () => {
@@ -50,6 +55,7 @@ describe('deriveExtractionVerification', () => {
   it('bekrefter når alle påkrevde felter stemmer og kilden var tilgjengelig', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
       answers: allYes(),
     })
@@ -58,7 +64,7 @@ describe('deriveExtractionVerification', () => {
     // den gir inntrykk av å si.
     expect([...derived.checkedFields].sort()).toEqual([...REQUIRED].sort())
     expect(derived.findings).toBeNull()
-    expect(derived.rationale).toContain('4 av 4 delkontroller besvart')
+    expect(derived.rationale).toContain('3 av 3 delkontroller besvart')
   })
 
   // evidence_verifications_source_access_check: en bekreftelse kan ikke hvile på
@@ -66,6 +72,7 @@ describe('deriveExtractionVerification', () => {
   it('kan ikke bekrefte på et sammendrag fra et annet ledd', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
       sourceAccess: 'derived_summary',
       answers: allYes(),
     })
@@ -76,6 +83,7 @@ describe('deriveExtractionVerification', () => {
   it('blir «må rettes» av ett konkret avvik, og bærer avviksteksten', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
       answers: {
         ...allYes(),
@@ -90,8 +98,9 @@ describe('deriveExtractionVerification', () => {
   it('blir uavklart når noe ikke lot seg avgjøre', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
-      answers: { ...allYes(), source_locator: { answer: 'cannot_determine', note: '' } },
+      answers: { ...allYes(), population: { answer: 'cannot_determine', note: '' } },
     })
     expect(derived.outcome).toBe('uncertain')
     expect(derived.findings).toContain('lot seg ikke avgjøre mot kilden')
@@ -100,8 +109,9 @@ describe('deriveExtractionVerification', () => {
   it('er uavklart så lenge noe står ubesvart', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
-      answers: answers({ raw_extraction: 'yes' }),
+      answers: answers({ intervention_arm: 'yes' }),
     })
     expect(derived.outcome).toBe('uncertain')
     expect(derived.findings).toContain('ikke besvart')
@@ -114,6 +124,7 @@ describe('deriveExtractionVerification', () => {
       for (const answer of ['no', 'cannot_determine'] as const) {
         const derived = deriveExtractionVerification({
           requiredFields: REQUIRED,
+          semanticFields: SEMANTIC,
           sourceAccess,
           answers: { ...allYes(), outcome: { answer, note: '' } },
         })
@@ -129,11 +140,12 @@ describe('deriveExtractionVerification', () => {
   it('lar et avvik veie tyngre enn noe uavklart', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
       answers: {
         ...allYes(),
         outcome: { answer: 'no', note: 'Feil endepunkt.' },
-        source_locator: { answer: 'cannot_determine', note: '' },
+        population: { answer: 'cannot_determine', note: '' },
       },
     })
     expect(derived.outcome).toBe('needs_correction')
@@ -141,12 +153,12 @@ describe('deriveExtractionVerification', () => {
 
   it('teller delsvarene', () => {
     expect(
-      extractionTally(REQUIRED, {
+      extractionTally(SEMANTIC, {
         ...allYes(),
         outcome: { answer: 'no', note: '' },
-        source_locator: { answer: 'cannot_determine', note: '' },
+        population: { answer: 'cannot_determine', note: '' },
       }),
-    ).toEqual({ total: 4, answered: 4, confirmed: 2, deviations: 1, unresolved: 1 })
+    ).toEqual({ total: 3, answered: 3, confirmed: 1, deviations: 1, unresolved: 1 })
   })
 })
 
@@ -296,7 +308,7 @@ describe('foreldet grunnlag', () => {
     }
     const pruned = pruneExtractionSession({
       state,
-      requiredFields: ['outcome', 'estimate'],
+      semanticFields: ['outcome', 'estimate'],
       sourceAccessStepId: 'tilgang',
       fieldStepIdFor: (field) => `felt:${field}`,
       previousBasis: { tilgang: 'k1', 'felt:outcome': 'f1', 'felt:estimate': 'f2' },
@@ -315,7 +327,7 @@ describe('foreldet grunnlag', () => {
     }
     const pruned = pruneExtractionSession({
       state,
-      requiredFields: ['outcome'],
+      semanticFields: ['outcome'],
       sourceAccessStepId: 'tilgang',
       fieldStepIdFor: (field) => `felt:${field}`,
       previousBasis: { tilgang: 'k1', 'felt:outcome': 'f1' },

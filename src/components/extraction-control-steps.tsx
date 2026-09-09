@@ -28,9 +28,15 @@
 // ============================================================================
 
 import { ExtractionFieldStep } from './ExtractionFieldStep'
-import { SourceAddressLink } from './SourceAddressLink'
+import { SourceLink } from './SourceLink'
 import { ControlChoice, type WizardStep } from './ControlWizard'
-import { VERIFICATION_OUTCOME_LABELS } from './vocabulary-labels'
+import {
+  EVIDENCE_CHECK_FIELD_LABELS,
+  SOURCE_REPRESENTATION_LABELS,
+  VERIFICATION_OUTCOME_LABELS,
+  termText,
+} from './vocabulary-labels'
+import { readEvidenceCheckField, readSourceRepresentation } from '../lib/evidence-item'
 import {
   deriveExtractionVerification,
   extractionTally,
@@ -39,10 +45,11 @@ import {
   type DerivedVerification,
   type ExtractionSessionState,
 } from '../lib/control-session'
-import { uncoveredCheckFields } from '../lib/extraction-review'
+import { groundingGap, uncoveredCheckFields } from '../lib/extraction-review'
 import { designStatement, interpretField } from '../lib/extraction-statements'
 import { extractionCommitStepId, fieldStepId, sourceAccessStepId } from '../lib/control-steps'
 import type { ExtractionReviewItem } from '../lib/extraction-review'
+import type { VerificationItem } from '../agents/verification-input'
 import type { VerificationOutcome } from '../types/api'
 
 export interface ExtractionSessionHandlers {
@@ -60,6 +67,29 @@ const ACCESS_WITHOUT_FULL_TEXT = [
   },
   { value: 'derived_summary', label: 'Bare et sammendrag fra et annet ledd' },
 ] as const
+
+function checkFieldLabel(field: string): string {
+  return termText(readEvidenceCheckField(field), EVIDENCE_CHECK_FIELD_LABELS, 'kontrollfelt')
+}
+
+/**
+ * Hva slags representasjon ekstraksjonen bygger på, som én setning.
+ *
+ * EVIDENCE_PIPELINE.md §13: kontrolløren skal vite om verdiene er lest ut av
+ * fulltekst eller av et sammendrag, fordi det avgjør hva de i det hele tatt kan
+ * si. Fravær står som fravær.
+ */
+function representationSentence(dossier: VerificationItem): string {
+  const representation = dossier.sourceVersion?.representation ?? null
+  if (representation === null) {
+    return 'Antidep har ikke registrert hva slags representasjon av kilden denne ekstraksjonen bygger på.'
+  }
+  return `Ekstraksjonen bygger på ${termText(
+    readSourceRepresentation(representation),
+    SOURCE_REPRESENTATION_LABELS,
+    'representasjon',
+  ).toLowerCase()}.`
+}
 
 function outcomeLabel(outcome: string): string {
   return outcome in VERIFICATION_OUTCOME_LABELS
@@ -121,6 +151,7 @@ export function derivedExtractionFor(
 ): DerivedVerification {
   return deriveExtractionVerification({
     requiredFields: item.requiredCheckFields,
+    semanticFields: item.dossier.semanticCheckFields,
     sourceAccess: state.sourceAccess ?? 'derived_summary',
     answers: state.fields,
   })
@@ -154,7 +185,10 @@ export function buildExtractionSteps({
   const evidenceItemId = dossier.evidenceItemId
   const isOwnExtraction = dossier.createdByActorId === reviewerActorId
   const uncovered = uncoveredCheckFields(item)
-  const retrievedFrom = dossier.sourceVersion?.retrievedFrom ?? null
+  const missingGrounding = groundingGap(dossier)
+  const groundings = new Map(
+    dossier.fieldGroundings.map((grounding) => [grounding.checkField, grounding]),
+  )
   const hasVerifiableCopy =
     dossier.sourceVersion !== null && dossier.sourceVersion.contentHash !== null
   const prefix = titlePrefix === null ? '' : `${titlePrefix} `
@@ -172,7 +206,8 @@ export function buildExtractionSteps({
       content: (
         <div className="control-step__form">
           <p className="control-step__lead">{dossier.sourceTitle}</p>
-          <SourceAddressLink label="Åpne kilden" retrievedFrom={retrievedFrom} />
+          <SourceLink identifiers={dossier.sourceIdentifiers} />
+          <p className="control-step__lead">{representationSentence(dossier)}</p>
           <ControlChoice
             legend="Har du tilgang til fullteksten?"
             onChoose={(value) => handlers.onFullText(evidenceItemId, value as ControlAnswer)}
@@ -219,6 +254,39 @@ export function buildExtractionSteps({
     return steps
   }
 
+  // Et funn uten komplett forankring kan ikke kontrolleres felt for felt: det
+  // finnes ingen venstreside å sammenligne mot. Å be kontrolløren finne den i
+  // artikkelen selv er nøyaktig arbeidsformen forankringen finnes for å fjerne,
+  // så økten stopper her og sier hva som må skje i stedet.
+  if (missingGrounding.length > 0) {
+    steps.push({
+      id: extractionCommitStepId(evidenceItemId),
+      title: `${prefix}Dette evidensfunnet må ekstraheres på nytt`,
+      answerSummary: null,
+      // Ikke ferdig, for ingenting her er gjort: steget er en stopp, og skal
+      // stå åpent som den aktive tilstanden økten faktisk er i.
+      isComplete: false,
+      countsTowardProgress: false,
+      content: (
+        <div className="knowledge-notice knowledge-notice--absence" role="note">
+          <p className="knowledge-notice__lead">
+            Ekstraksjonen mangler kildeforankring for{' '}
+            {`${String(missingGrounding.length)} av feltene den påstår noe om, og kan derfor ikke kontrolleres felt for felt.`}
+          </p>
+          <p className="knowledge-notice__detail">
+            {`Uten forankring: ${missingGrounding.map(checkFieldLabel).join(', ')}.`}
+          </p>
+          <p className="knowledge-notice__caveat">
+            Antidep gjetter ikke hvilket kildeutdrag en verdi hviler på, og du skal ikke måtte lete
+            i artikkelen selv. Funnet må ekstraheres på nytt etter gjeldende protokoll, slik at
+            hvert felt får sitt ordrette utdrag, sin peker og sin begrunnelse.
+          </p>
+        </div>
+      ),
+    })
+    return steps
+  }
+
   if (!includeFieldSteps) {
     steps.push({
       id: extractionCommitStepId(evidenceItemId),
@@ -240,11 +308,14 @@ export function buildExtractionSteps({
     return steps
   }
 
-  const groundings = new Map(
-    dossier.fieldGroundings.map((grounding) => [grounding.checkField, grounding]),
-  )
-
-  for (const field of item.requiredCheckFields) {
+  for (const field of dossier.semanticCheckFields) {
+    const grounding = groundings.get(field)
+    if (grounding === undefined) {
+      // Kan ikke skje: et funn med hull i forankringen er stoppet over. Vakten
+      // står likevel, slik at en senere endring ikke stille kan gi et feltsteg
+      // uten venstreside.
+      continue
+    }
     const interpretation = interpretField(field, dossier.extraction)
     const entry = state.fields[field]
     steps.push({
@@ -256,22 +327,21 @@ export function buildExtractionSteps({
       content: (
         <ExtractionFieldStep
           answer={entry?.answer ?? null}
-          grounding={groundings.get(field) ?? null}
+          grounding={grounding}
           interpretation={interpretation}
           note={entry?.note ?? ''}
           onAnswer={(answer) => handlers.onFieldAnswer(evidenceItemId, field, answer)}
           onNote={(note) => handlers.onFieldNote(evidenceItemId, field, note)}
-          retrievedFrom={retrievedFrom}
         />
       ),
     })
   }
 
-  const counts = extractionTally(item.requiredCheckFields, state.fields)
+  const counts = extractionTally(dossier.semanticCheckFields, state.fields)
   const derived = derivedExtractionFor(item, state)
   const ready =
     state.sourceAccess !== null &&
-    item.requiredCheckFields.every((field) => isFieldComplete(state.fields[field]))
+    dossier.semanticCheckFields.every((field) => isFieldComplete(state.fields[field]))
 
   steps.push({
     id: extractionCommitStepId(evidenceItemId),

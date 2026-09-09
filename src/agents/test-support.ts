@@ -14,6 +14,7 @@ import type {
   ClaimStatement,
 } from './claim-verification-input.ts'
 import type {
+  EvidenceFieldGrounding,
   VerificationExtraction,
   VerificationItem,
   VerificationSourceVersion,
@@ -39,6 +40,7 @@ export function sourceVersionFixture(
     retrievedFrom: 'https://eksempel.invalid/kilde',
     externalVersion: null,
     contentHash: `sha256:${'a'.repeat(64)}`,
+    representation: 'full_text',
     hasStorageReference: false,
     ...overrides,
   }
@@ -99,6 +101,64 @@ export function extractionFixture(
   }
 }
 
+/**
+ * Feltene raden påstår noe om studien, utledet av raden slik
+ * `workflow.semantic_check_fields(uuid)` gjør det.
+ *
+ * Speilet her framfor importert, fordi fiksturen skal bygge en *gyldig* rad
+ * uten å spørre databasen. Speilingen er prøvd mot originalen i pgTAP
+ * (600_agent_extraction_test.sql); avviker de, feiler den testen.
+ */
+export function semanticFieldsFor(e: VerificationExtraction): readonly string[] {
+  const reported = (availability: string) => availability === 'reported_value'
+  return [
+    'intervention_arm',
+    'outcome',
+    'reported_direction',
+    'availability_semantics',
+    ...(e.effectMeasure !== null ? ['effect_measure'] : []),
+    ...(e.comparatorKind !== 'none' ? ['comparator_arm'] : []),
+    ...(reported(e.populationAvailability) ? ['population'] : []),
+    ...(reported(e.sampleSizeAvailability) ? ['sample_size'] : []),
+    ...(reported(e.timepointAvailability) ? ['timepoint'] : []),
+    ...(reported(e.estimateAvailability) ? ['estimate'] : []),
+    ...(reported(e.confidenceIntervalAvailability) ? ['confidence_interval'] : []),
+    ...(e.limitationsText !== null ? ['limitations'] : []),
+  ]
+}
+
+/**
+ * Forankringen en agentekstraksjon ville levert for denne raden: ett ordrett
+ * utdrag, én peker og én begrunnelse per semantisk felt.
+ *
+ * Utdragene hentes fra radens egne `raw_extraction`-verdier etter tur, slik at
+ * en test som bytter ut den rå ekstraksjonen med noe som *ikke* står i kilden,
+ * automatisk får en forankring som heller ikke gjør det. Fiksturen er den
+ * positive kontrollen; hva som skjer når forankringen mangler eller ikke lar
+ * seg gjenfinne, prøves av testene som setter `fieldGroundings` selv.
+ */
+export function fieldGroundingsFor(e: VerificationExtraction): readonly EvidenceFieldGrounding[] {
+  const raw = e.rawExtraction
+  const excerpts =
+    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+      ? Object.values(raw as Record<string, unknown>).filter(
+          (value): value is string => typeof value === 'string',
+        )
+      : []
+  if (excerpts.length === 0) {
+    return []
+  }
+  return semanticFieldsFor(e).map((field, index) => ({
+    fieldGroundingId: `61000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    checkField: field,
+    sourceExcerpt: excerpts[index % excerpts.length] as string,
+    sourceLocator: e.sourceLocator,
+    justification: `Utdraget oppgir ${field}.`,
+    createdAt: '2026-09-01T00:00:00+00:00',
+    createdByActorId: '99999999-9999-4999-8999-999999999999',
+  }))
+}
+
 export function verificationItemFixture(
   overrides: Partial<Omit<VerificationItem, 'extraction' | 'sourceVersion'>> & {
     readonly extraction?: Partial<VerificationExtraction>
@@ -106,8 +166,13 @@ export function verificationItemFixture(
   } = {},
 ): VerificationItem {
   const { extraction, sourceVersion, ...rest } = overrides
+  const built = extractionFixture(extraction)
+  const groundings = fieldGroundingsFor(built)
   return {
-    fieldGroundings: [],
+    sourceIdentifiers: [{ system: 'doi', value: '10.1000/testkilde.1' }],
+    fieldGroundings: groundings,
+    semanticCheckFields: semanticFieldsFor(built),
+    groundedCheckFields: groundings.map((grounding) => grounding.checkField),
     evidenceItemId: '3422c284-31eb-428e-b1a0-bebf3f616ffc',
     createdByActorId: '99999999-9999-4999-8999-999999999999',
     createdByActorKey: 'agent:evidence-extraction',
@@ -123,7 +188,7 @@ export function verificationItemFixture(
     sourceStatus: 'active',
     sourceStatusNote: null,
     sourceVersion: sourceVersion === undefined ? sourceVersionFixture() : sourceVersion,
-    extraction: extractionFixture(extraction),
+    extraction: built,
     verificationsByThisActor: 0,
     ...rest,
   }

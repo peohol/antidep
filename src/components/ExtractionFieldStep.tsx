@@ -1,36 +1,32 @@
 // ============================================================================
-// Én delkontroll av ekstraksjonen: kilden til venstre, Antideps tolkning til høyre
+// Én delkontroll: den ordrette teksten til venstre, Antideps tolkning til høyre
 //
-// Kontrolløren skal se det minste som trengs for å svare på ett spørsmål: står
-// dette i kilden, slik Antidep har lest det? Derfor to felt side om side —
-// utdraget kilden faktisk har, og setningen Antidep har laget av det — og
-// ingenting annet.
-//
-// ----------------------------------------------------------------------------
-// Tolkningen er den kanoniske raden, ikke en lagret gjengivelse av den
-//
-// Setningen bygges av `interpretField(...)` fra evidensfunnets egne kolonner
-// (`extraction-statements.ts`). Forankringen leverer utdraget, pekeren og
-// begrunnelsen; den leverer aldri tolkningen. Da kan kontrolløren ikke bekrefte
-// en setning som er noe annet enn det databasen holder
-// (ANTIDEP_CONSTITUTION.md §4, §8).
+// Skuffen inneholder det som trengs for å svare på ett spørsmål, og ingenting
+// mer. Ingen lenke, ingen adresse, ingen provenans, ingen forklaring av
+// publiseringsgaten — de hører til kildetilgangssteget og til «Tekniske
+// detaljer» (ANTIDEP_CONSTITUTION.md §2).
 //
 // ----------------------------------------------------------------------------
-// Et felt uten forankring ser ut som et felt uten forankring
+// Venstresiden er bevist av maskinen, høyresiden vurderes av mennesket
 //
-// Funn registrert før migrasjon 005u har ingen forankring, og flaten viser
-// fraværet med ord. Den henter *ikke* et utdrag ut av `raw_extraction`: et
-// utdrag gjettet på den måten ville vært å konstruere nettopp det grunnlaget
-// kontrollen skal prøve, og kontrolløren ville ikke kunnet se forskjell på et
-// utdrag ekstraktøren faktisk brukte og et flaten fant på.
+// Utdraget er ordrett tekst fra den representasjonen som faktisk ble hentet, og
+// den deterministiske verifikatoren har prøvd at det står der (`extraction-checks.ts`).
+// Tolkningen bygges av evidensfunnets egne kolonner (`extraction-statements.ts`),
+// aldri av en lagret kopi som kunne kommet i utakt med dem.
 //
-// Feltet kan fortsatt kontrolleres — mot kilden selv, som kontrolløren har åpen
-// — men det er da kontrollørens egen lesning som bærer bekreftelsen, og det skal
-// stå tydelig.
+// Kontrollørens oppgave er derfor den ene sammenligningen som er igjen: sier
+// venstresiden det høyresiden påstår?
+//
+// ----------------------------------------------------------------------------
+// Et felt uten forankring får ikke et spørsmål
+//
+// Da har økten ingen venstreside å vise, og å be kontrolløren finne den i
+// artikkelen selv er nøyaktig arbeidsformen forankringen finnes for å fjerne.
+// Slike funn stoppes før økten begynner (`extraction-control-steps.tsx`), og
+// komponenten her tar derfor alltid imot en forankring.
 // ============================================================================
 
 import { ControlChoice } from './ControlWizard'
-import { SourceAddressLink } from './SourceAddressLink'
 import { CONTROL_ANSWER_OPTIONS, type ControlAnswer } from '../lib/control-session'
 import type { FieldInterpretation } from '../lib/extraction-statements'
 import type { EvidenceFieldGrounding } from '../agents/verification-input'
@@ -38,16 +34,13 @@ import type { EvidenceFieldGrounding } from '../agents/verification-input'
 export function ExtractionFieldStep({
   interpretation,
   grounding,
-  retrievedFrom,
   answer,
   note,
   onAnswer,
   onNote,
 }: {
   readonly interpretation: FieldInterpretation
-  /** `null` betyr at ekstraksjonen ikke har forankret dette feltet. */
-  readonly grounding: EvidenceFieldGrounding | null
-  readonly retrievedFrom: string | null
+  readonly grounding: EvidenceFieldGrounding
   readonly answer: ControlAnswer | null
   readonly note: string
   readonly onAnswer: (answer: ControlAnswer) => void
@@ -57,24 +50,9 @@ export function ExtractionFieldStep({
     <div className="field-check">
       <div className="field-check__panes">
         <div className="field-check__pane">
-          <h4 className="field-check__pane-heading">Kilden</h4>
-          {grounding === null ? (
-            <div className="knowledge-notice knowledge-notice--absence" role="note">
-              <p className="knowledge-notice__lead">
-                Ekstraksjonen har ikke registrert hvilket kildeutdrag denne tolkningen bygger på.
-              </p>
-              <p className="knowledge-notice__caveat">
-                Antidep gjetter ikke på et utdrag. Skal du bekrefte feltet, må du finne det i kilden
-                selv — og bekreftelsen hviler da på din egen lesning.
-              </p>
-            </div>
-          ) : (
-            <>
-              <blockquote className="field-check__excerpt">{grounding.sourceExcerpt}</blockquote>
-              <p className="field-check__locator">{grounding.sourceLocator}</p>
-            </>
-          )}
-          <SourceAddressLink label="Åpne kilden" retrievedFrom={retrievedFrom} />
+          <h4 className="field-check__pane-heading">Ordrett tekst</h4>
+          <blockquote className="field-check__excerpt">{grounding.sourceExcerpt}</blockquote>
+          <p className="field-check__locator">{grounding.sourceLocator}</p>
         </div>
 
         <div className="field-check__pane">
@@ -83,17 +61,15 @@ export function ExtractionFieldStep({
           {interpretation.detail === null ? null : (
             <p className="field-check__detail">{interpretation.detail}</p>
           )}
-          {grounding === null ? null : (
-            <details className="field-check__why">
-              <summary>Hvorfor mener Antidep dette?</summary>
-              <p>{grounding.justification}</p>
-            </details>
-          )}
+          <details className="field-check__why">
+            <summary>Hvorfor mener Antidep dette?</summary>
+            <p>{grounding.justification}</p>
+          </details>
         </div>
       </div>
 
       <ControlChoice
-        legend="Stemmer Antideps tolkning med kilden?"
+        legend="Stemmer Antideps tolkning med teksten?"
         onChoose={(value) => onAnswer(value as ControlAnswer)}
         options={CONTROL_ANSWER_OPTIONS}
         value={answer}

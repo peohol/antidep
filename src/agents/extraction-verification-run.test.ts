@@ -147,6 +147,7 @@ async function matchingItem(): Promise<VerificationItem> {
       retrievedFrom: 'https://eksempel.invalid/kilde',
       externalVersion: null,
       contentHash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
+      representation: 'full_text',
       hasStorageReference: false,
     },
   })
@@ -204,6 +205,7 @@ describe('runExtractionVerification — når ingenting skal registreres', () => 
           retrievedFrom: 'https://eksempel.invalid/sporet-besok',
           externalVersion: null,
           contentHash: null,
+          representation: 'full_text',
           hasStorageReference: false,
         },
       }),
@@ -259,6 +261,7 @@ describe('runExtractionVerification — når ingenting skal registreres', () => 
             content: FIXTURE_SOURCE_TEXT,
             byteLength: 1,
             contentHash: `sha256:${'a'.repeat(64)}`,
+        representation: 'full_text',
             bytesAreUtf8: false,
           },
         }),

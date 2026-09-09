@@ -176,6 +176,27 @@ export function uncoveredCheckFields(item: {
   return item.requiredCheckFields.filter((field) => !covered.has(field))
 }
 
+/**
+ * De semantiske feltene som mangler forankring i kilden.
+ *
+ * Forankringen er det kontrolløren faktisk kontrollerer: ordrett kildeutdrag,
+ * locator og begrunnelse per felt, laget av ekstraksjonsagenten samtidig med
+ * verdien. Et felt uten forankring har ikke noe kontrollgrunnlag, og da skal
+ * økten stoppe framfor å be klinikeren lete det fram selv
+ * (ANTIDEP_CONSTITUTION.md §11, EVIDENCE_PIPELINE.md §13).
+ *
+ * Som `uncoveredCheckFields` er dette ren mengdelære over to lister databasen
+ * har levert — `workflow.semantic_check_fields` og
+ * `workflow.grounded_check_fields` — og ingen ny regel her.
+ */
+export function groundingGap(dossier: {
+  readonly semanticCheckFields: readonly string[]
+  readonly groundedCheckFields: readonly string[]
+}): readonly string[] {
+  const grounded = new Set(dossier.groundedCheckFields)
+  return dossier.semanticCheckFields.filter((field) => !grounded.has(field))
+}
+
 // ----------------------------------------------------------------------------
 // Leserne
 // ----------------------------------------------------------------------------

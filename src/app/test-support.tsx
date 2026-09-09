@@ -729,22 +729,54 @@ export function fieldGrounding(
   }
 }
 
-/** Feltene fiksturen forankrer. Alle de påkrevde, slik en fersk ekstraksjon gjør. */
-export const TEST_FIELD_GROUNDINGS: readonly Record<string, unknown>[] = [
+/**
+ * Feltene fiksturen forankrer: de semantiske feltene funnet påstår noe om, slik
+ * en fersk agentekstraksjon må levere dem (`api.register_agent_extraction`).
+ *
+ * `raw_extraction` og `source_locator` står ikke her. De er provenansfelter, og
+ * hver forankring bærer sitt eget ordrette utdrag og sin egen peker.
+ */
+export const TEST_SEMANTIC_FIELDS: readonly string[] = [
+  'intervention_arm',
+  'outcome',
+  'reported_direction',
+  'availability_semantics',
+  'effect_measure',
+  'comparator_arm',
   'population',
   'sample_size',
-  'intervention_arm',
-  'comparator_arm',
-  'outcome',
   'timepoint',
-  'reported_direction',
-  'effect_measure',
   'estimate',
   'confidence_interval',
-  'availability_semantics',
-  'source_locator',
-  'raw_extraction',
-].map((field) => fieldGrounding(field))
+]
+
+export const TEST_FIELD_GROUNDINGS: readonly Record<string, unknown>[] =
+  TEST_SEMANTIC_FIELDS.map((field) => fieldGrounding(field))
+
+/**
+ * Kilden i dossieret, med sine globale identifikatorer.
+ *
+ * Egen byggefunksjon fordi identifikatorene er det den menneskelige lenken
+ * bygges av: en test som varierer dem, skal slippe å gjenta hele kilden.
+ */
+export function reviewSource(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    source_id: SOURCE_A,
+    source_type: 'journal_article',
+    title: 'Testkilde A: vektendring ved åtte uker',
+    authors_or_issuer: 'Testforfatter m.fl.',
+    publisher_or_journal: 'Testtidsskrift',
+    publication_date: '2019-03-01',
+    publication_date_precision: 'month',
+    source_status: 'active',
+    status_note: null,
+    identifiers: [
+      { identifier_system: 'doi', identifier_value: '10.1000/testkilde-a.1' },
+      { identifier_system: 'pmid', identifier_value: '10999999' },
+    ],
+    ...overrides,
+  }
+}
 
 /** Én evidenslenke i grunnlaget, slik dossieret gir den. */
 export function reviewLink(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -761,26 +793,20 @@ export function reviewLink(overrides: Record<string, unknown> = {}): Record<stri
       created_by_actor_type: 'agent',
       extraction_method: 'ai_assisted',
       content_hash: `sha256-v2:${'e'.repeat(64)}`,
-      source: {
-        source_id: SOURCE_A,
-        source_type: 'journal_article',
-        title: 'Testkilde A: vektendring ved åtte uker',
-        authors_or_issuer: 'Testforfatter m.fl.',
-        publisher_or_journal: 'Testtidsskrift',
-        publication_date: '2019-03-01',
-        publication_date_precision: 'month',
-        source_status: 'active',
-        status_note: null,
-      },
+      source: reviewSource(),
       source_version: {
         source_version_id: REVIEW_SOURCE_VERSION,
         retrieved_at: '2026-09-01T09:00:00Z',
-        retrieved_from: 'https://eksempel.invalid/testkilde-a',
+        // Maskinens henteadresse. Den skal aldri være lenken kontrolløren får.
+        retrieved_from: 'https://eutils.eksempel.invalid/efetch.fcgi?db=pubmed&id=10999999',
         external_version: null,
         content_hash: `sha256:${'a'.repeat(64)}`,
+        representation: 'full_text',
         has_storage_reference: false,
       },
       field_groundings: TEST_FIELD_GROUNDINGS,
+      semantic_check_fields: TEST_SEMANTIC_FIELDS,
+      grounded_check_fields: TEST_SEMANTIC_FIELDS,
       extraction: {
         design_code: 'randomized_controlled_trial',
         population_id: null,

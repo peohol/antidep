@@ -95,7 +95,7 @@ function ExtractionControlSession({ evidenceItemId }: { readonly evidenceItemId:
         const state = current[evidenceItemId] ?? emptyExtractionSessionState()
         const pruned = pruneExtractionSession({
           state,
-          requiredFields: item.requiredCheckFields,
+          semanticFields: item.dossier.semanticCheckFields,
           sourceAccessStepId: sourceAccessStepId(evidenceItemId),
           fieldStepIdFor: (field) => fieldStepId(evidenceItemId, field),
           previousBasis,

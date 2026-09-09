@@ -140,7 +140,7 @@ function sessionTallyFor(
   let unresolved = claimCounts.unresolved
   for (const [evidenceItemId, item] of Object.entries(data.extractions)) {
     const state = extractionSessions[evidenceItemId] ?? emptyExtractionSessionState()
-    const counts = extractionTally(item.requiredCheckFields, state.fields)
+    const counts = extractionTally(item.dossier.semanticCheckFields, state.fields)
     total += counts.total
     answered += counts.answered
     confirmed += counts.confirmed
@@ -198,7 +198,7 @@ function ClaimControlSession({ claimRevisionId }: { readonly claimRevisionId: Uu
           const state = current[evidenceItemId] ?? emptyExtractionSessionState()
           const pruned = pruneExtractionSession({
             state,
-            requiredFields: item.requiredCheckFields,
+            semanticFields: item.dossier.semanticCheckFields,
             sourceAccessStepId: sourceAccessStepId(evidenceItemId),
             fieldStepIdFor: (field) => fieldStepId(evidenceItemId, field),
             previousBasis,

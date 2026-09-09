@@ -203,12 +203,12 @@ function tally(
   return { total: keys.length, answered, confirmed, deviations, unresolved }
 }
 
-/** Antallene for én ekstraksjonskontroll. */
+/** Antallene for én ekstraksjonskontroll, over de feltene kontrolløren får spørsmål om. */
 export function extractionTally(
-  requiredFields: readonly string[],
+  semanticFields: readonly string[],
   answers: Readonly<Record<string, AnsweredCheck>>,
 ): ControlTally {
-  return tally(requiredFields, answers)
+  return tally(semanticFields, answers)
 }
 
 function outcomeFrom(counts: ControlTally, accessCanConfirm: boolean): DerivedOutcome {
@@ -266,13 +266,33 @@ function joinFindings(sentences: readonly string[]): string | null {
  * teller bare felter fra kontroller med utfallet `verified`, så et gjennomgått
  * felt i en uavklart kontroll gir ingen dekning. Å utelate det ville derimot
  * skjult hva kontrolløren faktisk så på.
+ *
+ * ----------------------------------------------------------------------------
+ * De to provenansfeltene føres opp uten å ha vært egne spørsmål
+ *
+ * `requiredFields` er publiseringsgatens krav og inneholder `raw_extraction` og
+ * `source_locator`. De er ikke kliniske påstander en lege bedømmer som egne
+ * beslutninger — «er noe bevart ordrett?» og «hvor i dokumentet står funnet som
+ * helhet?» — og som egne trekkspillskuffer var de spørsmål uten klinisk
+ * innhold.
+ *
+ * De føres opp som kontrollert nøyaktig når hvert semantiske felt er bekreftet,
+ * og det er ikke en snarvei: hver forankring bærer sitt eget ordrette utdrag og
+ * sin egen presise peker, så en bekreftet semantisk delkontroll *er* en
+ * kontroll av at noe er bevart ordrett og av hvor i kilden det står — for
+ * nøyaktig det feltet, framfor for raden under ett. Er kontrollen ikke en
+ * bekreftelse, føres de ikke opp, og gatens G5b ser da ingen dekning i det hele
+ * tatt.
  */
 export function deriveExtractionVerification(input: {
+  /** Publiseringsgatens krav: `workflow.required_check_fields(uuid)`. */
   readonly requiredFields: readonly string[]
+  /** Feltene kontrolløren faktisk får spørsmål om: `workflow.semantic_check_fields(uuid)`. */
+  readonly semanticFields: readonly string[]
   readonly sourceAccess: string
   readonly answers: Readonly<Record<string, AnsweredCheck>>
 }): DerivedVerification {
-  const counts = extractionTally(input.requiredFields, input.answers)
+  const counts = extractionTally(input.semanticFields, input.answers)
   const accessCanConfirm = sourceAccessCanConfirm(input.sourceAccess)
   const outcome = outcomeFrom(counts, accessCanConfirm)
 
@@ -284,23 +304,32 @@ export function deriveExtractionVerification(input: {
       `${String(counts.unresolved)} kunne ikke avgjøres.`,
   )
 
+  const answeredSemanticFields = input.semanticFields.filter(
+    (field) => input.answers[field] !== undefined,
+  )
+
   if (outcome === 'verified') {
+    // De to provenansfeltene er de i gatens krav som ikke er semantiske. Se
+    // hodekommentaren for hvorfor de dekkes av de bekreftede delkontrollene.
+    const provenanceFields = input.requiredFields.filter(
+      (field) => !input.semanticFields.includes(field),
+    )
     return {
       outcome,
-      checkedFields: input.requiredFields.filter((field) => input.answers[field] !== undefined),
+      checkedFields: [...answeredSemanticFields, ...provenanceFields],
       rationale,
       findings: null,
     }
   }
 
-  const sentences = [...findingSentences(input.requiredFields, input.answers, fieldLabel)]
+  const sentences = [...findingSentences(input.semanticFields, input.answers, fieldLabel)]
   if (!accessCanConfirm) {
     sentences.push(SUMMARY_ACCESS_CAVEAT)
   }
 
   return {
     outcome,
-    checkedFields: input.requiredFields.filter((field) => input.answers[field] !== undefined),
+    checkedFields: answeredSemanticFields,
     rationale,
     // Utfallet er ikke `verified`, så databasen krever et funn. Er ingen
     // delkontroll åpen, er det kildetilgangen som er grunnen, og setningen over
@@ -352,7 +381,7 @@ export function emptyExtractionSessionState(): ExtractionSessionState {
  */
 export function pruneExtractionSession(input: {
   readonly state: ExtractionSessionState
-  readonly requiredFields: readonly string[]
+  readonly semanticFields: readonly string[]
   readonly sourceAccessStepId: string
   readonly fieldStepIdFor: (field: string) => string
   readonly previousBasis: Readonly<Record<string, string>>
@@ -364,7 +393,7 @@ export function pruneExtractionSession(input: {
     accessBefore !== undefined && accessAfter !== undefined && accessBefore === accessAfter
 
   const fields: Record<string, AnsweredCheck> = {}
-  for (const field of input.requiredFields) {
+  for (const field of input.semanticFields) {
     const entry = input.state.fields[field]
     if (entry === undefined) {
       continue
