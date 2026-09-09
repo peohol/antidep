@@ -101,10 +101,15 @@ export interface RunOptions {
    * kildeversjonen og forankringen — for at kjeden skal kunne fullføres uten å
    * dra hele køen med seg.
    *
+   * Hele køen sendes inn, ikke ett funn om gangen, slik at kalleren kan se hva
+   * som *fantes* og ikke bare hva som ble valgt. Forskjellen er nettopp det
+   * re-ekstraksjonen trenger: en kø uten funnet betyr at det allerede er
+   * kontrollert, mens en kø med et funn som ikke passer, betyr noe annet.
+   *
    * Filtreringen skjer på kjørerens side og gjør ingen kontroll løsere: køen er
    * den samme, og hvert funn som slipper gjennom, kontrolleres nøyaktig som før.
    */
-  readonly select?: (item: VerificationItem) => boolean
+  readonly select?: (items: readonly VerificationItem[]) => readonly VerificationItem[]
   readonly log?: (line: string) => void
 }
 
@@ -241,7 +246,7 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
 
   try {
     const input = parseVerificationInput(await api.readInput(agentRunId, evidenceItemId))
-    const selected = options.select === undefined ? input.items : input.items.filter(options.select)
+    const selected = options.select === undefined ? input.items : options.select(input.items)
     const queue = limit === null ? selected : selected.slice(0, limit)
     log(
       `${String(input.items.length)} evidensfunn i grunnlaget, ${String(queue.length)} tas i denne kjøringen.`,

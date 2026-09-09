@@ -770,6 +770,62 @@ async function main(): Promise<void> {
     ) === '0',
   )
 
+  // ---- Ledd 7: en rettet forankring er ikke en dublett ---------------------
+  //
+  // content_hash dekker kolonnene på knowledge.evidence_items, ikke
+  // forankringen. Et forslag som bare retter et utdrag, treffer derfor den samme
+  // dublettregelen — og skal ikke rapporteres som «allerede gjort» (issue #66).
+  const konfliktBase = JSON.parse(JSON.stringify(reProposalInput)) as {
+    extraction: Record<string, unknown>
+    field_groundings: Record<string, unknown>[]
+  } & Record<string, unknown>
+  konfliktBase.extraction['outcome_detail'] = 'Vektendring, forankringskonflikt.'
+
+  const registrertVariant = parseExtractionProposal(konfliktBase)
+  const registrertKonflikt = await runEvidenceExtraction({
+    api: reextractionPorts.extractionApi,
+    premises: EVIDENCE_EXTRACTION_PREMISES,
+    proposal: registrertVariant,
+    retrieve: retrieve(contentHash),
+  })
+  check(
+    'et forankret funn er registrert og står ukontrollert',
+    registrertKonflikt.decision === 'registered',
+  )
+
+  // Samme strukturerte verdier, ett annet ordrett utdrag. Utdraget står fortsatt
+  // i kilden, så ekstraksjonens egen kontroll slipper det gjennom — det er
+  // databasen som avviser raden.
+  const rettetForslag = parseExtractionProposal({
+    ...JSON.parse(JSON.stringify(konfliktBase)),
+    field_groundings: konfliktBase.field_groundings.map((grounding) =>
+      grounding['check_field'] === 'outcome'
+        ? { ...grounding, source_excerpt: 'Sertraline patients were randomised for 8 weeks.' }
+        : grounding,
+    ),
+  })
+
+  const rettet = await runReextraction({
+    ...reextractionPorts,
+    proposals: [{ label: 'rettet-forankring.json', proposal: rettetForslag }],
+  })
+  check(
+    'den rettede forankringen avvises som en dublett',
+    rettet.registered === 0 && rettet.alreadyRegistered === 1,
+  )
+  check(
+    'og meldes som en forankringskonflikt, ikke som «allerede gjort»',
+    rettet.groundingConflicts === 1 && rettet.results[0]?.verified === false,
+  )
+  check(
+    'og ingen kontroll ble registrert på den fremmede raden',
+    psql(
+      config,
+      `select count(*) from workflow.evidence_verifications
+       where evidence_item_id = ${q(registrertKonflikt.evidenceItemId ?? '')}`,
+    ) === '0',
+  )
+
   check(
     'det gamle funnet står urørt, og har fortsatt ingen forankring',
     psql(

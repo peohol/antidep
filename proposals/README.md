@@ -106,7 +106,11 @@ sammenligner mot, dekker de strukturerte verdiene på funnet — ikke forankring
 som ligger i sin egen tabell. Et forslag som bare retter et utdrag, en peker
 eller en begrunnelse, er derfor den samme ekstraksjonen for databasen og avvises
 som en dublett. Skal en forankring rettes, må noe i `extraction` også være et
-annet; ellers står den gamle forankringen. Se issue [#66].
+annet; ellers står den gamle forankringen. Se issue #66.
+
+`agent:reextract-evidence` sier fra når det skjer: den melder en
+**forankringskonflikt** og avslutter med feil, framfor å la det se ut som
+«allerede gjort».
 
 ## 6. Den deterministiske kontrollen etterpå
 

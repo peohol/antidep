@@ -676,7 +676,10 @@ kontrolleres like strengt (`docs/ANTIDEP_CONSTITUTION.md` §20).
 på raden, så det samme forslaget kjørt om igjen skriver ingenting og rapporteres som
 `already_registered`. Avtrykket dekker ikke forankringen, som ligger i sin egen tabell: et
 forslag som bare retter et utdrag, en peker eller en begrunnelse, er den samme ekstraksjonen
-for databasen og kan ikke registreres på nytt (issue #66).
+for databasen og kan ikke registreres på nytt (issue #66). Re-ekstraksjonen skiller de to
+tilfellene: står forslagets forankring ikke i arbeidskøen mens et annet forankret funn på den
+samme kildeversjonen gjør det, meldes det som en **forankringskonflikt** og kommandoen
+avslutter med feil.
 
 **En avbrutt kjøring kan fullføres.** Registreringen og kontrollen er to skrivinger. Dør
 prosessen mellom dem, finnes raden uten maskinbevis, og en ny kjøring med det samme forslaget

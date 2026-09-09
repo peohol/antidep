@@ -6612,13 +6612,20 @@ rører nøyaktig det forslaget beskriver og lar resten av køen stå. Kjøringen
 funn som står uten registrert maskinbevis, og kommandoen avslutter med feil framfor å si at
 kjeden er komplett: en kontroll som ikke lot seg gjennomføre, er ikke en kontroll (§11).
 
-**Avtrykket dekker verdiene, ikke forankringen, og det sies nå i klartekst.** Også et funn fra
-review. `content_hash` beregnes av kolonnene på `knowledge.evidence_items`; forankringen ligger
-i sin egen tabell. Et forslag som bare retter et utdrag, en peker eller en begrunnelse, er
-derfor den samme ekstraksjonen for databasen og avvises som en dublett — den rettede
-forankringen blir aldri registrert. Det er en begrensning i datamodellen og ikke i kjørerne, og
-er ført som issue #66. Kjøreren og dokumentasjonen sier det nå framfor å la det se ut som
-«allerede gjort».
+**Avtrykket dekker verdiene, ikke forankringen, og kjøringen skiller nå de to tilfellene.**
+Også et funn fra review. `content_hash` beregnes av kolonnene på `knowledge.evidence_items`;
+forankringen ligger i sin egen tabell. Et forslag som bare retter et utdrag, en peker eller en
+begrunnelse, er derfor den samme ekstraksjonen for databasen og avvises som en dublett.
+
+Arbeidskøen gjør forskjellen synlig uten en schemaendring. Køen er nøyaktig «funn denne
+verifikatoren ikke har kontrollert», og sier derfor mer enn hvilket funn som skal kontrolleres:
+ligger forslagets forankring der, er det en avbrutt kjøring som skal fullføres; ligger den ikke
+der og heller ingen annen forankret rad på kildeversjonen gjør det, er funnet allerede
+kontrollert og kjeden komplett; ligger den ikke der mens en *annen* forankret rad på den samme
+kildeversjonen står ukontrollert, er forslaget en rettelse av forankringen. Det siste meldes som
+en forankringskonflikt, og kommandoen avslutter med feil framfor å si «allerede gjort». At
+rettelsen ikke kan registreres i det hele tatt, er en begrensning i datamodellen og ikke i
+kjørerne; den er ført som issue #66 med tre alternativer.
 
 **En feil i ekstraksjonskjøringen ble funnet av at kjeden nå prøves mot en ekte database.**
 `agent_runs_status_shape_check` krever en begrunnelse på en kjøring som lukkes som `aborted`.
@@ -6655,9 +6662,11 @@ at en tørrkjøring ikke skriver, og at ett dårlig forslag ikke stopper de andr
 `scripts/agent-chain-test.ts` har fått re-ekstraksjonen som et femte og sjette ledd, og prøver
 der de tingene bare en ekte database kan avgjøre: at tørrkjøringen ikke skriver en evidensrad
 men likevel lukker kjøringen sin med en begrunnelse, at det samme forslaget kjørt om igjen ikke
-skriver noe fordi `evidence_items_content_hash_key` avviser dubletten, og at en ekstraksjon som
+skriver noe fordi `evidence_items_content_hash_key` avviser dubletten, at en ekstraksjon som
 ble registrert uten kontroll — den avbrutte kjøringen — blir kontrollert av den neste kjøringen
-uten at det skrives en ny rad, og uten at det gamle funnet på den samme kildeversjonen røres.
+uten at det skrives en ny rad og uten at det gamle funnet på den samme kildeversjonen røres, og
+at et forslag med de samme strukturerte verdiene men en annen forankring meldes som en
+forankringskonflikt framfor som en dublett.
 Samtidig prøves regelen re-ekstraksjonen finnes for: det gamle, uforankrede funnet står urørt
 ved siden av det nye, uten forankring lagt til i etterkant. Det var dette leddet som avdekket
 avbruddsfeilen over.

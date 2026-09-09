@@ -206,9 +206,11 @@ describe('runReextraction', () => {
     expect(report.registered).toBe(0)
     expect(report.alreadyRegistered).toBe(1)
     expect(report.unverified).toBe(0)
+    expect(report.groundingConflicts).toBe(0)
     expect(spy.registered).toHaveLength(0)
-    // Køen leses, men er tom for dette funnet: det står allerede med et bevis,
-    // og da er det ingenting igjen å gjøre.
+    // Arbeidskøen er «funn denne verifikatoren ikke har kontrollert». At funnet
+    // ikke ligger der, er derfor et bevis på at det allerede er kontrollert:
+    // kjeden er komplett, og det er ingenting igjen å gjøre.
     expect(spy.readInputFor).toEqual([null])
     expect(spy.verified).toEqual([])
   })
@@ -308,6 +310,73 @@ describe('runReextraction', () => {
     expect(report.registered).toBe(1)
     expect(report.unverified).toBe(1)
     expect(report.results[0]?.verified).toBe(false)
+    expect(spy.verified).toEqual([])
+  })
+
+  // Avtrykket databasen sammenligner, dekker de strukturerte verdiene og ikke
+  // forankringen. Et forslag som bare retter et utdrag, treffer derfor den samme
+  // dublettregelen — og skal ikke rapporteres som «allerede gjort».
+  it('skiller en rettet forankring fra et identisk forslag', async () => {
+    const forslag = await proposal()
+    const spy = spies({
+      duplicate: true,
+      queue: [
+        verificationItemFixture({
+          evidenceItemId: ITEM_ID,
+          sourceVersion: sourceVersionFixture({
+            contentHash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
+          }),
+          // Den registrerte raden bærer en annen forankring enn forslagets.
+          fieldGroundings: forslag.fieldGroundings.map((grounding) => ({
+            fieldGroundingId: '90000000-0000-4000-8000-000000000001',
+            checkField: grounding.checkField,
+            sourceExcerpt: 'Et helt annet utdrag enn det forslaget oppgir.',
+            sourceLocator: grounding.sourceLocator,
+            justification: grounding.justification,
+            createdAt: '2026-09-01T00:00:00+00:00',
+            createdByActorId: '99999999-9999-4999-8999-999999999999',
+          })),
+        }),
+      ],
+    })
+
+    const report = await runReextraction({
+      extractionApi: spy.extractionApi,
+      verificationApi: spy.verificationApi,
+      extractionPremises: EXTRACTION_PREMISES,
+      verificationPremises: VERIFICATION_PREMISES,
+      proposals: [{ label: 'rettet.json', proposal: forslag }],
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.groundingConflicts).toBe(1)
+    expect(report.unverified).toBe(0)
+    expect(report.results[0]?.verified).toBe(false)
+    expect(report.results[0]?.groundingConflict).toMatch(/forankringen i basen er en annen/)
+    // Ingenting skrives, verken en rad eller en kontroll av en fremmed rad.
+    expect(spy.registered).toHaveLength(0)
+    expect(spy.verified).toEqual([])
+  })
+
+  // En legacy-rad uten forankring på den samme kildeversjonen er ikke en rettet
+  // forankring, og skal ikke bli meldt som en konflikt.
+  it('melder ingen konflikt for et uforankret funn på den samme kildeversjonen', async () => {
+    const spy = spies({
+      duplicate: true,
+      queue: [verificationItemFixture({ evidenceItemId: ITEM_ID, fieldGroundings: [] })],
+    })
+
+    const report = await runReextraction({
+      extractionApi: spy.extractionApi,
+      verificationApi: spy.verificationApi,
+      extractionPremises: EXTRACTION_PREMISES,
+      verificationPremises: VERIFICATION_PREMISES,
+      proposals: [{ label: 'fava.json', proposal: await proposal() }],
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.groundingConflicts).toBe(0)
+    expect(report.alreadyRegistered).toBe(1)
     expect(spy.verified).toEqual([])
   })
 

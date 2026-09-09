@@ -170,7 +170,8 @@ async function main(): Promise<number> {
       `\n${String(report.registered)} nye forankrede evidensfunn, ` +
         `${String(report.alreadyRegistered)} allerede registrert, ` +
         `${String(report.skipped)} ikke registrert, ` +
-        `${String(report.unverified)} uten maskinbevis.`,
+        `${String(report.unverified)} uten maskinbevis, ` +
+        `${String(report.groundingConflicts)} med en annen forankring i basen.`,
     )
 
     // Setningen under er en påstand om at kjeden er komplett, og skal bare stå
@@ -184,23 +185,27 @@ async function main(): Promise<number> {
           'registreringen ble avvist. Rett årsaken og kjør kommandoen om igjen; den skriver ' +
           'ingen ny rad, men fullfører kontrollen.',
       )
-    } else if (report.registered > 0 || report.alreadyRegistered > 0) {
+    } else if (
+      report.groundingConflicts === 0 &&
+      (report.registered > 0 || report.alreadyRegistered > 0)
+    ) {
       console.log(
         'Funnene er registrert og deterministisk kontrollert. Å lenke dem til en ' +
           'påstandsrevisjon er en faglig vurdering og gjøres av en kvalifisert redaktør.',
       )
     }
 
-    if (report.alreadyRegistered > 0) {
-      console.log(
-        `\n${String(report.alreadyRegistered)} forslag var registrert fra før. Fingeravtrykket ` +
-          'databasen sammenligner, dekker de strukturerte verdiene og ikke forankringen: et ' +
-          'forslag som bare retter et utdrag, en peker eller en begrunnelse, er den samme ' +
-          'ekstraksjonen for databasen og kan ikke registreres på nytt.',
-      )
+    // En rettet forankring er ikke det samme som «allerede gjort», og skal ikke
+    // se slik ut. Kjøringen vet forskjellen: forslagets forankring finnes ikke i
+    // arbeidskøen, mens et annet forankret funn på den samme kildeversjonen står
+    // ukontrollert der.
+    for (const result of report.results) {
+      if (result.groundingConflict !== undefined) {
+        console.error(`\n${result.label}: ${result.groundingConflict}`)
+      }
     }
 
-    return report.skipped > 0 || report.unverified > 0 ? 1 : 0
+    return report.skipped > 0 || report.unverified > 0 || report.groundingConflicts > 0 ? 1 : 0
   } catch (cause) {
     // Alt som skrives ut, går gjennom redact: en feilmelding fra PostgREST kan
     // i prinsippet gjengi det som ble sendt, og det som ble sendt inneholder

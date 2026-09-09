@@ -50,6 +50,23 @@
 // stå.
 //
 // ----------------------------------------------------------------------------
+// Hva køen beviser, og hvordan dubletten tolkes
+//
+// Arbeidskøen er nøyaktig «funn denne verifikatoren ikke har kontrollert».
+// Derfor sier den mer enn hvilket funn som skal kontrolleres:
+//
+//   * Funnet ligger i køen og bærer forslagets forankring → en avbrutt kjøring.
+//     Kontrollen fullføres, og ingen ny rad skrives.
+//   * Funnet ligger *ikke* i køen → det er allerede kontrollert. Databasen sa at
+//     de strukturerte verdiene finnes, og køen sier at raden med dem er
+//     kontrollert: kjeden er komplett, og det er ingenting å gjøre.
+//   * Køen har et forankret funn på den samme kildeversjonen, men ingen med
+//     forslagets forankring → forslaget er ikke det som står i basen. Det er
+//     tilfellet der bare et utdrag, en peker eller en begrunnelse er rettet, og
+//     databasens avtrykk ikke skiller det fra en dublett (issue #66). Kjøringen
+//     rapporterer det som en konflikt framfor å si «allerede gjort».
+//
+// ----------------------------------------------------------------------------
 // Hvor den stopper, og hvorfor den stopper der
 //
 // Den registrerer funnet og kontrollerer det deterministisk. Den lenker det
@@ -114,6 +131,15 @@ export interface ReextractionResult {
    * (ANTIDEP_CONSTITUTION.md §11).
    */
   readonly verified: boolean
+  /**
+   * Satt når databasen avviste forslaget som en dublett, men basen bærer en
+   * *annen* forankring enn forslagets.
+   *
+   * Da er forslaget ikke det som står registrert, og det kan likevel ikke
+   * registreres: avtrykket dekker de strukturerte verdiene og ikke forankringen
+   * (issue #66). Teksten sier hva som ble observert.
+   */
+  readonly groundingConflict?: string
 }
 
 export interface ReextractionReport {
@@ -126,6 +152,11 @@ export interface ReextractionReport {
   readonly skipped: number
   /** Funn som finnes, men står uten registrert maskinbevis etter kjøringen. */
   readonly unverified: number
+  /**
+   * Forslag der basen bærer de samme strukturerte verdiene, men en annen
+   * forankring. Verken registrert eller mulig å registrere (issue #66).
+   */
+  readonly groundingConflicts: number
 }
 
 /**
@@ -229,9 +260,26 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
     // Ble raden nettopp skrevet, kjenner vi id-en. Var den skrevet fra før —
     // fordi en tidligere kjøring døde mellom de to skrivingene — gjør vi det
     // ikke, og funnet gjenfinnes i køen på kildeversjonen og forankringen.
+    //
+    // Køen sier samtidig mer enn hvilket funn som skal kontrolleres; se
+    // hodekommentaren. `rivals` teller de forankrede funnene på den samme
+    // kildeversjonen som *ikke* er forslagets — de som skiller «rettet
+    // forankring» fra «allerede kontrollert».
+    let rivals = 0
     const target =
       extraction.evidenceItemId === undefined
-        ? { select: (item: VerificationItem) => matchesProposal(item, proposal) }
+        ? {
+            select: (items: readonly VerificationItem[]): readonly VerificationItem[] => {
+              const mine = items.filter((item) => matchesProposal(item, proposal))
+              rivals = items.filter(
+                (item) =>
+                  item.sourceVersion?.sourceVersionId === proposal.sourceVersionId &&
+                  item.fieldGroundings.length > 0 &&
+                  !mine.includes(item),
+              ).length
+              return mine
+            },
+          }
         : { evidenceItemId: extraction.evidenceItemId }
 
     const verification = await runExtractionVerification({
@@ -243,12 +291,25 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
       log,
     })
 
+    // Basen bærer de samme strukturerte verdiene, forslagets forankring er ikke
+    // i køen, og et annet forankret funn på den samme kildeversjonen står
+    // ukontrollert. Da er forslaget en rettelse av forankringen, og den kan
+    // ikke registreres (issue #66).
+    const conflict =
+      extraction.decision === 'already_registered' && verification.items.length === 0 && rivals > 0
+        ? 'De strukturerte verdiene er allerede registrert, men forankringen i basen er en ' +
+          'annen enn forslagets. Fingeravtrykket databasen sammenligner, dekker verdiene og ' +
+          'ikke forankringen, så en rettet forankring kan ikke registreres som et nytt funn ' +
+          '(issue #66).'
+        : undefined
+
     // En kontroll som ikke lot seg gjennomføre, er ikke en kontroll. Sto funnet
     // allerede med et bevis, er køen tom for det — og da er det ingenting som
     // ble hoppet over.
-    const verified = !verification.items.some((item) => item.decision === 'skipped')
+    const verified =
+      conflict === undefined && !verification.items.some((item) => item.decision === 'skipped')
     if (!verified) {
-      log(`Funnet fra ${label} står uten registrert maskinbevis etter denne kjøringen.`)
+      log(conflict ?? `Funnet fra ${label} står uten registrert maskinbevis etter denne kjøringen.`)
     }
 
     results.push({
@@ -257,6 +318,7 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
       extraction,
       verification,
       verified,
+      ...(conflict === undefined ? {} : { groundingConflict: conflict }),
     })
   }
 
@@ -267,7 +329,12 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
       (result) => result.extraction.decision === 'already_registered',
     ).length,
     skipped: results.filter((result) => result.extraction.decision === 'skipped').length,
-    unverified: results.filter((result) => result.verification !== undefined && !result.verified)
-      .length,
+    unverified: results.filter(
+      (result) =>
+        result.verification !== undefined &&
+        !result.verified &&
+        result.groundingConflict === undefined,
+    ).length,
+    groundingConflicts: results.filter((result) => result.groundingConflict !== undefined).length,
   }
 }
