@@ -62,9 +62,11 @@ comment on column knowledge.source_versions.representation is
 -- Skriveveien tar imot verdien
 --
 -- Begge funksjonene slippes og lages på nytt: en ny parameter med standardverdi
--- ville laget en overload, og da ville klienten og ikke kontrakten avgjort
--- hvilken PostgREST kaller. Samme begrunnelse som migrasjon 007f gir for
--- api.create_evidence_item(...).
+-- ville laget en *ny* funksjon ved siden av den gamle, og PostgREST ville da
+-- hatt to kandidater for samme navn — hvilken som ble valgt, ville avhengt av
+-- hvilke argumenter klienten tilfeldigvis sendte, altså av klienten og ikke av
+-- kontrakten. DROP + CREATE er den eneste operasjonen som bytter signatur uten
+-- å etterlate to. Rettighetene gjenopprettes identisk.
 --
 -- Parameteren er valgfri utad og påkrevd der den betyr noe. En editor som
 -- registrerer en kildeversjon for hånd, kan la den stå — men da kan ingen

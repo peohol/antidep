@@ -1389,7 +1389,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
       feat: add the human claim review and publication approval flow        (#59)  merget   migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
       feat: add the human extraction check and make publication operational (#61)  merget   migrasjon 005q, 005r, 005s, 005t, 006g, 006h
-      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007f
+      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1491,7 +1491,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1922 pgTAP-assertions over 59 testfiler.
+Databaselaget teller nå 1923 pgTAP-assertions over 59 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1659,15 +1659,16 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   39 enum-typer, fordelt på de femti migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de femtisju migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
-   005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g og 006h — i
+   005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
+   007g, 003b, 005v, 005w og 003c — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle femtitre ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle femtisju ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -1692,6 +1693,13 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
    `workflow.verification_source_access` og `workflow.verification_check_result` fra
    migrasjon 005 på en ny tabell, 005k tar imot de samme vokabularene som `text` og `jsonb`
    og caster dem i funksjonskroppen, og 006c og 005l gjenskaper hver sine funksjoner.
+   Av de sju siste oppretter bare 003b en ny type — `knowledge.source_representation`,
+   som løfter totalen fra 39 til 40. 008h er en ren `ALTER TYPE ... ADD VALUE` som 008a,
+   005u oppretter en tabell over et vokabular migrasjon 005 allerede eier, 007g flytter
+   innsettingen ut i én delt funksjon uten å innføre noe vokabular, 005v tar imot de samme
+   vokabularene som `text` og `jsonb` og caster dem i funksjonskroppen som 005k, 005w
+   skriver én rad i et register som allerede finnes, og 003c skriver forankringsrader og
+   setter en kolonne som 003b nettopp opprettet.
    Viewene caster enum-kolonner til `text`, så den offentlige kontrakten er en streng
    fra et dokumentert vokabular, ikke PostgreSQL-typen. Et senere bytte til
    oppslagstabeller er dermed ikke en brytende API-endring. Castingen sparer også
@@ -6242,13 +6250,17 @@ den eksplisitte publiseringsbeslutningen, og publiseringen. Bare det aktive steg
 et ferdig steg lukkes, markeres med svaret sitt og kan åpnes igjen. Hele dossieret ligger
 bak «Tekniske detaljer» og er ute av den kliniske arbeidsflyten.
 
-**Tre migrasjoner, og den ene av dem er grunnen til at resten er mulig.**
+**Sju migrasjoner, og den bærende beslutningen er hvem som lager kontrollgrunnlaget.**
 
 | Migrasjon | Hva den gjør |
 | --- | --- |
 | 008h | `audit.event_operation` får `evidence_field_grounding_recorded` |
 | 005u | `knowledge.evidence_field_groundings` — kildeforankringen per kontrollfelt, med leser, dossier og avtrykk |
-| 007f | `api.create_evidence_item(...)` produserer forankringen i samme transaksjon som funnet |
+| 007g | Innsettingen i `knowledge.evidence_items` flyttes ut i én delt funksjon begge skriveveiene kaller |
+| 003b | `knowledge.source_representation` og `source_versions.representation` — hva slags representasjon som faktisk ble hentet |
+| 005v | `api.register_agent_extraction(...)` — ekstraksjonsagentens skrivevei, med komplett forankring som vilkår |
+| 005w | Ekstraksjonsagenten får sin identitet i `provenance.agent_identities` |
+| 003c | Golden slicen får sin forankring og sin representasjonstype |
 
 **Koblingen mellom felt og kilde fantes ikke som data, og det var den egentlige feilen.**
 Kontrollflaten kunne bare stille ett spørsmål — «stemmer denne raden med kilden?» — fordi
@@ -6261,6 +6273,18 @@ fjorten ganger.
 gjelder, det minste ordrette kildeutdraget, den presise kildepekeren for nettopp det utdraget,
 og en kort eksplisitt begrunnelse for hvordan utdraget ble til den strukturerte verdien.
 
+**Forankringen er ekstraksjonens produkt, ikke redaktørens.** Ved første forsøk lå
+forankringen på den manuelle registreringssiden, og det var feil produsent: da ville
+venstresiden i kontrolløkten vært noe et menneske skrev inn ved siden av verdien, og
+kontrolløren ville kontrollert skjemautfyllingen framfor kilden.
+`api.register_agent_extraction(...)` er derfor den eneste veien inn. Den autentiserer
+identiteten for rollen `evidence_extraction`, krever en åpen agentkjøring, krever en
+kildeversjon med registrert representasjonstype, og avviser enhver ekstraksjon som ikke
+forankrer hvert semantiske felt raden påstår noe om
+(`workflow.assert_extraction_fully_grounded(uuid)`). Editorveien
+`api.create_evidence_item(...)` er uendret og skriver ingen forankring; et funn registrert
+der er nøyaktig så kontrollerbart felt for felt som fraværet sier.
+
 **Den femte tingen lagres bevisst ikke, og det er en sikkerhetsbeslutning.** «Agentens
 strukturerte tolkning» finnes allerede: det er kolonnen på `knowledge.evidence_items`. En
 kopi ved siden av kunne kommet i utakt med den kanoniske verdien, og da ville kontrolløren
@@ -6269,11 +6293,47 @@ inkluderte 48 deltakere» bygges derfor deterministisk av raden selv, i
 `src/lib/extraction-statements.ts`, og forankringen sier bare hva utsagnet hviler på. Skjult
 chain-of-thought verken lagres eller etterspørres.
 
-**Gamle funn er håndtert eksplisitt, og ingenting gjettes.** Et evidensfunn registrert før
-005u har ingen forankring. Flaten viser fraværet med ord og henter *ikke* et utdrag ut av
-`raw_extraction`: et utdrag gjettet på den måten ville vært å konstruere nettopp det
-grunnlaget kontrollen skal prøve, og kontrolløren ville ikke kunnet se forskjell på et utdrag
-ekstraktøren faktisk brukte og et flaten fant på.
+**Maskinen beviser venstresiden, mennesket vurderer høyresiden.** Den deterministiske
+ekstraksjonskontrollen søker hvert forankret utdrag ordrett i den kildeversjonen raden peker
+på. Et utdrag som ikke står der, er et avvik av samme slag som et sitat som ikke gjør det, og
+feltet det gjelder føres aldri opp som kontrollert. Kontrolløren står dermed igjen med den
+ene sammenligningen som ikke kan avgjøres maskinelt: følger den strukturerte verdien av
+utdraget? De verifiserte utdragene inngår også i høystakken tallene og begrepene søkes i;
+kravet om at armen og endepunktet står i samme sammenhengende treff, er urørt.
+
+**To provenansfelter er ikke lenger egne kliniske steg.** `raw_extraction` og
+`source_locator` er påstander om proveniens — «er noe bevart ordrett?» og «hvor i dokumentet
+står funnet som helhet?» — og som egne spørsmål i en kontrolløkt var de spørsmål uten klinisk
+innhold. `workflow.semantic_check_fields(uuid)` er `required_check_fields(uuid)` uten dem, og
+det er dette settet økten spør om. Garantien de bar er ikke svekket, men flyttet dit den er
+sterkere: hver forankring har sitt eget ordrette utdrag og sin egen presise peker, så en
+bekreftet semantisk delkontroll *er* en kontroll av begge deler — for nøyaktig det feltet
+framfor for raden under ett. Publiseringsgatens G5b leser fortsatt hele
+`required_check_fields(uuid)`, og de to feltene føres opp når kontrollen ender i en
+bekreftelse.
+
+**Lenken til kilden bygges av identifikatorene, ikke av henteadressen.**
+`source_versions.retrieved_from` er maskinens eksakte adresse — for et EUtils-kall er den XML
+— og er riktig der fingeravtrykket beregnes, men den er ikke artikkelen et menneske skal
+åpne. Den menneskelige lenken bygges av kildens DOI, med PubMed-siden som reserve, og står
+én gang i økten: i kildetilgangssteget. Henteadressen er flyttet til «Tekniske detaljer».
+
+**Gamle funn stopper økten framfor å be om håndarbeid.** Et evidensfunn uten komplett
+forankring kan ikke kontrolleres felt for felt: det finnes ingen venstreside å bedømme
+verdien mot. Økten stopper derfor med én kort beskjed om at funnet må ekstraheres på nytt
+etter gjeldende protokoll, og navngir feltene som mangler. Den deterministiske kontrollen
+konkluderer på samme måte: `uncertain`, aldri `verified`. Antidep gjetter aldri et utdrag ut
+av `raw_extraction` — et utdrag gjettet på den måten ville vært å konstruere nettopp det
+grunnlaget kontrollen skal prøve.
+
+Golden slicens to funn er eldre enn 005u og var i akkurat denne tilstanden. 003c forankrer
+dem felt for felt, ført opp i klartekst med den samme forfatterstatusen de seedede radene
+selv har, og setter representasjonstypen `abstract` på de to kildeversjonene: EUtils efetch
+gir MEDLINE-posten, ikke fulltekstartikkelen. Hvert utdrag er en sammenhengende del av
+`raw_extraction`, som selv er ordrett fra den hashede posten, så den deterministiske
+verifikatoren kan bevise hvert av dem. Migrasjonen er ikke en generell tilbakefylling: den
+rører ingen annen rad, og radene identifiseres av kildens PubMed-ID fordi id-ene i
+migrasjon 003 er databasegenererte.
 
 **Utfallet velges ikke lenger.** Kontrollalgoritmen *er* metoden. Alle obligatoriske felter
 bekreftet og kildetilgangen oppfylt gir `verified`; minst ett konkret avvik gir
@@ -6292,34 +6352,38 @@ Avvisning uttrykkes der den hører hjemme: i publiseringsbeslutningen.
 **Foreldet grunnlag rammer det som faktisk er endret.** Garantien er uendret og ligger i
 databasen: `workflow.assert_extraction_unchanged(uuid, text)` og
 `workflow.assert_evidence_set_unchanged(uuid, text)` avviser en registrering der noe i
-grunnlaget er endret, under radlåsen. Avtrykket dekker nå også settet av forankringer.
-Flaten legger til én bekvemmelighet over den: den sammenligner avtrykket av hvert *steg* før
-og etter en ny henting, og nullstiller bare de stegene som nå viser noe annet. En forankring
-som byttes ut, rammer sitt eget felt; en kontroll som registreres av en annen i mellomtiden,
-rammer registreringssteget og ikke svarene.
+grunnlaget er endret, under radlåsen. Avtrykket dekker nå også settet av forankringer og
+kildeversjonens representasjonstype. Flaten legger til én bekvemmelighet over den: den
+sammenligner avtrykket av hvert *steg* før og etter en ny henting, og nullstiller bare de
+stegene som nå viser noe annet. En forankring som byttes ut, rammer sitt eget felt; en
+kontroll som registreres av en annen i mellomtiden, rammer registreringssteget og ikke
+svarene.
 
 **Ingen regel er myket opp.** Ingen CHECK, constraint, trigger, policy eller grant er fjernet
 eller svekket, og ingen ny direkte tabelltilgang er gitt til `anon` eller `authenticated`.
-`knowledge.evidence_field_groundings` er append-only med RLS og uten klientgrant, forankringen
-er låst til ekstraksjonens egen skaper av en sammensatt fremmednøkkel, og den eneste veien inn
-er `api.create_evidence_item(...)`. Grunnlagsavtrykket er blitt strengere, ikke løsere.
+`knowledge.evidence_field_groundings` er append-only med RLS og uten klientgrant, og
+forankringen er låst til ekstraksjonens egen skaper av en sammensatt fremmednøkkel.
+Grunnlagsavtrykket er blitt strengere, ikke løsere, og agentveien krever to ting editorveien
+ikke gjør: en kildeversjon med kjent representasjonstype, og komplett forankring.
 
-**Prisen står i to steder, og begge er betalt framfor omgått.** `api.create_evidence_item`
-har byttet signatur, og den gamle er sluppet framfor å bli stående som en overload — to
-kandidater ville latt klienten og ikke kontrakten avgjøre hvilken PostgREST kaller. Og
-kommentaren på `workflow.ensure_editor_role_grant()` navnga den gamle signaturen; den er
-erstattet i 007f, fordi en kommentar som navngir en funksjon som ikke finnes, er nøyaktig det
-`280_content_hash_serialization_test.sql` finnes for å fange.
+**Det som gjenstår.** Selve ekstraksjonsagenten finnes ikke ennå: kontrakten, skriveveien og
+kravene er bygget og prøvd, men leddet som leser en representasjon og foreslår de
+strukturerte verdiene, er en egen leveranse. Den trenger en modellleverandør, som er en
+kostnads- og kontobeslutning for prosjekteieren.
 
-**Testene.** To nye pgTAP-filer: `580` (tabellen, rettighetene, radinvariantene, append-only,
-leseren, dossieret, avtrykket og auditsporet) og `590` (skriveveien, at forankringen blir til
-i samme kall og attribueres til ekstraktøren, formfeilene, og at et funn uten forankring står
-som uforankret). Frontenden har fått fem nye testfiler for de rene modulene — utledningen av
-utfallene, utsagnene per felt, avtrykkene per steg, kildeadressen og innsamlingen av
-forankringen — og de to sidetestene er skrevet om til å beskrive arbeidsmodellen: at bare det
-aktive steget vises, at stegprogresjonen og tilbakegangen virker, at avvikstekst festes til
-riktig delkontroll, at det ikke finnes noen utfallsmeny, og at hele kjeden fra kildetilgang
-til publisering går gjennom uten at noen av de fire beslutningsobjektene slås sammen.
+**Testene.** To pgTAP-filer bærer leveransen: `580` (tabellen, rettighetene,
+radinvariantene, append-only, leseren, dossieret, avtrykket og auditsporet) og `590`
+(agentens skrivevei, at forankringen blir til i samme kall og attribueres til kjøringens egen
+aktør, at et hull i forankringen ikke etterlater noe, at en kildeversjon uten
+representasjonstype avvises, at editorveien ikke kan skrive forankring, og hele kjeden fra
+agentekstraksjon til publisert påstand). Frontenden har fått nye testfiler for de rene
+modulene — utledningen av utfallene, utsagnene per felt, avtrykkene per steg, den
+menneskelige kildelenken og grunnlaget for hvert kontrollpunkt — og de to sidetestene er
+skrevet om til å beskrive arbeidsmodellen: at bare det aktive steget vises, at lenken går til
+DOI og aldri til henteadressen, at ingen feltskuffe gjentar lenken, at ingen steg spør om
+`raw_extraction` eller den globale kildepekeren, at et ugrunnet funn stopper økten, at
+avvikstekst festes til riktig delkontroll, at det ikke finnes noen utfallsmeny, og at hele
+kjeden går gjennom uten at noen av de fire beslutningsobjektene slås sammen.
 
 ---
 

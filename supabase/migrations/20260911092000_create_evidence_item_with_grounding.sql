@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migrasjon 007f — ekstraksjonen produserer sin egen kildeforankring
+-- Migrasjon 007g — én delt innsetting for begge skriveveiene inn i evidens
 --
 -- Migrasjon 005u innførte knowledge.evidence_field_groundings. Denne
 -- migrasjonen gir den den eneste skriveveien den skal ha: den samme

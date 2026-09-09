@@ -2,7 +2,7 @@
 -- Migrasjon 005v — ekstraksjonsagenten får sin egen skrivevei, og forankringen
 --                  blir et krav der den hører hjemme
 --
--- Migrasjon 005u ga forankringen en tabell, og 007f ga editorens skjema en
+-- Migrasjon 005u ga forankringen en tabell, og 007g ga editorens skjema en
 -- parameter å sende den i. Det var feil produsent. Forankringen — det ordrette
 -- utdraget, den presise pekeren og begrunnelsen — skal lages av det leddet som
 -- faktisk leser kilden, samtidig med den strukturerte ekstraksjonen
