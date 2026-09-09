@@ -1102,3 +1102,361 @@ header nav a {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* ==========================================================================
+   Kontrolløkten: ett spørsmål om gangen
+
+   Trekkspillet er ikke en layoutdetalj. Kontrolløren skal se den minste
+   informasjonsmengden som trengs for å ta én beslutning
+   (ANTIDEP_CONSTITUTION.md §2), og et lukket steg er derfor det normale — ikke
+   en sammenslått variant av et åpent.
+
+   Tre regler går igjen:
+
+     * Farge er aldri eneste bærer (§2, WCAG 1.4.1). Hvert steg står med ord —
+       «Stemmer», «Avvik», «Ikke gjort» — og kantstreken er tillegg for øyet.
+     * Animasjonen er en overgang mellom to tilstander, ikke informasjon. Den
+       slås av under prefers-reduced-motion, og innholdet er det samme uansett.
+     * Fravær ser ikke ut som en verdi. Et felt uten registrert forankring får
+       en `knowledge-notice--absence`, aldri en tom rute.
+   ========================================================================== */
+
+.control-wizard {
+  margin: 1.5rem 0;
+  max-width: 52rem;
+}
+
+.control-wizard__progress {
+  margin: 0 0 0.75rem;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.control-step {
+  margin-block-end: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.25rem;
+}
+
+/* Det aktive steget er det eneste med tyngde. Et ferdig steg trer tilbake uten
+   å forsvinne: det skal kunne åpnes igjen. */
+.control-step[data-state='active'] {
+  border-color: var(--color-text);
+}
+
+.control-step[data-state='done'] {
+  border-style: dashed;
+}
+
+.control-step__heading {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.control-step__toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  justify-content: space-between;
+  align-items: baseline;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.control-step__toggle:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -3px;
+}
+
+.control-step__title {
+  font-weight: 600;
+}
+
+.control-step[data-state='done'] .control-step__title {
+  font-weight: 400;
+}
+
+.control-step__status {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+/* Åpning og lukking som en høydeovergang. `grid-template-rows: 0fr → 1fr` er
+   den ene formen som animerer til innholdets egen høyde uten at høyden må være
+   kjent på forhånd. */
+.control-step__body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms ease;
+}
+
+.control-step__body[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+
+.control-step__content {
+  overflow: hidden;
+}
+
+.control-step__body[data-open='true'] .control-step__content {
+  padding: 0 1rem 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .control-step__body {
+    transition: none;
+  }
+}
+
+.control-step__form > * + * {
+  margin-block-start: 1rem;
+}
+
+.control-step__lead {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.control-step__form button {
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--color-text);
+  border-radius: 0.25rem;
+  background: var(--color-text);
+  color: var(--color-background);
+  font: inherit;
+  cursor: pointer;
+}
+
+.control-step__form button:disabled {
+  border-color: var(--color-border);
+  background: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+/* Påstanden i innledningssteget. Sitatformen er semantisk: dette er
+   formuleringen som kontrolleres. */
+.control-claim-statement {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-inline-start: 4px solid var(--color-text);
+  font-size: 1.125rem;
+  line-height: 1.5;
+}
+
+.control-summary {
+  margin: 0;
+}
+
+.control-summary__outcome {
+  margin: 0;
+  font-weight: 600;
+}
+
+.control-summary__note {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}
+
+/* ==========================================================================
+   Svarknappene
+   ========================================================================== */
+
+.control-choice__legend {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+
+.control-choice__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.control-choice__option {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.25rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.control-choice__option:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Det valgte alternativet bæres av aria-pressed, ikke av fargen alene: en
+   skjermleser leser tilstanden, og kontrasten er tillegg for øyet. */
+.control-choice__option[aria-pressed='true'] {
+  border-color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-background);
+}
+
+/* ==========================================================================
+   Delkontrollen: kilden og tolkningen side om side
+   ========================================================================== */
+
+.field-check__panes {
+  display: grid;
+  gap: 1rem;
+}
+
+/* To kolonner først når det faktisk er plass til to lesbare spalter. Under det
+   stables de, og kilden står øverst — den er det tolkningen skal måles mot. */
+@media (min-width: 44rem) {
+  .field-check__panes {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.field-check__pane {
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--color-border);
+}
+
+.field-check__pane-heading {
+  margin: 0 0 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.field-check__excerpt {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.field-check__locator {
+  margin: 0 0 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.field-check__statement {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.field-check__detail {
+  margin: 0 0 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}
+
+/* «Hvorfor mener Antidep dette?» — en kort, eksplisitt begrunnelse, ikke en
+   modells indre resonnement. Lukket som standard: den trengs når tolkningen
+   overrasker, ikke ellers. */
+.field-check__why summary {
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}
+
+.field-check__why p {
+  margin: 0.5rem 0 0;
+  font-size: 0.9375rem;
+}
+
+.field-check__note {
+  display: block;
+  margin-block-start: 1rem;
+  font-weight: 600;
+}
+
+.field-check__note textarea {
+  display: block;
+  margin-block-start: 0.35rem;
+  width: 100%;
+  max-width: 40rem;
+  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.25rem;
+  background: var(--color-background);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 400;
+}
+
+/* ==========================================================================
+   Kildeadressen
+
+   Alltid trykkbar når den er en adresse som kan åpnes, aldri trykkbar når den
+   ikke er det (`source-address.ts`).
+   ========================================================================== */
+
+.source-address {
+  margin: 0.5rem 0 0;
+  font-size: 0.9375rem;
+}
+
+.source-address__link {
+  font-weight: 600;
+}
+
+.source-address__value {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.source-address--absent,
+.source-address--plain {
+  color: var(--color-text-muted);
+}
+
+/* ==========================================================================
+   Tekniske detaljer
+
+   Hele dossieret, utenfor den kliniske arbeidsflyten. Lukket som standard.
+   ========================================================================== */
+
+.technical-details {
+  margin: 2rem 0;
+  max-width: 52rem;
+  padding-block-start: 1rem;
+  border-block-start: 1px solid var(--color-border);
+}
+
+.technical-details > summary {
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}
+
+/* Forankringen i registreringsskjemaet: ett felt om gangen, med utdrag, peker
+   og begrunnelse. */
+.grounding-field {
+  margin-block: 1rem;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--color-border);
+}
+
+.grounding-field h4 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.grounding-field__statement {
+  margin: 0 0 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.9375rem;
+}

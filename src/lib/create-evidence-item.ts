@@ -37,9 +37,23 @@
 //                        gjennom skjemaet ER en menneskelig ekstraksjon
 //   raw_extraction       bygges av `sourceQuote` i databasen, under én
 //                        dokumentert nøkkel
+//
+// ----------------------------------------------------------------------------
+// Kildeforankringen følger med ekstraksjonen, i samme kall
+//
+// `fieldGroundings` er koblingen mellom hvert kontrollerbart felt og det
+// grunnlaget ekstraksjonen faktisk hvilte på (migrasjon 005u). Den sendes i det
+// samme kallet, og ikke i et eget etterpå: to kall er to transaksjoner, og
+// mellom dem ville det finnes et evidensfunn uten forankring som en kontrollør
+// kunne rukket å hente fram.
+//
+// Tom liste er lovlig og betyr det den sier: ingen forankring er registrert.
+// Kontrollflaten viser det som fravær og gjetter aldri et utdrag ut av
+// `raw_extraction` (ANTIDEP_CONSTITUTION.md §6, §8).
 // ============================================================================
 
 import type { AntidepClient } from './supabase'
+import type { FieldGroundingInput } from './grounding-draft'
 import type { Uuid } from '../types/api'
 
 /**
@@ -88,6 +102,8 @@ export interface CreateEvidenceItemInput {
   readonly sourceLocator: string
   /** Ordrett sitat fra kilden. Bevares i `raw_extraction` for verifikasjon. */
   readonly sourceQuote: string | null
+  /** Kildeforankringen per kontrollfelt. Tom liste = ingen forankring registrert. */
+  readonly fieldGroundings: readonly FieldGroundingInput[]
 }
 
 export type CreateEvidenceItemResult =
@@ -135,6 +151,12 @@ export async function createEvidenceItem(
     p_limitations_text: input.limitationsText,
     p_source_locator: input.sourceLocator,
     p_source_quote: input.sourceQuote,
+    p_field_groundings: input.fieldGroundings.map((grounding) => ({
+      check_field: grounding.checkField,
+      source_excerpt: grounding.sourceExcerpt,
+      source_locator: grounding.sourceLocator,
+      justification: grounding.justification,
+    })),
   })
   if (error !== null) {
     return { status: 'error', message: error.message }

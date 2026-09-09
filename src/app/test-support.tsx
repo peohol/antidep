@@ -43,7 +43,19 @@ export type FakeOutcome<Row> =
   readonly Row[] | { readonly error: string } | { readonly pending: true }
 
 /** Hva ett RPC-kall svarer: en verdi, eller en feil — aldri rader. */
-export type FakeRpcOutcome<Data> = { readonly data: Data } | { readonly error: string }
+export type FakeRpcAnswer<Data> = { readonly data: Data } | { readonly error: string }
+
+/**
+ * Svaret på ett RPC-navn: ett svar, eller en sekvens.
+ *
+ * Sekvensen finnes for de testene som handler om hva som skjer *mellom* to kall
+ * — en registrering som avvises fordi grunnlaget er endret, og den nye
+ * hentingen etterpå. Med bare ett svar per navn ville en slik test måttet late
+ * som at grunnlaget var uendret, og da hadde den prøvd noe annet enn den sier.
+ * Siste svar gjentas når sekvensen er brukt opp.
+ */
+export type FakeRpcOutcome<Data> =
+  FakeRpcAnswer<Data> | readonly [FakeRpcAnswer<Data>, ...FakeRpcAnswer<Data>[]]
 
 export interface FakeApi {
   readonly published_drugs?: FakeOutcome<PublishedDrugRow>
@@ -101,6 +113,15 @@ function outcomeFor(api: FakeApi, view: string): FakeOutcome<Record<string, unkn
 
 /** Standardsvaret fra en skrivevei fiksturen ikke sier noe om: den lyktes. */
 const DEFAULT_RPC_ID = '00000000-0000-4000-8000-999999999999'
+
+/** Svaret for dette kallet i rekken. Siste svar gjentas når sekvensen er brukt opp. */
+function answerAt<Data>(outcome: FakeRpcOutcome<Data>, callIndex: number): FakeRpcAnswer<Data> {
+  if (!Array.isArray(outcome)) {
+    return outcome as FakeRpcAnswer<Data>
+  }
+  const answers = outcome as readonly FakeRpcAnswer<Data>[]
+  return answers[Math.min(callIndex, answers.length - 1)] as FakeRpcAnswer<Data>
+}
 
 function fakeRpcOutcome(api: FakeApi, name: string, args: unknown): FakeRpcOutcome<unknown> {
   switch (name) {
@@ -249,6 +270,7 @@ export function fakeClient(
   const queries: RecordedQuery[] = []
   const signOutCalls: FakeSignOutCall[] = []
   const rpcCalls: RecordedRpcCall[] = []
+  const rpcCallCounts = new Map<string, number>()
 
   const client = {
     // Steg 2 og 3 av adminflyten (§29, §74.24): de to kontrollerte
@@ -256,8 +278,14 @@ export function fakeClient(
     // framfor å svare stille, slik at en glemt fikstur ikke ser ut som en
     // vellykket registrering.
     rpc(name: string, args: unknown) {
+      // Tellingen er per navn *og* per form på kallet: den samme funksjonen
+      // svarer på to spørsmål avhengig av om den får en id, og en sekvens for
+      // det ene skal ikke telles ned av det andre.
+      const key = `${name}:${JSON.stringify(args ?? null)}`
+      const callIndex = rpcCallCounts.get(key) ?? 0
+      rpcCallCounts.set(key, callIndex + 1)
       rpcCalls.push({ name, args })
-      const outcome = fakeRpcOutcome(api, name, args)
+      const outcome = answerAt(fakeRpcOutcome(api, name, args), callIndex)
       return Promise.resolve(
         'error' in outcome
           ? { data: null, error: { message: outcome.error } }
@@ -679,6 +707,45 @@ export function reviewQueuePayload(
   return { reviewer_actor_id: REVIEW_REVIEWER_ACTOR, queue: items }
 }
 
+/**
+ * Én kildeforankring, slik `workflow.evidence_field_groundings(uuid)` gir den.
+ *
+ * Utdraget er syntetisk, som resten av fiksturene. Poenget er formen: ett felt,
+ * ett ordrett utdrag, én presis peker og én kort begrunnelse.
+ */
+export function fieldGrounding(
+  checkField: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    field_grounding_id: `99999999-9999-4999-8999-${checkField.slice(0, 12).padEnd(12, '0')}`,
+    check_field: checkField,
+    source_excerpt: `Testutdrag for ${checkField}.`,
+    source_locator: `Testkilde A, avsnittet om ${checkField}`,
+    justification: `Testbegrunnelse for hvordan utdraget ble til verdien for ${checkField}.`,
+    created_at: '2026-08-30T08:00:00Z',
+    created_by_actor_id: '00000000-0000-4000-8000-444444444444',
+    ...overrides,
+  }
+}
+
+/** Feltene fiksturen forankrer. Alle de påkrevde, slik en fersk ekstraksjon gjør. */
+export const TEST_FIELD_GROUNDINGS: readonly Record<string, unknown>[] = [
+  'population',
+  'sample_size',
+  'intervention_arm',
+  'comparator_arm',
+  'outcome',
+  'timepoint',
+  'reported_direction',
+  'effect_measure',
+  'estimate',
+  'confidence_interval',
+  'availability_semantics',
+  'source_locator',
+  'raw_extraction',
+].map((field) => fieldGrounding(field))
+
 /** Én evidenslenke i grunnlaget, slik dossieret gir den. */
 export function reviewLink(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -713,6 +780,7 @@ export function reviewLink(overrides: Record<string, unknown> = {}): Record<stri
         content_hash: `sha256:${'a'.repeat(64)}`,
         has_storage_reference: false,
       },
+      field_groundings: TEST_FIELD_GROUNDINGS,
       extraction: {
         design_code: 'randomized_controlled_trial',
         population_id: null,

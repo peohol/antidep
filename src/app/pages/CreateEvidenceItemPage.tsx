@@ -47,9 +47,11 @@
 
 import { useCallback, useId, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router'
+import { GroundingFieldset } from '../../components/GroundingFieldset'
 import {
   COMPARATOR_KIND_LABELS,
   DRUG_STATUS_LABELS,
+  EVIDENCE_CHECK_FIELD_LABELS,
   EXTRACTION_METHOD_LABELS,
   MEASURE_LABELS,
   REPORTED_DIRECTION_LABELS,
@@ -61,6 +63,7 @@ import {
 } from '../../components/vocabulary-labels'
 import { describeClaimComparator } from '../../lib/claim-effect'
 import { createEvidenceItem } from '../../lib/create-evidence-item'
+import { collectFieldGroundings, type GroundingDraft } from '../../lib/grounding-draft'
 import { sourceChoice, withStatus, type Choice } from '../../lib/source-choice'
 import {
   fetchEditorDrugs,
@@ -588,6 +591,8 @@ interface FormState {
   readonly limitationsText: string
   readonly sourceLocator: string
   readonly sourceQuote: string
+  /** Kildeforankringen per kontrollfelt. Feltene som ikke fylles ut, står tomme. */
+  readonly fieldGroundings: Readonly<Record<string, GroundingDraft>>
 }
 
 const NO_SELECTION = ''
@@ -617,6 +622,7 @@ function emptyForm(lookups: Extract<LookupState, { status: 'ready' }>): FormStat
     limitationsText: '',
     sourceLocator: '',
     sourceQuote: '',
+    fieldGroundings: {},
   }
 }
 
@@ -805,6 +811,18 @@ function EvidenceItemForm({
     ) {
       return
     }
+
+    // Forankringen samles inn på samme premiss: en halvferdig forankring er
+    // ikke en forankring, og den skal ikke sendes som om den var det.
+    const groundings = collectFieldGroundings(
+      form.fieldGroundings,
+      (field) =>
+        EVIDENCE_CHECK_FIELD_LABELS[field as keyof typeof EVIDENCE_CHECK_FIELD_LABELS] ?? field,
+    )
+    if (groundings.status === 'incomplete') {
+      setProblem(groundings.message)
+      return
+    }
     setProblem(null)
 
     setStatus('submitting')
@@ -841,6 +859,7 @@ function EvidenceItemForm({
       limitationsText: blankToNull(form.limitationsText),
       sourceLocator: form.sourceLocator,
       sourceQuote: blankToNull(form.sourceQuote),
+      fieldGroundings: groundings.groundings,
     })
     setStatus('idle')
     setResult(outcome)
@@ -1183,6 +1202,13 @@ function EvidenceItemForm({
             value={form.limitationsText}
           />
         </fieldset>
+
+        <GroundingFieldset
+          drafts={form.fieldGroundings}
+          onChange={(field, draft) =>
+            setForm({ ...form, fieldGroundings: { ...form.fieldGroundings, [field]: draft } })
+          }
+        />
 
         {problem === null ? null : (
           <p className="admin-form__problem" id={problemId} role="alert">

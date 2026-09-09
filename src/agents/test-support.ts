@@ -107,6 +107,7 @@ export function verificationItemFixture(
 ): VerificationItem {
   const { extraction, sourceVersion, ...rest } = overrides
   return {
+    fieldGroundings: [],
     evidenceItemId: '3422c284-31eb-428e-b1a0-bebf3f616ffc',
     createdByActorId: '99999999-9999-4999-8999-999999999999',
     createdByActorKey: 'agent:evidence-extraction',

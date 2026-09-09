@@ -30,7 +30,7 @@ select has_trigger(
 
 select ok(
   (select p.prosecdef from pg_proc p
-   where p.oid = 'api.create_evidence_item(uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,uuid,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text)'::regprocedure),
+   where p.oid = 'api.create_evidence_item(uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,uuid,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text,jsonb)'::regprocedure),
   'api.create_evidence_item() er SECURITY DEFINER (DATABASE_ARCHITECTURE.md §50)'
 );
 -- Auditskriveren skal aldri være mer privilegert enn operasjonen den
@@ -47,7 +47,7 @@ select is_empty(
     from (values ('anon'), ('service_role'), ('public')) as r(role_name)
     where has_function_privilege(
       r.role_name,
-      'api.create_evidence_item(uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,uuid,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text)'::regprocedure,
+      'api.create_evidence_item(uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,uuid,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text,jsonb)'::regprocedure,
       'execute'
     )
   $$,
@@ -56,7 +56,7 @@ select is_empty(
 select ok(
   has_function_privilege(
     'authenticated',
-    'api.create_evidence_item(uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,uuid,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text)'::regprocedure,
+    'api.create_evidence_item(uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,uuid,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text,jsonb)'::regprocedure,
     'execute'
   ),
   'authenticated har EXECUTE på api.create_evidence_item()'

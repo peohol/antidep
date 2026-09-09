@@ -36,10 +36,11 @@ select is_empty(
 );
 
 -- Vaktpost for hvor langt schemaet faktisk har kommet. Migrasjon 003 la til
--- kilde- og evidenslaget i knowledge, migrasjon 004 påstandslaget og migrasjon
--- 006 publiseringshistorikken, og listen under er uttømmende: den skal utvides
--- av den migrasjonen som legger til en tabell, slik at et objekt ingen har
--- bestemt seg for ikke kan gli inn ubemerket. api-projeksjonene hører til
+-- kilde- og evidenslaget i knowledge, migrasjon 004 påstandslaget, migrasjon
+-- 006 publiseringshistorikken og migrasjon 005u kildeforankringen per
+-- kontrollfelt, og listen under er uttømmende: den skal utvides av den
+-- migrasjonen som legger til en tabell, slik at et objekt ingen har bestemt seg
+-- for ikke kan gli inn ubemerket. api-projeksjonene hører til
 -- migrasjon 007 og skal ikke opprettes i knowledge.
 select set_eq(
   $$
@@ -50,9 +51,10 @@ select set_eq(
       and c.relkind in ('r', 'p', 'v', 'm')
   $$,
   $$values ('sources'), ('source_identifiers'), ('source_versions'), ('evidence_items'),
+           ('evidence_field_groundings'),
            ('claims'), ('claim_revisions'), ('claim_evidence_links'),
            ('evidence_assessments'), ('publication_events')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004 og 006'
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006 og 005u'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok

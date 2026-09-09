@@ -55,6 +55,7 @@ const MINIMAL_INPUT: CreateEvidenceItemInput = {
   limitationsText: null,
   sourceLocator: 'Avsnitt 1',
   sourceQuote: null,
+  fieldGroundings: [],
 }
 
 describe('createEvidenceItem', () => {
@@ -87,6 +88,14 @@ describe('createEvidenceItem', () => {
       confidenceIntervalAvailability: 'reported_value',
       limitationsText: 'Åpen etikett i den ene armen.',
       sourceQuote: 'Mean difference 1.7 kg.',
+      fieldGroundings: [
+        {
+          checkField: 'estimate',
+          sourceExcerpt: 'Mean difference 1.7 kg (95% CI 0.9 to 2.5).',
+          sourceLocator: 'Tabell 2, rad 3',
+          justification: 'Tallet står som gjennomsnittsforskjell mot komparatorarmen.',
+        },
+      ],
     })
 
     expect(result).toEqual({ status: 'ok', evidenceItemId })
@@ -124,6 +133,14 @@ describe('createEvidenceItem', () => {
           p_limitations_text: 'Åpen etikett i den ene armen.',
           p_source_locator: 'Avsnitt 1',
           p_source_quote: 'Mean difference 1.7 kg.',
+          p_field_groundings: [
+            {
+              check_field: 'estimate',
+              source_excerpt: 'Mean difference 1.7 kg (95% CI 0.9 to 2.5).',
+              source_locator: 'Tabell 2, rad 3',
+              justification: 'Tallet står som gjennomsnittsforskjell mot komparatorarmen.',
+            },
+          ],
         },
       },
     ])

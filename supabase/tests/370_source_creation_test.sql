@@ -37,9 +37,10 @@ select enum_has_labels(
     'evidence_item_created', 'agent_identity_registered',
     'agent_identity_credential_issued', 'agent_identity_revoked',
     'evidence_verification_registered', 'source_version_registered',
-    'claim_verification_registered', 'review_decision_registered'
+    'claim_verification_registered', 'review_decision_registered',
+    'evidence_field_grounding_recorded'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner og den menneskelige reviewbeslutningen'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen og kildeforankringen per kontrollfelt'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -69,7 +70,7 @@ select is_empty(
       and has_function_privilege(r.role_name, p.oid, 'execute')
       and p.oid::regprocedure::text not in (
         'api.create_source(text,text,text,text,text,text,text,date,text)',
-        'api.create_evidence_item(uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,uuid,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text)',
+        'api.create_evidence_item(uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,uuid,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text,jsonb)',
         -- Migrasjon 005e. De to eneste funksjonene i api som anon kan kjøre, og
         -- de rører ingen kunnskapsobjekter: de åpner og lukker en agentkjøring,
         -- og gjør ingenting før legitimasjonen er autentisert. Hvilke roller som

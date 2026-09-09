@@ -68,6 +68,30 @@ export interface VerificationExtraction {
   readonly rawExtraction: unknown
 }
 
+/**
+ * Kildeforankringen av ett kontrollerbart felt (migrasjon 005u).
+ *
+ * Fire ting, og ikke en femte: hvilket felt forankringen gjelder, det ordrette
+ * kildeutdraget verdien er lest ut av, den presise kildepekeren for nettopp det
+ * utdraget, og en kort eksplisitt begrunnelse for hvordan utdraget ble til den
+ * strukturerte verdien.
+ *
+ * Den strukturerte verdien selv står *ikke* her, og det er hele poenget: den er
+ * kolonnen på evidensfunnet, og en kopi ved siden av kunne kommet i utakt med
+ * den. En kontrollør som bekreftet kopien, ville da bekreftet noe annet enn det
+ * databasen holder (ANTIDEP_CONSTITUTION.md §4, §8).
+ */
+export interface EvidenceFieldGrounding {
+  readonly fieldGroundingId: string
+  /** En verdi fra `workflow.evidence_check_field`. */
+  readonly checkField: string
+  readonly sourceExcerpt: string
+  readonly sourceLocator: string
+  readonly justification: string
+  readonly createdAt: string
+  readonly createdByActorId: string
+}
+
 export interface VerificationItem {
   readonly evidenceItemId: string
   readonly createdByActorId: string
@@ -107,6 +131,15 @@ export interface VerificationItem {
   /** `null` betyr «ingen begrunnelse er registrert», ikke «statusen er normal». */
   readonly sourceStatusNote: string | null
   readonly sourceVersion: VerificationSourceVersion | null
+  /**
+   * Kildeforankringen per kontrollfelt, i vokabularets egen rekkefølge.
+   *
+   * Tom liste betyr at ingen forankring er registrert — tilstanden alle funn
+   * registrert før migrasjon 005u er i. Den skal vises som fravær, aldri fylles
+   * inn fra `rawExtraction`: et utdrag gjettet ut av den rå ekstraksjonen ville
+   * vært å konstruere nettopp det grunnlaget kontrollen skal prøve.
+   */
+  readonly fieldGroundings: readonly EvidenceFieldGrounding[]
   readonly extraction: VerificationExtraction
   readonly verificationsByThisActor: number
 }
@@ -191,6 +224,49 @@ function parseSourceVersion(value: unknown): VerificationSourceVersion | null {
     contentHash: asOptionalString(record['content_hash']),
     hasStorageReference: record['has_storage_reference'] === true,
   }
+}
+
+/**
+ * Én forankringsrad, eller en feil som sier hva som manglet.
+ *
+ * Leses like strengt som resten: en forankring som stille mistet utdraget sitt,
+ * ville vist kontrolløren en tom rute der grunnlaget skulle stått — og en tom
+ * rute ser ut som «ingenting å innvende», ikke som «grunnlaget mangler».
+ */
+function parseFieldGrounding(value: unknown): EvidenceFieldGrounding {
+  const record = asRecord(value, 'field_groundings[]')
+  return {
+    fieldGroundingId: asString(
+      record['field_grounding_id'],
+      'field_groundings[].field_grounding_id',
+    ),
+    checkField: asString(record['check_field'], 'field_groundings[].check_field'),
+    sourceExcerpt: asString(record['source_excerpt'], 'field_groundings[].source_excerpt'),
+    sourceLocator: asString(record['source_locator'], 'field_groundings[].source_locator'),
+    justification: asString(record['justification'], 'field_groundings[].justification'),
+    createdAt: asString(record['created_at'], 'field_groundings[].created_at'),
+    createdByActorId: asString(
+      record['created_by_actor_id'],
+      'field_groundings[].created_by_actor_id',
+    ),
+  }
+}
+
+/**
+ * Forankringslisten.
+ *
+ * Et svar som er eldre enn migrasjon 005u har ingen nøkkel i det hele tatt, og
+ * en manglende nøkkel leses derfor som en tom liste framfor som en feil. Er
+ * nøkkelen der, men ikke en liste, er det et kontraktsbrudd og sier fra.
+ */
+function parseFieldGroundings(value: unknown): readonly EvidenceFieldGrounding[] {
+  if (value === null || value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    throw new Error('Svaret fra api.extraction_verification_input mangler listen field_groundings.')
+  }
+  return value.map(parseFieldGrounding)
 }
 
 function parseExtraction(value: unknown): VerificationExtraction {
@@ -282,6 +358,7 @@ export function parseVerificationItem(value: unknown): VerificationItem {
     sourceStatus: asString(source['source_status'], 'items[].source.source_status'),
     sourceStatusNote: asOptionalString(source['status_note']),
     sourceVersion: parseSourceVersion(record['source_version']),
+    fieldGroundings: parseFieldGroundings(record['field_groundings']),
     extraction: parseExtraction(record['extraction']),
     verificationsByThisActor: typeof byThisActor === 'number' ? byThisActor : 0,
   }

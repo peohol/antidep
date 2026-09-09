@@ -1388,7 +1388,8 @@ PR G  db: add publication events and gate                                   (#15
       ops: activate the extraction verifier in the hosted project           (#56)  merget   ingen migrasjon
       feat: verify claims against their registered evidence                 (#57)  merget   migrasjon 008f, 005i, 005j, 005k, 006c, 005l
       feat: add the human claim review and publication approval flow        (#59)  merget   migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
-      feat: add the human extraction check and make publication operational (#61)  åpen     migrasjon 005q, 005r, 005s, 005t, 006g, 006h
+      feat: add the human extraction check and make publication operational (#61)  merget   migrasjon 005q, 005r, 005s, 005t, 006g, 006h
+      feat: rebuild the human control flow as a guided session              (#62)  åpen     migrasjon 008h, 005u, 007f
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1490,7 +1491,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 1867 pgTAP-assertions over 57 testfiler.
+Databaselaget teller nå 1922 pgTAP-assertions over 59 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1664,9 +1665,9 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g og 006h — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle femti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle femtitre ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -6218,6 +6219,107 @@ i flaten:
 4. **Publiser revisjonen** med handlingen som da blir tilbudt.
 
 Fire vurderinger, tre av dem faglige. Ingen av dem kan tas av en agent.
+
+---
+
+
+### 74.38 Kontrollflaten er bygget om til en guidet kontrolløkt
+
+§74.37 endte med at maskineriet var komplett og at det som gjenstod, var prosjekteierens
+faktiske faglige vurderinger i flaten. Ved første forsøk viste flaten seg ikke å være brukbar
+til det. Den var teknisk riktig og faglig uframkommelig: et helt dossier først, så et skjema
+der revieweren skulle huke av fjorten felter, velge et samlet utfall, skrive «hvordan
+gjennomførte du kontrollen?» og oppsummere funnene sine i ett felt til slutt — etter at
+grunnlaget var lest ferdig og detaljene var blitt kalde.
+
+Denne leveransen erstatter arbeidsmodellen. Databaseobjektene er de samme fire, og
+publiseringsgaten er uendret.
+
+**Én beslutning om gangen.** Kontrollen er nå en sekvensiell økt sentrert om én
+påstandsrevisjon: hvilken påstand som vurderes, hvilken tilgang kontrolløren faktisk har til
+hver kilde, ett steg per felt funnet påstår noe om, de sju kontrollpunktene ett om gangen,
+den eksplisitte publiseringsbeslutningen, og publiseringen. Bare det aktive steget står åpent;
+et ferdig steg lukkes, markeres med svaret sitt og kan åpnes igjen. Hele dossieret ligger
+bak «Tekniske detaljer» og er ute av den kliniske arbeidsflyten.
+
+**Tre migrasjoner, og den ene av dem er grunnen til at resten er mulig.**
+
+| Migrasjon | Hva den gjør |
+| --- | --- |
+| 008h | `audit.event_operation` får `evidence_field_grounding_recorded` |
+| 005u | `knowledge.evidence_field_groundings` — kildeforankringen per kontrollfelt, med leser, dossier og avtrykk |
+| 007f | `api.create_evidence_item(...)` produserer forankringen i samme transaksjon som funnet |
+
+**Koblingen mellom felt og kilde fantes ikke som data, og det var den egentlige feilen.**
+Kontrollflaten kunne bare stille ett spørsmål — «stemmer denne raden med kilden?» — fordi
+grunnlaget den kunne vise, var hele `raw_extraction`: utypet jsonb uten kobling til hvilket
+felt et utdrag gjelder, og selv en del av den maskinelle ekstraksjonen. Å be om et svar per
+felt uten å kunne vise grunnlaget per felt ville vært å be kontrolløren finne grunnlaget selv,
+fjorten ganger.
+
+`knowledge.evidence_field_groundings` bærer fire ting per felt: hvilket felt forankringen
+gjelder, det minste ordrette kildeutdraget, den presise kildepekeren for nettopp det utdraget,
+og en kort eksplisitt begrunnelse for hvordan utdraget ble til den strukturerte verdien.
+
+**Den femte tingen lagres bevisst ikke, og det er en sikkerhetsbeslutning.** «Agentens
+strukturerte tolkning» finnes allerede: det er kolonnen på `knowledge.evidence_items`. En
+kopi ved siden av kunne kommet i utakt med den kanoniske verdien, og da ville kontrolløren
+bekreftet en setning som ikke er det databasen holder. Utsagnet «Antidep mener at studien
+inkluderte 48 deltakere» bygges derfor deterministisk av raden selv, i
+`src/lib/extraction-statements.ts`, og forankringen sier bare hva utsagnet hviler på. Skjult
+chain-of-thought verken lagres eller etterspørres.
+
+**Gamle funn er håndtert eksplisitt, og ingenting gjettes.** Et evidensfunn registrert før
+005u har ingen forankring. Flaten viser fraværet med ord og henter *ikke* et utdrag ut av
+`raw_extraction`: et utdrag gjettet på den måten ville vært å konstruere nettopp det
+grunnlaget kontrollen skal prøve, og kontrolløren ville ikke kunnet se forskjell på et utdrag
+ekstraktøren faktisk brukte og et flaten fant på.
+
+**Utfallet velges ikke lenger.** Kontrollalgoritmen *er* metoden. Alle obligatoriske felter
+bekreftet og kildetilgangen oppfylt gir `verified`; minst ett konkret avvik gir
+`needs_correction`; noe som ikke lot seg avgjøre — eller bare et sammendrag å gå på — gir
+`uncertain`. Reglene er databasens egne, uttrykt framover framfor som en avvisning:
+`*_source_access_check` forbyr en bekreftelse på et avledet sammendrag,
+`claim_verifications_verified_requires_all_ok_check` krever at alle sju punktene er `ok`, og
+`*_findings_required_check` krever et funn når utfallet ikke er `verified`. Begrunnelsen som
+lagres, skrives deterministisk av de samme svarene; kontrolløren skriver bare der teksten
+bærer informasjon — ved et avvik, der det oppdages, og ved «Be om endringer» og «Avvis».
+
+`rejected` kan ikke utledes. Det er en sterkere konklusjon enn «noe må rettes», og en terskel
+for hvor mange avvik som tipper over i avvisning ville vært en terskel ingen har bestemt.
+Avvisning uttrykkes der den hører hjemme: i publiseringsbeslutningen.
+
+**Foreldet grunnlag rammer det som faktisk er endret.** Garantien er uendret og ligger i
+databasen: `workflow.assert_extraction_unchanged(uuid, text)` og
+`workflow.assert_evidence_set_unchanged(uuid, text)` avviser en registrering der noe i
+grunnlaget er endret, under radlåsen. Avtrykket dekker nå også settet av forankringer.
+Flaten legger til én bekvemmelighet over den: den sammenligner avtrykket av hvert *steg* før
+og etter en ny henting, og nullstiller bare de stegene som nå viser noe annet. En forankring
+som byttes ut, rammer sitt eget felt; en kontroll som registreres av en annen i mellomtiden,
+rammer registreringssteget og ikke svarene.
+
+**Ingen regel er myket opp.** Ingen CHECK, constraint, trigger, policy eller grant er fjernet
+eller svekket, og ingen ny direkte tabelltilgang er gitt til `anon` eller `authenticated`.
+`knowledge.evidence_field_groundings` er append-only med RLS og uten klientgrant, forankringen
+er låst til ekstraksjonens egen skaper av en sammensatt fremmednøkkel, og den eneste veien inn
+er `api.create_evidence_item(...)`. Grunnlagsavtrykket er blitt strengere, ikke løsere.
+
+**Prisen står i to steder, og begge er betalt framfor omgått.** `api.create_evidence_item`
+har byttet signatur, og den gamle er sluppet framfor å bli stående som en overload — to
+kandidater ville latt klienten og ikke kontrakten avgjøre hvilken PostgREST kaller. Og
+kommentaren på `workflow.ensure_editor_role_grant()` navnga den gamle signaturen; den er
+erstattet i 007f, fordi en kommentar som navngir en funksjon som ikke finnes, er nøyaktig det
+`280_content_hash_serialization_test.sql` finnes for å fange.
+
+**Testene.** To nye pgTAP-filer: `580` (tabellen, rettighetene, radinvariantene, append-only,
+leseren, dossieret, avtrykket og auditsporet) og `590` (skriveveien, at forankringen blir til
+i samme kall og attribueres til ekstraktøren, formfeilene, og at et funn uten forankring står
+som uforankret). Frontenden har fått fem nye testfiler for de rene modulene — utledningen av
+utfallene, utsagnene per felt, avtrykkene per steg, kildeadressen og innsamlingen av
+forankringen — og de to sidetestene er skrevet om til å beskrive arbeidsmodellen: at bare det
+aktive steget vises, at stegprogresjonen og tilbakegangen virker, at avvikstekst festes til
+riktig delkontroll, at det ikke finnes noen utfallsmeny, og at hele kjeden fra kildetilgang
+til publisering går gjennom uten at noen av de fire beslutningsobjektene slås sammen.
 
 ---
 
