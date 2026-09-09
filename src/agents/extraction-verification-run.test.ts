@@ -261,7 +261,7 @@ describe('runExtractionVerification — når ingenting skal registreres', () => 
             content: FIXTURE_SOURCE_TEXT,
             byteLength: 1,
             contentHash: `sha256:${'a'.repeat(64)}`,
-        representation: 'full_text',
+            representation: 'full_text',
             bytesAreUtf8: false,
           },
         }),

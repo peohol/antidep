@@ -750,8 +750,9 @@ export const TEST_SEMANTIC_FIELDS: readonly string[] = [
   'confidence_interval',
 ]
 
-export const TEST_FIELD_GROUNDINGS: readonly Record<string, unknown>[] =
-  TEST_SEMANTIC_FIELDS.map((field) => fieldGrounding(field))
+export const TEST_FIELD_GROUNDINGS: readonly Record<string, unknown>[] = TEST_SEMANTIC_FIELDS.map(
+  (field) => fieldGrounding(field),
+)
 
 /**
  * Kilden i dossieret, med sine globale identifikatorer.

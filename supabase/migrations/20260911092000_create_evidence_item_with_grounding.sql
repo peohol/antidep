@@ -11,17 +11,19 @@
 -- av den (ANTIDEP_CONSTITUTION.md §8), og den skal derfor bli til samtidig.
 --
 -- ----------------------------------------------------------------------------
--- Hvorfor funksjonen slippes og lages på nytt framfor å få en overload
+-- Editoren skriver ingen forankring
 --
--- En ny parameter med standardverdi lager en *ny* funksjon ved siden av den
--- gamle. PostgREST ville da hatt to kandidater for det samme navnet, og hvilken
--- som ble valgt, ville avhengt av hvilke argumenter klienten tilfeldigvis sendte
--- — altså av klienten og ikke av kontrakten. Den gamle signaturen slippes derfor
--- eksplisitt, og den nye får de samme rettighetene.
+-- Forankringen er ekstraksjonens eget produkt: det ordrette utdraget en verdi
+-- ble lest ut av, i den representasjonen som faktisk ble hentet. Skrev den
+-- menneskelige editoren den selv, ville venstresiden i kontrolløkten vært noe
+-- et menneske hadde skrevet inn ved siden av verdien — og da kontrollerer
+-- kontrolløren skjemautfyllingen, ikke kilden.
 --
--- Fremover-skrivende: ingen merget migrasjon er endret. 20260904092000 har
--- allerede kjørt i det hostede prosjektet (§74.32), og DROP + CREATE er den
--- eneste operasjonen som kan bytte signatur uten å etterlate to.
+-- api.create_evidence_item(...) tar derfor ingen forankringsparameter, og
+-- beholder signaturen sin uendret. Forankringen skrives bare av agentveien
+-- (api.register_agent_extraction, migrasjon 005v), som har en åpen
+-- agentkjøring og en kildeversjon med registrert representasjon å knytte den
+-- til.
 --
 -- ----------------------------------------------------------------------------
 -- Hvorfor innsettingen flyttes ut i én funksjon
@@ -50,20 +52,14 @@
 -- Forankringen er valgfri på databasenivå, og det er et bevisst valg: et
 -- evidensfunn uten forankring er nettopp den tilstanden alle funn registrert før
 -- 005u er i, og den skal kunne beskrives framfor å gjøres uuttrykkelig.
--- Kontrollflaten viser fraværet som fravær. Det ekstraksjonsflaten krever av seg
--- selv, er en flateregel og ikke en databaseregel.
+-- Kravet om komplett forankring hører til agentveien, som håndhever det
+-- (workflow.assert_extraction_fully_grounded, migrasjon 005v).
 --
 -- Styrende dokumenter:
 --   docs/ANTIDEP_CONSTITUTION.md §4, §6, §8, §11, §12, §20
 --   docs/DATABASE_ARCHITECTURE.md §29, §35, §43, §50, §57, §59
 --   docs/MVP_IMPLEMENTATION_PLAN.md §15, §29, §74.32
 -- ============================================================================
-
-drop function api.create_evidence_item(
-  uuid, text, text, text, text, uuid, text, uuid, text, text, text, text, text, text,
-  uuid, uuid, integer, text, uuid, text, text, text, text, numeric, text, numeric,
-  numeric, numeric, text, text
-);
 
 -- ----------------------------------------------------------------------------
 -- 1. knowledge.record_evidence_item(...) — selve innsettingen, ett sted
@@ -266,7 +262,7 @@ revoke execute on function knowledge.record_evidence_item(
 -- ----------------------------------------------------------------------------
 -- 2. api.create_evidence_item(...) — inngangspunktet for en editor
 -- ----------------------------------------------------------------------------
-create function api.create_evidence_item(
+create or replace function api.create_evidence_item(
   -- Påkrevd: nøyaktig de kolonnene knowledge.evidence_items krever.
   p_source_id uuid,
   p_design_code text,
@@ -300,11 +296,7 @@ create function api.create_evidence_item(
   p_ci_upper numeric default null,
   p_ci_level_percent numeric default null,
   p_limitations_text text default null,
-  p_source_quote text default null,
-  -- Kildeforankringen per kontrollfelt (migrasjon 005u). En jsonb-liste der
-  -- hvert element har check_field, source_excerpt, source_locator og
-  -- justification. NULL og tom liste er det samme: ingen forankring registrert.
-  p_field_groundings jsonb default null
+  p_source_quote text default null
 )
   returns uuid
   language plpgsql
@@ -327,7 +319,8 @@ begin
     p_intervention_detail, p_comparator_drug_id, p_comparator_detail,
     p_timepoint_min, p_timepoint_max, p_effect_measure, p_estimate, p_estimate_unit,
     p_ci_lower, p_ci_upper, p_ci_level_percent, p_limitations_text, p_source_quote,
-    p_field_groundings,
+    -- Ingen forankring: den er ekstraksjonsagentens produkt, ikke editorens.
+    null::jsonb,
     -- Hardkodet: en registrering gjennom denne veien *er* en menneskelig
     -- ekstraksjon. En klientoppgitt verdi ville gjort det mulig å merke en
     -- håndskrevet rad som maskinelt produsert.
@@ -340,33 +333,17 @@ $$;
 comment on function api.create_evidence_item(
   uuid, text, text, text, text, uuid, text, uuid, text, text, text, text, text, text,
   uuid, uuid, integer, text, uuid, text, text, text, text, numeric, text, numeric,
-  numeric, numeric, text, text, jsonb
+  numeric, numeric, text, text
 ) is
-  'Den kontrollerte skriveveien for å registrere et EvidenceItem med sin egen kildeforankring (DATABASE_ARCHITECTURE.md §43, MVP_IMPLEMENTATION_PLAN.md §15, §29). Kontrollerer at kalleren har en registrert, aktiv aktør og en gyldig editor-rolle for endepunktet funnet gjelder (knowledge.assert_editor_authorized(uuid)), setter inn raden attribuert til kallerens egen aktør, skriver kildeforankringen per kontrollfelt i den samme transaksjonen, og returnerer funnets id. Erstatter signaturen fra migrasjon 007e, som er sluppet: en overload ville latt klienten og ikke kontrakten avgjøre hvilken funksjon PostgREST kaller. Auditradene skrives av triggerne på tabellene, i samme transaksjon. SECURITY DEFINER fordi knowledge.evidence_items, knowledge.evidence_field_groundings, workflow.user_roles og provenance.actors har RLS med default deny for authenticated; tomt search_path, og kalleren valideres på funksjonens eget kall (§50). extraction_method er ikke parameter og er alltid manual, content_hash eies av databasen, og raw_extraction bygges av p_source_quote. p_field_groundings er en jsonb-liste der hvert element har check_field, source_excerpt, source_locator og justification; NULL og tom liste betyr at ingen forankring er registrert, som er tilstanden alle funn registrert før migrasjon 005u er i. Ingen feltvalidering er duplisert her: constraintene på de to tabellene er fasiten, og deres avvisninger propageres uendret. Unntakene er dubletten og de tre formfeilene i forankringslisten, som oversettes til setninger på norsk uten at noen regel endres.';
+  'Den kontrollerte skriveveien for at en kvalifisert redaktør kan registrere et EvidenceItem (DATABASE_ARCHITECTURE.md §43, MVP_IMPLEMENTATION_PLAN.md §15, §29). Kontrollerer at kalleren har en registrert, aktiv aktør og en gyldig editor-rolle for endepunktet funnet gjelder (knowledge.assert_editor_authorized(uuid)), og setter inn raden attribuert til kallerens egen aktør gjennom knowledge.record_evidence_item, som er den samme innsettingen agentveien api.register_agent_extraction bruker. Auditraden skrives av triggeren på tabellen, i samme transaksjon. SECURITY DEFINER fordi knowledge.evidence_items, workflow.user_roles og provenance.actors har RLS med default deny for authenticated; tomt search_path, og kalleren valideres på funksjonens eget kall (§50). extraction_method er ikke parameter og er alltid manual, content_hash eies av databasen, og raw_extraction bygges av p_source_quote. Skriver ingen kildeforankring: forankringen er ekstraksjonens eget produkt — det ordrette utdraget en verdi ble lest ut av i den representasjonen som faktisk ble hentet — og et utdrag en redaktør skrev inn ved siden av verdien, ville gjort kontrolløkten til en kontroll av skjemautfyllingen framfor av kilden. Ingen feltvalidering er duplisert her: constraintene på tabellen er fasiten, og deres avvisninger propageres uendret. Unntaket er dubletten, som oversettes til en setning på norsk uten at noen regel endres.';
 
 revoke execute on function api.create_evidence_item(
   uuid, text, text, text, text, uuid, text, uuid, text, text, text, text, text, text,
   uuid, uuid, integer, text, uuid, text, text, text, text, numeric, text, numeric,
-  numeric, numeric, text, text, jsonb
+  numeric, numeric, text, text
 ) from public;
 grant execute on function api.create_evidence_item(
   uuid, text, text, text, text, uuid, text, uuid, text, text, text, text, text, text,
   uuid, uuid, integer, text, uuid, text, text, text, text, numeric, text, numeric,
-  numeric, numeric, text, text, jsonb
+  numeric, numeric, text, text
 ) to authenticated;
-
--- ----------------------------------------------------------------------------
--- Kommentaren som navngir signaturen, oppdatert
---
--- workflow.ensure_editor_role_grant() sin kommentar navngir de to skriveveiene
--- editor-rollen åpner, med full signatur. Den ene av dem har nettopp byttet
--- signatur, og en kommentar som navngir en funksjon som ikke finnes, er en
--- kommentar som lyver — det er nøyaktig det vakten i
--- supabase/tests/280_content_hash_serialization_test.sql finnes for å fange.
---
--- Kommentaren erstattes derfor her, framfor å bli rettet i migrasjon 006c, som
--- allerede er kjørt i det hostede prosjektet (§74.32). Innholdet er ordrett det
--- samme; bare signaturen er den nye.
--- ----------------------------------------------------------------------------
-comment on function workflow.ensure_editor_role_grant() is
-  'Idempotent tildeling av `editor`-rollen til den navngitte kvalifiserte redaktørens brukerkonto, altså retten til å registrere kilder og evidens som forslag (CONTENT_GOVERNANCE.md §8). Åpner de kontrollerte skriveveiene api.create_source(text, text, text, text, text, text, text, date, text) fra migrasjon 007c og api.create_evidence_item(uuid, text, text, text, text, uuid, text, uuid, text, text, text, text, text, text, uuid, uuid, integer, text, uuid, text, text, text, text, numeric, text, numeric, numeric, numeric, text, text, jsonb) fra migrasjon 007e og 007f, som begge krever en gyldig editor-tildeling gjennom knowledge.assert_editor_authorized(uuid). Gir verken faglig godkjenningsrett (reviewer) eller publiseringsrett (publisher): de tre er forskjellige rettigheter med hver sin rad. Forutsetter at aktørraden er knyttet til kontoen av workflow.ensure_named_editor_authorization() (migrasjon 005b) og setter ikke koblingen selv. Returnerer account_missing (ingen rad i auth.users), authorized (tildelingen ble skrevet), already_authorized (en tildeling er gyldig nå), role_not_yet_valid (en tildeling begynner å gjelde senere) eller role_ended (en tildeling er avsluttet). Bare authorized skriver noe. Gyldighet måles med statement_timestamp() fordi predikatet avgjør noe (MVP_IMPLEMENTATION_PLAN.md §74.6). En avsluttet tildeling gjeninnføres aldri: en tilbakekalling som en migrasjonskjøring omgjør, er ingen tilbakekalling (DATABASE_ARCHITECTURE.md §46). Konto og aktørnøkkel er konstanter i kroppen, og rollen er det også: funksjonen kan bare gjøre denne ene tildelingen, aldri en vilkårlig.';
