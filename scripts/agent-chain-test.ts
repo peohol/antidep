@@ -735,17 +735,44 @@ async function main(): Promise<void> {
     },
   })
 
+  // Et *annet* funn på den samme kildeversjonen, med nøyaktig den samme
+  // forankringen. Det er lovlig: to funn fra én studie kan dele
+  // utvalgsutdraget og likevel gjelde ulike utfall. Gjenopptakelsen må aldri
+  // kunne velge det.
+  const naboForslag = parseExtractionProposal({
+    ...JSON.parse(JSON.stringify(reProposalInput)),
+    extraction: {
+      ...(JSON.parse(JSON.stringify(reProposalInput)) as { extraction: Record<string, unknown> })
+        .extraction,
+      outcome_detail: 'Vektendring, samme forankring men et annet utfall.',
+    },
+  })
+
   const avbrutt = await runEvidenceExtraction({
     api: reextractionPorts.extractionApi,
     premises: EVIDENCE_EXTRACTION_PREMISES,
     proposal: avbruttForslag,
     retrieve: retrieve(contentHash),
   })
-  check('en ekstraksjon uten kontroll er registrert', avbrutt.decision === 'registered')
-  const avbruttItem = avbrutt.evidenceItemId ?? ''
+  const nabo = await runEvidenceExtraction({
+    api: reextractionPorts.extractionApi,
+    premises: EVIDENCE_EXTRACTION_PREMISES,
+    proposal: naboForslag,
+    retrieve: retrieve(contentHash),
+  })
   check(
-    'og står uten maskinbevis',
-    psql(config, `select workflow.grounding_machine_proved(${q(avbruttItem)})::text`) === 'false',
+    'to funn med samme forankring men ulike verdier er registrert uten kontroll',
+    avbrutt.decision === 'registered' && nabo.decision === 'registered',
+  )
+  const avbruttItem = avbrutt.evidenceItemId ?? ''
+  const naboItem = nabo.evidenceItemId ?? ''
+  check(
+    'og begge står uten maskinbevis',
+    psql(
+      config,
+      `select workflow.grounding_machine_proved(${q(avbruttItem)})::text
+              || '|' || workflow.grounding_machine_proved(${q(naboItem)})::text`,
+    ) === 'false|false',
   )
 
   const gjenopptatt = await runReextraction({
@@ -757,9 +784,13 @@ async function main(): Promise<void> {
     gjenopptatt.registered === 0 && gjenopptatt.alreadyRegistered === 1,
   )
   check(
-    'men fullfører kontrollen av den raden som allerede fantes',
+    'men fullfører kontrollen av nøyaktig den raden dubletten gjaldt',
     gjenopptatt.unverified === 0 &&
-      psql(config, `select workflow.grounding_machine_proved(${q(avbruttItem)})::text`) === 'true',
+      psql(
+        config,
+        `select workflow.grounding_machine_proved(${q(avbruttItem)})::text
+                || '|' || workflow.grounding_machine_proved(${q(naboItem)})::text`,
+      ) === 'true|false',
   )
   check(
     'og lot det gamle funnet på den samme kildeversjonen stå ukontrollert',
@@ -767,6 +798,28 @@ async function main(): Promise<void> {
       config,
       `select count(*) from workflow.evidence_verifications
        where evidence_item_id = ${q(legacyItem)}`,
+    ) === '0',
+  )
+
+  // Den eksakte dublettraden er nå kontrollert, mens naboen fortsatt står
+  // ukontrollert på den samme kildeversjonen. Det er ikke en rettet forankring,
+  // og skal ikke bli meldt som en konflikt.
+  const enGangTil = await runReextraction({
+    ...reextractionPorts,
+    proposals: [{ label: 'avbrutt.json', proposal: avbruttForslag }],
+  })
+  check(
+    'og en tredje kjøring melder ingen konflikt selv om naboen står ukontrollert',
+    enGangTil.groundingConflicts === 0 &&
+      enGangTil.unverified === 0 &&
+      enGangTil.alreadyRegistered === 1,
+  )
+  check(
+    'og naboen står fortsatt ukontrollert',
+    psql(
+      config,
+      `select count(*) from workflow.evidence_verifications
+       where evidence_item_id = ${q(naboItem)}`,
     ) === '0',
   )
 

@@ -1492,7 +1492,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2001 pgTAP-assertions over 61 testfiler.
+Databaselaget teller nå 2003 pgTAP-assertions over 61 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1668,7 +1668,7 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0 og 0.
+   0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
    mot databasen. Alle sekstifire ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
@@ -6543,11 +6543,12 @@ kjeden går gjennom uten at noen av de fire beslutningsobjektene slås sammen.
 svakhet. Denne leveransen lukker den, og gjør samtidig ekstraksjonsforslaget til en form som
 tåler å være den permanente grensen mot et framtidig modell-ledd.
 
-**Én migrasjon.**
+**To migrasjoner.**
 
 | Migrasjon | Hva den gjør |
 | --- | --- |
 | 006i | `workflow.review_decisions` får `registration_ordinal` tildelt på innsiden av radlåsen, og alle sju leserne av «den gjeldende beslutningen» bytter til det |
+| 007h | Dublettavvisningen fra `knowledge.record_evidence_item` navngir raden som kolliderte, slått opp med den kanoniske identiteten `UNIQUE`-regelen bruker |
 
 **Et menneskes nei kunne forsvinne.** «Den gjeldende beslutningen» ble avgjort av
 `decided_at`, som settes med `now()` — transaksjonens *starttidspunkt*, ikke tidspunktet raden
@@ -6617,15 +6618,23 @@ Også et funn fra review. `content_hash` beregnes av kolonnene på `knowledge.ev
 forankringen ligger i sin egen tabell. Et forslag som bare retter et utdrag, en peker eller en
 begrunnelse, er derfor den samme ekstraksjonen for databasen og avvises som en dublett.
 
-Arbeidskøen gjør forskjellen synlig uten en schemaendring. Køen er nøyaktig «funn denne
-verifikatoren ikke har kontrollert», og sier derfor mer enn hvilket funn som skal kontrolleres:
-ligger forslagets forankring der, er det en avbrutt kjøring som skal fullføres; ligger den ikke
-der og heller ingen annen forankret rad på kildeversjonen gjør det, er funnet allerede
-kontrollert og kjeden komplett; ligger den ikke der mens en *annen* forankret rad på den samme
-kildeversjonen står ukontrollert, er forslaget en rettelse av forankringen. Det siste meldes som
-en forankringskonflikt, og kommandoen avslutter med feil framfor å si «allerede gjort». At
-rettelsen ikke kan registreres i det hele tatt, er en begrensning i datamodellen og ikke i
-kjørerne; den er ført som issue #66 med tre alternativer.
+**Identiteten kommer fra databasen, ikke fra en likhet kjøreren finner på.** Første forsøk lot
+kjøreren gjenfinne raden i arbeidskøen på kildeversjon og forankring. Det er ikke nok, og
+teknisk review fant hvorfor: to funn fra den samme kildeversjonen kan legitimt dele forankring —
+det samme utvalgsutdraget, den samme populasjonssetningen — og likevel gjelde ulike utfall. En
+slik match kunne pekt på feil rad, og en slutning fra hva som *ellers* lå i køen kunne meldt en
+konflikt der det ikke var noen.
+
+Migrasjon 007h lar derfor avvisningen navngi raden. Oppslaget bruker
+`knowledge.evidence_item_content_hash` på en radvariabel satt av de samme uttrykkene som
+innsettingen — den kanoniske identiteten `UNIQUE`-regelen bruker, ikke en ny definisjon.
+Kjøringen leser så nøyaktig den raden og avgjør på den: bærer den forslagets forankring og har
+et gjeldende maskinbevis, er kjeden komplett; bærer den forankringen uten beviset, er det en
+avbrutt kjøring som fullføres; bærer den en annen forankring, er forslaget en rettelse som
+avtrykket ikke skiller fra en dublett. Det siste meldes som en forankringskonflikt, og
+kommandoen avslutter med feil framfor å si «allerede gjort». At rettelsen ikke kan registreres i
+det hele tatt, er en begrensning i datamodellen og ikke i kjørerne; den er ført som issue #66
+med tre alternativer.
 
 **En feil i ekstraksjonskjøringen ble funnet av at kjeden nå prøves mot en ekte database.**
 `agent_runs_status_shape_check` krever en begrunnelse på en kjøring som lukkes som `aborted`.
@@ -6666,7 +6675,12 @@ skriver noe fordi `evidence_items_content_hash_key` avviser dubletten, at en eks
 ble registrert uten kontroll — den avbrutte kjøringen — blir kontrollert av den neste kjøringen
 uten at det skrives en ny rad og uten at det gamle funnet på den samme kildeversjonen røres, og
 at et forslag med de samme strukturerte verdiene men en annen forankring meldes som en
-forankringskonflikt framfor som en dublett.
+forankringskonflikt framfor som en dublett. To av leddene er identitetsprøvene fra review: to
+funn på den samme kildeversjonen med identisk forankring men ulike verdier, der gjenopptakelsen
+må treffe riktig rad, og tilfellet der den eksakte dublettraden allerede er kontrollert mens et
+annet forankret funn på den samme kildeversjonen står ukontrollert, som ikke skal bli en falsk
+konflikt. `590` prøver migrasjonen selv: at avvisningen navngir raden, og at den er funnet på
+den kanoniske identiteten.
 Samtidig prøves regelen re-ekstraksjonen finnes for: det gamle, uforankrede funnet står urørt
 ved siden av det nye, uten forankring lagt til i etterkant. Det var dette leddet som avdekket
 avbruddsfeilen over.

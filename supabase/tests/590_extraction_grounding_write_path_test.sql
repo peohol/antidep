@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(27);
+select plan(29);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -617,6 +617,68 @@ select is(
    where r.id = '59000000-0000-4000-8000-000000000031'),
   '59000000-0000-4000-8000-000000000031'::uuid,
   'og påstanden står publisert, med agentens egen forankring i bunn'
+);
+
+-- ===========================================================================
+-- Dublettavvisningen navngir raden som kolliderte (migrasjon 007h)
+--
+-- Uten den måtte en kjøring som ble avbrutt mellom registreringen og
+-- kontrollen, gjette hvilken rad den kolliderte med — og en gjetning på noe
+-- annet enn den kanoniske identiteten kan peke på feil rad: to funn fra den
+-- samme kildeversjonen kan legitimt dele kildeforankring og likevel gjelde
+-- ulike utfall.
+-- ===========================================================================
+create temporary table dublett (label text primary key, id uuid, detail text) on commit drop;
+
+insert into dublett (label, id)
+select 'first', knowledge.record_evidence_item(
+  '59000000-0000-4000-8000-000000000001',
+  'randomized_controlled_trial', 'not_reported', 'Dublettprøve i 590.', 'not_reported',
+  (select id from fixture where name = 'sertralin'), 'none',
+  (select id from fixture where name = 'weight'), 'Dublettprøve, utfall.',
+  'not_reported', 'increase', 'not_reported', 'not_reported', 'Avsnitt 9',
+  '59000000-0000-4000-8000-000000000021',
+  null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+  '[]'::jsonb, 'manual', (select id from fixture where name = 'editor'), null);
+
+do $$
+declare
+  v_detail text;
+begin
+  begin
+    perform knowledge.record_evidence_item(
+      '59000000-0000-4000-8000-000000000001',
+      'randomized_controlled_trial', 'not_reported', 'Dublettprøve i 590.', 'not_reported',
+      (select id from fixture where name = 'sertralin'), 'none',
+      (select id from fixture where name = 'weight'), 'Dublettprøve, utfall.',
+      'not_reported', 'increase', 'not_reported', 'not_reported', 'Avsnitt 9',
+      '59000000-0000-4000-8000-000000000021',
+      null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+      '[]'::jsonb, 'manual', (select id from fixture where name = 'editor'), null);
+  exception
+    when unique_violation then
+      get stacked diagnostics v_detail = pg_exception_detail;
+      insert into dublett (label, detail) values ('second', v_detail);
+  end;
+end
+$$;
+
+select is(
+  (select detail from dublett where label = 'second'),
+  (select 'evidence_item_id=' || id::text from dublett where label = 'first'),
+  'dublettavvisningen navngir nøyaktig raden som kolliderte'
+);
+
+-- Og den er slått opp med den samme identiteten UNIQUE-regelen bruker, ikke med
+-- en likhet noen fant på: avtrykket på den navngitte raden er avtrykket av det
+-- innholdet innsettingen forsøkte.
+select is(
+  (select e.content_hash from knowledge.evidence_items e
+   where e.id = (select id from dublett where label = 'first')),
+  (select e.content_hash from knowledge.evidence_items e
+   where e.id = (select id from dublett where label = 'first')
+     and e.content_hash = knowledge.evidence_item_content_hash(e)),
+  'og raden er funnet på den kanoniske identiteten, ikke på en likhet ved siden av'
 );
 
 select finish();

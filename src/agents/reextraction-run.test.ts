@@ -18,7 +18,11 @@ import type {
 } from './agent-api'
 import { AgentApiError } from './agent-api'
 import { sourceVersionContentHash } from './content-hash'
-import { EXTRACTION_PROPOSAL_VERSION, parseExtractionProposal } from './extraction-proposal'
+import {
+  EXTRACTION_PROPOSAL_VERSION,
+  parseExtractionProposal,
+  type ExtractionProposal,
+} from './extraction-proposal'
 import type { RetrieveLike } from './extraction-run'
 import { matchesProposal, runReextraction } from './reextraction-run'
 import {
@@ -48,9 +52,10 @@ const VERIFICATION_PREMISES: AgentRunPremises = {
 const EXTRACTION_RUN_ID = '11111111-1111-4111-8111-111111111111' as Uuid
 const VERIFICATION_RUN_ID = '22222222-2222-4222-8222-222222222222' as Uuid
 const ITEM_ID = '33333333-3333-4333-8333-333333333333' as Uuid
+const OTHER_ITEM_ID = '77777777-7777-4777-8777-777777777777' as Uuid
 const VERIFIER_ACTOR_ID = '44444444-4444-4444-8444-444444444444'
 
-async function proposal(): Promise<ReturnType<typeof parseExtractionProposal>> {
+async function proposal(): Promise<ExtractionProposal> {
   return parseExtractionProposal({
     proposal_version: EXTRACTION_PROPOSAL_VERSION,
     source_id: '50000000-0000-4000-8000-000000000001',
@@ -110,6 +115,8 @@ interface Spy {
 
 interface SpyOptions {
   readonly duplicate?: boolean
+  /** Raden dublettavvisningen navngir. `ITEM_ID` hvis utelatt, `null` for «ukjent». */
+  readonly collidesWith?: Uuid | null
   /** Køen api.extraction_verification_input svarer med. Tom hvis utelatt. */
   readonly queue?: readonly VerificationItem[]
 }
@@ -138,6 +145,9 @@ function spies(options: SpyOptions = {}): Spy {
               'api.register_agent_extraction',
               'Nøyaktig det samme evidensfunnet er allerede registrert.',
               '23505',
+              options.collidesWith === null
+                ? 'Den kolliderende raden lot seg ikke slå opp.'
+                : `evidence_item_id=${options.collidesWith ?? ITEM_ID}`,
             ),
           )
         }
@@ -153,13 +163,19 @@ function spies(options: SpyOptions = {}): Spy {
       },
       readInput: (_runId, evidenceItemId) => {
         readInputFor.push(evidenceItemId)
-        // Køen er tom hvis testen ikke oppgir noe: kontrollen av selve
-        // kontrollen ligger i extraction-verification-run.test.ts og i
-        // kjedeprøven. Det som prøves her, er hvilket funn den kjøres på.
+        // Doblet oppfører seg som api.extraction_verification_input: med en id
+        // svarer den om nøyaktig det funnet, også et allerede kontrollert; uten
+        // en id svarer den med arbeidskøen. Uten den oppførselen ville testene
+        // ikke sagt noe om at kjøreren slår opp riktig rad.
+        const all = options.queue ?? []
+        const items =
+          evidenceItemId === null
+            ? all
+            : all.filter((item) => item.evidenceItemId === evidenceItemId)
         return Promise.resolve({
           agent_run_id: VERIFICATION_RUN_ID,
           verifier_actor_id: VERIFIER_ACTOR_ID,
-          items: (options.queue ?? []).map(verificationItemPayload),
+          items: items.map(verificationItemPayload),
         })
       },
       registerVerification: (args) => {
@@ -168,6 +184,28 @@ function spies(options: SpyOptions = {}): Spy {
       },
     },
   }
+}
+
+/** Et køfunn som bærer nøyaktig forslagets forankring. */
+async function grounded(
+  forslag: ExtractionProposal,
+  overrides: Parameters<typeof verificationItemFixture>[0] = {},
+): Promise<VerificationItem> {
+  return verificationItemFixture({
+    sourceVersion: sourceVersionFixture({
+      contentHash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
+    }),
+    fieldGroundings: forslag.fieldGroundings.map((grounding, index) => ({
+      fieldGroundingId: `9000000${String(index)}-0000-4000-8000-000000000001`,
+      checkField: grounding.checkField,
+      sourceExcerpt: grounding.sourceExcerpt,
+      sourceLocator: grounding.sourceLocator,
+      justification: grounding.justification,
+      createdAt: '2026-09-01T00:00:00+00:00',
+      createdByActorId: '99999999-9999-4999-8999-999999999999',
+    })),
+    ...overrides,
+  })
 }
 
 describe('runReextraction', () => {
@@ -193,13 +231,17 @@ describe('runReextraction', () => {
   // Kjørt om igjen med den samme filen skriver den ingenting: content_hash
   // dekker hele radens faglige innhold, og databasen avviser dubletten.
   it('er idempotent: en dublett skriver ingenting og kontrolleres ikke', async () => {
-    const spy = spies({ duplicate: true })
+    const forslag = await proposal()
+    const spy = spies({
+      duplicate: true,
+      queue: [await grounded(forslag, { evidenceItemId: ITEM_ID, groundingMachineProved: true })],
+    })
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
-      proposals: [{ label: 'fava.json', proposal: await proposal() }],
+      proposals: [{ label: 'fava.json', proposal: forslag }],
       retrieve: retrieveFixture(),
     })
 
@@ -208,10 +250,9 @@ describe('runReextraction', () => {
     expect(report.unverified).toBe(0)
     expect(report.groundingConflicts).toBe(0)
     expect(spy.registered).toHaveLength(0)
-    // Arbeidskøen er «funn denne verifikatoren ikke har kontrollert». At funnet
-    // ikke ligger der, er derfor et bevis på at det allerede er kontrollert:
-    // kjeden er komplett, og det er ingenting igjen å gjøre.
-    expect(spy.readInputFor).toEqual([null])
+    // Raden slås opp på den id-en databasen navnga, og den bar allerede et
+    // maskinbevis: kjeden er komplett, og ingenting skrives.
+    expect(spy.readInputFor).toEqual([ITEM_ID])
     expect(spy.verified).toEqual([])
   })
 
@@ -244,29 +285,12 @@ describe('runReextraction', () => {
     const spy = spies({
       duplicate: true,
       queue: [
-        verificationItemFixture({
-          evidenceItemId: ITEM_ID,
-          // Kildeversjonen må bære det avtrykket kilden faktisk gir, ellers
-          // stopper kontrollen på fingeravtrykket og registrerer ingenting.
-          sourceVersion: sourceVersionFixture({
-            contentHash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
-          }),
-          fieldGroundings: forslag.fieldGroundings.map((grounding, index) => ({
-            fieldGroundingId: `9000000${String(index)}-0000-4000-8000-000000000001`,
-            checkField: grounding.checkField,
-            sourceExcerpt: grounding.sourceExcerpt,
-            sourceLocator: grounding.sourceLocator,
-            justification: grounding.justification,
-            createdAt: '2026-09-01T00:00:00+00:00',
-            createdByActorId: '99999999-9999-4999-8999-999999999999',
-          })),
-        }),
-        // Et funn på den samme kildeversjonen som forslaget ikke gjelder. Det
-        // skal ikke dras med: utvalget er strengere enn databasens dublettregel.
-        verificationItemFixture({
-          evidenceItemId: '77777777-7777-4777-8777-777777777777',
-          fieldGroundings: [],
-        }),
+        await grounded(forslag, { evidenceItemId: ITEM_ID }),
+        // Et *annet* funn på den samme kildeversjonen, med nøyaktig den samme
+        // forankringen. Det er lovlig: to funn fra én studie kan dele
+        // utvalgsutdraget og likevel gjelde ulike utfall. Kjøreren skal aldri
+        // kunne velge det, fordi den slår opp på id-en databasen navnga.
+        await grounded(forslag, { evidenceItemId: OTHER_ITEM_ID }),
       ],
     })
 
@@ -282,19 +306,21 @@ describe('runReextraction', () => {
     expect(report.registered).toBe(0)
     expect(report.alreadyRegistered).toBe(1)
     expect(report.unverified).toBe(0)
-    // Køen leses uten id-filter, og utvalget treffer nøyaktig det ene funnet.
-    expect(spy.readInputFor).toEqual([null])
+    // Oppslaget går på id-en dublettavvisningen navnga, og kontrollen treffer
+    // nøyaktig den raden — ikke det andre funnet med den samme forankringen.
+    expect(spy.readInputFor).toEqual([ITEM_ID])
     expect(spy.verified).toEqual([ITEM_ID])
   })
 
   // Et funn uten registrert maskinbevis er ikke deterministisk kontrollert, og
   // kjøringen skal ikke rapportere at kjeden er komplett.
   it('rapporterer et funn uten maskinbevis som ukontrollert', async () => {
+    const forslag = await proposal()
     const spy = spies({
       queue: [
         // Uten kildeversjon kan kontrollen ikke gjennomføres, og den registrerer
         // ingenting. Det er en utgang runExtractionVerification har med vilje.
-        verificationItemFixture({ evidenceItemId: ITEM_ID, sourceVersion: null }),
+        await grounded(forslag, { evidenceItemId: ITEM_ID, sourceVersion: null }),
       ],
     })
 
@@ -303,7 +329,7 @@ describe('runReextraction', () => {
       verificationApi: spy.verificationApi,
       extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
-      proposals: [{ label: 'fava.json', proposal: await proposal() }],
+      proposals: [{ label: 'fava.json', proposal: forslag }],
       retrieve: retrieveFixture(),
     })
 
@@ -318,25 +344,18 @@ describe('runReextraction', () => {
   // dublettregelen — og skal ikke rapporteres som «allerede gjort».
   it('skiller en rettet forankring fra et identisk forslag', async () => {
     const forslag = await proposal()
+    const registrert = await grounded(forslag, { evidenceItemId: ITEM_ID })
     const spy = spies({
       duplicate: true,
       queue: [
-        verificationItemFixture({
-          evidenceItemId: ITEM_ID,
-          sourceVersion: sourceVersionFixture({
-            contentHash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
-          }),
-          // Den registrerte raden bærer en annen forankring enn forslagets.
-          fieldGroundings: forslag.fieldGroundings.map((grounding) => ({
-            fieldGroundingId: '90000000-0000-4000-8000-000000000001',
-            checkField: grounding.checkField,
+        {
+          ...registrert,
+          // Den navngitte raden bærer en annen forankring enn forslagets.
+          fieldGroundings: registrert.fieldGroundings.map((grounding) => ({
+            ...grounding,
             sourceExcerpt: 'Et helt annet utdrag enn det forslaget oppgir.',
-            sourceLocator: grounding.sourceLocator,
-            justification: grounding.justification,
-            createdAt: '2026-09-01T00:00:00+00:00',
-            createdByActorId: '99999999-9999-4999-8999-999999999999',
           })),
-        }),
+        },
       ],
     })
 
@@ -352,19 +371,44 @@ describe('runReextraction', () => {
     expect(report.groundingConflicts).toBe(1)
     expect(report.unverified).toBe(0)
     expect(report.results[0]?.verified).toBe(false)
-    expect(report.results[0]?.groundingConflict).toMatch(/forankringen i basen er en annen/)
+    expect(report.results[0]?.groundingConflict).toMatch(/forankringen på den raden er en annen/)
     // Ingenting skrives, verken en rad eller en kontroll av en fremmed rad.
     expect(spy.registered).toHaveLength(0)
     expect(spy.verified).toEqual([])
   })
 
-  // En legacy-rad uten forankring på den samme kildeversjonen er ikke en rettet
-  // forankring, og skal ikke bli meldt som en konflikt.
-  it('melder ingen konflikt for et uforankret funn på den samme kildeversjonen', async () => {
+  // Den eksakte dublettraden er allerede kontrollert, mens et *annet* forankret
+  // funn på den samme kildeversjonen fortsatt står ukontrollert. Det er ikke en
+  // rettet forankring, og skal ikke bli meldt som en konflikt.
+  it('melder ingen konflikt når et annet funn på kildeversjonen står ukontrollert', async () => {
+    const forslag = await proposal()
     const spy = spies({
       duplicate: true,
-      queue: [verificationItemFixture({ evidenceItemId: ITEM_ID, fieldGroundings: [] })],
+      queue: [
+        await grounded(forslag, { evidenceItemId: ITEM_ID, groundingMachineProved: true }),
+        await grounded(forslag, { evidenceItemId: OTHER_ITEM_ID }),
+      ],
     })
+
+    const report = await runReextraction({
+      extractionApi: spy.extractionApi,
+      verificationApi: spy.verificationApi,
+      extractionPremises: EXTRACTION_PREMISES,
+      verificationPremises: VERIFICATION_PREMISES,
+      proposals: [{ label: 'fava.json', proposal: forslag }],
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.groundingConflicts).toBe(0)
+    expect(report.alreadyRegistered).toBe(1)
+    expect(report.unverified).toBe(0)
+    expect(spy.verified).toEqual([])
+  })
+
+  // Databasen kunne ikke navngi raden. Da finnes det ingen rad å kontrollere
+  // herfra, og kjøringen skal ikke påstå at kjeden er komplett.
+  it('rapporterer en dublett uten navngitt rad som uavklart', async () => {
+    const spy = spies({ duplicate: true, collidesWith: null })
 
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
@@ -375,9 +419,9 @@ describe('runReextraction', () => {
       retrieve: retrieveFixture(),
     })
 
-    expect(report.groundingConflicts).toBe(0)
-    expect(report.alreadyRegistered).toBe(1)
-    expect(spy.verified).toEqual([])
+    expect(report.groundingConflicts).toBe(1)
+    expect(report.results[0]?.verified).toBe(false)
+    expect(spy.readInputFor).toEqual([])
   })
 
   it('lar de andre forslagene gå videre når ett ikke holder mål', async () => {

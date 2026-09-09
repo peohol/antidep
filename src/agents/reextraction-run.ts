@@ -43,28 +43,32 @@
 // prosessen mellom dem, finnes raden uten maskinbevis — og en ny kjøring med det
 // samme forslaget får bare «dublett» tilbake, uten en id å kontrollere.
 //
-// Kjøringen gjenfinner da funnet i verifikatorens egen arbeidskø, på det den
-// faktisk har: kildeversjonen og forankringen. Utvalget er strengere enn
-// databasens dublettregel — en legacy-rad uten forankring treffer aldri — så
-// gjenopptakelsen rører nøyaktig det forslaget beskriver, og lar resten av køen
-// stå.
+// Databasen navngir da raden som kolliderte, og kjøringen fullfører kontrollen
+// av nøyaktig den. Den rører ingen annen rad, og skriver ingen ny.
 //
 // ----------------------------------------------------------------------------
-// Hva køen beviser, og hvordan dubletten tolkes
+// Hvilken rad dubletten gjaldt, og hva den sier
 //
-// Arbeidskøen er nøyaktig «funn denne verifikatoren ikke har kontrollert».
-// Derfor sier den mer enn hvilket funn som skal kontrolleres:
+// Databasen navngir raden som kolliderte (migrasjon 007h), slått opp med den
+// samme kanoniske identiteten UNIQUE-regelen bruker. Kjøringen leser derfor
+// nøyaktig den raden — ikke en rad som ligner — og avgjør på den:
 //
-//   * Funnet ligger i køen og bærer forslagets forankring → en avbrutt kjøring.
-//     Kontrollen fullføres, og ingen ny rad skrives.
-//   * Funnet ligger *ikke* i køen → det er allerede kontrollert. Databasen sa at
-//     de strukturerte verdiene finnes, og køen sier at raden med dem er
-//     kontrollert: kjeden er komplett, og det er ingenting å gjøre.
-//   * Køen har et forankret funn på den samme kildeversjonen, men ingen med
-//     forslagets forankring → forslaget er ikke det som står i basen. Det er
-//     tilfellet der bare et utdrag, en peker eller en begrunnelse er rettet, og
-//     databasens avtrykk ikke skiller det fra en dublett (issue #66). Kjøringen
-//     rapporterer det som en konflikt framfor å si «allerede gjort».
+//   * Raden bærer forslagets forankring og har allerede et maskinbevis →
+//     kjeden er komplett. Ingenting skrives.
+//   * Raden bærer forslagets forankring, men mangler beviset → en avbrutt
+//     kjøring. Kontrollen fullføres, og ingen ny rad skrives.
+//   * Raden bærer en *annen* forankring → forslaget er ikke det som står i
+//     basen. Det er tilfellet der bare et utdrag, en peker eller en begrunnelse
+//     er rettet, og databasens avtrykk ikke skiller det fra en dublett
+//     (issue #66). Kjøringen rapporterer en konflikt framfor å la det se ut som
+//     «allerede gjort».
+//
+// Identiteten kommer fra databasen og ikke fra en likhet kjøreren finner på: to
+// funn fra den samme kildeversjonen kan legitimt dele forankring — det samme
+// utvalgsutdraget, den samme populasjonssetningen — og likevel gjelde ulike
+// utfall. En match på kildeversjon og forankring alene kunne derfor pekt på feil
+// rad, og en slutning fra hva som ellers ligger i arbeidskøen kunne meldt en
+// konflikt der det ikke var noen.
 //
 // ----------------------------------------------------------------------------
 // Hvor den stopper, og hvorfor den stopper der
@@ -253,59 +257,72 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
     }
 
     // Kontrollen er en *separat* operasjon, av en annen aktør og med sin egen
-    // kjøring (ANTIDEP_CONSTITUTION.md §10, §11). Den kjøres på nøyaktig det
-    // funnet forslaget gjelder, aldri på hele køen: en re-ekstraksjon skal ikke
-    // stille dra andre funn med seg.
+    // kjøring (ANTIDEP_CONSTITUTION.md §10, §11). Den kjøres på nøyaktig den
+    // raden forslaget gjelder, aldri på en rad som ligner og aldri på hele køen.
     //
-    // Ble raden nettopp skrevet, kjenner vi id-en. Var den skrevet fra før —
-    // fordi en tidligere kjøring døde mellom de to skrivingene — gjør vi det
-    // ikke, og funnet gjenfinnes i køen på kildeversjonen og forankringen.
-    //
-    // Køen sier samtidig mer enn hvilket funn som skal kontrolleres; se
-    // hodekommentaren. `rivals` teller de forankrede funnene på den samme
-    // kildeversjonen som *ikke* er forslagets — de som skiller «rettet
-    // forankring» fra «allerede kontrollert».
-    let rivals = 0
-    const target =
-      extraction.evidenceItemId === undefined
-        ? {
-            select: (items: readonly VerificationItem[]): readonly VerificationItem[] => {
-              const mine = items.filter((item) => matchesProposal(item, proposal))
-              rivals = items.filter(
-                (item) =>
-                  item.sourceVersion?.sourceVersionId === proposal.sourceVersionId &&
-                  item.fieldGroundings.length > 0 &&
-                  !mine.includes(item),
-              ).length
-              return mine
-            },
-          }
-        : { evidenceItemId: extraction.evidenceItemId }
+    // Ble raden nettopp skrevet, kjenner vi id-en derfra. Var den skrevet fra
+    // før, navngir dublettavvisningen den (migrasjon 007h).
+    const evidenceItemId = extraction.evidenceItemId ?? extraction.existingEvidenceItemId
+    if (evidenceItemId === undefined) {
+      // Databasen kunne ikke slå opp den kolliderende raden. Da er det ingen rad
+      // å kontrollere, og kjøringen skal ikke påstå at kjeden er komplett.
+      const reason =
+        'De strukturerte verdiene er allerede registrert, men databasen kunne ikke navngi ' +
+        'raden det gjaldt. Kontrollen av den kan ikke fullføres herfra; kjør ' +
+        'npm run agent:verify-extraction for arbeidskøen.'
+      log(reason)
+      results.push({
+        label,
+        sourceVersionId: proposal.sourceVersionId,
+        extraction,
+        verified: false,
+        groundingConflict: reason,
+      })
+      continue
+    }
 
+    // Raden leses på id, så svaret gjelder den og ingen annen — også når den
+    // allerede er kontrollert. `select` avgjør hva som skal kontrolleres, og
+    // fanger samtidig raden slik at forankringen kan sammenlignes på den.
+    //
+    // Forankringen sammenlignes bare når raden var der fra før. Ble den nettopp
+    // skrevet, er den forslagets per konstruksjon, og en sammenligning ville
+    // bare kunnet ta feil.
+    const wasAlreadyThere = extraction.decision === 'already_registered'
+    let existing: VerificationItem | undefined
     const verification = await runExtractionVerification({
       api: verificationApi,
       premises: verificationPremises,
-      ...target,
+      evidenceItemId,
+      select: (items) => {
+        existing = items[0]
+        // Et gjeldende maskinbevis betyr at kjeden allerede er komplett. En ny
+        // kontroll ville vært en ny rad uten et nytt svar, og ville brutt at
+        // den samme filen kjørt om igjen ikke skriver noe.
+        return items.filter(
+          (item) =>
+            (!wasAlreadyThere || matchesProposal(item, proposal)) && !item.groundingMachineProved,
+        )
+      },
       ...(retrieve === undefined ? {} : { retrieve }),
       ...(retrieveOptions === undefined ? {} : { retrieveOptions }),
       log,
     })
 
-    // Basen bærer de samme strukturerte verdiene, forslagets forankring er ikke
-    // i køen, og et annet forankret funn på den samme kildeversjonen står
-    // ukontrollert. Da er forslaget en rettelse av forankringen, og den kan
-    // ikke registreres (issue #66).
+    // Raden fantes fra før, men bærer en annen forankring enn forslagets. Da er
+    // forslaget en rettelse av forankringen, og den kan ikke registreres:
+    // avtrykket dekker de strukturerte verdiene og ikke forankringen (issue #66).
     const conflict =
-      extraction.decision === 'already_registered' && verification.items.length === 0 && rivals > 0
-        ? 'De strukturerte verdiene er allerede registrert, men forankringen i basen er en ' +
-          'annen enn forslagets. Fingeravtrykket databasen sammenligner, dekker verdiene og ' +
-          'ikke forankringen, så en rettet forankring kan ikke registreres som et nytt funn ' +
-          '(issue #66).'
+      wasAlreadyThere && existing !== undefined && !matchesProposal(existing, proposal)
+        ? `De strukturerte verdiene er allerede registrert som ${evidenceItemId}, men ` +
+          'forankringen på den raden er en annen enn forslagets. Fingeravtrykket databasen ' +
+          'sammenligner, dekker verdiene og ikke forankringen, så en rettet forankring kan ' +
+          'ikke registreres som et nytt funn (issue #66).'
         : undefined
 
-    // En kontroll som ikke lot seg gjennomføre, er ikke en kontroll. Sto funnet
-    // allerede med et bevis, er køen tom for det — og da er det ingenting som
-    // ble hoppet over.
+    // En kontroll som ikke lot seg gjennomføre, er ikke en kontroll. Sto raden
+    // allerede med et bevis, ble ingenting valgt — og da er det heller ingenting
+    // som ble hoppet over.
     const verified =
       conflict === undefined && !verification.items.some((item) => item.decision === 'skipped')
     if (!verified) {

@@ -32,6 +32,7 @@ const PREMISSER: AgentRunPremises = {
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
 const ITEM_ID = '33333333-3333-4333-8333-333333333333'
+const EXISTING_ITEM_ID = '44444444-4444-4444-8444-444444444444'
 
 interface FakeApi extends EvidenceExtractionApi {
   readonly registered: RegisterAgentExtractionArgs[]
@@ -278,6 +279,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
             'api.register_agent_extraction',
             'Nøyaktig det samme evidensfunnet er allerede registrert.',
             '23505',
+            `evidence_item_id=${EXISTING_ITEM_ID}`,
           ),
         ),
     })
@@ -292,6 +294,10 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     expect(report.decision).toBe('already_registered')
     expect(report.runStatus).toBe('aborted')
     expect(report.evidenceItemId).toBeUndefined()
+    // Databasen navngir raden som kolliderte, slått opp med den samme
+    // identiteten UNIQUE-regelen bruker (migrasjon 007h). Uten den måtte en
+    // kaller som vil fullføre en avbrutt kjøring, gjette hvilken rad det var.
+    expect(report.existingEvidenceItemId).toBe(EXISTING_ITEM_ID)
     expect(api.completions[0]?.outputManifest).toMatchObject({ already_registered: true })
     // agent_runs_status_shape_check godtar ikke en avsluttet kjøring uten et
     // svar på hvorfor den ble stoppet.
@@ -309,6 +315,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
             'api.register_agent_extraction',
             'Kildeversjonen finnes ikke.',
             '23503',
+            null,
           ),
         ),
     })

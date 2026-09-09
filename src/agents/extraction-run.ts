@@ -49,7 +49,7 @@
 
 import type { Uuid } from '../types/api.ts'
 import type { AgentRunPremises, EvidenceExtractionApi } from './agent-api.ts'
-import { isUniqueViolation } from './agent-api.ts'
+import { collidingEvidenceItemId, isUniqueViolation } from './agent-api.ts'
 import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
 import type { RetrievalResult, RetrieveOptions } from './source-retrieval.ts'
@@ -80,6 +80,15 @@ export interface ExtractionRunReport {
    */
   readonly decision: 'registered' | 'already_registered' | 'previewed' | 'skipped'
   readonly evidenceItemId?: Uuid
+  /**
+   * Raden dublettavvisningen navngir, når den gjorde det (migrasjon 007h).
+   *
+   * Bare satt ved `already_registered`, og bare når databasen kunne slå opp den
+   * kolliderende raden. Den er identifisert med nøyaktig den identiteten
+   * UNIQUE-regelen bruker, så en kaller som vil fullføre en avbrutt kjøring, vet
+   * hvilken rad det gjelder framfor å gjette.
+   */
+  readonly existingEvidenceItemId?: Uuid
   /** Feltene forslaget forankrer, i forslagets egen rekkefølge. */
   readonly groundedFields: readonly string[]
   /** Hvorfor ingenting ble registrert. Alltid satt for `skipped`. */
@@ -235,11 +244,15 @@ export async function runEvidenceExtraction(
       // produserte noe, ikke fordi noe gikk galt — og det gamle funnet står
       // urørt, som det skal (knowledge.evidence_items er append-only).
       const reason = cause instanceof Error ? cause.message : String(cause)
-      log('Ingenting registrert: evidensfunnet finnes allerede med nøyaktig dette innholdet.')
+      const existingEvidenceItemId = collidingEvidenceItemId(cause)
+      log(
+        'Ingenting registrert: de strukturerte verdiene er allerede registrert' +
+          (existingEvidenceItemId === null ? '.' : ` som ${existingEvidenceItemId}.`),
+      )
       await api.completeRun(
         agentRunId,
         'aborted',
-        { already_registered: true },
+        { already_registered: true, existing_evidence_item_id: existingEvidenceItemId },
         reason.slice(0, 4000),
       )
       return {
@@ -248,6 +261,7 @@ export async function runEvidenceExtraction(
         decision: 'already_registered',
         groundedFields,
         reason,
+        ...(existingEvidenceItemId === null ? {} : { existingEvidenceItemId }),
       }
     }
     log(

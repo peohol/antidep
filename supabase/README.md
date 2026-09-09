@@ -677,15 +677,16 @@ på raden, så det samme forslaget kjørt om igjen skriver ingenting og rapporte
 `already_registered`. Avtrykket dekker ikke forankringen, som ligger i sin egen tabell: et
 forslag som bare retter et utdrag, en peker eller en begrunnelse, er den samme ekstraksjonen
 for databasen og kan ikke registreres på nytt (issue #66). Re-ekstraksjonen skiller de to
-tilfellene: står forslagets forankring ikke i arbeidskøen mens et annet forankret funn på den
-samme kildeversjonen gjør det, meldes det som en **forankringskonflikt** og kommandoen
+tilfellene fra hverandre: dublettavvisningen navngir raden som kolliderte (migrasjon 007h),
+slått opp med den kanoniske identiteten `UNIQUE`-regelen bruker, og forankringen sammenlignes på
+nettopp den raden. Er den en annen, meldes det som en **forankringskonflikt** og kommandoen
 avslutter med feil.
 
 **En avbrutt kjøring kan fullføres.** Registreringen og kontrollen er to skrivinger. Dør
 prosessen mellom dem, finnes raden uten maskinbevis, og en ny kjøring med det samme forslaget
-får bare «dublett» tilbake — uten en id å kontrollere. Kjøringen gjenfinner da funnet i
-verifikatorens arbeidskø på kildeversjonen og forankringen, fullfører kontrollen, og lar
-resten av køen stå. Står et funn likevel uten maskinbevis når kjøringen er ferdig, avslutter
+får «dublett» tilbake — men avvisningen navngir raden, så kontrollen av nøyaktig den kan
+fullføres. Ingen annen rad røres, og ingen ny skrives. Bærer raden allerede et gjeldende
+maskinbevis, gjøres ingenting. Står et funn uten maskinbevis når kjøringen er ferdig, avslutter
 kommandoen med feil framfor å si at kjeden er komplett.
 
 **Re-ekstraksjonen røres ikke ved gamle rader.** `npm run agent:reextract-evidence` er veien

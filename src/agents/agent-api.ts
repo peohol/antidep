@@ -317,11 +317,22 @@ export const CITATION_SUPPORT_VERIFICATION_ROLE = 'citation_support_verification
  */
 export class AgentApiError extends Error {
   readonly code: string | null
+  /**
+   * Databasens `detail` på avvisningen.
+   *
+   * Bærer den ene opplysningen en kaller ikke kan utlede selv:
+   * `knowledge.record_evidence_item` navngir raden som kolliderte ved en
+   * dublett (migrasjon 007h), slått opp med den samme kanoniske identiteten
+   * UNIQUE-regelen bruker. Uten den måtte en kjøring som vil gjenoppta en
+   * avbrutt registrering, gjette hvilken rad det var.
+   */
+  readonly details: string | null
 
-  constructor(operation: string, message: string, code: string | null) {
+  constructor(operation: string, message: string, code: string | null, details: string | null) {
     super(`${operation} ble avvist: ${message}`)
     this.name = 'AgentApiError'
     this.code = code
+    this.details = details
   }
 }
 
@@ -333,11 +344,27 @@ export function isUniqueViolation(cause: unknown): boolean {
   return cause instanceof AgentApiError && cause.code === UNIQUE_VIOLATION
 }
 
+/**
+ * Evidensfunnet dublettavvisningen navngir, eller `null`.
+ *
+ * Formen er `evidence_item_id=<uuid>` og settes av
+ * `knowledge.record_evidence_item` (migrasjon 007h). `null` når avvisningen
+ * ikke navngir noen rad — databasen sier det da selv i `detail`, og en kaller
+ * skal behandle det som «ukjent», aldri som «ingen rad».
+ */
+export function collidingEvidenceItemId(cause: unknown): Uuid | null {
+  if (!(cause instanceof AgentApiError) || cause.details === null) {
+    return null
+  }
+  const match = /^evidence_item_id=([0-9a-fA-F-]{36})$/.exec(cause.details.trim())
+  return match?.[1] === undefined ? null : (match[1] as Uuid)
+}
+
 function fail(
   operation: string,
-  error: { readonly message: string; readonly code?: string },
+  error: { readonly message: string; readonly code?: string; readonly details?: string | null },
 ): never {
-  throw new AgentApiError(operation, error.message, error.code ?? null)
+  throw new AgentApiError(operation, error.message, error.code ?? null, error.details ?? null)
 }
 
 type Identity = { readonly p_identity_key: string; readonly p_secret: string }
