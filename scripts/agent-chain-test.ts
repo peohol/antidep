@@ -81,8 +81,8 @@
 // ============================================================================
 
 import { execFileSync } from 'node:child_process'
-import { createHmac } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash, createHmac } from 'node:crypto'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -115,6 +115,10 @@ import { prepareDraftingRequest, runExtractionDrafting } from '../src/agents/dra
 import { closeDraftingJob, JOB_FILES, openDraftingJob } from '../src/agents/drafting-job.ts'
 import { MODEL_ANSWER_VERSION } from '../src/agents/model-answer.ts'
 import { readProposalFile } from '../src/agents/proposal-files.ts'
+import { documentsIn } from '../src/agents/source-document.ts'
+import { syntheticPdf } from '../src/agents/test-support.ts'
+import { buildAssignmentFromCatalog } from '../src/ops/extraction-assignment.ts'
+import type { EditorCatalogApi } from '../src/ops/extraction-assignment.ts'
 
 // ----------------------------------------------------------------------------
 // Miljøet
@@ -224,6 +228,8 @@ const REVIEWER_USER = 'c0000000-0000-4000-8000-0000000000c0'
 const REVIEWER_ACTOR = 'c0000000-0000-4000-8000-0000000000c1'
 const PUBLISHER_USER = 'c0000000-0000-4000-8000-0000000000d0'
 const PUBLISHER_ACTOR = 'c0000000-0000-4000-8000-0000000000d1'
+const EDITOR_USER = 'c0000000-0000-4000-8000-0000000000e0'
+const EDITOR_ACTOR = 'c0000000-0000-4000-8000-0000000000e1'
 
 const KILDETEKST = [
   '<PubmedArticle>',
@@ -288,12 +294,16 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
     delete from knowledge.evidence_field_groundings where evidence_item_id in (
       select id from knowledge.evidence_items where source_id = ${q(SOURCE)});
     delete from knowledge.evidence_items where source_id = ${q(SOURCE)};
-    delete from provenance.agent_runs where input_source_version_id = ${q(VERSION)};
-    delete from knowledge.source_versions where id = ${q(VERSION)};
+    delete from provenance.agent_runs where input_source_version_id in (
+      select id from knowledge.source_versions where source_id = ${q(SOURCE)});
+    delete from knowledge.source_versions where source_id = ${q(SOURCE)};
     delete from knowledge.sources where id = ${q(SOURCE)};
-    delete from workflow.user_roles where user_id in (${q(REVIEWER_USER)}, ${q(PUBLISHER_USER)});
-    delete from provenance.actors where id in (${q(REVIEWER_ACTOR)}, ${q(PUBLISHER_ACTOR)});
-    delete from auth.users where id in (${q(REVIEWER_USER)}, ${q(PUBLISHER_USER)});
+    delete from workflow.user_roles
+      where user_id in (${q(REVIEWER_USER)}, ${q(PUBLISHER_USER)}, ${q(EDITOR_USER)});
+    delete from provenance.actors
+      where id in (${q(REVIEWER_ACTOR)}, ${q(PUBLISHER_ACTOR)}, ${q(EDITOR_ACTOR)});
+    delete from auth.users
+      where id in (${q(REVIEWER_USER)}, ${q(PUBLISHER_USER)}, ${q(EDITOR_USER)});
     `,
   )
 
@@ -315,14 +325,18 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
     values (${q(REVIEWER_USER)}, '00000000-0000-0000-0000-000000000000',
             'authenticated', 'authenticated', 'kjede-reviewer@example.test'),
            (${q(PUBLISHER_USER)}, '00000000-0000-0000-0000-000000000000',
-            'authenticated', 'authenticated', 'kjede-publisher@example.test');
+            'authenticated', 'authenticated', 'kjede-publisher@example.test'),
+           (${q(EDITOR_USER)}, '00000000-0000-0000-0000-000000000000',
+            'authenticated', 'authenticated', 'kjede-editor@example.test');
 
     insert into provenance.actors
       (id, actor_key, actor_type, display_name, description, auth_user_id)
     values (${q(REVIEWER_ACTOR)}, 'human:kjede-reviewer', 'human', 'Kjedeprøvens reviewer',
             'Bare for scripts/agent-chain-test.ts.', ${q(REVIEWER_USER)}),
            (${q(PUBLISHER_ACTOR)}, 'human:kjede-publisher', 'human', 'Kjedeprøvens publisher',
-            'Bare for scripts/agent-chain-test.ts.', ${q(PUBLISHER_USER)});
+            'Bare for scripts/agent-chain-test.ts.', ${q(PUBLISHER_USER)}),
+           (${q(EDITOR_ACTOR)}, 'human:kjede-editor', 'human', 'Kjedeprøvens editor',
+            'Bare for scripts/agent-chain-test.ts.', ${q(EDITOR_USER)});
 
     insert into workflow.user_roles
       (user_id, role_code, scope_id, valid_from, granted_by_actor_id, grant_reason)
@@ -331,7 +345,10 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
             'Kjedeprøve.'),
            (${q(PUBLISHER_USER)}, 'publisher', null, now() - interval '1 day',
             (select id from provenance.actors where actor_key = 'human:peder-holman'),
-            'Kjedeprøve.');
+            'Kjedeprøve.'),
+           (${q(EDITOR_USER)}, 'editor', null, now() - interval '1 day',
+            (select id from provenance.actors where actor_key = 'human:peder-holman'),
+            'Kjedeprøve: dokumentveien krever editor-rollen.');
     `,
   )
 
@@ -1452,6 +1469,380 @@ async function main(): Promise<void> {
     )
   } finally {
     rmSync(kjoremappe, { recursive: true, force: true })
+  }
+
+  // ---- Ledd 10: dokumentveien, fra en original-PDF til et maskinbevis ------
+  //
+  // Den ene veien som ikke kan prøves uten både en ekte database og et ekte
+  // verktøy: en PDF som ikke ligger på noen adresse, blir en registrert
+  // fulltekstversjon, et oppdrag, et forslag og til slutt et maskinbevis — og
+  // hvert ledd underveis henter teksten ut av dokumentet på nytt.
+  //
+  // PDF-en er syntetisk og bygges her (`syntheticPdf`). Poenget er ikke
+  // innholdet, men at bytene er en ekte PDF som en ekte `pdftotext` leser, og
+  // at fingeravtrykket databasen beregnet, er det `sha256sum` gir på filen.
+  const dokumentmappe = mkdtempSync(join(tmpdir(), 'antidep-kjede-dokument-'))
+  try {
+    const fulltekstlinjer = [
+      'Patients were randomised to double-blind treatment for 26 to 32 weeks.',
+      'Forty-eight sertraline-treated patients completed the trial and were analysed.',
+      'The mean percent change in weight for sertraline was 1.0% at endpoint.',
+    ]
+    const pdf = syntheticPdf(fulltekstlinjer)
+    const pdfSti = join(dokumentmappe, 'artikkel.pdf')
+    writeFileSync(pdfSti, pdf)
+    const lager = join(dokumentmappe, 'lager')
+
+    const editor = asUser(EDITOR_USER)
+    const katalog: EditorCatalogApi = {
+      listSources: async () => {
+        const { data, error } = await editor.from('editor_sources').select('*')
+        if (error !== null) {
+          throw new Error(error.message)
+        }
+        return (data ?? []) as never[]
+      },
+      listSourceVersions: async (sourceId) => {
+        const { data, error } = await editor
+          .from('editor_source_versions')
+          .select('*')
+          .eq('source_id', sourceId)
+        if (error !== null) {
+          throw new Error(error.message)
+        }
+        return (data ?? []) as never[]
+      },
+      createSourceVersionFromDocument: async (input) => {
+        const { data, error } = await editor.rpc('create_source_version_from_document', {
+          p_source_id: input.sourceId,
+          p_retrieved_at: input.retrievedAt,
+          p_retrieved_from: input.retrievedFrom,
+          p_document_base64: input.documentBase64,
+          p_extracted_text: input.extractedText,
+          p_representation: input.representation,
+          p_text_extraction_tool: input.recipe.tool,
+          p_text_extraction_tool_version: input.recipe.toolVersion,
+          p_text_extraction_arguments: input.recipe.arguments,
+          p_external_version: input.externalVersion,
+        })
+        if (error !== null) {
+          throw new Error(error.message)
+        }
+        return data as string
+      },
+      buildAssignment: async (input) => {
+        const { data, error } = await editor.rpc('build_extraction_assignment', {
+          p_source_version_id: input.sourceVersionId,
+          p_drug_names: input.drugs,
+          p_outcome_labels: input.outcomes,
+          p_population_labels: input.populations,
+        })
+        if (error !== null) {
+          throw new Error(error.message)
+        }
+        return data
+      },
+    }
+
+    const rapport = await buildAssignmentFromCatalog({
+      catalog: katalog,
+      sourceQuery: 'Kjedeprøve',
+      documentPath: pdfSti,
+      retrievedFrom: 'https://example.test/kjede-fulltekst',
+      drugs: ['sertralin'],
+      outcomes: ['vektendring'],
+      populations: [],
+      documentStore: lager,
+    })
+    const fulltekstVersjon = rapport.sourceVersionId
+
+    check(
+      'databasen beregnet fingeravtrykket av PDF-en selv, og det er det sha256sum gir',
+      psql(
+        config,
+        `select document_sha256 from knowledge.source_versions where id = ${q(fulltekstVersjon)}`,
+      ) === `sha256:${createHash('sha256').update(pdf).digest('hex')}`,
+    )
+    check(
+      'kildeversjonen er ført som fulltekst, med hele oppskriften teksten kan reproduseres av',
+      psql(
+        config,
+        `select representation::text || '|' || text_extraction_tool || '|'
+                || text_extraction_arguments || '|' || document_media_type
+         from knowledge.source_versions where id = ${q(fulltekstVersjon)}`,
+      ) === 'full_text|pdftotext|-layout -enc UTF-8 -eol unix|application/pdf',
+    )
+    check(
+      'oppdraget kom fra databasen med dokumentbindingen, uten at noen skrev en uuid',
+      rapport.assignment.document?.sha256 ===
+        `sha256:${createHash('sha256').update(pdf).digest('hex')}` &&
+        rapport.assignment.sourceVersionId === fulltekstVersjon &&
+        rapport.assignment.drugs.length === 1 &&
+        rapport.assignment.outcomes.length === 1,
+    )
+    check(
+      'sammendraget og fullteksten står som to versjoner av den samme kilden',
+      psql(
+        config,
+        `select string_agg(representation::text, ',' order by representation::text)
+         from knowledge.source_versions where source_id = ${q(SOURCE)}`,
+      ) === 'abstract,full_text',
+    )
+
+    // Modell-leddet, kjørt mot dokumentet. Teksten hentes ut av PDF-en med den
+    // registrerte oppskriften; ingenting hentes over nett.
+    const oppdragsfil = join(dokumentmappe, 'fulltekst.json')
+    writeFileSync(oppdragsfil, JSON.stringify(rapport.json, null, 2), 'utf8')
+    const dokumentKjoring = join(dokumentmappe, 'kjoring')
+    const dokumenter = documentsIn(lager)
+    const åpnetDokument = await openDraftingJob({
+      assignmentPath: oppdragsfil,
+      runDirectory: dokumentKjoring,
+      documents: dokumenter,
+    })
+    check(
+      'modell-leddet bygget prompten av teksten i PDF-en, ikke av noe hentet over nett',
+      åpnetDokument.job.state === 'awaiting_answer' &&
+        åpnetDokument.job.documentSha256 === rapport.assignment.document?.sha256 &&
+        readFileSync(åpnetDokument.promptPath, 'utf8').includes(
+          'The mean percent change in weight for sertraline was 1.0% at endpoint.',
+        ),
+    )
+
+    const fulltekstUtkast = {
+      extraction: {
+        design_code: 'randomized_controlled_trial',
+        population_availability: 'not_reported',
+        population_detail: 'Voksne.',
+        sample_size: 48,
+        sample_size_availability: 'reported_value',
+        intervention_drug_id: drugId,
+        comparator_kind: 'none',
+        outcome_concept_id: outcomeId,
+        outcome_detail: 'Gjennomsnittlig prosentvis vektendring ved endepunkt.',
+        timepoint_min: '26 weeks',
+        timepoint_max: '32 weeks',
+        timepoint_availability: 'reported_value',
+        reported_direction: 'increase',
+        effect_measure: 'mean_change',
+        estimate: '1.0',
+        estimate_unit: 'percent',
+        estimate_availability: 'reported_value',
+        confidence_interval_availability: 'not_reported',
+        source_locator: 'Fulltekst',
+        source_quote: 'The mean percent change in weight for sertraline was 1.0% at endpoint.',
+      },
+      field_groundings: [
+        {
+          check_field: 'intervention_arm',
+          source_excerpt:
+            'Forty-eight sertraline-treated patients completed the trial and were analysed.',
+          source_locator: 'Fulltekst',
+          justification: 'Armen står i fullteksten.',
+        },
+        {
+          check_field: 'sample_size',
+          source_excerpt:
+            'Forty-eight sertraline-treated patients completed the trial and were analysed.',
+          source_locator: 'Fulltekst',
+          justification: 'Utvalget står i fullteksten.',
+        },
+        {
+          check_field: 'outcome',
+          source_excerpt: 'The mean percent change in weight for sertraline was 1.0% at endpoint.',
+          source_locator: 'Fulltekst',
+          justification: 'Endepunktet står i fullteksten.',
+        },
+        {
+          check_field: 'estimate',
+          source_excerpt: 'The mean percent change in weight for sertraline was 1.0% at endpoint.',
+          source_locator: 'Fulltekst',
+          justification: 'Verdien står i fullteksten.',
+        },
+        {
+          check_field: 'effect_measure',
+          source_excerpt: 'The mean percent change in weight for sertraline was 1.0% at endpoint.',
+          source_locator: 'Fulltekst',
+          justification: 'Effektmålet er en gjennomsnittlig endring innen armen.',
+        },
+        {
+          check_field: 'reported_direction',
+          source_excerpt: 'The mean percent change in weight for sertraline was 1.0% at endpoint.',
+          source_locator: 'Fulltekst',
+          justification: 'Retningen står i fullteksten.',
+        },
+        {
+          check_field: 'timepoint',
+          source_excerpt: 'Patients were randomised to double-blind treatment for 26 to 32 weeks.',
+          source_locator: 'Fulltekst',
+          justification: 'Tidsrommet står i fullteksten.',
+        },
+        {
+          check_field: 'availability_semantics',
+          source_excerpt: 'Patients were randomised to double-blind treatment for 26 to 32 weeks.',
+          source_locator: 'Fulltekst',
+          justification: 'Feltene uten verdi er ført som ikke rapportert.',
+        },
+      ],
+    }
+    writeFileSync(
+      join(dokumentKjoring, JOB_FILES.answer),
+      JSON.stringify({
+        answer_version: MODEL_ANSWER_VERSION,
+        request_digest: åpnetDokument.job.requestDigest,
+        identity: {
+          provider: 'kjedeprove',
+          model: 'dokumentmodell',
+          model_version: '2026-09-16',
+        },
+        answered_at: new Date().toISOString(),
+        draft: fulltekstUtkast,
+      }),
+      'utf8',
+    )
+    const lukketDokument = await closeDraftingJob({
+      runDirectory: dokumentKjoring,
+      assignmentPath: oppdragsfil,
+      documents: dokumenter,
+    })
+    check(
+      'og skrev et forslag av svaret, med utdrag som står ordrett i den uttrukne teksten',
+      lukketDokument.outcome === 'drafted',
+      lukketDokument.reason ?? '',
+    )
+
+    const fulltekstForslag = (await readProposalFile(lukketDokument.proposalPath)).proposal
+    const fulltekstOppdrag = parseAssignmentJson(oppdragsfil, readFileSync(oppdragsfil, 'utf8'))
+    const fulltekstRegistrering = await runEvidenceExtraction({
+      api: reextractionPorts.extractionApi,
+      proposal: fulltekstForslag,
+      assignment: fulltekstOppdrag,
+      mode: 'with_assignment',
+      documents: dokumenter,
+    })
+    const fulltekstItem = fulltekstRegistrering.evidenceItemId ?? ''
+    check(
+      'registreringen hentet teksten ut av dokumentet på nytt, og skrev raden',
+      fulltekstRegistrering.decision === 'registered' && fulltekstItem !== '',
+      fulltekstRegistrering.reason ?? '',
+    )
+    check(
+      'kjøringen førte hvilket dokument representasjonen ble hentet ut av',
+      psql(
+        config,
+        `select input_manifest ->> 'document_sha256' from provenance.agent_runs
+         where id = ${q(fulltekstRegistrering.agentRunId)}`,
+      ) === rapport.assignment.document?.sha256,
+    )
+
+    const fulltekstKontroll = await runExtractionVerification({
+      api: reextractionPorts.verificationApi,
+      premises: EXTRACTION_VERIFICATION_PREMISES,
+      evidenceItemId: fulltekstItem,
+      documents: dokumenter,
+    })
+    check(
+      'den maskinelle kontrollen reproduserte teksten av dokumentet, og beviste forankringen',
+      fulltekstKontroll.items[0]?.decision === 'registered' &&
+        psql(config, `select workflow.grounding_machine_proved(${q(fulltekstItem)})::text`) ===
+          'true',
+      fulltekstKontroll.items[0]?.reason ?? '',
+    )
+    // Verdiene fullteksten faktisk oppgir, og som sammendraget ikke gjorde.
+    // comparator_kind er `none` fordi estimatet er en endring innen armen: en
+    // studie med en aktiv komparator gjør ikke 1,0 % til et mellom-gruppeanslag.
+    check(
+      'og funnet står med de verdiene fullteksten faktisk oppgir',
+      psql(
+        config,
+        `select estimate::text || ' ' || estimate_unit::text || ' ' || sample_size::text
+                || ' ' || effect_measure::text || ' ' || comparator_kind::text
+         from knowledge.evidence_items where id = ${q(fulltekstItem)}`,
+      ) === '1.0 percent 48 mean_change none' &&
+        psql(
+          config,
+          `select (timepoint_min = interval '26 weeks' and timepoint_max = interval '32 weeks')::text
+           from knowledge.evidence_items where id = ${q(fulltekstItem)}`,
+        ) === 'true',
+    )
+
+    // Feiltilfellene. Ingen av dem skal ende i en rad, og ingen av dem skal
+    // falle tilbake på adressen.
+    const førFeil = psql(
+      config,
+      `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+    )
+    const utenDokument = await runEvidenceExtraction({
+      api: reextractionPorts.extractionApi,
+      proposal: fulltekstForslag,
+      assignment: fulltekstOppdrag,
+      mode: 'with_assignment',
+      documents: documentsIn(join(dokumentmappe, 'tomt-lager')),
+    })
+    check(
+      'uten originaldokumentet blir det ingen rad — og adressen hentes ikke i stedet',
+      utenDokument.decision === 'skipped' &&
+        psql(
+          config,
+          `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+        ) === førFeil,
+      utenDokument.reason ?? '',
+    )
+
+    const feilLager = join(dokumentmappe, 'feil-lager')
+    mkdirSync(feilLager, { recursive: true })
+    writeFileSync(join(feilLager, 'artikkel.pdf'), syntheticPdf(['En helt annen artikkel.']))
+    const feilDokument = await runEvidenceExtraction({
+      api: reextractionPorts.extractionApi,
+      proposal: fulltekstForslag,
+      assignment: fulltekstOppdrag,
+      mode: 'with_assignment',
+      documents: documentsIn(feilLager),
+    })
+    check(
+      'en annen PDF med samme filnavn blir ingen rad: oppslaget går på fingeravtrykk',
+      feilDokument.decision === 'skipped' &&
+        (feilDokument.reason ?? '').includes('Fant ingen fil') &&
+        psql(
+          config,
+          `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+        ) === førFeil,
+      feilDokument.reason ?? '',
+    )
+
+    // En dokumentbinding som ikke er den registrerte: oppdraget er redaktørens
+    // egen fil, og et forslag som peker på et annet dokument, er ikke det
+    // oppdraget ba om.
+    const manipulert = parseExtractionProposal({
+      ...(JSON.parse(JSON.stringify(serializeExtractionProposal(fulltekstForslag))) as Record<
+        string,
+        unknown
+      >),
+      document: {
+        ...(serializeExtractionProposal(fulltekstForslag) as { document: Record<string, unknown> })
+          .document,
+        sha256: `sha256:${'0'.repeat(64)}`,
+      },
+    })
+    const manipulertKjoring = await runEvidenceExtraction({
+      api: reextractionPorts.extractionApi,
+      proposal: manipulert,
+      assignment: fulltekstOppdrag,
+      mode: 'with_assignment',
+      documents: dokumenter,
+    })
+    check(
+      'et forslag som peker på et annet dokument enn oppdraget, blir ingen rad',
+      manipulertKjoring.decision === 'skipped' &&
+        (manipulertKjoring.reason ?? '').includes('document.sha256') &&
+        psql(
+          config,
+          `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+        ) === førFeil,
+      manipulertKjoring.reason ?? '',
+    )
+  } finally {
+    rmSync(dokumentmappe, { recursive: true, force: true })
   }
 
   console.log(

@@ -161,20 +161,7 @@ type Verdict =
  * å søke, fordi et treff da ville vært i en annen utgave enn den ekstraksjonen
  * skal peke på.
  */
-function judge(
-  proposal: ExtractionProposal,
-  sourceText: string,
-  assignment: ExtractionAssignment | undefined,
-): string | null {
-  if (assignment !== undefined) {
-    const mismatch = assignmentMismatch(assignment, proposal)
-    if (mismatch !== null) {
-      return (
-        `Forslaget holder seg ikke innenfor oppdraget: ${mismatch}. Ekstraksjonen ble ikke ` +
-        'registrert.'
-      )
-    }
-  }
+function judge(proposal: ExtractionProposal, sourceText: string): string | null {
   const projections = searchProjections(sourceText)
   const missing = proposal.fieldGroundings.filter(
     (grounding) => !verbatimOccursIn(projections, grounding.sourceExcerpt),
@@ -250,16 +237,35 @@ async function fetchAndJudge(
   ports: ResolvePorts,
   assignment: ExtractionAssignment | undefined,
 ): Promise<Verdict> {
+  // Oppdraget først, og før noe hentes.
+  //
+  // Forslaget er utrygg inndata, og kildebindingen i det avgjør *hvor* teksten
+  // skaffes fra. Hentet kjøringen først og sammenlignet etterpå, ville et
+  // forslag som pekte på et annet dokument, blitt avvist med «fant ingen fil» —
+  // en sann setning om feil ting. Oppdraget er redaktørens egen fil, og
+  // avviket mot det er det som faktisk er galt.
+  if (assignment !== undefined) {
+    const mismatch = assignmentMismatch(assignment, proposal)
+    if (mismatch !== null) {
+      return {
+        kind: 'skip',
+        reason:
+          `Forslaget holder seg ikke innenfor oppdraget: ${mismatch}. Ekstraksjonen ble ikke ` +
+          'registrert.',
+      }
+    }
+  }
+
   // Hvordan representasjonen skaffes — hentet fra adressen, eller hentet ut av
-  // originaldokumentet med den registrerte oppskriften — avgjøres av forslagets
-  // egen kildebinding, og den er kontrollert mot oppdraget rett under
-  // (`source-binding.ts`, `assignmentMismatch`).
+  // originaldokumentet med den registrerte oppskriften — avgjøres av
+  // kildebindingen, som nå er kontrollert mot oppdraget der det finnes ett
+  // (`source-binding.ts`).
   const resolved = await resolveRepresentation(proposalBinding(proposal), ports)
   if (resolved.status === 'error') {
     return { kind: 'skip', reason: `${resolved.message} Ekstraksjonen ble ikke registrert.` }
   }
 
-  const problem = judge(proposal, resolved.text, assignment)
+  const problem = judge(proposal, resolved.text)
   if (problem !== null) {
     return { kind: 'skip', reason: problem }
   }
