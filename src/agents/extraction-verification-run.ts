@@ -202,6 +202,33 @@ async function evaluateItemUnguarded(
 }
 
 /**
+ * Om kjøringen i det hele tatt kan skaffe representasjonen til dette funnet.
+ *
+ * Bare dokumentbundne funn kan svare nei: teksten deres finnes ikke på noen
+ * adresse, og et ledd uten originaldokumentet henter aldri `retrieved_from` i
+ * stedet (`source-binding.ts`). Kontrollen er hele oppslaget og ikke bare «har
+ * kjøringen en dokumentkatalog»: katalogen finnes alltid, den er bare tom der
+ * dokumentene ikke ligger.
+ *
+ * Den kjører ikke tekstuttrekkingen. Spørsmålet her er om dokumentet er
+ * tilgjengelig, ikke om kontrollen går gjennom.
+ */
+async function documentIsAvailable(item: VerificationItem, ports: ResolvePorts): Promise<boolean> {
+  const document = item.sourceVersion?.document ?? null
+  if (document === null) {
+    return true
+  }
+  if (ports.documents === undefined) {
+    return false
+  }
+  try {
+    return (await ports.documents(document.sha256)).status === 'ok'
+  } catch {
+    return false
+  }
+}
+
+/**
  * Kjører ekstraksjonsverifikasjonen for ett funn eller for hele køen.
  *
  * Kjøringen lukkes alltid: `succeeded` når den kom gjennom, `aborted` for en
@@ -238,7 +265,25 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
   try {
     const input = parseVerificationInput(await api.readInput(agentRunId, evidenceItemId))
     const selected = options.select === undefined ? input.items : options.select(input.items)
-    const queue = limit === null ? selected : selected.slice(0, limit)
+
+    // Funn kjøringen ikke kan skaffe dokumentet til, tas ut *før* grensen — ikke
+    // etter.
+    //
+    // Uten det ville en kjøring med `--limit` sultet: køen er sortert på
+    // created_at, et overhoppet funn får ingen verifikasjonsrad og blir derfor
+    // stående i køen, og en hostet kjøring uten dokumentene ville tatt de samme
+    // n dokumentbundne funnene om igjen hver eneste gang — og aldri nådd fram
+    // til dem den faktisk kan kontrollere over nett.
+    //
+    // De rapporteres likevel, med en begrunnelse som sier hva som må gjøres.
+    // De bruker bare ikke opp plassen til noe som kunne blitt kontrollert.
+    const unavailable: VerificationItem[] = []
+    const available: VerificationItem[] = []
+    for (const item of selected) {
+      ;((await documentIsAvailable(item, options)) ? available : unavailable).push(item)
+    }
+
+    const queue = limit === null ? available : available.slice(0, limit)
     log(
       `${String(input.items.length)} evidensfunn i grunnlaget, ${String(queue.length)} tas i denne kjøringen.`,
     )
@@ -247,6 +292,29 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
         `Utvalget er avgrenset til funn som svarer til forslaget: ` +
           `${String(selected.length)} av ${String(input.items.length)}.`,
       )
+    }
+    if (unavailable.length > 0) {
+      log(
+        `${String(unavailable.length)} funn er utledet av et originaldokument som ikke ligger i ` +
+          'dokumentkatalogen. De kontrolleres fra en maskin som har dokumentet, og teller ikke ' +
+          'mot --limit.',
+      )
+    }
+
+    for (const item of unavailable) {
+      const reason =
+        'Funnet er utledet av originaldokumentet ' +
+        `${item.sourceVersion?.document?.sha256 ?? 'ukjent'}, som ikke ligger i ` +
+        'dokumentkatalogen denne kjøringen leser. Kontrollen krever dokumentet, og henter aldri ' +
+        'adressen i stedet. Kjør den fra en maskin som har det: ' +
+        `ANTIDEP_DOCUMENT_DIR=<katalog> npm run agent:verify-extraction -- --evidence-item ${item.evidenceItemId}`
+      log(`— ${summarize(item)}: ingen verifikasjon registrert. ${reason}`)
+      results.push({
+        evidenceItemId: item.evidenceItemId,
+        sourceTitle: item.sourceTitle,
+        decision: 'skipped',
+        reason,
+      })
     }
 
     for (const item of queue) {
@@ -321,6 +389,10 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
       checked: results.length,
       registered: results.filter((result) => result.decision === 'registered').length,
       skipped: results.filter((result) => result.decision === 'skipped').length,
+      // Overhoppet fordi originaldokumentet ikke lå i katalogen — ikke fordi
+      // kontrollen fant noe galt. Tallet står for seg selv, slik at «hva gjorde
+      // denne kjøringen» kan besvares uten å lese hver begrunnelse.
+      skipped_without_document: unavailable.length,
       results,
     }
 

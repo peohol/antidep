@@ -48,9 +48,10 @@
 // (EVIDENCE_PIPELINE.md §63, `drafting-no-write-path.test.ts`).
 // ============================================================================
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { documentDigest } from '../agents/document-binding.ts'
 import {
   currentPdfRecipe,
   extractDocumentText,
@@ -215,20 +216,35 @@ export interface AssignmentBuildReport {
   readonly document?: { readonly digest: string; readonly storedAt: string | null }
 }
 
-/** Legger originaldokumentet i lageret, under fingeravtrykket sitt. */
+/**
+ * Legger originaldokumentet i lageret, under fingeravtrykket sitt.
+ *
+ * Filnavnet er fingeravtrykket, men **innholdet** er fasiten: oppslaget senere
+ * hasher bytene og bryr seg ikke om navnet (`documentsIn`). En fil som ligger
+ * der fra før, gjenbrukes derfor bare når bytene faktisk er dokumentets — ellers
+ * skrives den på nytt. Uten den kontrollen ville en avbrutt skriving etterlatt
+ * en halv fil under riktig navn, kommandoen ville meldt at alt gikk bra, og
+ * hvert eneste ledd videre ville stanset med «fant ingen fil».
+ *
+ * Skrivingen går via en midlertidig fil og `rename`, som er atomisk innenfor
+ * samme filsystem: en avbrutt kjøring etterlater da en `.tmp`-fil med et navn
+ * oppslaget ikke bryr seg om, aldri en halv fil under fingeravtrykket.
+ */
 async function storeDocument(document: LoadedDocument, directory: string): Promise<string> {
   await mkdir(directory, { recursive: true })
   const path = join(directory, `${document.digest.replace('sha256:', '')}.pdf`)
   try {
-    // Ligger den der fra før, er det den samme filen: navnet *er*
-    // fingeravtrykket, så en fil med det navnet kan ikke være et annet dokument
-    // uten at hele kjeden ville sagt fra ved neste oppslag.
-    await readFile(path)
-    return path
+    if ((await documentDigest(new Uint8Array(await readFile(path)))) === document.digest) {
+      return path
+    }
   } catch {
-    await writeFile(path, document.bytes)
-    return path
+    // Filen finnes ikke, eller lot seg ikke lese. Begge deler betyr at den skal
+    // skrives — og en fil som ikke lar seg lese, er ikke et dokument.
   }
+  const temporary = `${path}.${String(process.pid)}.tmp`
+  await writeFile(temporary, document.bytes)
+  await rename(temporary, path)
+  return path
 }
 
 /**
@@ -282,10 +298,31 @@ async function registerFromDocument(
   // Finnes den samme teksten allerede for denne kilden, er det den samme
   // observasjonen. Databasen ville avvist dubletten; her gjenbrukes den, slik at
   // en avbrutt kjøring kan kjøres om igjen.
+  //
+  // Men bare når raden er bundet til **dette** dokumentet. Den samme teksten kan
+  // komme av en annen PDF — den samme artikkelen fra to utgivere — eller av
+  // tekstveien, uten noe dokument i det hele tatt. Gjenbrukte kommandoen raden
+  // likevel, ville oppdraget pekt på den *gamle* bindingen mens lageret fikk den
+  // *nye* filen, og hvert ledd videre ville stanset med «fant ingen fil» etter at
+  // kommandoen hadde meldt at alt gikk bra.
   const existing = (await options.catalog.listSourceVersions(source.source_id)).find(
     (row) => row.content_hash === extracted.extracted.contentHash,
   )
   if (existing !== undefined) {
+    if (existing.document_sha256 !== document.digest) {
+      return {
+        error:
+          `Den samme teksten er allerede registrert for denne kilden, som kildeversjon ` +
+          `${existing.source_version_id} — men ${
+            existing.document_sha256 === null
+              ? 'uten noe originaldokument (den er registrert som tekst hentet fra en adresse)'
+              : `utledet av dokumentet ${existing.document_sha256}`
+          }, ikke av ${document.path} (${document.digest}). En ny rad ville vært den samme ` +
+          'observasjonen om igjen, og databasen ville avvist den. Bygg oppdraget av den ' +
+          'registrerte versjonen med --representation framfor --pdf, eller bruk det ' +
+          'dokumentet den faktisk er utledet av.',
+      }
+    }
     log(`Kildeversjonen er allerede registrert: ${existing.source_version_id}.`)
     return {
       sourceVersionId: existing.source_version_id,

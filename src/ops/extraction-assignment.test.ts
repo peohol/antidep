@@ -279,7 +279,7 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
     )
   })
 
-  it('gjenbruker kildeversjonen når den samme teksten allerede er registrert', async () => {
+  it('gjenbruker kildeversjonen når den samme teksten og det samme dokumentet er registrert', async () => {
     // Databasen ville avvist dubletten; en avbrutt kjøring skal kunne kjøres om
     // igjen framfor å stoppe på den avvisningen.
     const catalog = katalog({
@@ -288,6 +288,12 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
           source_version_id: NY_VERSJON,
           representation: 'full_text',
           content_hash: await sourceVersionContentHash(TEKST),
+          document_sha256: await documentDigest(PDF),
+          document_byte_size: PDF.length,
+          document_media_type: 'application/pdf',
+          text_extraction_tool: PDF_TEXT_TOOL,
+          text_extraction_tool_version: 'pdftotext 24.02.0',
+          text_extraction_arguments: PDF_TEXT_ARGUMENTS,
         }),
       ],
     })
@@ -299,6 +305,68 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
     expect(report.versionOutcome).toBe('reused')
     expect(report.sourceVersionId).toBe(NY_VERSJON)
     expect(catalog.registered).toHaveLength(0)
+  })
+
+  // Den samme teksten kan komme av en annen PDF — den samme artikkelen fra to
+  // utgivere — eller av tekstveien. Gjenbrukte kommandoen raden likevel, ville
+  // oppdraget pekt på den gamle bindingen mens lageret fikk den nye filen, og
+  // hvert ledd videre ville stanset med «fant ingen fil».
+  it('gjenbruker ikke en rad som er bundet til et annet dokument', async () => {
+    const catalog = katalog({
+      versions: [
+        versjon({
+          source_version_id: NY_VERSJON,
+          representation: 'full_text',
+          content_hash: await sourceVersionContentHash(TEKST),
+          document_sha256: `sha256:${'9'.repeat(64)}`,
+          document_byte_size: 4242,
+          document_media_type: 'application/pdf',
+          text_extraction_tool: PDF_TEXT_TOOL,
+          text_extraction_tool_version: 'pdftotext 24.02.0',
+          text_extraction_arguments: PDF_TEXT_ARGUMENTS,
+        }),
+      ],
+    })
+    await expect(
+      buildAssignmentFromCatalog({ ...grunnlag, catalog, documentPath: await pdfPaDisk() }),
+    ).rejects.toThrow(/utledet av dokumentet sha256:99/)
+    expect(catalog.registered).toHaveLength(0)
+  })
+
+  it('gjenbruker ikke en rad uten dokument, og sier hvilken vei som gjelder', async () => {
+    const catalog = katalog({
+      versions: [
+        versjon({
+          source_version_id: NY_VERSJON,
+          representation: 'abstract',
+          content_hash: await sourceVersionContentHash(TEKST),
+        }),
+      ],
+    })
+    await expect(
+      buildAssignmentFromCatalog({ ...grunnlag, catalog, documentPath: await pdfPaDisk() }),
+    ).rejects.toThrow(/--representation framfor --pdf/)
+    expect(catalog.registered).toHaveLength(0)
+  })
+
+  it('skriver dokumentet på nytt når filen i lageret er ødelagt', async () => {
+    // En avbrutt skriving kan etterlate en halv fil under riktig navn. Navnet er
+    // ikke identiteten — bytene er det — og oppslaget senere hasher dem.
+    const store = await mkdtemp(join(tmpdir(), 'antidep-lager-'))
+    kataloger.push(store)
+    const digest = (await documentDigest(PDF)).replace('sha256:', '')
+    await writeFile(join(store, `${digest}.pdf`), new TextEncoder().encode('%PDF-halv fil'))
+
+    const report = await buildAssignmentFromCatalog({
+      ...grunnlag,
+      catalog: katalog({ versions: [versjon()] }),
+      documentPath: await pdfPaDisk(),
+      documentStore: store,
+    })
+    expect(report.document?.storedAt).toBe(join(store, `${digest}.pdf`))
+    expect(await documentDigest(new Uint8Array(await readFile(join(store, `${digest}.pdf`))))).toBe(
+      await documentDigest(PDF),
+    )
   })
 
   it('krever å få vite hvor dokumentet kom fra', async () => {
