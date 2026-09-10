@@ -82,7 +82,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHmac } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -104,7 +104,10 @@ import { runExtractionVerification } from '../src/agents/extraction-verification
 import type { RetrieveLike } from '../src/agents/extraction-verification-run.ts'
 import { EXTRACTION_VERIFICATION_PREMISES } from '../src/agents/pipeline-version.ts'
 import { runReextraction } from '../src/agents/reextraction-run.ts'
-import { parseExtractionAssignment } from '../src/agents/extraction-assignment.ts'
+import {
+  parseAssignmentJson,
+  parseExtractionAssignment,
+} from '../src/agents/extraction-assignment.ts'
 import { serializeExtractionProposal } from '../src/agents/extraction-proposal.ts'
 import { EXTRACTION_DRAFTING_PROMPT_VERSION } from '../src/agents/extraction-prompt.ts'
 import { createModelClient } from '../src/agents/model-adapters.ts'
@@ -1347,6 +1350,7 @@ async function main(): Promise<void> {
       config,
       `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
     )
+    const routineOppdrag = parseAssignmentJson(oppdragsfil, readFileSync(oppdragsfil, 'utf8'))
     const utenfor = await runEvidenceExtraction({
       api: reextractionPorts.extractionApi,
       proposal: routineForslag.proposal,
@@ -1374,6 +1378,48 @@ async function main(): Promise<void> {
           `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
         ) === førUtenfor,
       utenfor.reason ?? '',
+    )
+    // Den samme overleveringen, men med bare ett ord endret: `producer` fra
+    // «model» til «human». Alt annet passerer — katalogen, kildebindingen,
+    // utdragene — og raden ville blitt ført som en menneskelig ekstraksjon.
+    // Modusen kalleren registrerer under, er den tiltrodde halvdelen.
+    const førOmskrevet = psql(
+      config,
+      `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+    )
+    const omskrevet = parseExtractionProposal({
+      ...(JSON.parse(
+        JSON.stringify(serializeExtractionProposal(routineForslag.proposal)),
+      ) as Record<string, unknown>),
+      generated_by: {
+        producer: 'human',
+        provider: 'human',
+        model: 'manuell-ekstraksjon',
+        model_version: 'not_applicable',
+        prompt_template_version: 'not_applicable',
+        drafted_at: '2026-09-16T08:00:00Z',
+      },
+    })
+    let avvist = ''
+    try {
+      await runEvidenceExtraction({
+        api: reextractionPorts.extractionApi,
+        proposal: omskrevet,
+        assignment: routineOppdrag,
+        mode: 'with_assignment',
+        retrieve: retrieve(contentHash),
+      })
+    } catch (cause) {
+      avvist = cause instanceof Error ? cause.message : String(cause)
+    }
+    check(
+      'et maskinutkast omskrevet til «human» blir ingen rad, og ingen kjøring',
+      avvist.includes('erklært laget av «human»') &&
+        psql(
+          config,
+          `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+        ) === førOmskrevet,
+      avvist,
     )
     check(
       'og kontrollgrunnlaget bærer identiteten aktøren erklærte i svarfilen',

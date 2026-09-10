@@ -7029,6 +7029,19 @@ oppdraget trengtes, ville latt den utrygge filen bestemme om den skulle kontroll
 endret `producer` fra `model` til `human`, og kontrollen var hoppet over. Valget føres i
 kjøringens manifest, slik at fravær av kontroll er en handling noen gjorde.
 
+**Modusen bærer også produsenten, og avtrykket rekonstrueres.** `producer` avgjør
+`extraction_method`, som er det feltet som forteller kontrolløren om hen etterprøver et
+maskinutkast eller en kollegas arbeid, og verdien inngår i evidensfunnets identitet
+(migrasjon 005ab, ANTIDEP_CONSTITUTION.md §8, §12, §14). Feltet står i den utrygge filen, så
+et maskinutkast kunne blitt ført som en menneskelig ekstraksjon ved at ett ord ble endret
+etter `--close` — alt annet ville passert. De to modusene bærer derfor hver sin produsent, og
+forslagets erklæring må stemme med den; et avvik avvises før kjøringen åpnes. Av resten av
+`generated_by` er `request_digest` den ene verdien som er etterprøvbar: forespørselen er en ren
+funksjon av oppdraget, representasjonen og promptmalen, og registreringen har alle tre. Den
+rekonstrueres derfor framfor å kopieres, og et avvik gir ingen rad. Lar den seg ikke
+rekonstruere — uten oppdrag, uten forespørsel, eller under en eldre promptmal — fører kjøringen
+`request_digest_checked` som usann, framfor å kalle en påstand et bevis.
+
 **Deployveien er stengt der den fantes.** `.github/workflows/vercel.yml` kjørte på alle
 `pull_request` med `VERCEL_TOKEN` i jobbens miljø og bygde koden fra PR-branchen; en pull
 request fra en branch i samme repo får repository-secrets. En Routine pusher `claude/`-brancher

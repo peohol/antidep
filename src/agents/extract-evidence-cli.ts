@@ -30,6 +30,7 @@ import { EVIDENCE_EXTRACTION_CREDENTIAL, readAgentConfig } from './agent-environ
 import { redact } from './agent-credential.ts'
 import { parseRegistrationArguments, type RegistrationCliOptions } from './cli-arguments.ts'
 import { parseAssignmentJson } from './extraction-assignment.ts'
+import { registrationModeProblem, type RegistrationMode } from './extraction-proposal.ts'
 import { buildExtractionProposalSchema } from './extraction-proposal-schema.ts'
 import { runEvidenceExtraction } from './extraction-run.ts'
 import { readProposalFile } from './proposal-files.ts'
@@ -77,6 +78,7 @@ async function main(): Promise<number> {
   // sagt i det hele tatt.
   let proposal
   let assignment
+  let mode: RegistrationMode
   try {
     proposal = (await readProposalFile(options.proposalPath)).proposal
     // Hvorvidt oppdraget kontrolleres, er avgjort av argumentlisten — ikke av
@@ -88,6 +90,18 @@ async function main(): Promise<number> {
             options.assignmentPath,
             await readFile(options.assignmentPath, 'utf8'),
           )
+
+    // Modusen kontrolleres her, før legitimasjonen leses: den trenger ingenting
+    // annet enn de to filene, og kalleren skal få vite at valget og forslaget
+    // ikke stemmer, uten først å måtte ha legitimasjon på plass. Kjøringen
+    // håndhever den samme regelen om igjen — der er den invarianten, her er den
+    // en beskjed.
+    mode = assignment === undefined ? 'without_assignment' : 'with_assignment'
+    const problem = registrationModeProblem(mode, proposal.generatedBy.producer)
+    if (problem !== null) {
+      console.error(`Ingenting ble registrert: ${problem}.`)
+      return 1
+    }
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause))
     return 1
@@ -103,6 +117,10 @@ async function main(): Promise<number> {
     const report = await runEvidenceExtraction({
       api,
       proposal,
+      // Modusen er kallerens valg, og den er den tiltrodde halvdelen av «hvem
+      // laget dette»: den avgjør hvilken `extraction_method` raden får, og
+      // forslagets egen erklæring må stemme med den.
+      mode,
       ...(assignment === undefined ? {} : { assignment }),
       dryRun: options.dryRun,
       log: (line) => {

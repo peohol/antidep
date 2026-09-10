@@ -267,6 +267,72 @@ export function extractionMethodFor(producer: ProposalProducer): ExtractionMetho
   return producer === 'model' ? 'ai_assisted' : 'manual'
 }
 
+// ----------------------------------------------------------------------------
+// Registreringsmodusen: den tiltrodde halvdelen av «hvem laget dette»
+//
+// `producer` avgjør `knowledge.evidence_items.extraction_method`, og den er
+// ikke pynt: migrasjon 005ab innførte feltet nettopp for at en kontrollør skal
+// vite om hen etterprøver et maskinutkast eller en kollegas arbeid, og verdien
+// inngår i evidensfunnets identitet (ANTIDEP_CONSTITUTION.md §8, §12, §14).
+//
+// Feltet står i forslaget, og forslaget er utrygg inndata: det har vært innom
+// en økt som leste en artikkel Antidep ikke kontrollerer, og som har skall.
+// Lot registreringen filen alene avgjøre verdien, kunne et maskinutkast blitt
+// ført som et menneskes arbeid ved å endre ett ord — og kontrolløren ville lest
+// raden som noe annet enn den er.
+//
+// Den tiltrodde halvdelen er hvilken *modus* kalleren registrerte under, og de
+// to modusene er de to reelle arbeidsformene:
+//
+//   * med oppdrag    — modell-leddets flyt. Oppdraget finnes fordi en modell
+//                      ikke skal velge fritt i katalogen.
+//   * uten oppdrag   — en redaktørs egen ekstraksjon ut av en fulltekst. Det
+//                      finnes ikke noe oppdrag, fordi avgrensningen *er* det
+//                      faglige arbeidet.
+//
+// Erklæringen i filen beholdes likevel, og må stemme. En modus som bare
+// overstyrte feltet, ville skjult at noen hadde endret det; et avvik skal si
+// fra.
+// ----------------------------------------------------------------------------
+
+/** Hvilken arbeidsform registreringen ble kjørt under. Kallerens valg. */
+export type RegistrationMode = 'with_assignment' | 'without_assignment'
+
+/** Produsenten en modus beskriver. */
+export function producerForMode(mode: RegistrationMode): ProposalProducer {
+  return mode === 'with_assignment' ? 'model' : 'human'
+}
+
+/**
+ * Om forslagets egen erklæring stemmer med modusen det registreres under.
+ *
+ * Returnerer `null` når de stemmer, ellers én setning som sier hva som ikke
+ * gjorde det.
+ */
+export function registrationModeProblem(
+  mode: RegistrationMode,
+  producer: ProposalProducer,
+): string | null {
+  const expected = producerForMode(mode)
+  if (producer === expected) {
+    return null
+  }
+  if (mode === 'with_assignment') {
+    return (
+      `forslaget er erklært laget av «${producer}», men registreres med et oppdrag. Et oppdrag ` +
+      'finnes fordi en modell ikke skal velge fritt i katalogen, og verdien ville blitt ført som ' +
+      'en menneskelig ekstraksjon (extraction_method «manual»). Er det virkelig en redaktørs ' +
+      'eget arbeid, registrer det med --no-assignment-check; er det et maskinutkast, skal ' +
+      'producer være «model»'
+    )
+  }
+  return (
+    `forslaget er erklært laget av «${producer}», men registreres uten et oppdrag. Et ` +
+    'maskinutkast skal registreres med oppdraget det ble laget under, slik at avgrensningen mot ' +
+    'katalogen kontrolleres — oppgi --assignment <fil>'
+  )
+}
+
 function parseGrounding(parent: Fields, value: unknown, index: number): ProposedGrounding {
   const fields = nestedFields(parent, value, `field_groundings[${String(index)}]`)
   const grounding: ProposedGrounding = {

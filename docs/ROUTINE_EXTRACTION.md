@@ -73,7 +73,7 @@ Skillet er en sikkerhetsgrense, ikke en oppdeling av bekvemmelighet.
 
 | Ledd | Hva det gjør | Kjøremiljø | Connectorer | Repo-tilgang |
 | --- | --- | --- | --- | --- |
-| **A — modell-leddet** | Åpner kjøringen, leser kilden, skriver svaret, lukker kjøringen | Eget miljø **uten** skrivekapable hemmeligheter | **Ingen** | Må **ikke** kunne pushe til dette repoet |
+| **A — modell-leddet** | Åpner kjøringen, leser kilden, skriver svaret, lukker kjøringen | Eget miljø **uten** skrivekapable hemmeligheter | **Ingen** | Kan pushe `claude/`-brancher, og det kan ikke slås av. Derfor er eskaleringsveien stengt i repoet (3.5) |
 | **B — registrering og kontroll** | Registrerer forslaget og kjører den deterministiske kontrollen | Eget miljø med agentlegitimasjonen | Ingen | Trenger ingen |
 
 ### 3.1 Hvorfor grensen må ligge i kjøremiljøet
@@ -98,10 +98,12 @@ har lest en artikkel med noe instruksjonslignende i seg, kan bruke hva som helst
 økten faktisk har, og det eneste som gjør at den ikke kan skrive til produksjon,
 er at den ikke har noe å skrive med.
 
-Repo-tilgangen er den som er lettest å overse. En Routine pusher `claude/`-brancher
-som standard, med **din** GitHub-identitet, og kan åpne pull requests. Det er ikke
-en tilgang til Antideps kunnskapsbase, men det er en tilgang til koden — og i
-dette repoet er det en vei videre, se 3.5.
+Repo-tilgangen er den som er lettest å overse, og den er også den som ikke kan
+settes: en Routine pusher `claude/`-brancher med **din** GitHub-identitet, kan
+åpne pull requests, og det finnes ingen tilgangsmodus som slår det av under en
+kjøring. Et krav om «må ikke kunne pushe» ville derfor vært en regel uten
+håndhevelse. Grensen settes i stedet der den *kan* settes — i repoet, ved at
+ingen arbeidsflyt kjører PR-kode med en hemmelighet i miljøet (3.5).
 
 ### 3.2 Hva økten som leser artikkelen, ikke skal ha
 
@@ -383,6 +385,55 @@ kjøringens manifest.
 
 `--no-assignment-check` er for et forslag som ikke *har* noe oppdrag — et en
 redaktør har skrevet selv ut av en fulltekst.
+
+### 6.3 Valget avgjør også hva slags ekstraksjon som registreres
+
+`producer` avgjør `knowledge.evidence_items.extraction_method`, og det er ikke
+pynt: feltet finnes for at en kontrollør skal vite om hen etterprøver et
+maskinutkast eller en kollegas arbeid, og verdien inngår i evidensfunnets
+identitet (`ANTIDEP_CONSTITUTION.md` §8, §12, §14).
+
+Feltet står i den utrygge filen. Lot registreringen filen alene avgjøre det,
+kunne et maskinutkast blitt ført som et menneskes arbeid ved at ett ord ble
+endret etter `--close` — og alt annet ville passert.
+
+De to modusene bærer derfor hver sin produsent, og forslagets erklæring må
+stemme med den:
+
+| Modus | Betyr | `producer` | `extraction_method` |
+| --- | --- | --- | --- |
+| `--assignment <fil>` | Den oppdragsbaserte modellflyten | `model` | `ai_assisted` |
+| `--no-assignment-check` | En redaktørs egen ekstraksjon, uten oppdrag | `human` | `manual` |
+
+Et avvik avvises **før** kjøringen åpnes: ingen rad, og ingen proveniensrad om
+en kjøring som aldri skulle vært startet. Erklæringen i filen blir stående og
+kontrollert, framfor stille overstyrt — en modus som bare skrev over feltet,
+ville skjult at noen hadde endret det.
+
+### 6.4 Hva av proveniensen som faktisk etterprøves
+
+`generated_by` er en **erklæring** fra den som skrev filen, og det har den vært
+siden kontrakten ble laget. Én av verdiene er likevel etterprøvbar, og der
+prøves den:
+
+| Verdi | Status ved registrering |
+| --- | --- |
+| `request_digest` | **Rekonstrueres** av oppdraget, representasjonen og promptmalen når alle tre finnes. Et avvik gir ingen rad |
+| `producer` | Kontrolleres mot modusen kalleren registrerte under (6.3) |
+| kildebindingen | Kontrolleres mot oppdraget, og representasjonen hentes på nytt |
+| `provider`, `model`, `model_version`, `drafted_at` | Erklæringer. Databasen kan ikke observere hvilken modell som leste en artikkel |
+
+Forespørselen er en ren funksjon av oppdraget, representasjonen og promptmalen,
+og registreringen har alle tre — oppdraget fra redaktøren, representasjonen
+hentet på nytt, malen fra sin egen kode. Der avtrykket lar seg rekonstruere,
+kopieres det ikke.
+
+Det lar seg ikke alltid gjøre: uten oppdrag mangler halve inndataen, et
+menneskeskrevet forslag har ingen forespørsel, og et utkast laget under en
+*eldre* promptmal ville gitt et annet avtrykk — der er det malen som er endret,
+ikke utkastet som er galt. Kjøringen fører `request_digest_checked` i
+utdatamanifestet, slik at den som leser proveniensen senere, ser hvilken av de
+to det var. Å oppgi noe annet ville vært å kalle en påstand et bevis.
 
 Etter dette er funnet klart for den menneskelige kontrollen i appen. Ingenting
 publiseres uten den.

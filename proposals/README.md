@@ -144,6 +144,14 @@ Valget er **kallerens**, ikke forslagets. Sperren leser ikke `generated_by` for 
 avgjøre om oppdraget trengs; da ville et endret felt i filen kunnet slå
 kontrollen av.
 
+**Valget avgjør også hva slags ekstraksjon raden blir.** `--assignment` betyr den
+oppdragsbaserte modellflyten og krever `producer: "model"` (`ai_assisted`);
+`--no-assignment-check` betyr en redaktørs eget arbeid og krever
+`producer: "human"` (`manual`). Et avvik avvises før kjøringen åpnes. Uten den
+bindingen kunne et maskinutkast blitt ført som en menneskelig ekstraksjon ved at
+ett ord ble endret i filen — og `extraction_method` er nettopp det som forteller
+kontrolløren hva hen etterprøver.
+
 Et forslag i denne katalogen er som regel skrevet av en redaktør ut av en
 fulltekst og har ikke noe oppdrag. Da er `--no-assignment-check` det riktige
 svaret, og valget føres i kjøringens manifest slik at den som senere bedømmer

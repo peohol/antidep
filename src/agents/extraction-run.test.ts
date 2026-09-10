@@ -20,6 +20,11 @@ import {
   type ExtractionProposal,
 } from './extraction-proposal'
 import { parseExtractionAssignment } from './extraction-assignment'
+import {
+  buildExtractionDraftingRequest,
+  EXTRACTION_DRAFTING_PROMPT_VERSION,
+} from './extraction-prompt'
+import { modelRequestDigest } from './model-client'
 import { runEvidenceExtraction, type RetrieveLike } from './extraction-run'
 import { ANTIDEP_EVIDENCE_PIPELINE_VERSION, EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version'
 import { FIXTURE_SOURCE_TEXT } from './test-support'
@@ -279,6 +284,194 @@ describe('runEvidenceExtraction — kontrollen mot oppdraget', () => {
     })
 
     expect(report.reason).not.toMatch(/ordrett/)
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Modusen: den tiltrodde halvdelen av «hvem laget dette»
+//
+// `producer` avgjør `extraction_method`, og feltet står i den utrygge filen.
+// Regresjonen som prøves her, er den konkrete: et maskinutkast der bare
+// `producer` er endret til «human» etter `--close`, registrert med det ekte
+// oppdraget. Alt annet passerer — katalogen, kildebindingen, utdragene — og
+// raden ville blitt ført som en menneskelig ekstraksjon.
+// ----------------------------------------------------------------------------
+
+const MENNESKE = {
+  producer: 'human',
+  provider: 'human',
+  model: 'manuell-ekstraksjon',
+  model_version: 'not_applicable',
+  prompt_template_version: 'not_applicable',
+  drafted_at: '2026-09-15T09:00:00Z',
+}
+
+describe('runEvidenceExtraction — modusen kalleren registrerte under', () => {
+  it('skriver ingen rad når et maskinutkast er omskrevet til et menneskes arbeid', async () => {
+    const api = fakeApi()
+
+    await expect(
+      runEvidenceExtraction({
+        api,
+        proposal: await proposal({ generatedBy: MENNESKE }),
+        assignment: await oppdrag(),
+        mode: 'with_assignment',
+        retrieve: retrieveFixture(),
+      }),
+    ).rejects.toThrow(/erklært laget av «human»/)
+
+    // Ingen kjøring åpnet, ingen rad skrevet: avvisningen skjer før databasen
+    // røres i det hele tatt.
+    expect(api.premises).toEqual([])
+    expect(api.registered).toEqual([])
+  })
+
+  it('skriver ingen rad når et menneskeskrevet forslag registreres som et maskinutkast', async () => {
+    const api = fakeApi()
+
+    await expect(
+      runEvidenceExtraction({
+        api,
+        proposal: await proposal(),
+        mode: 'without_assignment',
+        retrieve: retrieveFixture(),
+      }),
+    ).rejects.toThrow(/erklært laget av «model»/)
+
+    expect(api.premises).toEqual([])
+    expect(api.registered).toEqual([])
+  })
+
+  it('registrerer et maskinutkast som ai_assisted under modusen med oppdrag', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await proposal(),
+      assignment: await oppdrag(),
+      mode: 'with_assignment',
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('registered')
+    expect(api.registered[0]?.extractionMethod).toBe('ai_assisted')
+    expect(api.manifests[0]?.registration_mode).toBe('with_assignment')
+  })
+
+  it('registrerer en redaktørs eget forslag som manual under modusen uten oppdrag', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await proposal({ generatedBy: MENNESKE }),
+      mode: 'without_assignment',
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('registered')
+    expect(api.registered[0]?.extractionMethod).toBe('manual')
+    expect(api.manifests[0]?.registration_mode).toBe('without_assignment')
+  })
+
+  it('fører at kalleren ikke oppga noen modus, framfor å finne på en', async () => {
+    const api = fakeApi()
+    await runEvidenceExtraction({ api, proposal: await proposal(), retrieve: retrieveFixture() })
+
+    expect(api.manifests[0]?.registration_mode).toBeNull()
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Forespørselsavtrykket, rekonstruert
+//
+// Avtrykket er en ren funksjon av oppdraget, representasjonen og promptmalen,
+// og registreringen har alle tre. Der det lar seg rekonstruere, skal det prøves
+// framfor kopieres — og der det ikke lar seg gjøre, skal kjøringen si at det
+// forble en erklæring.
+// ----------------------------------------------------------------------------
+
+describe('runEvidenceExtraction — forespørselsavtrykket', () => {
+  /** Et forslag med avtrykket oppdraget og representasjonen faktisk gir. */
+  async function medEktAvtrykk(overrides: Record<string, unknown> = {}) {
+    const assignment = await oppdrag()
+    const digest = await modelRequestDigest(
+      buildExtractionDraftingRequest({ assignment, representation: FIXTURE_SOURCE_TEXT }),
+    )
+    return proposal({
+      generatedBy: {
+        producer: 'model',
+        provider: 'antidep',
+        model: 'opptaksmodell',
+        model_version: '1',
+        prompt_template_version: EXTRACTION_DRAFTING_PROMPT_VERSION,
+        drafted_at: '2026-09-15T09:00:00Z',
+        request_digest: digest,
+        ...overrides,
+      },
+    })
+  }
+
+  it('godtar et avtrykk som stemmer med oppdraget og kilden, og fører at det ble prøvd', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await medEktAvtrykk(),
+      assignment: await oppdrag(),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('registered')
+    expect(api.completions[0]?.outputManifest?.request_digest_checked).toBe(true)
+  })
+
+  it('skriver ingen rad når avtrykket ikke kan ha kommet av denne forespørselen', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await medEktAvtrykk({ request_digest: `sha256:${'f'.repeat(64)}` }),
+      assignment: await oppdrag(),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('skipped')
+    expect(report.reason).toMatch(/forespørselsavtrykket/)
+    expect(api.registered).toEqual([])
+  })
+
+  it('fører avtrykket som uprøvd når utkastet ble laget under en eldre promptmal', async () => {
+    // Malen er endret, ikke utkastet. Et avvik her ville vært en påstand om at
+    // forslaget er galt, når det er Antidep som har flyttet seg.
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await medEktAvtrykk({ prompt_template_version: 'en/eldre/mal/1' }),
+      assignment: await oppdrag(),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('registered')
+    expect(api.completions[0]?.outputManifest?.request_digest_checked).toBe(false)
+  })
+
+  it('fører avtrykket som uprøvd uten et oppdrag å rekonstruere det av', async () => {
+    const api = fakeApi()
+    await runEvidenceExtraction({
+      api,
+      proposal: await medEktAvtrykk(),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(api.completions[0]?.outputManifest?.request_digest_checked).toBe(false)
+  })
+
+  it('fører avtrykket som uprøvd for et forslag uten noen forespørsel', async () => {
+    const api = fakeApi()
+    await runEvidenceExtraction({
+      api,
+      proposal: await proposal({ generatedBy: MENNESKE }),
+      assignment: await oppdrag(),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(api.completions[0]?.outputManifest?.request_digest_checked).toBe(false)
   })
 })
 
