@@ -2,7 +2,8 @@
 // Ekstraksjonskjøringen: fra et forslag til et forankret evidensfunn
 //
 //   api.begin_agent_run           premissene registreres
-//   retrieveRepresentation        kilden hentes, over nett
+//   resolveRepresentation         kilden skaffes: hentet fra adressen, eller
+//                                 hentet ut av originaldokumentet
 //   (fingeravtrykk)               representasjonen må være den registrerte
 //   (ordrett kontroll)            hvert utdrag må stå i den, ordrett
 //   api.register_agent_extraction ekstraksjonen registreres, med forankringen
@@ -59,6 +60,7 @@ import {
   extractionMethodFor,
   modeRequiresAssignment,
   producerForMode,
+  proposalBinding,
   registrationModeProblem,
   type RegistrationMode,
 } from './extraction-proposal.ts'
@@ -68,12 +70,12 @@ import {
 } from './extraction-prompt.ts'
 import { modelRequestDigest } from './model-client.ts'
 import { EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version.ts'
-import type { RetrieveLike, RetrieveOptions } from './source-retrieval.ts'
-import { retrieveRepresentation } from './source-retrieval.ts'
+import { resolveRepresentation, type ResolvePorts } from './source-binding.ts'
+import type { RetrieveLike } from './source-retrieval.ts'
 
 export type { RetrieveLike }
 
-export interface ExtractionRunOptions {
+export interface ExtractionRunOptions extends ResolvePorts {
   readonly api: EvidenceExtractionApi
   /**
    * Forslaget kjøringen registrerer.
@@ -115,8 +117,6 @@ export interface ExtractionRunOptions {
   readonly mode: RegistrationMode
   /** Kontroller og rapporter, men registrer ingenting. */
   readonly dryRun?: boolean
-  readonly retrieve?: RetrieveLike
-  readonly retrieveOptions?: RetrieveOptions
   readonly log?: (line: string) => void
 }
 
@@ -161,20 +161,7 @@ type Verdict =
  * å søke, fordi et treff da ville vært i en annen utgave enn den ekstraksjonen
  * skal peke på.
  */
-function judge(
-  proposal: ExtractionProposal,
-  sourceText: string,
-  assignment: ExtractionAssignment | undefined,
-): string | null {
-  if (assignment !== undefined) {
-    const mismatch = assignmentMismatch(assignment, proposal)
-    if (mismatch !== null) {
-      return (
-        `Forslaget holder seg ikke innenfor oppdraget: ${mismatch}. Ekstraksjonen ble ikke ` +
-        'registrert.'
-      )
-    }
-  }
+function judge(proposal: ExtractionProposal, sourceText: string): string | null {
   const projections = searchProjections(sourceText)
   const missing = proposal.fieldGroundings.filter(
     (grounding) => !verbatimOccursIn(projections, grounding.sourceExcerpt),
@@ -247,40 +234,42 @@ async function requestDigestVerdict(
 
 async function fetchAndJudge(
   proposal: ExtractionProposal,
-  retrieve: RetrieveLike,
+  ports: ResolvePorts,
   assignment: ExtractionAssignment | undefined,
 ): Promise<Verdict> {
-  const retrieved = await retrieve(proposal.retrievedFrom)
-  if (retrieved.status === 'error') {
-    return { kind: 'skip', reason: retrieved.message }
-  }
-
-  const representation = retrieved.representation
-  if (!representation.bytesAreUtf8) {
-    return {
-      kind: 'skip',
-      reason:
-        `Svaret fra ${proposal.retrievedFrom} er ikke ren UTF-8, så fingeravtrykket kan ikke ` +
-        'sammenlignes byte for byte med den registrerte kildeversjonen.',
+  // Oppdraget først, og før noe hentes.
+  //
+  // Forslaget er utrygg inndata, og kildebindingen i det avgjør *hvor* teksten
+  // skaffes fra. Hentet kjøringen først og sammenlignet etterpå, ville et
+  // forslag som pekte på et annet dokument, blitt avvist med «fant ingen fil» —
+  // en sann setning om feil ting. Oppdraget er redaktørens egen fil, og
+  // avviket mot det er det som faktisk er galt.
+  if (assignment !== undefined) {
+    const mismatch = assignmentMismatch(assignment, proposal)
+    if (mismatch !== null) {
+      return {
+        kind: 'skip',
+        reason:
+          `Forslaget holder seg ikke innenfor oppdraget: ${mismatch}. Ekstraksjonen ble ikke ` +
+          'registrert.',
+      }
     }
   }
 
-  if (representation.contentHash !== proposal.contentHash) {
-    return {
-      kind: 'skip',
-      reason:
-        `Kilden har endret seg: ${proposal.retrievedFrom} gir nå ` +
-        `${representation.contentHash}, mens kildeversjonen er registrert med ` +
-        `${proposal.contentHash}. Ekstraksjonen ville pekt på en annen utgave enn den ` +
-        'som faktisk ble lest.',
-    }
+  // Hvordan representasjonen skaffes — hentet fra adressen, eller hentet ut av
+  // originaldokumentet med den registrerte oppskriften — avgjøres av
+  // kildebindingen, som nå er kontrollert mot oppdraget der det finnes ett
+  // (`source-binding.ts`).
+  const resolved = await resolveRepresentation(proposalBinding(proposal), ports)
+  if (resolved.status === 'error') {
+    return { kind: 'skip', reason: `${resolved.message} Ekstraksjonen ble ikke registrert.` }
   }
 
-  const problem = judge(proposal, representation.content, assignment)
+  const problem = judge(proposal, resolved.text)
   if (problem !== null) {
     return { kind: 'skip', reason: problem }
   }
-  return await requestDigestVerdict(proposal, assignment, representation.content)
+  return await requestDigestVerdict(proposal, assignment, resolved.text)
 }
 
 /**
@@ -294,13 +283,7 @@ async function fetchAndJudge(
 export async function runEvidenceExtraction(
   options: ExtractionRunOptions,
 ): Promise<ExtractionRunReport> {
-  const {
-    api,
-    proposal,
-    dryRun = false,
-    retrieve = (url) => retrieveRepresentation(url, options.retrieveOptions),
-    log = () => {},
-  } = options
+  const { api, proposal, dryRun = false, log = () => {} } = options
 
   // Modusen kontrolleres før noe åpnes: en kjøring skal ikke registreres for å
   // bli avvist på noe kalleren kunne fått vite uten å røre databasen. Kastet er
@@ -344,6 +327,11 @@ export async function runEvidenceExtraction(
       source_version_id: proposal.sourceVersionId,
       retrieved_from: proposal.retrievedFrom,
       content_hash: proposal.contentHash,
+      // Fingeravtrykket av originaldokumentet representasjonen ble hentet ut
+      // av, eller `null` når teksten er den som lå på adressen. Uten det ville
+      // proveniensen for en fulltekstekstraksjon ikke sagt hvilket dokument den
+      // faktisk ble lest av (ANTIDEP_CONSTITUTION.md §8).
+      document_sha256: proposal.document?.sha256 ?? null,
       grounded_fields: groundedFields,
       // Erklæringen om hvem som laget utkastet, ordrett slik forslaget bar den.
       //
@@ -380,7 +368,7 @@ export async function runEvidenceExtraction(
   log(`Kjøring ${agentRunId} åpnet for kildeversjon ${proposal.sourceVersionId}.`)
 
   try {
-    const verdict = await fetchAndJudge(proposal, retrieve, options.assignment)
+    const verdict = await fetchAndJudge(proposal, options, options.assignment)
 
     if (verdict.kind === 'skip') {
       log(`Ingenting registrert: ${verdict.reason}`)

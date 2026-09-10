@@ -33,6 +33,7 @@ import { parseAssignmentJson } from './extraction-assignment.ts'
 import { registrationModeProblem } from './extraction-proposal.ts'
 import { buildExtractionProposalSchema } from './extraction-proposal-schema.ts'
 import { runEvidenceExtraction } from './extraction-run.ts'
+import { documentsFromEnv } from './source-document.ts'
 import { readProposalFile } from './proposal-files.ts'
 
 const USAGE = `Bruk:
@@ -119,6 +120,9 @@ async function main(): Promise<number> {
     const report = await runEvidenceExtraction({
       api,
       proposal,
+      // Dokumentlageret: en kildeversjon utledet av en PDF kontrolleres mot
+      // originaldokumentet, aldri mot adressen (`source-binding.ts`).
+      documents: documentsFromEnv(process.env),
       // Modusen er kallerens valg, og den er den tiltrodde halvdelen av «hvem
       // laget dette»: den avgjør hvilken `extraction_method` raden får, og
       // forslagets egen erklæring må stemme med den.

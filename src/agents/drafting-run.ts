@@ -1,7 +1,8 @@
 // ============================================================================
 // Modell-leddet: fra en registrert kildeversjon til et ekstraksjonsforslag
 //
-//   retrieveRepresentation   kilden hentes, over nett
+//   resolveRepresentation    kilden skaffes: hentet fra adressen, eller hentet
+//                            ut av originaldokumentet med den registrerte oppskriften
 //   (fingeravtrykk)          representasjonen må være den registrerte
 //   buildDraftingRequest     den versjonerte promptmalen, med teksten inngjerdet
 //   model.complete           modellen leser og foreslår
@@ -57,7 +58,11 @@
 // ============================================================================
 
 import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
-import { catalogProblem, type ExtractionAssignment } from './extraction-assignment.ts'
+import {
+  assignmentBinding,
+  catalogProblem,
+  type ExtractionAssignment,
+} from './extraction-assignment.ts'
 import {
   parseExtractionDraft,
   type ExtractionProposal,
@@ -65,19 +70,13 @@ import {
 } from './extraction-proposal.ts'
 import { buildExtractionDraftingRequest } from './extraction-prompt.ts'
 import { modelRequestDigest, type ModelClient, type ModelRequest } from './model-client.ts'
-import {
-  retrieveRepresentation,
-  type RetrieveLike,
-  type RetrieveOptions,
-} from './source-retrieval.ts'
+import { resolveRepresentation, type ResolvePorts } from './source-binding.ts'
 
 const DRAFT_SUBJECT = 'Modellsvaret'
 
-export interface DraftingRunOptions {
+export interface DraftingRunOptions extends ResolvePorts {
   readonly assignment: ExtractionAssignment
   readonly model: ModelClient
-  readonly retrieve?: RetrieveLike
-  readonly retrieveOptions?: RetrieveOptions
   /**
    * Klokka, injisert.
    *
@@ -117,38 +116,25 @@ function rejected(
 }
 
 /**
- * Henter representasjonen og krever at den er kildeversjonens egen.
+ * Skaffer representasjonen og krever at den er kildeversjonens egen.
  *
  * Rekkefølgen er ikke tilfeldig: uten riktig fingeravtrykk er det ingen vits i
  * å spørre en modell, fordi svaret da ville vært lest ut av en annen utgave enn
  * den ekstraksjonen skal peke på.
+ *
+ * Hvordan teksten skaffes — hentet fra adressen, eller hentet ut av
+ * originaldokumentet med den registrerte oppskriften — avgjøres av oppdraget og
+ * ikke av dette leddet (`source-binding.ts`).
  */
 async function readRepresentation(
   assignment: ExtractionAssignment,
-  retrieve: RetrieveLike,
+  ports: ResolvePorts,
 ): Promise<{ readonly text: string } | { readonly error: string }> {
-  const retrieved = await retrieve(assignment.retrievedFrom)
-  if (retrieved.status === 'error') {
-    return { error: retrieved.message }
+  const resolved = await resolveRepresentation(assignmentBinding(assignment), ports)
+  if (resolved.status === 'error') {
+    return { error: resolved.message }
   }
-  const representation = retrieved.representation
-  if (!representation.bytesAreUtf8) {
-    return {
-      error:
-        `Svaret fra ${assignment.retrievedFrom} er ikke ren UTF-8, så fingeravtrykket kan ikke ` +
-        'sammenlignes byte for byte med den registrerte kildeversjonen.',
-    }
-  }
-  if (representation.contentHash !== assignment.contentHash) {
-    return {
-      error:
-        `Kilden har endret seg: ${assignment.retrievedFrom} gir nå ` +
-        `${representation.contentHash}, mens kildeversjonen er registrert med ` +
-        `${assignment.contentHash}. Et utkast lest ut av den ville pekt på en annen utgave ` +
-        'enn den som faktisk ble registrert.',
-    }
-  }
-  return { text: representation.content }
+  return { text: resolved.text }
 }
 
 /**
@@ -158,14 +144,10 @@ async function readRepresentation(
  * avtrykk. Det er den veien et utkast lages i dag: prompten kjøres utenfor
  * Antidep, og svaret limes inn i opptaket.
  */
-export async function prepareDraftingRequest(options: {
-  readonly assignment: ExtractionAssignment
-  readonly retrieve?: RetrieveLike
-  readonly retrieveOptions?: RetrieveOptions
-}): Promise<PreparedRequest> {
-  const retrieve =
-    options.retrieve ?? ((url: string) => retrieveRepresentation(url, options.retrieveOptions))
-  const read = await readRepresentation(options.assignment, retrieve)
+export async function prepareDraftingRequest(
+  options: ResolvePorts & { readonly assignment: ExtractionAssignment },
+): Promise<PreparedRequest> {
+  const read = await readRepresentation(options.assignment, options)
   if ('error' in read) {
     throw new Error(read.error)
   }
@@ -223,10 +205,8 @@ function verbatimProblem(
  */
 export async function runExtractionDrafting(options: DraftingRunOptions): Promise<DraftingReport> {
   const { assignment, model, now = () => new Date().toISOString(), log = () => {} } = options
-  const retrieve =
-    options.retrieve ?? ((url: string) => retrieveRepresentation(url, options.retrieveOptions))
 
-  const read = await readRepresentation(assignment, retrieve)
+  const read = await readRepresentation(assignment, options)
   if ('error' in read) {
     return rejected('', null, read.error)
   }
@@ -300,6 +280,7 @@ export async function runExtractionDrafting(options: DraftingRunOptions): Promis
     sourceVersionId: assignment.sourceVersionId,
     retrievedFrom: assignment.retrievedFrom,
     contentHash: assignment.contentHash,
+    document: assignment.document,
     extraction: draft.extraction,
     fieldGroundings: draft.fieldGroundings,
   }

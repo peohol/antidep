@@ -7,6 +7,7 @@ const LOOKUPS = { editor_sources: [editorSourceRow()] }
 const REPRESENTATION = '<PubmedArticle>Ordrett innhold fra kilden.</PubmedArticle>'
 
 const CONTENT_LABEL = 'Representasjonen, som fil'
+const REPRESENTATION_LABEL = 'Hva slags representasjon er dette?'
 
 function representationFile(content: string, name = 'kilde.xml'): File {
   // Bytene, ikke en streng: en File laget av en streng ville latt nettleseren
@@ -25,6 +26,7 @@ function fillRequiredFields(content: string = REPRESENTATION) {
   fireEvent.change(screen.getByLabelText('Da den ble hentet'), {
     target: { value: '2026-09-07T09:15' },
   })
+  fireEvent.change(screen.getByLabelText(REPRESENTATION_LABEL), { target: { value: 'abstract' } })
   chooseFile(representationFile(content))
 }
 
@@ -67,6 +69,7 @@ describe('Registrer kildeversjon — innlogget', () => {
       p_source_id: TEST_EDITOR_IDS.source,
       p_retrieved_from: 'https://eksempel.invalid/hentet',
       p_retrieved_content: REPRESENTATION,
+      p_representation: 'abstract',
       p_external_version: null,
       p_storage_reference: null,
     })
@@ -139,10 +142,61 @@ describe('Registrer kildeversjon — innlogget', () => {
     fireEvent.change(screen.getByLabelText('Da den ble hentet'), {
       target: { value: '2026-09-07T09:15' },
     })
+    fireEvent.change(screen.getByLabelText(REPRESENTATION_LABEL), { target: { value: 'abstract' } })
     chooseFile(new File([new Uint8Array([0x61, 0xff, 0x62])], 'latin.xml'))
     fireEvent.click(screen.getByRole('button', { name: 'Registrer kildeversjon' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('ikke gyldig UTF-8')
+    expect(rpcCalls).toEqual([])
+  })
+
+  // EVIDENCE_PIPELINE.md §13: hva ekstraksjonen bygger på, skal være eksplisitt.
+  // En standardverdi ville vært en gjetning om hva noen faktisk lastet ned, og
+  // en versjon uten verdien kan ikke bære en agentekstraksjon (migrasjon 005v).
+  it('krever at representasjonstypen er valgt, framfor å gjette', async () => {
+    const { rpcCalls } = renderRoute('/source-versions/new', {
+      api: LOOKUPS,
+      auth: { initialUserId: TEST_USER_IDS.a },
+    })
+    await screen.findByLabelText(CONTENT_LABEL)
+    fireEvent.change(screen.getByLabelText('Adressen representasjonen ble hentet fra'), {
+      target: { value: 'https://eksempel.invalid/hentet' },
+    })
+    fireEvent.change(screen.getByLabelText('Da den ble hentet'), {
+      target: { value: '2026-09-07T09:15' },
+    })
+    chooseFile(representationFile(REPRESENTATION))
+    fireEvent.click(screen.getByRole('button', { name: 'Registrer kildeversjon' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Velg hva slags representasjon')
+    expect(rpcCalls).toEqual([])
+  })
+
+  // Den ene feilen dokumentveien gjør lettere å gjøre: en PDF hashet som tekst
+  // ville gitt et fingeravtrykk ingen kan reprodusere med sha256sum på filen.
+  it('avviser en PDF, og sier hvilken vei som gjelder i stedet', async () => {
+    const { rpcCalls } = renderRoute('/source-versions/new', {
+      api: LOOKUPS,
+      auth: { initialUserId: TEST_USER_IDS.a },
+    })
+    await screen.findByLabelText(CONTENT_LABEL)
+    fireEvent.change(screen.getByLabelText('Adressen representasjonen ble hentet fra'), {
+      target: { value: 'https://eksempel.invalid/artikkel.pdf' },
+    })
+    fireEvent.change(screen.getByLabelText('Da den ble hentet'), {
+      target: { value: '2026-09-07T09:15' },
+    })
+    fireEvent.change(screen.getByLabelText(REPRESENTATION_LABEL), {
+      target: { value: 'full_text' },
+    })
+    chooseFile(
+      new File([new TextEncoder().encode('%PDF-1.4\n1 0 obj')], 'artikkel.pdf', {
+        type: 'application/pdf',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Registrer kildeversjon' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('er en PDF, ikke tekst')
     expect(rpcCalls).toEqual([])
   })
 
@@ -245,6 +299,8 @@ describe('Registrer kildeversjon — innlogget', () => {
       auth: { initialUserId: TEST_USER_IDS.a },
     })
     await screen.findByLabelText(CONTENT_LABEL)
-    expect(screen.getByRole('option').textContent).toMatch(/trukket tilbake/i)
+    expect(screen.getByLabelText('Kilde').querySelector('option')?.textContent).toMatch(
+      /trukket tilbake/i,
+    )
   })
 })

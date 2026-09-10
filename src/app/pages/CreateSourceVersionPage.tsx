@@ -54,7 +54,8 @@ import { usePageTitle } from '../use-page-title'
 import { useReadModel } from '../use-read-model'
 import { accessPath, newEvidenceItemPath, newSourcePath } from '../routes'
 import type { CreateSourceVersionResult } from '../../lib/create-source-version'
-import type { EditorSourceRow, Uuid } from '../../types/api'
+import { SOURCE_REPRESENTATIONS, type EditorSourceRow, type Uuid } from '../../types/api'
+import { SOURCE_REPRESENTATION_LABELS } from '../../components/vocabulary-labels'
 
 function SignedOutNotice() {
   return (
@@ -76,6 +77,8 @@ interface FormState {
   readonly sourceId: string
   readonly retrievedAt: string
   readonly retrievedFrom: string
+  /** Hva slags representasjon dette er. Tom betyr «ikke valgt ennå». */
+  readonly representation: string
   readonly externalVersion: string
   readonly storageReference: string
 }
@@ -104,6 +107,7 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
     sourceId: sources[0]?.source_id ?? '',
     retrievedAt: nowAsLocalInputValue(),
     retrievedFrom: '',
+    representation: '',
     externalVersion: '',
     storageReference: '',
   }))
@@ -120,6 +124,8 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
   const sourceId = useId()
   const retrievedAtId = useId()
   const retrievedFromId = useId()
+  const representationId = useId()
+  const representationHelpId = useId()
   const contentId = useId()
   const contentHelpId = useId()
   const externalVersionId = useId()
@@ -145,6 +151,14 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
       setProblem('Velg filen med representasjonen slik den ble hentet.')
       return
     }
+    // Representasjonstypen er påkrevd her, selv om kolonnen er nullbar. En
+    // versjon uten den kan ikke bære en agentekstraksjon (migrasjon 005v), og
+    // en standardverdi ville vært en gjetning om hva noen faktisk lastet ned
+    // (EVIDENCE_PIPELINE.md §13).
+    if (form.representation === '') {
+      setProblem('Velg hva slags representasjon dette er.')
+      return
+    }
 
     setStatus('submitting')
     const content = await readUtf8File(file)
@@ -162,6 +176,7 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
       // Uendret: verken trimmet, normalisert eller omkodet. Hashen skal være
       // hashen av det som faktisk lå på adressen.
       retrievedContent: content.text,
+      representation: form.representation,
       externalVersion: blankToNull(form.externalVersion),
       storageReference: blankToNull(form.storageReference),
     })
@@ -172,6 +187,7 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
         sourceId: form.sourceId,
         retrievedAt: nowAsLocalInputValue(),
         retrievedFrom: '',
+        representation: '',
         externalVersion: '',
         storageReference: '',
       })
@@ -228,6 +244,29 @@ function SourceVersionForm({ sources }: { readonly sources: readonly EditorSourc
             type="datetime-local"
             value={form.retrievedAt}
           />
+        </div>
+
+        <div className="admin-form__field">
+          <label htmlFor={representationId}>Hva slags representasjon er dette?</label>
+          <select
+            aria-describedby={representationHelpId}
+            id={representationId}
+            onChange={(event) => setForm({ ...form, representation: event.target.value })}
+            value={form.representation}
+          >
+            <option value="">Velg …</option>
+            {SOURCE_REPRESENTATIONS.map((value) => (
+              <option key={value} value={value}>
+                {SOURCE_REPRESENTATION_LABELS[value]}
+              </option>
+            ))}
+          </select>
+          <p className="admin-form__hint" id={representationHelpId}>
+            Hva som faktisk ble hentet, ikke hva artikkelen er. Et sammendrag fra PubMed er «bare
+            sammendraget», selv om artikkelen finnes i fulltekst et annet sted. Fulltekstartikkelen
+            selv registreres ikke her: den registreres av originaldokumentet sitt, slik at både
+            filen og teksten kan etterprøves.
+          </p>
         </div>
 
         <div className="admin-form__field">

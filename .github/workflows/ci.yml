@@ -47,6 +47,11 @@ jobs:
           cache: npm
       - name: Installer avhengigheter
         run: npm ci
+      # Tekstuttrekkingen fra PDF er en ekte kjøring av et ekte verktøy, og
+      # kjedeprøven går gjennom hele dokumentveien (migrasjon 003e). Uten
+      # poppler ville det leddet vært det eneste som aldri ble kjørt i CI.
+      - name: Installer poppler-utils (pdftotext)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Start lokal Supabase-stack
         run: npx supabase start
       - name: Kjør migrasjonene fra bunnen av

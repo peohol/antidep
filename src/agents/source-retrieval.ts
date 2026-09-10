@@ -38,6 +38,7 @@
 
 import { sourceVersionContentHash } from './content-hash.ts'
 import { guardedGet, type GuardedGetOptions, type GuardedGetResult } from './guarded-http.ts'
+import { looksLikePdf } from './document-binding.ts'
 
 /** En hentet representasjon, med alt som skal til for å etterprøve den. */
 export interface RetrievedRepresentation {
@@ -126,6 +127,26 @@ export async function retrieveRepresentation(
 
   if (response.status === 'error') {
     return response
+  }
+
+  // Et binært dokument stoppes her, før dekodingen, og med en annen setning enn
+  // «ikke gyldig UTF-8».
+  //
+  // Grunnen er at avvisningen ellers ville vært riktig av feil årsak, og derfor
+  // invitert til den ene feilen dette leddet ikke skal kunne gjøre: å presse en
+  // PDF gjennom tekstveien. En PDF dekodet som UTF-8 er ikke fulltekstartikkelen
+  // — det er binærinnholdet med erstatningstegn der bokstavene var — og
+  // fingeravtrykket av *den* teksten ville vært et fingeravtrykk av omkodingen.
+  // Et dokument har sin egen vei, med sitt eget fingeravtrykk og sin egen
+  // tekstuttrekking (`source-binding.ts`, migrasjon 003e).
+  if (looksLikePdf(response.bytes)) {
+    return {
+      status: 'error',
+      message:
+        `Svaret fra ${response.finalUrl} er en PDF, ikke tekst. En kildeversjon som er utledet ` +
+        'av et dokument, registreres med dokumentets eget fingeravtrykk og oppskriften teksten ' +
+        'ble hentet ut med — den hentes ikke som tekst fra en adresse.',
+    }
   }
 
   let content: string

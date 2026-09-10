@@ -225,7 +225,7 @@ export function buildExtractionDraftSchema(): Schema {
 export function buildExtractionProposalSchema(): Schema {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: 'https://antidep.no/schema/extraction-proposal-2.json',
+    $id: 'https://antidep.no/schema/extraction-proposal-3.json',
     title: 'Antidep ExtractionProposal',
     description:
       'Ett forslag om ett evidensfunn, lest ut av én bestemt kildeversjon. Forslaget skriver ingenting: det leses av npm run agent:extract-evidence, som henter kildeversjonen på nytt, krever at fingeravtrykket stemmer, og prøver hvert source_excerpt ordrett mot den før noe registreres. Ukjente felter avvises, og ingenting fylles inn automatisk.',
@@ -238,6 +238,7 @@ export function buildExtractionProposalSchema(): Schema {
       'source_version_id',
       'retrieved_from',
       'content_hash',
+      'document',
       ...DRAFT_REQUIRED,
     ],
     properties: {
@@ -300,7 +301,42 @@ export function buildExtractionProposalSchema(): Schema {
         type: 'string',
         pattern: CONTENT_HASH_PATTERN,
         description:
-          'Fingeravtrykket kildeversjonen er registrert med. Kjøringen henter adressen på nytt og nekter å registrere noe dersom avtrykket ikke stemmer.',
+          'Fingeravtrykket kildeversjonen er registrert med. Kjøringen skaffer representasjonen på nytt og nekter å registrere noe dersom avtrykket ikke stemmer.',
+      },
+      document: {
+        type: ['object', 'null'],
+        additionalProperties: false,
+        description:
+          'Originaldokumentet kildeversjonen er utledet av, når den er det — i praksis PDF-en av en fulltekstartikkel. null betyr at representasjonen er teksten som lå på retrieved_from. Verdien er oppdragets, ikke modellens: den avgjør hvordan kjeden skaffer teksten på nytt, og et forslag som oppga noe annet enn oppdraget, ville pekt kontrollen mot et annet dokument enn ekstraksjonen ble lest av.',
+        required: ['sha256', 'byte_size', 'media_type', 'text_extraction'],
+        properties: {
+          sha256: {
+            type: 'string',
+            pattern: CONTENT_HASH_PATTERN,
+            description:
+              'sha256 av originaldokumentets byte, beregnet av databasen. Kan reproduseres med sha256sum på filen.',
+          },
+          byte_size: {
+            type: 'integer',
+            minimum: 1,
+            description: 'Antall byte i originaldokumentet.',
+          },
+          media_type: text(
+            'Hva slags dokument originalen er, avlest av dokumentets egen signatur. I dag application/pdf.',
+          ),
+          text_extraction: {
+            type: 'object',
+            additionalProperties: false,
+            description:
+              'Oppskriften teksten ble hentet ut med. Kjør den på dokumentet med sha256 over, og sha256 av resultatet skal være content_hash.',
+            required: ['tool', 'tool_version', 'arguments'],
+            properties: {
+              tool: text('Verktøyet, for eksempel pdftotext.'),
+              tool_version: text('Versjonen verktøyet selv oppgir.'),
+              arguments: text('Argumentene verktøyet ble kjørt med, ordrett.'),
+            },
+          },
+        },
       },
       ...DRAFT_PROPERTIES,
     },

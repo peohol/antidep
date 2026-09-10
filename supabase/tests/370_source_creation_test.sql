@@ -133,10 +133,23 @@ select is_empty(
         -- agent ikke har en brukerkonto: kontrollen er legitimasjonen og den
         -- eksplisitte rollen, ikke Data API-rollen. Hvilke roller som faktisk
         -- har EXECUTE, kontrolleres i 600_agent_extraction_test.sql.
-        'api.register_agent_extraction(text,text,uuid,uuid,uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,jsonb,text,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text)'
+        'api.register_agent_extraction(text,text,uuid,uuid,uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,jsonb,text,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text)',
+        -- Migrasjon 003e. Den dokumentutledede kildeversjonen: samme
+        -- autorisasjon som tekstveien (knowledge.assert_editor_authorized), og
+        -- bare authenticated. Kalleren sender bytene, ikke fingeravtrykket:
+        -- databasen beregner det selv, og dokumentet lagres ikke. Hvilke roller
+        -- som faktisk har EXECUTE, kontrolleres i
+        -- 640_source_document_registration_test.sql.
+        'api.create_source_version_from_document(uuid,timestamp with time zone,text,text,text,text,text,text,text,text,text)',
+        -- Migrasjon 007i. Ekstraksjonsoppdraget bygget av databasens egne
+        -- rader. Ren lesevei, bare authenticated, og den autoriserer kalleren
+        -- på sitt eget kall (knowledge.assert_editor_authorized). Hvilke roller
+        -- som faktisk har EXECUTE, kontrolleres i
+        -- 650_build_extraction_assignment_test.sql.
+        'api.build_extraction_assignment(uuid,text[],text[],text[])'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de seksten kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de atten kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$

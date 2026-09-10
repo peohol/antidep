@@ -58,7 +58,7 @@ select is_empty(
     from (values ('anon'), ('authenticated'), ('service_role'), ('public')) as r(role_name)
     where has_function_privilege(
       r.role_name,
-      'knowledge.record_source_version(uuid,timestamptz,text,text,text,text,text,uuid)'::regprocedure,
+      'knowledge.record_source_version(uuid,timestamptz,text,text,text,text,text,uuid,text,bigint,text,text,text,text)'::regprocedure,
       'execute'
     )
   $$,

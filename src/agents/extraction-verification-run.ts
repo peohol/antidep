@@ -5,7 +5,9 @@
 //
 //   api.begin_agent_run                  premissene registreres
 //   api.extraction_verification_input    grunnlaget hentes (005h)
-//   retrieveRepresentation               kilden hentes på nytt, over nett
+//   resolveRepresentation                kilden skaffes på nytt: hentet fra
+//                                        adressen, eller hentet ut av
+//                                        originaldokumentet
 //   checkExtraction                      kontrollen gjøres, deterministisk
 //   api.register_extraction_verification resultatet registreres (005g)
 //   api.complete_agent_run               kjøringen lukkes
@@ -46,8 +48,8 @@ import type {
   RegisterVerificationArgs,
 } from './agent-api.ts'
 import { checkExtraction, type ExtractionCheckReport } from './extraction-checks.ts'
-import type { RetrieveLike, RetrieveOptions } from './source-retrieval.ts'
-import { retrieveRepresentation } from './source-retrieval.ts'
+import { resolveRepresentation, type ResolvePorts } from './source-binding.ts'
+import type { RetrieveLike } from './source-retrieval.ts'
 import { parseVerificationInput, type VerificationItem } from './verification-input.ts'
 
 /**
@@ -80,7 +82,7 @@ export interface RunReport {
 
 export type { RetrieveLike }
 
-export interface RunOptions {
+export interface RunOptions extends ResolvePorts {
   readonly api: ExtractionVerificationApi
   readonly premises: AgentRunPremises
   /** Ett bestemt evidensfunn, eller `null` for hele arbeidskøen. */
@@ -89,8 +91,6 @@ export interface RunOptions {
   readonly dryRun?: boolean
   /** Hvor mange funn kjøringen tar i ett. `null` for alle. */
   readonly limit?: number | null
-  readonly retrieve?: RetrieveLike
-  readonly retrieveOptions?: RetrieveOptions
   /**
    * Et snevrere utvalg av inndataen enn `evidenceItemId` alene gir.
    *
@@ -132,13 +132,13 @@ function summarize(item: VerificationItem): string {
  */
 async function evaluateItem(
   item: VerificationItem,
-  retrieve: RetrieveLike,
+  ports: ResolvePorts,
 ): Promise<
   | { readonly kind: 'skip'; readonly reason: string }
   | { readonly kind: 'checked'; readonly report: ExtractionCheckReport }
 > {
   try {
-    return await evaluateItemUnguarded(item, retrieve)
+    return await evaluateItemUnguarded(item, ports)
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
     return {
@@ -150,7 +150,7 @@ async function evaluateItem(
 
 async function evaluateItemUnguarded(
   item: VerificationItem,
-  retrieve: RetrieveLike,
+  ports: ResolvePorts,
 ): Promise<
   | { readonly kind: 'skip'; readonly reason: string }
   | { readonly kind: 'checked'; readonly report: ExtractionCheckReport }
@@ -173,38 +173,58 @@ async function evaluateItemUnguarded(
     }
   }
 
-  const retrieved = await retrieve(version.retrievedFrom)
-  if (retrieved.status === 'error') {
-    return { kind: 'skip', reason: retrieved.message }
-  }
-
-  const representation = retrieved.representation
-  if (!representation.bytesAreUtf8) {
-    return {
-      kind: 'skip',
-      reason:
-        `Svaret fra ${version.retrievedFrom} er ikke ren UTF-8, så fingeravtrykket kan ikke ` +
-        'sammenlignes byte for byte med den registrerte kildeversjonen.',
-    }
-  }
-
-  if (representation.contentHash !== version.contentHash) {
-    return {
-      kind: 'skip',
-      reason:
-        `Kilden har endret seg: ${version.retrievedFrom} gir nå ${representation.contentHash}, ` +
-        `mens kildeversjonen er registrert med ${version.contentHash}. Kontrollen ville ` +
-        'gjeldt en annen utgave enn ekstraksjonen ble gjort fra.',
-    }
+  // Hvordan representasjonen skaffes, avgjøres av den registrerte raden og ikke
+  // av kjøringen: en dokumentbundet versjon hentes ut av originaldokumentet med
+  // den registrerte oppskriften, aldri over nett, og en tekstversjon hentes fra
+  // adressen (`source-binding.ts`, migrasjon 003e). Uten dokumentet konkluderer
+  // kontrollen ikke — den henter aldri adressen i stedet, for da ville den
+  // gjeldt en annen tekst enn ekstraksjonen ble gjort fra.
+  const resolved = await resolveRepresentation(
+    {
+      retrievedFrom: version.retrievedFrom,
+      contentHash: version.contentHash,
+      document: version.document,
+    },
+    ports,
+  )
+  if (resolved.status === 'error') {
+    return { kind: 'skip', reason: resolved.message }
   }
 
   return {
     kind: 'checked',
     report: checkExtraction({
       item,
-      sourceText: representation.content,
+      sourceText: resolved.text,
       representationReproduced: true,
     }),
+  }
+}
+
+/**
+ * Om kjøringen i det hele tatt kan skaffe representasjonen til dette funnet.
+ *
+ * Bare dokumentbundne funn kan svare nei: teksten deres finnes ikke på noen
+ * adresse, og et ledd uten originaldokumentet henter aldri `retrieved_from` i
+ * stedet (`source-binding.ts`). Kontrollen er hele oppslaget og ikke bare «har
+ * kjøringen en dokumentkatalog»: katalogen finnes alltid, den er bare tom der
+ * dokumentene ikke ligger.
+ *
+ * Den kjører ikke tekstuttrekkingen. Spørsmålet her er om dokumentet er
+ * tilgjengelig, ikke om kontrollen går gjennom.
+ */
+async function documentIsAvailable(item: VerificationItem, ports: ResolvePorts): Promise<boolean> {
+  const document = item.sourceVersion?.document ?? null
+  if (document === null) {
+    return true
+  }
+  if (ports.documents === undefined) {
+    return false
+  }
+  try {
+    return (await ports.documents(document.sha256)).status === 'ok'
+  } catch {
+    return false
   }
 }
 
@@ -225,9 +245,6 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     limit = null,
     log = () => {},
   } = options
-  const retrieve: RetrieveLike =
-    options.retrieve ?? ((url) => retrieveRepresentation(url, options.retrieveOptions ?? {}))
-
   const inputManifest: Record<string, unknown> = {
     // `selected` sier at kjøringen arbeidet på et utvalg av køen, ikke på hele
     // den. Uten det ville manifestet påstått «queue» om en kjøring som bevisst
@@ -248,7 +265,25 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
   try {
     const input = parseVerificationInput(await api.readInput(agentRunId, evidenceItemId))
     const selected = options.select === undefined ? input.items : options.select(input.items)
-    const queue = limit === null ? selected : selected.slice(0, limit)
+
+    // Funn kjøringen ikke kan skaffe dokumentet til, tas ut *før* grensen — ikke
+    // etter.
+    //
+    // Uten det ville en kjøring med `--limit` sultet: køen er sortert på
+    // created_at, et overhoppet funn får ingen verifikasjonsrad og blir derfor
+    // stående i køen, og en hostet kjøring uten dokumentene ville tatt de samme
+    // n dokumentbundne funnene om igjen hver eneste gang — og aldri nådd fram
+    // til dem den faktisk kan kontrollere over nett.
+    //
+    // De rapporteres likevel, med en begrunnelse som sier hva som må gjøres.
+    // De bruker bare ikke opp plassen til noe som kunne blitt kontrollert.
+    const unavailable: VerificationItem[] = []
+    const available: VerificationItem[] = []
+    for (const item of selected) {
+      ;((await documentIsAvailable(item, options)) ? available : unavailable).push(item)
+    }
+
+    const queue = limit === null ? available : available.slice(0, limit)
     log(
       `${String(input.items.length)} evidensfunn i grunnlaget, ${String(queue.length)} tas i denne kjøringen.`,
     )
@@ -258,9 +293,32 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
           `${String(selected.length)} av ${String(input.items.length)}.`,
       )
     }
+    if (unavailable.length > 0) {
+      log(
+        `${String(unavailable.length)} funn er utledet av et originaldokument som ikke ligger i ` +
+          'dokumentkatalogen. De kontrolleres fra en maskin som har dokumentet, og teller ikke ' +
+          'mot --limit.',
+      )
+    }
+
+    for (const item of unavailable) {
+      const reason =
+        'Funnet er utledet av originaldokumentet ' +
+        `${item.sourceVersion?.document?.sha256 ?? 'ukjent'}, som ikke ligger i ` +
+        'dokumentkatalogen denne kjøringen leser. Kontrollen krever dokumentet, og henter aldri ' +
+        'adressen i stedet. Kjør den fra en maskin som har det: ' +
+        `ANTIDEP_DOCUMENT_DIR=<katalog> npm run agent:verify-extraction -- --evidence-item ${item.evidenceItemId}`
+      log(`— ${summarize(item)}: ingen verifikasjon registrert. ${reason}`)
+      results.push({
+        evidenceItemId: item.evidenceItemId,
+        sourceTitle: item.sourceTitle,
+        decision: 'skipped',
+        reason,
+      })
+    }
 
     for (const item of queue) {
-      const evaluation = await evaluateItem(item, retrieve)
+      const evaluation = await evaluateItem(item, options)
 
       if (evaluation.kind === 'skip') {
         log(`— ${summarize(item)}: ingen verifikasjon registrert. ${evaluation.reason}`)
@@ -331,6 +389,10 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
       checked: results.length,
       registered: results.filter((result) => result.decision === 'registered').length,
       skipped: results.filter((result) => result.decision === 'skipped').length,
+      // Overhoppet fordi originaldokumentet ikke lå i katalogen — ikke fordi
+      // kontrollen fant noe galt. Tallet står for seg selv, slik at «hva gjorde
+      // denne kjøringen» kan besvares uten å lese hver begrunnelse.
+      skipped_without_document: unavailable.length,
       results,
     }
 

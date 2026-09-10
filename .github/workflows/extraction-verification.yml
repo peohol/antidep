@@ -26,6 +26,28 @@
 # offentlige internettet. Kjøreren henter derfor bare fra offentlige adresser, og
 # kontrollerer både bokstavelige verter, navneoppslag og hvert redirect-hopp; se
 # `src/agents/guarded-http.ts` og supabase/README.md.
+#
+# ----------------------------------------------------------------------------
+# Hva denne kjøringen IKKE kan kontrollere
+#
+# En kildeversjon som er utledet av et originaldokument — en fulltekst-PDF —
+# hentes aldri over nett (migrasjon 003e, `src/agents/source-binding.ts`).
+# Kontrollen av den krever dokumentet, og dokumentet ligger lokalt hos den som
+# har lovlig tilgang til det: Antidep har ikke rett til å redistribuere
+# fullteksten, og en runner skal ikke ha en kopi (EVIDENCE_PIPELINE.md §14).
+#
+# Slike funn hoppes derfor over her, med en begrunnelse som sier hvorfor. De
+# teller ikke mot `limit`: køen er sortert på created_at og et overhoppet funn
+# får ingen verifikasjonsrad, så uten det ville en avgrenset kjøring tatt de
+# samme dokumentbundne funnene om igjen hver gang og aldri nådd fram til dem den
+# faktisk kan kontrollere over nett. De kontrolleres i stedet fra en maskin med
+# dokumentkatalogen på plass:
+#
+#   ANTIDEP_DOCUMENT_DIR=documents npm run agent:verify-extraction -- --evidence-item <uuid>
+#
+# Det er ikke en mangel ved kjøringen, men den samme regelen som ellers: en
+# kontroll som ikke fikk se kilden, er ingen kontroll
+# (ANTIDEP_CONSTITUTION.md §11).
 
 name: Ekstraksjonsverifikasjon
 

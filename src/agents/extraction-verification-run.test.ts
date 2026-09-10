@@ -92,6 +92,19 @@ function toPayload(item: VerificationItem): Record<string, unknown> {
             external_version: item.sourceVersion.externalVersion,
             content_hash: item.sourceVersion.contentHash,
             representation: item.sourceVersion.representation,
+            document:
+              item.sourceVersion.document === null
+                ? null
+                : {
+                    sha256: item.sourceVersion.document.sha256,
+                    byte_size: item.sourceVersion.document.byteSize,
+                    media_type: item.sourceVersion.document.mediaType,
+                    text_extraction: {
+                      tool: item.sourceVersion.document.textExtraction.tool,
+                      tool_version: item.sourceVersion.document.textExtraction.toolVersion,
+                      arguments: item.sourceVersion.document.textExtraction.arguments,
+                    },
+                  },
             has_storage_reference: item.sourceVersion.hasStorageReference,
           },
     // Kontrollgrunnlaget: forankringen og de to feltsettene kontrollen leser.
@@ -161,6 +174,7 @@ async function matchingItem(): Promise<VerificationItem> {
       externalVersion: null,
       contentHash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
       representation: 'full_text',
+      document: null,
       hasStorageReference: false,
     },
   })
@@ -219,6 +233,7 @@ describe('runExtractionVerification — når ingenting skal registreres', () => 
           externalVersion: null,
           contentHash: null,
           representation: 'full_text',
+          document: null,
           hasStorageReference: false,
         },
       }),
@@ -384,5 +399,97 @@ describe('runExtractionVerification — avgrensning', () => {
       limit: 1,
     })
     expect(report.items).toHaveLength(1)
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Funn kjøringen ikke kan skaffe dokumentet til
+//
+// Køen er sortert på created_at, og et overhoppet funn får ingen
+// verifikasjonsrad — det blir derfor stående i køen. Talte de mot `--limit`,
+// ville en kjøring uten dokumentene tatt de samme funnene om igjen hver gang, og
+// aldri nådd fram til dem den faktisk kan kontrollere.
+// ----------------------------------------------------------------------------
+
+async function documentBoundItem(evidenceItemId: string): Promise<VerificationItem> {
+  const item = await matchingItem()
+  return {
+    ...item,
+    evidenceItemId,
+    sourceVersion: {
+      ...(item.sourceVersion as NonNullable<VerificationItem['sourceVersion']>),
+      document: {
+        sha256: `sha256:${'d'.repeat(64)}`,
+        byteSize: 481253,
+        mediaType: 'application/pdf',
+        textExtraction: {
+          tool: 'pdftotext',
+          toolVersion: 'pdftotext 24.02.0',
+          arguments: '-layout -enc UTF-8 -eol unix',
+        },
+      },
+    },
+  }
+}
+
+describe('runExtractionVerification — dokumentbundne funn uten dokumentet', () => {
+  it('lar dem ikke bruke opp plassen --limit gir', async () => {
+    const nettverksfunn = { ...(await matchingItem()), evidenceItemId: 'over-nett' }
+    const api = fakeApi([
+      await documentBoundItem('pdf-1'),
+      await documentBoundItem('pdf-2'),
+      nettverksfunn,
+    ])
+
+    const report = await runExtractionVerification({
+      api,
+      premises: PREMISSER,
+      retrieve: retrieveFixture(),
+      limit: 1,
+    })
+
+    // Uten fiksen ville de to PDF-funnene fylt grensen, og det tredje ville
+    // aldri blitt kontrollert — hver eneste kjøring, i det uendelige.
+    expect(api.registered.map((row) => row.evidenceItemId)).toEqual(['over-nett'])
+    expect(
+      report.items.filter((item) => item.decision === 'skipped').map((item) => item.evidenceItemId),
+    ).toEqual(['pdf-1', 'pdf-2'])
+  })
+
+  it('sier hva som mangler, og fører det i kjøringens manifest', async () => {
+    const api = fakeApi([await documentBoundItem('pdf-1')])
+    const report = await runExtractionVerification({
+      api,
+      premises: PREMISSER,
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.items[0]?.reason).toMatch(/ANTIDEP_DOCUMENT_DIR/)
+    expect(api.registered).toEqual([])
+    expect(api.completions[0]?.outputManifest?.['skipped_without_document']).toBe(1)
+  })
+
+  it('kontrollerer dem når dokumentet ligger i katalogen', async () => {
+    const api = fakeApi([await documentBoundItem('pdf-1')])
+    const report = await runExtractionVerification({
+      api,
+      premises: PREMISSER,
+      documents: () =>
+        Promise.resolve({
+          status: 'ok',
+          document: {
+            path: '/lager/d.pdf',
+            bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+            digest: `sha256:${'d'.repeat(64)}`,
+            byteSize: 481253,
+            mediaType: 'application/pdf',
+          },
+        }),
+      runTool: () =>
+        Promise.resolve({ status: 'ran', exitCode: 0, stdout: FIXTURE_SOURCE_TEXT, stderr: '' }),
+    })
+
+    expect(report.items[0]?.decision).toBe('registered')
+    expect(api.registered).toHaveLength(1)
   })
 })

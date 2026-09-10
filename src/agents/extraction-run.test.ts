@@ -148,7 +148,7 @@ async function proposal(
 /** Oppdraget forslaget over holder seg innenfor. */
 async function oppdrag(overrides: Record<string, unknown> = {}) {
   return parseExtractionAssignment({
-    assignment_version: 'antidep/extraction-assignment@1',
+    assignment_version: 'antidep/extraction-assignment@2',
     source_id: '50000000-0000-4000-8000-000000000001',
     source_version_id: '51000000-0000-4000-8000-000000000001',
     retrieved_from: 'https://eksempel.invalid/kilde',
@@ -249,6 +249,35 @@ describe('runEvidenceExtraction — kontrollen mot oppdraget', () => {
 
     expect(report.decision).toBe('skipped')
     expect(report.reason).toMatch(/source_version_id/)
+    expect(api.registered).toEqual([])
+  })
+
+  // Dokumentbindingen er en del av kildebindingen, ikke et tillegg: et forslag
+  // med det samme `content_hash`, men et annet originaldokument eller en annen
+  // oppskrift, er lest ut av noe annet enn oppdraget ba om.
+  it('registrerer ingenting når oppdraget er utledet av et dokument og forslaget ikke er det', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      mode: 'with_assignment',
+      api,
+      proposal: await proposal(),
+      assignment: await oppdrag({
+        document: {
+          sha256: `sha256:${'b'.repeat(64)}`,
+          byte_size: 481253,
+          media_type: 'application/pdf',
+          text_extraction: {
+            tool: 'pdftotext',
+            tool_version: 'pdftotext 24.02.0',
+            arguments: '-layout -enc UTF-8 -eol unix',
+          },
+        },
+      }),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('skipped')
+    expect(report.reason).toMatch(/ingen dokumentbinding/)
     expect(api.registered).toEqual([])
   })
 
@@ -702,7 +731,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     })
 
     expect(report.decision).toBe('skipped')
-    expect(report.reason).toBe('Tidsavbrudd mot kilden.')
+    expect(report.reason).toBe('Tidsavbrudd mot kilden. Ekstraksjonen ble ikke registrert.')
     expect(api.registered).toHaveLength(0)
   })
 

@@ -78,6 +78,12 @@ import {
   type Uuid,
 } from '../types/api.ts'
 import {
+  parseDocumentBinding,
+  serializeDocumentBinding,
+  type DocumentBinding,
+  type RepresentationBinding,
+} from './document-binding.ts'
+import {
   asOptionalInteger,
   asOptionalNumericText,
   asOptionalText,
@@ -109,8 +115,15 @@ const PROPOSAL_SUBJECT = 'Ekstraksjonsforslaget'
  * `@2` la til `generated_by`. Et `@1`-forslag oppgir ikke hvem som laget det,
  * og kan derfor ikke registreres med riktige premisser; det er en form som er
  * ute, ikke en form som leses med standardverdier.
+ *
+ * `@3` la til `document`: hvilket originaldokument kildeversjonen er utledet
+ * av, og med hvilken oppskrift. Et `@2`-forslag sier ingenting om det, og et
+ * ledd som leste fraværet som «hentet fra adressen», ville forsøkt å hente en
+ * fulltekstversjon som tekst over nett — altså kontrollert ekstraksjonen mot
+ * noe annet enn den ble lest av. Samme grunn som forrige gang: en form som er
+ * ute, ikke en form som leses med standardverdier.
  */
-export const EXTRACTION_PROPOSAL_VERSION = 'antidep/extraction-proposal@2'
+export const EXTRACTION_PROPOSAL_VERSION = 'antidep/extraction-proposal@3'
 
 /**
  * Hvem som leste artikkelen og foreslo verdiene.
@@ -250,6 +263,26 @@ export interface ExtractionProposal extends ExtractionDraft {
    */
   readonly retrievedFrom: string
   readonly contentHash: string
+  /**
+   * Originaldokumentet kildeversjonen er utledet av, når den er det.
+   *
+   * Som kildebindingen ellers er dette oppdragets opplysning og ikke modellens
+   * (`drafting-run.ts`): den avgjør *hvordan* kjeden skaffer teksten på nytt,
+   * og et ledd som kunne oppgitt den selv, kunne pekt kontrollen mot et annet
+   * dokument enn det ekstraksjonen ble lest av.
+   *
+   * `null` betyr at representasjonen er teksten på adressen.
+   */
+  readonly document: DocumentBinding | null
+}
+
+/** Kildebindingen i forslaget, slik hvert ledd i kjeden trenger den. */
+export function proposalBinding(proposal: ExtractionProposal): RepresentationBinding {
+  return {
+    retrievedFrom: proposal.retrievedFrom,
+    contentHash: proposal.contentHash,
+    document: proposal.document,
+  }
 }
 
 const CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
@@ -542,6 +575,8 @@ export function parseExtractionProposal(value: unknown): ExtractionProposal {
     )
   }
 
+  const document = parseDocumentBinding(fields)
+
   const body = parseBody(fields)
   rejectUnknown(fields, { raw_extraction: RAW_EXTRACTION_EXPLANATION })
 
@@ -552,6 +587,7 @@ export function parseExtractionProposal(value: unknown): ExtractionProposal {
     sourceVersionId,
     retrievedFrom,
     contentHash,
+    document,
     ...body,
   }
 }
@@ -586,6 +622,7 @@ export function serializeExtractionProposal(proposal: ExtractionProposal): unkno
     source_version_id: proposal.sourceVersionId,
     retrieved_from: proposal.retrievedFrom,
     content_hash: proposal.contentHash,
+    document: serializeDocumentBinding(proposal.document),
     extraction: {
       design_code: e.designCode,
       population_id: e.populationId,

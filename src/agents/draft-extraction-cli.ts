@@ -42,6 +42,7 @@
 // ============================================================================
 
 import { parseDraftArguments, type DraftStep } from './cli-arguments.ts'
+import { documentsFromEnv } from './source-document.ts'
 import {
   closeDraftingJob,
   defaultRunDirectory,
@@ -81,6 +82,7 @@ function line(text = ''): void {
 
 async function open(options: DraftOptions): Promise<number> {
   const report = await openDraftingJob({
+    documents: documentsFromEnv(process.env),
     assignmentPath: options.assignmentPath,
     runDirectory: options.runDirectory,
     log: line,
@@ -120,6 +122,7 @@ function nextCommandAfterDrafting(proposalPath: string): string {
 
 async function close(options: DraftOptions): Promise<number> {
   const report = await closeDraftingJob({
+    documents: documentsFromEnv(process.env),
     runDirectory: options.runDirectory,
     assignmentPath: options.assignmentPath,
     log: line,

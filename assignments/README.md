@@ -13,45 +13,101 @@ på nytt.
 Filene her er **lokal inndata**. De er gitignorert, deployes ikke, og er ikke
 faglig innhold.
 
-## 1. Hvorfor katalogen står i filen
+## 1. Lag oppdraget
 
-Modell-leddet kan ikke slå opp i databasen. Det leser utrygt eksternt innhold,
-og et ledd som gjør det, skal ikke samtidig ha en leseflate inn i Antidep.
+Én kommando. Ingen uuid, ingen hash og ingen JSON skrives for hånd.
 
-Det er heller ikke bare en teknisk grense. Hvilket virkestoff og hvilket
-endepunkt et evidensfunn gjelder, er en **faglig avgrensning**. En modell som
-fikk velge fritt i hele katalogen, kunne flyttet funnet til et naboendepunkt
-uten at noe merket det: utdragene ville fortsatt stått ordrett i kilden, og den
-deterministiske kontrollen kontrollerer utdrag — ikke avgrensning.
+**Har du fulltekst-PDF-en?** Da registreres fullteksten av den, i samme slengen:
 
-Listen er derfor redaktørens, og modellen velger innenfor den. En id som ikke
-står i oppdraget, avvises av kjøringen.
-
-## 2. Hvor verdiene står
-
-Alle sju verdiene finnes i adminflyten, som krever `editor`-rolle:
-
-```sql
--- kildeversjonen: source_id, source_version_id, retrieved_from, content_hash
-select sv.source_id, sv.source_version_id, sv.retrieved_from, sv.content_hash
-from api.editor_source_versions sv
-join api.editor_sources s on s.source_id = sv.source_id
-where s.title ilike '%Fava%';
-
-select drug_id, canonical_name from api.editor_drugs;
-select outcome_concept_id, canonical_label from api.editor_outcomes;
-select population_id, canonical_label from api.editor_populations;
+```bash
+npm run editor:assignment -- \
+  --source "Fava" \
+  --pdf ~/artikler/fava-2000.pdf \
+  --retrieved-from "https://doi.org/10.4088/jcp.v61n1109" \
+  --drug sertralin \
+  --outcome vektendring \
+  --population "voksne med depressiv lidelse"
 ```
 
-Er kildeversjonen ikke registrert, registrer den først («Ny kildeversjon» på
-kildesiden).
+**Skal oppdraget gjelde en kildeversjon som allerede er registrert?** Da sløyfes
+`--pdf`, og den nyeste brukbare versjonen velges — eventuelt av den typen
+`--representation` ber om:
 
-## 3. Slik ser et oppdrag ut
+```bash
+npm run editor:assignment -- --source "Versiani" --representation abstract \
+  --drug mirtazapin --outcome vektendring
+```
+
+Kommandoen skriver ut hva den fant og hva den valgte, og legger oppdraget i
+`assignments/`. `--help` viser alle valgene.
+
+Dette er det eneste steget som krever et menneske med `editor`-rolle, og det er
+med hensikt: hvilken artikkel og hvilken avgrensning et funn gjelder, er en
+faglig avgjørelse.
+
+### Miljøet kommandoen trenger
+
+`ANTIDEP_SUPABASE_URL`, `ANTIDEP_SUPABASE_PUBLISHABLE_KEY` og redaktørens egen
+innlogging (`ANTIDEP_EDITOR_EMAIL`, `ANTIDEP_EDITOR_PASSWORD`) — se
+`.env.example`. Med `--pdf` trengs i tillegg `pdftotext` fra poppler
+(`apt-get install poppler-utils`, eller `brew install poppler`).
+
+## 2. Hva som faktisk skjer med en PDF
+
+Antidep lagrer **ikke** dokumentet. Det som skjer, er:
+
+1. PDF-en leses, og bytene sendes til
+   `api.create_source_version_from_document(...)`.
+2. **Databasen** beregner sha256 av bytene, størrelsen, og leser mediatypen av
+   dokumentets egen signatur. Ingen av de tre er noe kalleren oppgir — de er
+   observasjoner, ikke påstander (migrasjon 003e).
+3. Teksten hentes ut med `pdftotext`, og **oppskriften** — verktøy, versjon,
+   argumenter — lagres sammen med sha256 av teksten. Oppskriften er en lukket
+   liste: den er den ene lagrede verdien som senere blir _kjørt_, og databasen
+   godtar bare `pdftotext` med Antideps faste argumenter (migrasjon 003f).
+   Versjonen er fri — den forklarer et avvik, den kjøres ikke.
+4. PDF-en legges i `documents/` under fingeravtrykket sitt, slik at resten av
+   kjeden finner den igjen uten et filnavn (`../documents/README.md`).
+
+Kontrakten utad er dermed etterprøvbar av hvem som helst med sin egen lovlige
+kopi:
+
+```bash
+sha256sum artikkel.pdf                                          # document_sha256
+pdftotext -layout -enc UTF-8 -eol unix artikkel.pdf - | sha256sum   # content_hash
+```
+
+Hvert eneste ledd videre i kjeden gjør nøyaktig det samme, hver gang. En
+kildeversjon som er utledet av et dokument, hentes **aldri** over nett — og en
+som er hentet over nett, hentes aldri fra et dokument. Uten den regelen kunne et
+sammendrag fra PubMed blitt kontrollgrunnlaget for en ekstraksjon registrert som
+fulltekst.
+
+## 3. Hvorfor oppdraget kommer fra databasen
+
+Oppdraget er en **tiltrodd** inndata: registreringen kontrollerer forslaget mot
+det, så oppdraget er halvparten av kontrollen. Et oppdrag satt sammen av verdier
+noen har kopiert, ville vært en kontroll mot en kopi — og en kildebinding med
+adressen fra én rad og fingeravtrykket fra en annen ville sendt hele kjeden til
+feil tekst.
+
+`api.build_extraction_assignment(...)` (migrasjon 007i) tar derfor imot
+**kanoniske navn** og svarer med hele oppdraget. Et navn som ikke finnes i
+katalogen, gir en avvisning som navngir verdien — aldri et oppdrag med én
+avgrensning mindre enn du ba om.
+
+Modell-leddet får fortsatt bare filen. Det kan ikke slå opp i databasen, og skal
+ikke kunne det: det leser utrygt eksternt innhold, og et ledd som gjør det, skal
+ikke samtidig ha en leseflate inn i Antidep.
+
+## 4. Slik ser et oppdrag ut
 
 Se `eksempel-syntetisk-oppdrag.json`. Kort fortalt:
 
 - **hvilken kildeversjon** som skal leses (`source_id`, `source_version_id`,
   `retrieved_from`, `content_hash`),
+- **`document`** — originaldokumentet versjonen er utledet av, med oppskriften
+  teksten ble hentet ut med. `null` når representasjonen er teksten på adressen,
 - **`drugs`** og **`outcomes`** — minst ett av hver, med id og navn,
 - **`populations`** — kan være tom. Passer ingen registrert populasjon, sier
   forslaget det i `population_availability` framfor å velge en som nesten
@@ -61,17 +117,17 @@ Navnene ved siden av id-ene er for modellens skyld. Det er id-en som registreres
 
 Et ukjent felt er en feil, ikke noe som ignoreres.
 
-## 4. Kjør modell-leddet
+## 5. Kjør modell-leddet
 
-Dette er den vanlige veien, og den en Claude Code Routine kjører: to kommandoer
-med en fil imellom.
+To kommandoer med en fil imellom — den veien en Claude Code Routine kjører:
 
 ```bash
 npm run agent:draft-extraction -- --assignment assignments/fava-2000.json --open
 ```
 
-Kommandoen henter kildeversjonen, krever at fingeravtrykket stemmer, og legger
-igjen en **kjøremappe** — `assignments/fava-2000/`, utledet av oppdragsfilen:
+Kommandoen skaffer representasjonen, krever at fingeravtrykket stemmer, og
+legger igjen en **kjøremappe** — `assignments/fava-2000/`, utledet av
+oppdragsfilen:
 
 | Fil            | Hva den er                                                                    |
 | -------------- | ----------------------------------------------------------------------------- |
@@ -81,7 +137,7 @@ igjen en **kjøremappe** — `assignments/fava-2000/`, utledet av oppdragsfilen:
 
 Den skriver ingenting i databasen.
 
-## 5. Legg inn svaret
+## 6. Legg inn svaret
 
 Aktøren — en Claude Code Routine, ChatGPT, eller et menneske — leser `prompt.txt`
 og skriver svaret i `svar.json`:
@@ -108,15 +164,15 @@ Avtrykket binder svaret til nøyaktig den kildeteksten, den katalogen og den
 promptmalen som ble spurt om. Endres én av dem, gjelder ikke et gammelt svar — og
 det er riktig utfall, ikke et hinder.
 
-## 6. Lag forslaget
+## 7. Lag forslaget
 
 ```bash
 npm run agent:draft-extraction -- --assignment assignments/fava-2000.json --close
 ```
 
-Kjøringen henter kildeversjonen på nytt, krever at fingeravtrykket er den
-registrerte, leser svaret, og skriver `forslag.json` i kjøremappa **bare** hvis
-svaret holder mål:
+Kjøringen skaffer representasjonen på nytt — fra adressen, eller ut av
+originaldokumentet med den registrerte oppskriften — leser svaret, og skriver
+`forslag.json` i kjøremappa **bare** hvis svaret holder mål:
 
 1. formen er kontrakten i `proposals/extraction-proposal.schema.json`,
 2. hver id står i oppdraget,
@@ -134,7 +190,7 @@ kjøring som blir avbrutt, kan gjenopptas med den samme kommandoen.
 Hele arbeidsflyten, og hvordan den settes opp som en Routine, står i
 [`../docs/ROUTINE_EXTRACTION.md`](../docs/ROUTINE_EXTRACTION.md).
 
-## 7. Den eldre veien, som er beholdt
+## 8. Den eldre veien, som er beholdt
 
 `npm run agent:propose-extraction` er den samme kjeden i én kommando, med et
 **opptak** som inndata:
@@ -149,7 +205,7 @@ modell, og til å spille av en kjøring om igjen. Den er ikke nødvendig i vanli
 drift: `--close` skriver selv et opptak ved siden av forslaget, med det samme
 avtrykket.
 
-## 8. Registrer forslaget
+## 9. Registrer forslaget
 
 Forslaget er fortsatt bare en fil. Se `proposals/README.md`: det registreres av
 `npm run agent:extract-evidence`, kontrolleres deterministisk av en **annen**
@@ -167,10 +223,11 @@ npm run agent:extract-evidence -- \
 registrering, og valget er kallerens — ikke forslagets. Det avgjør både om
 avgrensningen kontrolleres, og om raden føres som KI-assistert eller manuell. Forslaget har
 vært innom en økt som leste utrygt eksternt innhold; oppdraget er redaktørens
-egen fil og kommer en annen vei. Registreringen kontrollerer kildebindingen og
-hver katalogverdi mot oppdraget før den skriver noe — den ene kontrollen den
-ordrette ikke kan gjøre, siden et utdrag kan stå ordrett i kilden og likevel være
-ført på feil virkestoff.
+egen fil og kommer en annen vei. Registreringen kontrollerer kildebindingen,
+dokumentbindingen og hver katalogverdi mot oppdraget før den skriver noe — de
+kontrollene den ordrette ikke kan gjøre, siden et utdrag kan stå ordrett i
+kilden og likevel være ført på feil virkestoff eller lest ut av et annet
+dokument.
 
 Registreringen er en **egen** kommando, med sin egen legitimasjon, og skal kjøres
 for seg. Modell-leddet nekter å kjøre dersom en agenthemmelighet står i miljøet:

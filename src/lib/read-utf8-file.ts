@@ -39,6 +39,8 @@
 // tilbake uendret. Verifikatoren leser svaret sitt med samme flagg.
 // ============================================================================
 
+import { looksLikePdf } from '../agents/document-binding'
+
 export type Utf8FileResult =
   | { readonly status: 'ok'; readonly text: string; readonly byteLength: number }
   | { readonly status: 'error'; readonly message: string }
@@ -66,6 +68,25 @@ export async function readUtf8File(file: ByteSource): Promise<Utf8FileResult> {
 
   if (bytes.length === 0) {
     return { status: 'error', message: `Filen «${file.name}» er tom.` }
+  }
+
+  // En PDF stoppes her, med en annen setning enn «ikke gyldig UTF-8».
+  //
+  // Avvisningen ville ellers vært riktig av feil årsak, og dermed invitert til
+  // den ene feilen denne veien ikke skal kunne gjøre: å registrere en PDF som
+  // en tekstrepresentasjon. En PDF dekodet som UTF-8 er ikke fulltekstartikkelen
+  // — det er binærinnholdet omkodet — og fingeravtrykket ville beskrevet
+  // omkodingen framfor filen. Et originaldokument har sin egen vei, med sitt
+  // eget fingeravtrykk og sin egen tekstuttrekking (migrasjon 003e).
+  if (looksLikePdf(bytes)) {
+    return {
+      status: 'error',
+      message:
+        `Filen «${file.name}» er en PDF, ikke tekst. En fulltekstartikkel registreres av ` +
+        'originaldokumentet sitt, med `npm run editor:assignment -- --pdf <fil>`: da beregner ' +
+        'databasen fingeravtrykket av selve filen og lagrer oppskriften teksten ble hentet ut ' +
+        'med, slik at begge deler kan etterprøves.',
+    }
   }
 
   try {

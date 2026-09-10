@@ -22,6 +22,7 @@ import { readAgentConfig } from './agent-environment.ts'
 import { redact } from './agent-credential.ts'
 import { parseVerifierArguments } from './cli-arguments.ts'
 import { runExtractionVerification } from './extraction-verification-run.ts'
+import { documentsFromEnv } from './source-document.ts'
 import { EXTRACTION_VERIFICATION_PREMISES } from './pipeline-version.ts'
 
 const USAGE = `Bruk:
@@ -48,6 +49,9 @@ async function main(): Promise<number> {
   try {
     const report = await runExtractionVerification({
       api,
+      // Dokumentlageret: en kildeversjon utledet av en PDF kontrolleres mot
+      // originaldokumentet, aldri mot adressen (`source-binding.ts`).
+      documents: documentsFromEnv(process.env),
       premises: EXTRACTION_VERIFICATION_PREMISES,
       evidenceItemId: options.targetId,
       dryRun: options.dryRun,

@@ -41,6 +41,7 @@ export function sourceVersionFixture(
     externalVersion: null,
     contentHash: `sha256:${'a'.repeat(64)}`,
     representation: 'full_text',
+    document: null,
     hasStorageReference: false,
     ...overrides,
   }
@@ -388,4 +389,63 @@ export function claimRevisionFixture(
     verificationsTotal: 0,
     ...rest,
   }
+}
+
+// ----------------------------------------------------------------------------
+// En syntetisk PDF
+//
+// Dokumentveien kan ikke prøves med en fil som *later* som den er en PDF: hele
+// poenget er at bytene er dokumentet, at fingeravtrykket er av dem, og at et
+// ekte verktøy henter teksten ut igjen. Prøvene lager derfor en liten, gyldig
+// PDF her framfor å commite en binærfil — den er noen hundre byte, den er
+// deterministisk, og den kan leses av et menneske i denne funksjonen.
+//
+// Ingen komprimering og ingen innebygde fonter: strømmen står i klartekst, og
+// `pdftotext` henter nøyaktig de linjene som ble skrevet.
+// ----------------------------------------------------------------------------
+
+/** Én tekstlinje i PDF-en, med PDF-strengens egne tegn escapet. */
+function pdfString(line: string): string {
+  return line.replace(/[\\()]/g, (match) => `\\${match}`)
+}
+
+/**
+ * Bygger en gyldig énsides PDF med linjene som synlig tekst.
+ *
+ * Byte for byte deterministisk for de samme linjene: to kall gir det samme
+ * fingeravtrykket, som er det prøvene hviler på.
+ */
+export function syntheticPdf(lines: readonly string[]): Uint8Array {
+  const content = [
+    'BT',
+    '/F1 11 Tf',
+    '14 TL',
+    '56 760 Td',
+    ...lines.map((line) => `(${pdfString(line)}) Tj T*`),
+    'ET',
+  ].join('\n')
+
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+
+  let body = '%PDF-1.4\n'
+  const offsets: number[] = []
+  objects.forEach((object, index) => {
+    offsets.push(body.length)
+    body += `${String(index + 1)} 0 obj\n${object}\nendobj\n`
+  })
+  const startxref = body.length
+  body += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`
+  for (const offset of offsets) {
+    body += `${String(offset).padStart(10, '0')} 00000 n \n`
+  }
+  body += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(startxref)}\n%%EOF\n`
+
+  return new TextEncoder().encode(body)
 }

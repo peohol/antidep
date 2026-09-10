@@ -67,13 +67,20 @@ import {
   parseModelRecording,
   type ModelRecording,
 } from './recorded-model.ts'
-import type { RetrieveLike, RetrieveOptions } from './source-retrieval.ts'
+import type { ResolvePorts } from './source-binding.ts'
 import { asText, fieldsOf, problem, raw, rejectUnknown, type Fields } from './strict-fields.ts'
 
 const JOB_SUBJECT = 'Kjøringen'
 
-/** Versjonen av kjøringsformen, oppgitt i hver `kjoring.json`. */
-export const DRAFTING_JOB_VERSION = 'antidep/drafting-job@1'
+/**
+ * Versjonen av kjøringsformen, oppgitt i hver `kjoring.json`.
+ *
+ * `@2` la til `document_sha256`: fingeravtrykket av originaldokumentet
+ * kildeversjonen er utledet av, eller `null`. Verdien er den ene opplysningen
+ * en avbrutt kjøring trenger for å komme videre — hvilken fil som må ligge i
+ * dokumentkatalogen — og en kjøremappe skrevet mot `@1` sier ingenting om den.
+ */
+export const DRAFTING_JOB_VERSION = 'antidep/drafting-job@2'
 
 /**
  * Filnavnene i en kjøremappe.
@@ -104,6 +111,8 @@ export interface DraftingJob {
   readonly sourceVersionId: string
   readonly retrievedFrom: string
   readonly contentHash: string
+  /** Originaldokumentet kjøringen leser, eller `null` når teksten hentes fra adressen. */
+  readonly documentSha256: string | null
   readonly requestDigest: string
   readonly promptTemplateVersion: string
   readonly state: DraftingJobState
@@ -181,6 +190,7 @@ export function parseDraftingJob(value: unknown): DraftingJob {
     sourceVersionId: asText(fields, 'source_version_id'),
     retrievedFrom: asText(fields, 'retrieved_from'),
     contentHash: asText(fields, 'content_hash'),
+    documentSha256: optionalText(fields, 'document_sha256'),
     requestDigest,
     promptTemplateVersion: asText(fields, 'prompt_template_version'),
     state: state as DraftingJobState,
@@ -200,6 +210,7 @@ export function serializeDraftingJob(job: DraftingJob): unknown {
     source_version_id: job.sourceVersionId,
     retrieved_from: job.retrievedFrom,
     content_hash: job.contentHash,
+    document_sha256: job.documentSha256,
     request_digest: job.requestDigest,
     prompt_template_version: job.promptTemplateVersion,
     state: job.state,
@@ -287,21 +298,19 @@ async function answerFileHoldsAnAnswer(path: string): Promise<boolean> {
   return file.present && answerHoldsAnAnswer(file.value)
 }
 
-export interface DraftingJobPorts {
-  readonly retrieve?: RetrieveLike
-  readonly retrieveOptions?: RetrieveOptions
+export interface DraftingJobPorts extends ResolvePorts {
   /** Klokka, injisert, slik at tidspunktene i kjøringen kan festes i en prøve. */
   readonly now?: () => string
   readonly log?: (line: string) => void
 }
 
-function retrievalPorts(ports: DraftingJobPorts): {
-  retrieve?: RetrieveLike
-  retrieveOptions?: RetrieveOptions
-} {
+/** Portene videre til kjøringen, uten klokka og loggen som er mappas egne. */
+function representationPorts(ports: DraftingJobPorts): ResolvePorts {
   return {
     ...(ports.retrieve === undefined ? {} : { retrieve: ports.retrieve }),
     ...(ports.retrieveOptions === undefined ? {} : { retrieveOptions: ports.retrieveOptions }),
+    ...(ports.documents === undefined ? {} : { documents: ports.documents }),
+    ...(ports.runTool === undefined ? {} : { runTool: ports.runTool }),
   }
 }
 
@@ -377,7 +386,7 @@ export async function openDraftingJob(options: OpenJobOptions): Promise<OpenJobR
 
   const { request, requestDigest } = await prepareDraftingRequest({
     assignment,
-    ...retrievalPorts(options),
+    ...representationPorts(options),
   })
 
   if (
@@ -403,6 +412,7 @@ export async function openDraftingJob(options: OpenJobOptions): Promise<OpenJobR
     sourceVersionId: assignment.sourceVersionId,
     retrievedFrom: assignment.retrievedFrom,
     contentHash: assignment.contentHash,
+    documentSha256: assignment.document?.sha256 ?? null,
     requestDigest,
     promptTemplateVersion: request.promptTemplateVersion,
     state: 'awaiting_answer',
@@ -584,7 +594,7 @@ export async function closeDraftingJob(options: CloseJobOptions): Promise<CloseJ
       model: createRecordedModelClient(recording),
       now: () => draftedAt,
       log,
-      ...retrievalPorts(options),
+      ...representationPorts(options),
     })
   } catch (cause) {
     // Den ene forventede kilden til et kast er at forespørselen ikke lenger er
