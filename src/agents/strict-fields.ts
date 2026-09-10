@@ -226,3 +226,63 @@ export function asOptionalObjectList(fields: Fields, key: string): readonly unkn
   }
   return value
 }
+
+// ----------------------------------------------------------------------------
+// Tidspunkter
+//
+// Både forslagets `drafted_at` og modellsvarets `answered_at` er påstander om
+// når en modell leste en artikkel, og begge ender i proveniensen. De må derfor
+// leses av den samme kontrollen — og den må være en *kalenderkontroll*, ikke
+// bare et mønster.
+//
+// `Date.parse` er ikke nok alene. Node normaliserer et ISO-tidspunkt med en dag
+// utenfor måneden: «2026-09-31T00:00:00Z» blir 1. oktober framfor å bli `NaN`.
+// En dato som ikke finnes, ville da passert vinduskontrollen og blitt lagret
+// ordrett som et tidspunkt ingen kan peke på i en kalender
+// (ANTIDEP_CONSTITUTION.md §14).
+// ----------------------------------------------------------------------------
+
+const RFC3339 =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0
+}
+
+const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2 && isLeapYear(year)) {
+    return 29
+  }
+  return MONTH_LENGTHS[month - 1] ?? 0
+}
+
+/**
+ * Ett tidspunkt på RFC 3339-form, med tidssone, og med en dato som finnes.
+ *
+ * Skuddsekunder (`:60`) godtas ikke. De er tillatt i RFC 3339, men ingen
+ * modell oppgir et, og PostgreSQL ville uansett normalisert det bort — så et
+ * avslag her er tydeligere enn en verdi som skifter mening senere.
+ */
+export function isCalendarTimestamp(value: string): boolean {
+  const match = RFC3339.exec(value)
+  if (match === null) {
+    return false
+  }
+  const [, year, month, day, hour, minute, second, offsetHour, offsetMinute] = match
+  const y = Number(year)
+  const m = Number(month)
+  if (m < 1 || m > 12 || Number(day) < 1 || Number(day) > daysInMonth(y, m)) {
+    return false
+  }
+  if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) {
+    return false
+  }
+  if (offsetHour !== undefined && (Number(offsetHour) > 23 || Number(offsetMinute) > 59)) {
+    return false
+  }
+  // Siste ord til plattformen: en verdi kontrollene over slipper gjennom, men
+  // som ikke lar seg lese som et øyeblikk, skal ikke bli en proveniensverdi.
+  return !Number.isNaN(Date.parse(value))
+}

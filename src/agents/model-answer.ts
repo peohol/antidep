@@ -56,7 +56,15 @@
 // ============================================================================
 
 import { parseModelIdentity, PLACEHOLDER_PREFIX, type ModelIdentity } from './model-identity.ts'
-import { asOptionalText, asText, fieldsOf, problem, raw, rejectUnknown } from './strict-fields.ts'
+import {
+  asOptionalText,
+  asText,
+  fieldsOf,
+  isCalendarTimestamp,
+  problem,
+  raw,
+  rejectUnknown,
+} from './strict-fields.ts'
 
 const ANSWER_SUBJECT = 'Modellsvaret'
 
@@ -77,7 +85,6 @@ export interface ModelAnswer {
 }
 
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
-const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
 /** Leser og kontrollerer ett modellsvar, eller sier hvilket felt som er galt. */
 export function parseModelAnswer(value: unknown): ModelAnswer {
@@ -114,17 +121,14 @@ export function parseModelAnswer(value: unknown): ModelAnswer {
         'tidspunktet i proveniensen den gangen kjøringen ble lukket',
     )
   }
-  // Mønsteret alene er ikke nok: det ser bare på formen, så «2026-99-99T99:99:99Z»
-  // slipper gjennom det. Et slikt tidspunkt gir NaN, og NaN er verken større
-  // eller mindre enn noe — vindussjekken i `drafting-job.ts` ville derfor sagt
-  // ja, og verdien ville blitt skrevet inn i forslaget som da utkastet ble
-  // laget. `parseExtractionProposal` avviser den samme verdien, så kjøringen
-  // ville meldt «forslag skrevet» og registreringen ville nektet å lese filen.
-  // Kontrollen er den samme som den `drafted_at` allerede har der.
-  if (
-    answeredAt !== null &&
-    (!TIMESTAMP_PATTERN.test(answeredAt) || Number.isNaN(Date.parse(answeredAt)))
-  ) {
+  // Kalenderkontroll, og ikke bare et mønster. «2026-99-99T99:99:99Z» har formen
+  // og gir NaN; «2026-09-31T00:00:00Z» har formen og gir 1. oktober. Begge ville
+  // sluppet gjennom vindussjekken i `drafting-job.ts` — den første fordi NaN er
+  // verken større eller mindre enn noe, den andre fordi den normaliserte datoen
+  // faktisk ligger i vinduet rundt et månedsskifte — og blitt skrevet inn i
+  // forslaget som da utkastet ble laget. Kontrollen er den samme som
+  // `drafted_at` bruker, fra det samme stedet.
+  if (answeredAt !== null && !isCalendarTimestamp(answeredAt)) {
     problem(
       ANSWER_SUBJECT,
       'svaret.answered_at',

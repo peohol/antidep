@@ -4,9 +4,19 @@ Lim teksten under inn som prompten til en Claude Code Routine. Bytt ut
 `<OPPDRAGSFIL>` med stien til oppdraget, for eksempel
 `assignments/fava-2000.json`.
 
-Miljøet denne Routinen kjører i, skal **ikke** inneholde agentlegitimasjon.
-Registrering og kontroll er en egen Routine — se `docs/ROUTINE_EXTRACTION.md`
-avsnitt 3 og 6.
+**Før du oppretter Routinen — dette er sikkerhetsgrensen, ikke en formalitet:**
+
+- Gi den et **eget kjøremiljø** uten skrivekapabel legitimasjon: ingen
+  `SUPABASE_ACCESS_TOKEN`, ingen databasepassord eller service-role-nøkkel, og
+  ingen `ANTIDEP_*_SECRET`.
+- **Fjern alle connectorer.** De er med som standard, og en Routine kan bruke
+  ethvert verktøy fra en inkludert connector — også skriveverktøy — uten å spørre.
+  Denne Routinen trenger ingen.
+- Sett nettverkstilgangen til **Custom** med bare kildeleverandørens domener,
+  for eksempel `eutils.ncbi.nlm.nih.gov`.
+
+Registrering og kontroll er en **egen** Routine, i et **annet** miljø. Se
+`docs/ROUTINE_EXTRACTION.md` avsnitt 3 og 6.
 
 ---
 
@@ -26,7 +36,10 @@ den til punkt og prikke. Kort sagt:
    etter tre forsøk, og rapporter hvorfor.
 
 Du skal **ikke** registrere noe, ikke publisere noe, og ikke kjøre noen kommando
-som skriver til databasen. Skriv aldri `forslag.json` selv.
+som skriver til databasen — heller ikke `scripts/deploy-migrations.sh` eller en
+connector som kan skrive. Skriv aldri `forslag.json` selv. Finner du at du har
+tilgang til noe som kan skrive til Antidep, er det en feil i oppsettet: si fra om
+det i rapporten framfor å bruke det.
 
 Er kjøringen allerede lukket med et forslag, er det ingenting å gjøre: rapporter
 det og avslutt.

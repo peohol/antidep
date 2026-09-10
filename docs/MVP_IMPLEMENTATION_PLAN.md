@@ -6980,12 +6980,18 @@ og et tidspunkt som ligger utenfor vinduet mellom åpningen og lukkingen, avvise
 fem minutters slakk, fordi to maskiner har to klokker og et avrundet minutt ikke er en usann
 påstand.
 
-**Rettighetsgrensen er håndhevet, ikke bare beskrevet.** Modell-leddet nekter å kjøre dersom
-en agenthemmelighet står i miljøet. En Claude Code-sesjon har et skall, og en sesjon som både
-leser en artikkel Antidep ikke kontrollerer *og* holder skrivelegitimasjonen, ville hatt
-begge deler samtidig — nøyaktig det §63 sier at et ledd ikke skal ha. Det anbefalte oppsettet
-er derfor **to** Routines: én for modell-leddet, uten legitimasjon, og én for registrering og
-kontroll (`ROUTINE_EXTRACTION.md`).
+**Rettighetsgrensen ligger i kjøremiljøet, og vakten i koden er et lag under.** En Claude Code
+Routine er en full, autonom sesjon: den har skall, miljøvariablene til kjøremiljøet sitt, og
+de connectorene den ble opprettet med — som er alle tilkoblede som standard — og den kan bruke
+ethvert verktøy fra dem, skriveverktøy medregnet, uten godkjenning underveis. En sesjon som
+både leser en artikkel Antidep ikke kontrollerer *og* har noe å skrive med, har begge deler
+samtidig, nøyaktig det §63 sier at et ledd ikke skal ha. Oppsettet er derfor **to** Routines
+med hvert sitt kjøremiljø: modell-leddet uten skrivekapable hemmeligheter og uten connectorer,
+registrering og kontroll for seg (`ROUTINE_EXTRACTION.md` §3). Antidep bidrar med et lag
+under: modell-leddet nekter å kjøre dersom en skrivekapabel legitimasjon står i miljøet til
+prosessen — også `SUPABASE_ACCESS_TOKEN`, som `scripts/deploy-migrations.sh` kjører vilkårlig
+SQL mot produksjon med. Vakten ser verken sesjonen som startet kjøringen eller connectorene
+den har, og er derfor dokumentert som det den er.
 
 **Ingen regel er myket opp.** Ingen migrasjon, ingen CHECK, ingen constraint, ingen policy og
 ingen grant er rørt. Denne leveransen har ingen databaseendring i det hele tatt: kontrakten

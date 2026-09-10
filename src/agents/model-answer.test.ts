@@ -143,4 +143,27 @@ describe('parseModelAnswer — proveniens som ville vært usann', () => {
       /answered_at/,
     )
   })
+
+  it('avviser en dato som ikke finnes i kalenderen', () => {
+    // Verre enn den over, fordi den ikke gir NaN: Node normaliserer
+    // 31. september til 1. oktober. Rundt et månedsskifte ville den
+    // normaliserte datoen ligget *innenfor* vinduet, og et tidspunkt ingen kan
+    // peke på i en kalender ville blitt lagret ordrett som da utkastet ble
+    // laget.
+    expect(() => parseModelAnswer(svar({ answered_at: '2026-09-31T00:00:00Z' }))).toThrow(
+      /answered_at/,
+    )
+  })
+
+  it('avviser 29. februar i et år som ikke er skuddår', () => {
+    expect(() => parseModelAnswer(svar({ answered_at: '2026-02-29T00:00:00Z' }))).toThrow(
+      /answered_at/,
+    )
+  })
+
+  it('godtar 29. februar i et skuddår', () => {
+    expect(parseModelAnswer(svar({ answered_at: '2028-02-29T00:00:00Z' })).answeredAt).toBe(
+      '2028-02-29T00:00:00Z',
+    )
+  })
 })

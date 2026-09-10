@@ -30,8 +30,13 @@
 // kommando, med sin egen legitimasjon, som kjører hele den deterministiske
 // kontrollen på nytt (EVIDENCE_PIPELINE.md §63).
 //
-// Vakten i `model-step-guard.ts` håndhever den grensen også for prosessen: står
-// en agenthemmelighet i miljøet, kjører ikke modell-leddet.
+// Vakten i `model-step-guard.ts` fanger det vanligste uhellet: står en
+// skrivekapabel legitimasjon i miljøet til denne prosessen, kjører ikke
+// modell-leddet. Den er et lag i dybden og ikke *den* grensen — den kan ikke se
+// sesjonen som startet kjøringen, og heller ikke verktøyene den sesjonen har.
+// Den egentlige grensen er at Routinen som kjører leddet, har sitt eget
+// kjøremiljø uten skrivekapable hemmeligheter og uten skrivekapable connectorer
+// (`docs/ROUTINE_EXTRACTION.md` §3).
 //
 // Filen importeres aldri av appen og havner derfor ikke i klientbunten.
 // ============================================================================
@@ -44,7 +49,7 @@ import {
   openDraftingJob,
   readDraftingJobStatus,
 } from './drafting-job.ts'
-import { assertNoAgentCredentials } from './model-step-guard.ts'
+import { assertNoWriteCapableCredentials } from './model-step-guard.ts'
 
 const COMMAND = 'npm run agent:draft-extraction'
 
@@ -185,7 +190,7 @@ async function main(): Promise<number> {
   }
 
   try {
-    assertNoAgentCredentials(process.env, `${COMMAND} -- --assignment <fil> --<steg>`)
+    assertNoWriteCapableCredentials(process.env, `${COMMAND} -- --assignment <fil> --<steg>`)
     if (options.step === 'open') {
       return await open(options)
     }

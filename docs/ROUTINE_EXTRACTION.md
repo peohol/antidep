@@ -31,8 +31,11 @@ Det gir tre ting samtidig:
   når, hva som skjer etterpå — er Routinens ansvar. Antidep bidrar med
   kommandoene, filformene og kontrollene.
 
-Routinen får **ingen** rettigheter Antidep ikke allerede har gitt et ledd i
-kjeden. Den kan lese en kilde og skrive filer. Den kan ikke skrive en rad.
+Antidep gir Routinen ingen skrivevei: kommandoene modell-leddet består av, har
+verken databasetilgang eller agentlegitimasjon. Men en Routine er en full,
+autonom sesjon med skall — så hva den *faktisk* kan nå, avgjøres av kjøremiljøet
+og connectorene den ble opprettet med, ikke av Antideps kode alene. Avsnitt 3
+sier hvordan den grensen settes, og hvorfor den må settes der.
 
 ---
 
@@ -56,35 +59,86 @@ samme; den har fått en aktør i forkant.
 
 ---
 
-## 3. To Routines, ikke én
+## 3. To Routines, og grensen mellom dem
 
-Det anbefalte oppsettet er **to** Routines, og skillet er en sikkerhetsgrense og
-ikke en oppdeling av bekvemmelighet.
+Det anbefalte oppsettet er **to** Routines. Skillet er en sikkerhetsgrense, ikke en
+oppdeling av bekvemmelighet.
 
-| Routine | Hva den gjør | Hva miljøet skal inneholde |
-| --- | --- | --- |
-| **A — modell-leddet** | Åpner kjøringen, leser kilden, skriver svaret, lukker kjøringen | **Ingen** agentlegitimasjon |
-| **B — registrering og kontroll** | Registrerer forslaget og kjører den deterministiske kontrollen | `.env.agent.local` med ekstraksjonsagentens og verifikatorens legitimasjon |
+| Routine | Hva den gjør | Kjøremiljø | Connectorer |
+| --- | --- | --- | --- |
+| **A — modell-leddet** | Åpner kjøringen, leser kilden, skriver svaret, lukker kjøringen | Eget miljø **uten** skrivekapable hemmeligheter | **Ingen** |
+| **B — registrering og kontroll** | Registrerer forslaget og kjører den deterministiske kontrollen | Eget miljø med agentlegitimasjonen | Ingen |
 
-Grunnen står i `EVIDENCE_PIPELINE.md` §63: et ledd som tar imot utrygt eksternt
-innhold i en modellkontekst, skal ikke samtidig ha tilgang til hemmeligheten som
-kan skrive en rad. Routine A leser en artikkel Antidep ikke kontrollerer.
-Routine B leser bare en fil Antidep selv har skrevet, og kjører to kommandoer på
-den.
+### 3.1 Hvorfor grensen må ligge i kjøremiljøet
 
-Grensen er håndhevet og ikke bare anbefalt: `npm run agent:draft-extraction`
-nekter å kjøre dersom en agenthemmelighet står i miljøet, og feilmeldingen
-oppgir kommandoen som fjerner den for den ene kjøringen.
+`EVIDENCE_PIPELINE.md` §63: et ledd som tar imot utrygt eksternt innhold i en
+modellkontekst, skal ikke samtidig ha tilgang til noe som kan skrive. Routine A
+leser en artikkel Antidep ikke kontrollerer. Routine B leser bare en fil Antidep
+selv har skrevet, og kjører to kommandoer på den.
 
-**Restrisikoen, sagt rett ut.** En Claude Code-sesjon har et skall. Kjøres begge
-Routinene i den samme sesjonen, kan en modell som har lest en artikkel med noe
-instruksjonslignende i seg, i prinsippet kjøre registreringskommandoen på en fil
-den skrev selv, uten å gå veien om `--close`. Det ville fortsatt ikke gitt en
-publisert påstand — registreringen henter kildeversjonen på nytt, krever at
-fingeravtrykket er den registrerte, prøver hvert utdrag ordrett, og hele den
-maskinelle og menneskelige kontrollkjeden står igjen etterpå — men avgrensningen
-mot katalogen ville vært omgått. To Routines fjerner den muligheten, fordi
-Routine A ikke har noen hemmelighet å bruke.
+En Claude Code Routine er en **full, autonom sesjon**. Den har skall, den har
+miljøvariablene til kjøremiljøet den ble tildelt, og den har de connectorene den
+ble opprettet med — uten godkjenningsprompt underveis. Anthropics egen
+dokumentasjon er tydelig på begge deler: en Routine kan kjøre shell-kommandoer og
+kalle enhver connector som er inkludert, «including writes, without asking for
+permission during a run», og alle tilkoblede connectorer er **med som standard**
+når en Routine opprettes.
+
+Det betyr at grensen ikke kan ligge i Antideps kode alene. **Kjøremiljøet og
+connectorlisten er den primære grensen.** En modell som har lest en artikkel med
+noe instruksjonslignende i seg, kan bruke hva som helst sesjonen faktisk har — og
+det eneste som gjør at den ikke kan skrive til produksjon, er at den ikke har noe
+å skrive med.
+
+### 3.2 Hva Routine A ikke skal ha
+
+Bruk et **eget kjøremiljø** for Routine A, ikke det samme som B eller som annet
+arbeid. Miljøet skal ikke inneholde:
+
+- `SUPABASE_ACCESS_TOKEN` — Management-API-tokenet. `scripts/deploy-migrations.sh`
+  i dette repoet kjører vilkårlig SQL mot produksjonsbasen med det.
+- `SUPABASE_DB_PASSWORD`, en `DATABASE_URL`, `PGPASSWORD` eller en annen direkte
+  databaseforbindelse.
+- En service-role- eller secret-nøkkel til Supabase.
+- `ANTIDEP_*_SECRET` — agentlegitimasjonen.
+
+**Fjern alle connectorer fra Routine A.** Den trenger ingen. En Supabase-connector
+er en skrivevei rett forbi hele kjeden, og en hvilken som helst annen
+skrivekapabel connector er det samme.
+
+Nettilgang trenger den derimot: kilden hentes over nett. Bruk **Custom** nettverk
+med bare kildeleverandørens domener i listen — for eksempel
+`eutils.ncbi.nlm.nih.gov` — framfor **Full**.
+
+### 3.3 Vakten i koden er et lag under, ikke grensen
+
+`npm run agent:draft-extraction` nekter å kjøre dersom en skrivekapabel
+legitimasjon står i miljøet til **den prosessen**, og feilmeldingen oppgir
+kommandoen som fjerner den for den ene kjøringen.
+
+Det er en nyttig kontroll, og det fanger det vanligste uhellet: at kommandoen
+kjøres i et skall der en hemmelighet allerede er eksportert. Men den er ikke hele
+grensen, og skal ikke leses som om den var det:
+
+- Den ser bare miljøet til prosessen sin. Den kan ikke se sesjonen som startet
+  den, og `env -u NAVN ...` fjerner variabelen fra barneprosessen — ikke fra
+  Routine-sesjonen, som fortsatt har skallet og variabelen.
+- Den kan ikke se connectorer i det hele tatt.
+- Navnelisten er en oppsamling av det vi vet finnes i dette repoet, ikke et
+  bevis på at ingenting annet finnes.
+
+Derfor: kjøremiljø og connectorliste først, vakten som et lag under.
+
+### 3.4 Hva et brudd faktisk ville gitt
+
+Selv om Routine A skulle klare å skrive til basen forbi `--close`, ville det
+**ikke** gitt en publisert påstand. Registreringen henter kildeversjonen på nytt,
+krever at fingeravtrykket er den registrerte, og prøver hvert utdrag ordrett; den
+maskinelle kontrollen av en annen identitet står igjen; og den menneskelige
+kontrollen felt for felt står igjen. Det som ville vært omgått, er **avgrensningen
+mot oppdragets katalog** — altså hvilket virkestoff og hvilket endepunkt funnet
+sies å gjelde. Det er alvorlig nok til at grensen skal være reell, og ikke bare
+dokumentert.
 
 ---
 
@@ -232,11 +286,18 @@ Prompten er kort med vilje: den peker på ferdigheten
 som ligger i repoet og derfor følger med hver endring av arbeidsflyten. Da kan
 ikke Routinen og repoet komme i utakt.
 
-Anbefalt oppsett:
+Anbefalt oppsett, i denne rekkefølgen:
 
-- **Routine A** kjøres på forespørsel med oppdragsfilen som eneste variabel.
-  Miljøet skal ikke inneholde agentlegitimasjon.
-- **Routine B** kjøres etter A, i et miljø med `.env.agent.local`.
+1. **Lag et eget kjøremiljø for Routine A.** Ingen `SUPABASE_ACCESS_TOKEN`, ingen
+   databasepassord eller service-role-nøkkel, ingen `ANTIDEP_*_SECRET`. Sett
+   nettverkstilgangen til **Custom** med bare kildeleverandørens domener.
+2. **Fjern alle connectorer fra Routine A** i opprettelsesskjemaet. De er med som
+   standard, og Routinen trenger ingen av dem.
+3. **Routine A** kjøres på forespørsel, med oppdragsfilen som eneste variabel.
+4. **Routine B** kjøres etter A, i et *annet* miljø, med agentlegitimasjonen.
+
+Punkt 1 og 2 er selve sikkerhetsgrensen (avsnitt 3). Hopper man over dem, er
+resten bare dokumentasjon.
 
 ---
 

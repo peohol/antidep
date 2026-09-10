@@ -87,6 +87,7 @@ import {
   asUuid,
   asVocabulary,
   fieldsOf,
+  isCalendarTimestamp,
   nestedFields,
   problem,
   raw,
@@ -252,7 +253,6 @@ export interface ExtractionProposal extends ExtractionDraft {
 }
 
 const CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
-const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
 /**
  * Ekstraksjonsmetoden et forslag fra denne produsenten blir registrert med.
@@ -387,7 +387,7 @@ export function parseExtractionDraft(value: unknown, subject: string): Extractio
 function parseGeneratedBy(parent: Fields, value: unknown): GeneratedBy {
   const fields = nestedFields(parent, value, 'generated_by')
   const draftedAt = asText(fields, 'drafted_at')
-  if (!TIMESTAMP_PATTERN.test(draftedAt) || Number.isNaN(Date.parse(draftedAt))) {
+  if (!isCalendarTimestamp(draftedAt)) {
     problem(
       fields.subject,
       'generated_by.drafted_at',

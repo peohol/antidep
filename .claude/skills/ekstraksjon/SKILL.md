@@ -36,10 +36,19 @@ beskjed om hvorfor det ikke lot seg gjøre.
    og slå aldri sammen to setninger som ikke står sammen.
 4. **Bruk bare identifikatorene som står i oppdraget.** Passer ingen av dem, er
    det et svar i seg selv.
-5. **Du har ingen skrivevei inn i databasen, og skal ikke lete etter en.** Kjør
-   aldri `npm run agent:extract-evidence` eller en annen kommando som skriver til
-   Antidep som en del av dette leddet. Registrering er en egen operasjon, med en
-   egen identitet, og skal kjøres for seg.
+5. **Du skal ikke skrive til Antidep, og ikke lete etter en vei til å gjøre det.**
+   Kjør aldri `npm run agent:extract-evidence`, `scripts/deploy-migrations.sh`
+   eller noen annen kommando eller connector som kan skrive, som en del av dette
+   leddet. Registrering er en egen operasjon, med en egen identitet, og skal
+   kjøres for seg.
+
+   Kommandoene i dette leddet har ingen databasetilgang. Men du kjører i en sesjon
+   med skall, så oppsettet — kjøremiljøet uten skrivekapable hemmeligheter, og
+   ingen connectorer — er det som faktisk holder grensen
+   (`docs/ROUTINE_EXTRACTION.md` §3). Oppdager du at du likevel har tilgang til
+   noe som kan skrive til Antidep, er oppsettet feil: si fra i rapporten, og bruk
+   det ikke.
+
 6. **Skriv aldri `forslag.json` selv.** Den filen lages av `--close`, som
    kontrollerer svaret ditt. En fil du skrev direkte, ville vært et forslag som
    ikke var kontrollert av noe.
@@ -124,3 +133,7 @@ Rapporter kort:
 - at ingenting er registrert, og at registrering er et eget steg.
 
 Ikke registrer noe. Ikke publiser noe. Ikke oppsummer artikkelen klinisk.
+
+Si også fra dersom kjøremiljøet inneholdt skrivekapabel legitimasjon eller en
+connector som kan skrive. Det er en feil i oppsettet av Routinen, ikke i
+oppdraget.
