@@ -436,7 +436,7 @@ async function main(): Promise<void> {
   }
 
   const extraction = await runEvidenceExtraction({
-    mode: 'unchecked_model',
+    mode: 'without_assignment',
     api: createEvidenceExtractionApi(client, {
       identityKey: 'agent-identity:evidence-extraction-01',
       secret: agentSecret(secret),
@@ -739,7 +739,7 @@ async function main(): Promise<void> {
   // og lukkes, slik at også en tørrkjøring er sporbar (§74.31).
   const dryRun = await runReextraction({
     ...reextractionPorts,
-    mode: 'unchecked_model',
+    mode: 'without_assignment',
     dryRun: true,
   })
   check(
@@ -759,7 +759,7 @@ async function main(): Promise<void> {
 
   const reextraction = await runReextraction({
     ...reextractionPorts,
-    mode: 'unchecked_model',
+    mode: 'without_assignment',
   })
   check(
     're-ekstraksjonen registrerte et nytt forankret funn',
@@ -779,7 +779,7 @@ async function main(): Promise<void> {
 
   const igjen = await runReextraction({
     ...reextractionPorts,
-    mode: 'unchecked_model',
+    mode: 'without_assignment',
   })
   check(
     'kjørt om igjen skriver den ingenting',
@@ -824,13 +824,13 @@ async function main(): Promise<void> {
   })
 
   const avbrutt = await runEvidenceExtraction({
-    mode: 'unchecked_model',
+    mode: 'without_assignment',
     api: reextractionPorts.extractionApi,
     proposal: avbruttForslag,
     retrieve: retrieve(contentHash),
   })
   const nabo = await runEvidenceExtraction({
-    mode: 'unchecked_model',
+    mode: 'without_assignment',
     api: reextractionPorts.extractionApi,
     proposal: naboForslag,
     retrieve: retrieve(contentHash),
@@ -852,7 +852,7 @@ async function main(): Promise<void> {
 
   const gjenopptatt = await runReextraction({
     ...reextractionPorts,
-    mode: 'unchecked_model',
+    mode: 'without_assignment',
     proposals: [{ label: 'avbrutt.json', proposal: avbruttForslag }],
   })
   check(
@@ -882,7 +882,7 @@ async function main(): Promise<void> {
   // kjeden er komplett, og ikke dra naboen med seg.
   const enGangTil = await runReextraction({
     ...reextractionPorts,
-    mode: 'unchecked_model',
+    mode: 'without_assignment',
     proposals: [{ label: 'avbrutt.json', proposal: avbruttForslag }],
   })
   check(
@@ -939,7 +939,7 @@ async function main(): Promise<void> {
 
   const rettet = await runReextraction({
     ...reextractionPorts,
-    mode: 'unchecked_model',
+    mode: 'without_assignment',
     proposals: [{ label: 'rettet-forankring.json', proposal: rettetForslag }],
   })
   check(
