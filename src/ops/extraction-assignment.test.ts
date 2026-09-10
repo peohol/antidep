@@ -329,7 +329,83 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
     })
     await expect(
       buildAssignmentFromCatalog({ ...grunnlag, catalog, documentPath: await pdfPaDisk() }),
-    ).rejects.toThrow(/utledet av dokumentet sha256:99/)
+    ).rejects.toThrow(/utledet av et annet originaldokument \(sha256:99/)
+    expect(catalog.registered).toHaveLength(0)
+  })
+
+  it('gjenbruker ikke en rad hentet ut med andre argumenter', async () => {
+    // Argumentene er en del av oppskriften kjeden faktisk kjører. En rad
+    // registrert med andre argumenter beskriver en annen operasjon, selv om
+    // teksten tilfeldigvis ble den samme.
+    const catalog = katalog({
+      versions: [
+        versjon({
+          source_version_id: NY_VERSJON,
+          representation: 'full_text',
+          content_hash: await sourceVersionContentHash(TEKST),
+          document_sha256: await documentDigest(PDF),
+          document_byte_size: PDF.length,
+          document_media_type: 'application/pdf',
+          text_extraction_tool: PDF_TEXT_TOOL,
+          text_extraction_tool_version: 'pdftotext 24.02.0',
+          text_extraction_arguments: '-raw',
+        }),
+      ],
+    })
+    await expect(
+      buildAssignmentFromCatalog({ ...grunnlag, catalog, documentPath: await pdfPaDisk() }),
+    ).rejects.toThrow(/andre argumenter/)
+    expect(catalog.registered).toHaveLength(0)
+  })
+
+  it('gjenbruker ikke en rad registrert som noe annet enn det kalleren ber om', async () => {
+    const catalog = katalog({
+      versions: [
+        versjon({
+          source_version_id: NY_VERSJON,
+          representation: 'abstract',
+          content_hash: await sourceVersionContentHash(TEKST),
+          document_sha256: await documentDigest(PDF),
+          document_byte_size: PDF.length,
+          document_media_type: 'application/pdf',
+          text_extraction_tool: PDF_TEXT_TOOL,
+          text_extraction_tool_version: 'pdftotext 24.02.0',
+          text_extraction_arguments: PDF_TEXT_ARGUMENTS,
+        }),
+      ],
+    })
+    await expect(
+      buildAssignmentFromCatalog({ ...grunnlag, catalog, documentPath: await pdfPaDisk() }),
+    ).rejects.toThrow(/registrert som «abstract», ikke som «full_text»/)
+    expect(catalog.registered).toHaveLength(0)
+  })
+
+  // En nyere poppler som gir byte for byte den samme teksten, skal ikke stenge
+  // en riktig kjøring: fasiten er fingeravtrykket, og en ny rad er umulig fordi
+  // databasen avviser dubletten. Versjonsnummeret er derfor ikke en del av
+  // sammenligningen.
+  it('gjenbruker en rad som bare har en annen verktøyversjon', async () => {
+    const catalog = katalog({
+      versions: [
+        versjon({
+          source_version_id: NY_VERSJON,
+          representation: 'full_text',
+          content_hash: await sourceVersionContentHash(TEKST),
+          document_sha256: await documentDigest(PDF),
+          document_byte_size: PDF.length,
+          document_media_type: 'application/pdf',
+          text_extraction_tool: PDF_TEXT_TOOL,
+          text_extraction_tool_version: 'pdftotext 22.02.0',
+          text_extraction_arguments: PDF_TEXT_ARGUMENTS,
+        }),
+      ],
+    })
+    const report = await buildAssignmentFromCatalog({
+      ...grunnlag,
+      catalog,
+      documentPath: await pdfPaDisk(),
+    })
+    expect(report.versionOutcome).toBe('reused')
     expect(catalog.registered).toHaveLength(0)
   })
 
@@ -345,7 +421,7 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
     })
     await expect(
       buildAssignmentFromCatalog({ ...grunnlag, catalog, documentPath: await pdfPaDisk() }),
-    ).rejects.toThrow(/--representation framfor --pdf/)
+    ).rejects.toThrow(/registrert som tekst hentet fra en adresse/)
     expect(catalog.registered).toHaveLength(0)
   })
 

@@ -248,6 +248,43 @@ async function storeDocument(document: LoadedDocument, directory: string): Promi
 }
 
 /**
+ * Hva som skiller en registrert kildeversjon fra den kalleren nå ber om.
+ *
+ * Returnerer `null` når raden beskriver nøyaktig det samme og trygt kan
+ * gjenbrukes, ellers én setning som sier hva som er forskjellig.
+ *
+ * Tre ting sammenlignes, og verktøyversjonen er med vilje ikke én av dem.
+ * Fasiten er fingeravtrykket av teksten, og den er allerede lik: gir en nyere
+ * poppler byte for byte den samme teksten, er teksten den samme, og en
+ * avvisning på versjonsnummeret ville stengt en riktig kjøring uten vei videre —
+ * en ny rad er umulig, siden `source_versions_source_content_key` avviser den.
+ * Argumentene er derimot en del av oppskriften kjeden faktisk kjører.
+ */
+function reuseDifference(
+  existing: EditorSourceVersionRow,
+  digest: string,
+  recipe: TextExtractionRecipe,
+  representation: string,
+): string | null {
+  if (existing.document_sha256 === null) {
+    return 'uten noe originaldokument — den er registrert som tekst hentet fra en adresse'
+  }
+  if (existing.document_sha256 !== digest) {
+    return `utledet av et annet originaldokument (${existing.document_sha256})`
+  }
+  if (existing.text_extraction_arguments !== recipe.arguments) {
+    return (
+      `hentet ut med andre argumenter («${existing.text_extraction_arguments ?? 'ingen'}» mot ` +
+      `«${recipe.arguments}»)`
+    )
+  }
+  if (existing.representation !== representation) {
+    return `registrert som «${existing.representation ?? 'uten representasjonstype'}», ikke som «${representation}»`
+  }
+  return null
+}
+
+/**
  * Registrerer fullteksten fra en original-PDF, eller gjenbruker den som finnes.
  *
  * Fingeravtrykkene beregnes to steder, og det er med hensikt: her, av
@@ -299,28 +336,25 @@ async function registerFromDocument(
   // observasjonen. Databasen ville avvist dubletten; her gjenbrukes den, slik at
   // en avbrutt kjøring kan kjøres om igjen.
   //
-  // Men bare når raden er bundet til **dette** dokumentet. Den samme teksten kan
-  // komme av en annen PDF — den samme artikkelen fra to utgivere — eller av
-  // tekstveien, uten noe dokument i det hele tatt. Gjenbrukte kommandoen raden
-  // likevel, ville oppdraget pekt på den *gamle* bindingen mens lageret fikk den
-  // *nye* filen, og hvert ledd videre ville stanset med «fant ingen fil» etter at
-  // kommandoen hadde meldt at alt gikk bra.
+  // Men bare når raden beskriver nøyaktig det kalleren nå ber om. Den samme
+  // teksten kan komme av en annen PDF — den samme artikkelen fra to utgivere —
+  // eller av tekstveien uten noe dokument i det hele tatt; og den samme PDF-en
+  // kan være registrert som noe annet enn det kalleren ber om nå. Gjenbrukte
+  // kommandoen raden likevel, ville oppdraget pekt på den *gamle* raden mens
+  // lageret fikk den *nye* filen, og kommandoen ville meldt at alt gikk bra.
   const existing = (await options.catalog.listSourceVersions(source.source_id)).find(
     (row) => row.content_hash === extracted.extracted.contentHash,
   )
   if (existing !== undefined) {
-    if (existing.document_sha256 !== document.digest) {
+    const difference = reuseDifference(existing, document.digest, recipe.recipe, representation)
+    if (difference !== null) {
       return {
         error:
-          `Den samme teksten er allerede registrert for denne kilden, som kildeversjon ` +
-          `${existing.source_version_id} — men ${
-            existing.document_sha256 === null
-              ? 'uten noe originaldokument (den er registrert som tekst hentet fra en adresse)'
-              : `utledet av dokumentet ${existing.document_sha256}`
-          }, ikke av ${document.path} (${document.digest}). En ny rad ville vært den samme ` +
+          'Den samme teksten er allerede registrert for denne kilden, som kildeversjon ' +
+          `${existing.source_version_id} — men ${difference}. En ny rad ville vært den samme ` +
           'observasjonen om igjen, og databasen ville avvist den. Bygg oppdraget av den ' +
-          'registrerte versjonen med --representation framfor --pdf, eller bruk det ' +
-          'dokumentet den faktisk er utledet av.',
+          'registrerte versjonen med --representation framfor --pdf, eller registrer den ' +
+          'representasjonen du faktisk mangler.',
       }
     }
     log(`Kildeversjonen er allerede registrert: ${existing.source_version_id}.`)
