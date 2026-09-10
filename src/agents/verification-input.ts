@@ -34,6 +34,49 @@ export interface VerificationSourceVersion {
   readonly hasStorageReference: boolean
 }
 
+/**
+ * Erklæringen om hvem som laget utkastet, og når (migrasjon 005ac).
+ *
+ * Kontrollgrunnlag og ikke driftsinformasjon: en kontrollør leser et
+ * maskinutkast fra en bestemt modell og en bestemt promptmal annerledes enn en
+ * kollegas egen ekstraksjon, og «hvilke funn ble laget med denne malen» er et
+ * spørsmål kontrollflaten skal kunne svare på (ANTIDEP_CONSTITUTION.md §12,
+ * §20, EVIDENCE_PIPELINE.md §46, §65).
+ *
+ * En *erklæring*, ikke en observasjon: databasen kan ikke se hvilken modell som
+ * leste en artikkel, men den kan kreve at påstanden står der og bevare den.
+ * `draftedAt` er da utkastet ble laget — ikke da det ble registrert.
+ */
+export interface DraftDeclaration {
+  readonly producer: string
+  readonly provider: string
+  readonly model: string
+  readonly modelVersion: string
+  readonly promptTemplateVersion: string
+  readonly draftedAt: string
+  /** `null` for et menneskeskrevet forslag: der finnes ingen forespørsel. */
+  readonly requestDigest: string | null
+}
+
+/**
+ * Kjøringen som faktisk registrerte evidensfunnet (migrasjon 005ac).
+ *
+ * Antideps egen deterministiske vei inn i basen, med sine egne premisser og
+ * sitt eget tidspunkt. Skilt fra erklæringen over fordi de to er forskjellige
+ * operasjoner: utkastet lages utenfor Antidep, registreringen skjer når noen
+ * kjører kommandoen — kanskje dager senere.
+ */
+export interface RegistrationRun {
+  readonly agentRunId: string
+  readonly agentRole: string
+  readonly provider: string
+  readonly model: string
+  readonly modelVersion: string
+  readonly promptTemplateVersion: string
+  readonly pipelineVersion: string
+  readonly startedAt: string
+}
+
 /** En global bibliografisk identifikator for kilden. */
 export interface SourceIdentifier {
   /** `doi` eller `pmid`. */
@@ -157,6 +200,18 @@ export interface VerificationItem {
   readonly sourceIdentifiers: readonly SourceIdentifier[]
   readonly sourceVersion: VerificationSourceVersion | null
   /**
+   * Erklæringen om hvem som laget utkastet, eller `null`.
+   *
+   * `null` betyr at ingen erklæring fulgte med kjøringen — editorveien, eller
+   * et funn registrert før migrasjon 005ab — ikke at premissene er ukjente.
+   * Fraværet skal vises som fravær, og aldri fylles inn fra `extractionMethod`:
+   * den sier hvordan raden ble til, ikke hvilken modell eller hvilken promptmal
+   * som gjorde det.
+   */
+  readonly draftedBy: DraftDeclaration | null
+  /** Kjøringen som registrerte raden. `null` på editorveien. */
+  readonly registeredBy: RegistrationRun | null
+  /**
    * Kildeforankringen per kontrollfelt, i vokabularets egen rekkefølge.
    *
    * Tom liste betyr at ingen forankring er registrert — tilstanden alle funn
@@ -256,6 +311,54 @@ function asOptionalNumericText(value: unknown, field: string): string | null {
 
 function asOptionalInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) ? value : null
+}
+
+/**
+ * Erklæringen, eller `null` når ingen fulgte med.
+ *
+ * En manglende nøkkel leses som `null` og ikke som en feil: et svar fra en
+ * projeksjonsversjon eldre enn 005ac har den ikke. Er nøkkelen der, leses hvert
+ * felt strengt — en premiss som stille manglet, ville vist kontrolløren en
+ * halv proveniens, og en halv proveniens ser ut som en fullstendig én.
+ */
+function parseDraftedBy(value: unknown): DraftDeclaration | null {
+  if (value === null || value === undefined) {
+    return null
+  }
+  const record = asRecord(value, 'drafted_by')
+  return {
+    producer: asString(record['producer'], 'drafted_by.producer'),
+    provider: asString(record['provider'], 'drafted_by.provider'),
+    model: asString(record['model'], 'drafted_by.model'),
+    modelVersion: asString(record['model_version'], 'drafted_by.model_version'),
+    promptTemplateVersion: asString(
+      record['prompt_template_version'],
+      'drafted_by.prompt_template_version',
+    ),
+    draftedAt: asString(record['drafted_at'], 'drafted_by.drafted_at'),
+    requestDigest: asOptionalString(record['request_digest']),
+  }
+}
+
+/** Kjøringen som registrerte raden, eller `null` på editorveien. */
+function parseRegisteredBy(value: unknown): RegistrationRun | null {
+  if (value === null || value === undefined) {
+    return null
+  }
+  const record = asRecord(value, 'registered_by')
+  return {
+    agentRunId: asString(record['agent_run_id'], 'registered_by.agent_run_id'),
+    agentRole: asString(record['agent_role'], 'registered_by.agent_role'),
+    provider: asString(record['provider'], 'registered_by.provider'),
+    model: asString(record['model'], 'registered_by.model'),
+    modelVersion: asString(record['model_version'], 'registered_by.model_version'),
+    promptTemplateVersion: asString(
+      record['prompt_template_version'],
+      'registered_by.prompt_template_version',
+    ),
+    pipelineVersion: asString(record['pipeline_version'], 'registered_by.pipeline_version'),
+    startedAt: asString(record['started_at'], 'registered_by.started_at'),
+  }
 }
 
 function parseSourceVersion(value: unknown): VerificationSourceVersion | null {
@@ -445,6 +548,8 @@ export function parseVerificationItem(value: unknown): VerificationItem {
     sourceStatusNote: asOptionalString(source['status_note']),
     sourceIdentifiers: parseSourceIdentifiers(source['identifiers']),
     sourceVersion: parseSourceVersion(record['source_version']),
+    draftedBy: parseDraftedBy(record['drafted_by']),
+    registeredBy: parseRegisteredBy(record['registered_by']),
     fieldGroundings: parseFieldGroundings(record['field_groundings']),
     semanticCheckFields: parseCheckFieldList(
       record['semantic_check_fields'],

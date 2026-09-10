@@ -8,10 +8,10 @@ innhold: det faglige innholdet blir til når forslaget er registrert i basen med
 proveniens. Bare kontrakten (`extraction-proposal.schema.json`) og eksempelet
 (`eksempel-syntetisk-forslag.json`) er commitet.
 
-Forslaget skriver ingenting selv. Den som lager det — i dag ChatGPT, ut av en
-lovlig innhentet fulltekst — har ingen tilgang til databasen. Alt som skrives,
-skjer i kjøringen etterpå, med agentlegitimasjon og under de deterministiske
-kontrollene.
+Forslaget skriver ingenting selv. Den som lager det — modell-leddet
+(`assignments/README.md`), ChatGPT utenfor Antidep, eller et menneske — har
+ingen tilgang til databasen. Alt som skrives, skjer i kjøringen etterpå, med
+agentlegitimasjon og under de deterministiske kontrollene.
 
 ## 1. Finn riktig kildeversjon
 
@@ -57,8 +57,9 @@ skrives ut på nytt med:
 npm run agent:extract-evidence -- --schema
 ```
 
-Kort fortalt har filen tre deler:
+Kort fortalt har filen fire deler:
 
+- **`generated_by`** — hvem som leste kilden og foreslo verdiene,
 - **hvilken kildeversjon** som ble lest (`source_id`, `source_version_id`,
   `retrieved_from`, `content_hash`),
 - **`extraction`** — de strukturerte verdiene, hver med sin `*_availability` som
@@ -74,6 +75,42 @@ Tre regler er verdt å ta med til den som skriver forslaget:
    Manglende forankring gjettes aldri fram.
 3. **Utdraget må stå ordrett i kilden**, med nok kontekst til å være
    kontrollgrunnlag — minst hele setningen verdien står i.
+
+### `generated_by`: hvem som laget forslaget
+
+Feltet er påkrevd, og det er ikke en opplysning ved siden av — det avgjør to
+ting. Erklæringen registreres i agentkjøringens manifest som **hvem som laget
+utkastet**, og `producer` avgjør om funnet føres som et KI-assistert forslag
+eller som en menneskelig ekstraksjon.
+
+`drafted_at` er da **utkastet** ble laget — ikke da det ble registrert. De to er
+forskjellige operasjoner på forskjellige tidspunkter, og registreringen kan skje
+dager senere. Uten feltet ville det eneste tidspunktet i proveniensen vært
+registreringskjøringens.
+
+Et forslag fra modell-leddet får blokken fylt ut automatisk, inkludert
+`request_digest` — fingeravtrykket av forespørselen modellen svarte på. Skriver
+du forslaget selv, ut av en lovlig innhentet fulltekst, er dette blokken:
+
+```json
+"generated_by": {
+  "producer": "human",
+  "provider": "human",
+  "model": "manuell-ekstraksjon",
+  "model_version": "not_applicable",
+  "prompt_template_version": "not_applicable",
+  "drafted_at": "2026-09-15T09:00:00Z"
+}
+```
+
+`request_digest` utelates: et menneskeskrevet forslag har ingen forespørsel.
+
+Laget ChatGPT utkastet utenfor Antidep, er `producer` `model`, og `provider`,
+`model` og `model_version` skal si hvilken modell det faktisk var.
+
+Verdien inngår i evidensfunnets fingeravtrykk. De samme strukturerte verdiene
+erklært av et menneske og av en modell er derfor **to rader**, ikke én rad som
+skifter mening.
 
 ## 4. Tørrkjøring
 
@@ -124,6 +161,17 @@ npm run agent:verify-extraction -- --evidence-item <uuid>
 En **separat** operasjon, av en annen agentidentitet, som henter kildeversjonen
 på nytt og beviser at hvert forankret utdrag står ordrett i den. Uten den kan
 ingen kliniker bekrefte funnet felt for felt i kontrolløkten.
+
+## Å lage forslaget med modell-leddet
+
+```bash
+npm run agent:propose-extraction -- --assignment <oppdrag> --prepare <katalog>
+npm run agent:propose-extraction -- --assignment <oppdrag> --recording <opptak> --out <fil>
+```
+
+Leddet leser kildeversjonen og skriver et forslag her. Det har ingen
+databasetilgang, og skriver aldri en rad. Hele oppskriften står i
+`assignments/README.md`.
 
 ## Flere artikler på én gang
 

@@ -59,7 +59,11 @@ import type {
   ExtractionVerificationRecord,
   LinkedClaimRevision,
 } from '../lib/extraction-review'
-import type { VerificationItem } from '../agents/verification-input'
+import type {
+  DraftDeclaration,
+  RegistrationRun,
+  VerificationItem,
+} from '../agents/verification-input'
 
 /** En verdi som ikke er registrert. Aldri en tom celle. */
 function Absent({ children }: { readonly children: string }) {
@@ -176,8 +180,78 @@ export function ExtractionSourcePanel({ item }: { readonly item: VerificationIte
             )}
           </DetailNote>
         </Detail>
+        <Detail label="Verdiene ble laget av">
+          <DraftedBy declaration={item.draftedBy} />
+        </Detail>
+        <Detail label="Registrert av kjøringen">
+          <RegisteredBy run={item.registeredBy} />
+        </Detail>
       </DetailList>
     </section>
+  )
+}
+
+/**
+ * Hvem som leste kilden og foreslo verdiene, slik forslaget erklærte det.
+ *
+ * Kontrollgrunnlag og ikke driftsinformasjon: den som skal bedømme om verdiene
+ * følger av kilden, leser et maskinutkast fra en bestemt modell og en bestemt
+ * promptmal annerledes enn en kollegas egen ekstraksjon
+ * (ANTIDEP_CONSTITUTION.md §12, §20, EVIDENCE_PIPELINE.md §46).
+ *
+ * Panelet sier med ord at dette er en erklæring. Databasen kan ikke observere
+ * hvilken modell som leste en artikkel, og en flate som viste verdien som et
+ * observert faktum, ville lovet mer enn den kan holde.
+ *
+ * Fravær vises som fravær: et funn ført inn i adminflyten bærer ingen
+ * erklæring, og det er en opplysning — ikke tomme felter, og aldri noe som
+ * fylles inn fra ekstraksjonsmetoden.
+ *
+ * `producer` er ikke et databasevokabular, men en verdi i kjøringens manifest,
+ * og oversettes derfor her framfor i `vocabulary-labels.ts`. En ukjent verdi
+ * vises ordrett framfor å bli oversatt til noe den ikke er.
+ */
+function DraftedBy({ declaration }: { readonly declaration: DraftDeclaration | null }) {
+  if (declaration === null) {
+    return <Absent>Ingen erklæring fulgte med. Verdiene ble ført inn direkte i adminflyten</Absent>
+  }
+  const producer =
+    declaration.producer === 'model'
+      ? 'Foreslått av en språkmodell'
+      : declaration.producer === 'human'
+        ? 'Skrevet av et menneske'
+        : declaration.producer
+  return (
+    <>
+      {declaration.provider}/{declaration.model} {declaration.modelVersion}
+      <DetailNote>{producer}, etter forslagets egen erklæring</DetailNote>
+      <DetailNote>Promptmal {declaration.promptTemplateVersion}</DetailNote>
+      <DetailNote>Utkastet laget {whenText(declaration.draftedAt)}</DetailNote>
+      {declaration.requestDigest === null ? null : (
+        <DetailNote>Forespørsel {declaration.requestDigest}</DetailNote>
+      )}
+    </>
+  )
+}
+
+/**
+ * Kjøringen som skrev raden — Antideps egen deterministiske registreringsvei.
+ *
+ * Egen rad og ikke slått sammen med erklæringen over: de to er forskjellige
+ * operasjoner på forskjellige tidspunkter, og et tidspunkt som ble lest som det
+ * andre, ville sagt at modellen leste artikkelen i det øyeblikket noen kjørte
+ * registreringskommandoen.
+ */
+function RegisteredBy({ run }: { readonly run: RegistrationRun | null }) {
+  if (run === null) {
+    return <Absent>Ingen agentkjøring. Funnet ble registrert i adminflyten</Absent>
+  }
+  return (
+    <>
+      {run.provider}/{run.model} {run.modelVersion}
+      <DetailNote>Pipeline {run.pipelineVersion}</DetailNote>
+      <DetailNote>Kjørt {whenText(run.startedAt)}</DetailNote>
+    </>
   )
 }
 

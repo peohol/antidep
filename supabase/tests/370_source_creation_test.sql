@@ -133,7 +133,7 @@ select is_empty(
         -- agent ikke har en brukerkonto: kontrollen er legitimasjonen og den
         -- eksplisitte rollen, ikke Data API-rollen. Hvilke roller som faktisk
         -- har EXECUTE, kontrolleres i 600_agent_extraction_test.sql.
-        'api.register_agent_extraction(text,text,uuid,uuid,uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,jsonb,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text)'
+        'api.register_agent_extraction(text,text,uuid,uuid,uuid,text,text,text,text,uuid,text,uuid,text,text,text,text,text,text,jsonb,text,uuid,integer,text,uuid,text,text,text,text,numeric,text,numeric,numeric,numeric,text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de seksten kontrollerte inngangspunktene er kjørbar for noen klientrolle'

@@ -28,7 +28,11 @@ import {
   STUDY_DESIGNS,
   VALUE_AVAILABILITIES,
 } from '../types/api.ts'
-import { EXTRACTION_PROPOSAL_VERSION, MIN_SOURCE_EXCERPT_LENGTH } from './extraction-proposal.ts'
+import {
+  EXTRACTION_PROPOSAL_VERSION,
+  MIN_SOURCE_EXCERPT_LENGTH,
+  PROPOSAL_PRODUCERS,
+} from './extraction-proposal.ts'
 
 const UUID_PATTERN = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 const CONTENT_HASH_PATTERN = '^sha256:[0-9a-f]{64}$'
@@ -146,11 +150,82 @@ const REQUIRED_EXTRACTION_FIELDS = [
   'source_locator',
 ]
 
+/**
+ * De to delene et modell-ledd faktisk produserer.
+ *
+ * Skilt ut fordi de er nøyaktig det `parseExtractionDraft` leser, og fordi de
+ * er det promptmalen legger ved som formkrav (`extraction-prompt.ts`). Ett
+ * uttrykk, brukt av begge skjemaene: en modell som fikk en litt annen form enn
+ * den kjøringen krever, ville produsert utkast som ikke lot seg registrere.
+ */
+const DRAFT_PROPERTIES: Record<string, Schema> = {
+  extraction: {
+    type: 'object',
+    additionalProperties: false,
+    description: 'De strukturerte verdiene forslaget påstår om studien.',
+    required: REQUIRED_EXTRACTION_FIELDS,
+    properties: EXTRACTION_PROPERTIES,
+  },
+  field_groundings: {
+    type: 'array',
+    minItems: 1,
+    description:
+      'Én forankring per semantisk felt raden påstår noe om. Databasen avviser en ekstraksjon som ikke forankrer dem alle, og ingen forankring fylles inn automatisk. Forankringen er en del av evidensfunnets identitet: et forslag med de samme strukturerte verdiene, men et rettet utdrag, en rettet peker eller en rettet begrunnelse, registreres som et nytt funn ved siden av det gamle og må kontrolleres på nytt. Rekkefølgen i listen betyr ingenting.',
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['check_field', 'source_excerpt', 'source_locator', 'justification'],
+      properties: {
+        check_field: vocabulary(
+          EVIDENCE_CHECK_FIELDS,
+          'Hvilket kontrollfelt forankringen gjelder. Hvert felt kan forankres én gang.',
+        ),
+        source_excerpt: {
+          type: 'string',
+          minLength: MIN_SOURCE_EXCERPT_LENGTH,
+          description:
+            'Det ordrette kildeutdraget, med nok kontekst til å være kontrollgrunnlag. Må stå ordrett i kildeversjonen; kjøringen prøver det.',
+        },
+        source_locator: text(
+          'Den presise pekeren for nettopp dette utdraget, for eksempel «Results, tabell 2».',
+        ),
+        justification: text(
+          'Kort og eksplisitt: hvordan utdraget ble til den strukturerte verdien. Ikke en tankerekke.',
+        ),
+      },
+    },
+  },
+}
+
+const DRAFT_REQUIRED = ['extraction', 'field_groundings']
+
+/**
+ * Formen et modell-ledd skal svare med.
+ *
+ * Kildebindingen er ikke med: den er oppdragets og settes av kjøringen. Å be en
+ * modell om å gjenta `source_version_id` og `content_hash` ville vært å be den
+ * om en opplysning den ikke kan kontrollere, og gitt den en måte å binde
+ * ekstraksjonen til feil utgave på.
+ */
+export function buildExtractionDraftSchema(): Schema {
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $id: 'https://antidep.no/schema/extraction-draft-1.json',
+    title: 'Antidep ExtractionDraft',
+    description:
+      'De strukturerte verdiene for ett evidensfunn, lest ut av én representasjon, med én ordrett kildeforankring per semantisk felt. Utkastet skriver ingenting: det blir et ExtractionProposal først når kjøringen har lagt kildebindingen på det, og en ekstraksjon først når det er registrert under de deterministiske kontrollene.',
+    type: 'object',
+    additionalProperties: false,
+    required: DRAFT_REQUIRED,
+    properties: DRAFT_PROPERTIES,
+  }
+}
+
 /** Bygger JSON Schema-formen av kontrakten, fra de samme konstantene parseren bruker. */
 export function buildExtractionProposalSchema(): Schema {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: 'https://antidep.no/schema/extraction-proposal-1.json',
+    $id: 'https://antidep.no/schema/extraction-proposal-2.json',
     title: 'Antidep ExtractionProposal',
     description:
       'Ett forslag om ett evidensfunn, lest ut av én bestemt kildeversjon. Forslaget skriver ingenting: det leses av npm run agent:extract-evidence, som henter kildeversjonen på nytt, krever at fingeravtrykket stemmer, og prøver hvert source_excerpt ordrett mot den før noe registreres. Ukjente felter avvises, og ingenting fylles inn automatisk.',
@@ -158,17 +233,58 @@ export function buildExtractionProposalSchema(): Schema {
     additionalProperties: false,
     required: [
       'proposal_version',
+      'generated_by',
       'source_id',
       'source_version_id',
       'retrieved_from',
       'content_hash',
-      'extraction',
-      'field_groundings',
+      ...DRAFT_REQUIRED,
     ],
     properties: {
       proposal_version: {
         const: EXTRACTION_PROPOSAL_VERSION,
         description: 'Versjonen av denne kontrakten. Et forslag med en annen verdi avvises.',
+      },
+      generated_by: {
+        type: 'object',
+        additionalProperties: false,
+        description:
+          'Hvem som leste kilden og foreslo verdiene. Registreres som premissene for agentkjøringen som skriver raden, og avgjør om funnet føres som et KI-assistert forslag eller som en menneskelig ekstraksjon. Pipelineversjonen hører ikke hjemme her: den er Antideps egen og settes av kjøringen.',
+        required: [
+          'producer',
+          'provider',
+          'model',
+          'model_version',
+          'prompt_template_version',
+          'drafted_at',
+        ],
+        properties: {
+          producer: vocabulary(
+            PROPOSAL_PRODUCERS,
+            'model når en språkmodell leste kilden, human når et menneske gjorde det. Verdien avgjør knowledge.evidence_items.extraction_method, og skal si hva som faktisk skjedde.',
+          ),
+          provider: text(
+            'Leverandøren av modellen, for eksempel openai. For et menneskeskrevet forslag: human.',
+          ),
+          model: text(
+            'Modellen som svarte, eller for et menneskeskrevet forslag en kort beskrivelse av arbeidsformen, for eksempel manuell-ekstraksjon.',
+          ),
+          model_version: text(
+            'Modellversjonen, så presist leverandøren oppgir den. For et menneskeskrevet forslag: not_applicable.',
+          ),
+          prompt_template_version: text(
+            'Versjonen av promptmalen forslaget ble laget med. For et menneskeskrevet forslag: not_applicable.',
+          ),
+          drafted_at: text(
+            'Da utkastet ble laget, med tidssone, for eksempel 2026-09-15T09:00:00Z. Ikke da det ble registrert: de to er forskjellige operasjoner på forskjellige tidspunkter.',
+          ),
+          request_digest: {
+            type: ['string', 'null'],
+            pattern: CONTENT_HASH_PATTERN,
+            description:
+              'Fingeravtrykket av forespørselen modellen svarte på. Dekker representasjonen, katalogen i oppdraget og promptmalen, og er det som gjør modellkjøringen identifiserbar i ettertid. Utelates for et menneskeskrevet forslag.',
+          },
+        },
       },
       source_id: uuid('Kilden funnet er hentet fra, slik den er registrert i knowledge.sources.'),
       source_version_id: uuid(
@@ -186,42 +302,7 @@ export function buildExtractionProposalSchema(): Schema {
         description:
           'Fingeravtrykket kildeversjonen er registrert med. Kjøringen henter adressen på nytt og nekter å registrere noe dersom avtrykket ikke stemmer.',
       },
-      extraction: {
-        type: 'object',
-        additionalProperties: false,
-        description: 'De strukturerte verdiene forslaget påstår om studien.',
-        required: REQUIRED_EXTRACTION_FIELDS,
-        properties: EXTRACTION_PROPERTIES,
-      },
-      field_groundings: {
-        type: 'array',
-        minItems: 1,
-        description:
-          'Én forankring per semantisk felt raden påstår noe om. Databasen avviser en ekstraksjon som ikke forankrer dem alle, og ingen forankring fylles inn automatisk. Forankringen er en del av evidensfunnets identitet: et forslag med de samme strukturerte verdiene, men et rettet utdrag, en rettet peker eller en rettet begrunnelse, registreres som et nytt funn ved siden av det gamle og må kontrolleres på nytt. Rekkefølgen i listen betyr ingenting.',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['check_field', 'source_excerpt', 'source_locator', 'justification'],
-          properties: {
-            check_field: vocabulary(
-              EVIDENCE_CHECK_FIELDS,
-              'Hvilket kontrollfelt forankringen gjelder. Hvert felt kan forankres én gang.',
-            ),
-            source_excerpt: {
-              type: 'string',
-              minLength: MIN_SOURCE_EXCERPT_LENGTH,
-              description:
-                'Det ordrette kildeutdraget, med nok kontekst til å være kontrollgrunnlag. Må stå ordrett i kildeversjonen; kjøringen prøver det.',
-            },
-            source_locator: text(
-              'Den presise pekeren for nettopp dette utdraget, for eksempel «Results, tabell 2».',
-            ),
-            justification: text(
-              'Kort og eksplisitt: hvordan utdraget ble til den strukturerte verdien. Ikke en tankerekke.',
-            ),
-          },
-        },
-      },
+      ...DRAFT_PROPERTIES,
     },
   }
 }

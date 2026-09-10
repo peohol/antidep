@@ -29,6 +29,7 @@
 //   api.register_human_claim_verification    påstanden kontrolleres
 //   api.register_publication_approval        publiseringsbeslutningen
 //   api.publish_claim_revision               publiseringen
+//   runExtractionDrafting                    modell-leddet, med opptaksadapteret
 //
 // De to første og de to neste går gjennom de ekte kjørerne
 // (`runEvidenceExtraction`, `runExtractionVerification`) med de ekte portene
@@ -57,6 +58,25 @@
 // strukturerte verdiene, men ett rettet ordrett utdrag, er et *nytt* evidensfunn.
 // Det går hele veien til et gyldig maskinbevis, mens den gamle raden står urørt
 // og beholder sin egen kontroll, sin claim-lenke og sin publiserte påstand.
+//
+// ----------------------------------------------------------------------------
+// Modell-leddet, kjørt deterministisk
+//
+// Siste ledd er `runExtractionDrafting` med opptaksadapteret: leddet som leser
+// representasjonen og foreslår verdier, uten leverandørkonto og uten kostnad.
+// Tre ting kan bare prøves mot en ekte database:
+//
+//   * at forslaget modellen produserte, går uendret gjennom filformen og de
+//     ekte portene til et gyldig maskinbevis,
+//   * at kjøringen registreres med *modellens* leverandør, modell,
+//     modellversjon og promptmalversjon — ikke med en fast verdi — og at
+//     kontrollgrunnlaget viser dem (migrasjon 005ac), og
+//   * at de samme verdiene erklært av et menneske blir en *annen* rad, ført som
+//     `manual`, fordi ekstraksjonsmetoden inngår i fingeravtrykket
+//     (migrasjon 005ab).
+//
+// Et utkast med et oppdiktet utdrag prøves også: det blir ikke et forslag, og
+// ingenting i basen endrer seg av det.
 // ============================================================================
 
 import { execFileSync } from 'node:child_process'
@@ -78,11 +98,13 @@ import {
 import { runEvidenceExtraction } from '../src/agents/extraction-run.ts'
 import { runExtractionVerification } from '../src/agents/extraction-verification-run.ts'
 import type { RetrieveLike } from '../src/agents/extraction-verification-run.ts'
-import {
-  EVIDENCE_EXTRACTION_PREMISES,
-  EXTRACTION_VERIFICATION_PREMISES,
-} from '../src/agents/pipeline-version.ts'
+import { EXTRACTION_VERIFICATION_PREMISES } from '../src/agents/pipeline-version.ts'
 import { runReextraction } from '../src/agents/reextraction-run.ts'
+import { parseExtractionAssignment } from '../src/agents/extraction-assignment.ts'
+import { serializeExtractionProposal } from '../src/agents/extraction-proposal.ts'
+import { EXTRACTION_DRAFTING_PROMPT_VERSION } from '../src/agents/extraction-prompt.ts'
+import { createModelClient } from '../src/agents/model-adapters.ts'
+import { prepareDraftingRequest, runExtractionDrafting } from '../src/agents/drafting-run.ts'
 
 // ----------------------------------------------------------------------------
 // Miljøet
@@ -243,6 +265,12 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
       select id from knowledge.evidence_items where source_id = ${q(SOURCE)});
     update knowledge.claims set current_published_revision_id = null
       where id::text like 'c0000000%';
+    -- Publiseringshendelsene må bort før revisjonen, ellers ser den neste
+    -- kjøringen at «revisjonen har vært publisert» og nekter å legge
+    -- evidensgrunnlaget under den på nytt (migrasjon 006, forseglingen).
+    -- Fremmednøkkelen ville normalt ha stoppet slettingen, men denne blokken
+    -- kjører med session_replication_role = replica.
+    delete from knowledge.publication_events where claim_id::text like 'c0000000%';
     delete from knowledge.claim_evidence_links where claim_revision_id::text like 'c0000000%';
     delete from knowledge.evidence_assessments where claim_revision_id::text like 'c0000000%';
     delete from knowledge.claim_revisions where id::text like 'c0000000%';
@@ -337,6 +365,14 @@ async function main(): Promise<void> {
   const kjedeForslag = {
     proposal_version: EXTRACTION_PROPOSAL_VERSION,
     source_id: SOURCE,
+    generated_by: {
+      producer: 'human',
+      provider: 'human',
+      model: 'manuell-ekstraksjon',
+      model_version: 'not_applicable',
+      prompt_template_version: 'not_applicable',
+      drafted_at: '2026-09-15T08:00:00Z',
+    },
     source_version_id: VERSION,
     retrieved_from: 'https://example.test/kjede',
     content_hash: contentHash,
@@ -394,7 +430,6 @@ async function main(): Promise<void> {
       identityKey: 'agent-identity:evidence-extraction-01',
       secret: agentSecret(secret),
     }),
-    premises: EVIDENCE_EXTRACTION_PREMISES,
     proposal: parseExtractionProposal(JSON.parse(JSON.stringify(kjedeForslag))),
     retrieve: retrieve(contentHash),
   })
@@ -613,6 +648,14 @@ async function main(): Promise<void> {
   const reProposalInput = {
     proposal_version: EXTRACTION_PROPOSAL_VERSION,
     source_id: SOURCE,
+    generated_by: {
+      producer: 'human',
+      provider: 'human',
+      model: 'manuell-ekstraksjon',
+      model_version: 'not_applicable',
+      prompt_template_version: 'not_applicable',
+      drafted_at: '2026-09-15T08:00:00Z',
+    },
     source_version_id: VERSION,
     retrieved_from: 'https://example.test/kjede',
     content_hash: contentHash,
@@ -675,7 +718,6 @@ async function main(): Promise<void> {
       identityKey: 'agent-identity:extraction-verification-01',
       secret: agentSecret(verifierSecret),
     }),
-    extractionPremises: EVIDENCE_EXTRACTION_PREMISES,
     verificationPremises: EXTRACTION_VERIFICATION_PREMISES,
     proposals: [{ label: 'kjedeprove-reekstraksjon.json', proposal: reProposal }],
     retrieve: retrieve(contentHash),
@@ -762,13 +804,11 @@ async function main(): Promise<void> {
 
   const avbrutt = await runEvidenceExtraction({
     api: reextractionPorts.extractionApi,
-    premises: EVIDENCE_EXTRACTION_PREMISES,
     proposal: avbruttForslag,
     retrieve: retrieve(contentHash),
   })
   const nabo = await runEvidenceExtraction({
     api: reextractionPorts.extractionApi,
-    premises: EVIDENCE_EXTRACTION_PREMISES,
     proposal: naboForslag,
     retrieve: retrieve(contentHash),
   })
@@ -944,6 +984,264 @@ async function main(): Promise<void> {
          and not exists (select 1 from knowledge.evidence_field_groundings g
                          where g.evidence_item_id = e.id)`,
     ) === '1',
+  )
+
+  // ---- Ledd 8: modell-leddet, fra kildeversjon til forslag ----------------
+  //
+  // Leddet som leser artikkelen og foreslår verdier, kjørt med opptaksadapteret
+  // — altså deterministisk og uten leverandørkonto. Det som prøves her og ikke
+  // kan prøves uten en ekte database, er at forslaget modellen produserte, går
+  // uendret gjennom de ekte portene, og at premissene raden registreres under,
+  // er modellens egne og ikke en fast verdi.
+  const drugId = psql(config, `select id from catalog.drugs where canonical_name = 'sertralin'`)
+  const outcomeId = psql(
+    config,
+    `select id from catalog.clinical_concepts where canonical_label = 'vektendring'`,
+  )
+  const oppdrag = parseExtractionAssignment({
+    assignment_version: 'antidep/extraction-assignment@1',
+    source_id: SOURCE,
+    source_version_id: VERSION,
+    retrieved_from: 'https://example.test/kjede',
+    content_hash: contentHash,
+    drugs: [{ drug_id: drugId, label: 'sertralin' }],
+    outcomes: [{ outcome_concept_id: outcomeId, label: 'vektendring' }],
+    populations: [],
+  })
+
+  // Slik en operatør faktisk gjør det: --prepare gir prompten og avtrykket,
+  // svaret limes inn i opptaket.
+  const forberedt = await prepareDraftingRequest({
+    assignment: oppdrag,
+    retrieve: retrieve(contentHash),
+  })
+  check(
+    'modell-leddet bygger en forespørsel av den hentede representasjonen',
+    forberedt.request.user.includes('Sertraline patients were randomised for 8 weeks.') &&
+      /^sha256:[0-9a-f]{64}$/.test(forberedt.requestDigest),
+  )
+
+  function opptakMed(completion: unknown) {
+    return createModelClient('recorded', {
+      recording: {
+        recording_version: 'antidep/model-recording@1',
+        identity: {
+          provider: 'kjedeprove',
+          model: 'opptaksmodell',
+          model_version: '2026-09-15',
+        },
+        entries: [
+          {
+            request_digest: forberedt.requestDigest,
+            prompt_template_version: forberedt.request.promptTemplateVersion,
+            completion: JSON.stringify(completion),
+          },
+        ],
+      },
+    })
+  }
+
+  const modellUtkast = {
+    extraction: {
+      design_code: 'randomized_controlled_trial',
+      population_availability: 'not_reported',
+      population_detail: 'Voksne.',
+      sample_size_availability: 'not_reported',
+      intervention_drug_id: drugId,
+      comparator_kind: 'none',
+      outcome_concept_id: outcomeId,
+      outcome_detail: 'Vektendring, foreslått av modell-leddet.',
+      timepoint_availability: 'not_reported',
+      reported_direction: 'increase',
+      estimate_availability: 'not_reported',
+      confidence_interval_availability: 'not_reported',
+      source_locator: 'Sammendrag',
+    },
+    field_groundings: [
+      {
+        check_field: 'intervention_arm',
+        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_locator: 'METHODS',
+        justification: 'Armen står i metodeavsnittet.',
+      },
+      {
+        check_field: 'outcome',
+        source_excerpt: 'Sertraline weight change increased from baseline.',
+        source_locator: 'RESULTS',
+        justification: 'Endepunktet står i resultatavsnittet.',
+      },
+      {
+        check_field: 'reported_direction',
+        source_excerpt: 'Sertraline weight change increased from baseline.',
+        source_locator: 'RESULTS',
+        justification: 'Retningen står i resultatavsnittet.',
+      },
+      {
+        check_field: 'availability_semantics',
+        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_locator: 'METHODS',
+        justification: 'Feltene uten verdi er ført som ikke rapportert.',
+      },
+    ],
+  }
+
+  // Først et utkast med et oppdiktet utdrag. Leddet har ingen skrivevei, så
+  // «ingen rad» er ikke en kontroll det gjør — men prøven skal likevel vise at
+  // ingenting ble til av et avvist utkast.
+  const førAvvist = psql(
+    config,
+    `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+  )
+  const avvist = await runExtractionDrafting({
+    assignment: oppdrag,
+    model: opptakMed({
+      ...modellUtkast,
+      field_groundings: [
+        {
+          check_field: 'intervention_arm',
+          source_excerpt: 'Paroxetine patients were randomised for twelve weeks.',
+          source_locator: 'METHODS',
+          justification: 'Armen står i metodeavsnittet.',
+        },
+      ],
+    }),
+    retrieve: retrieve(contentHash),
+  })
+  check(
+    'et utkast med et oppdiktet utdrag blir ikke et forslag',
+    avvist.decision === 'rejected' && avvist.proposal === undefined,
+    avvist.reason ?? '',
+  )
+  check(
+    'og ingenting ble skrevet av det avviste utkastet',
+    psql(config, `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`) ===
+      førAvvist,
+  )
+
+  const utkast = await runExtractionDrafting({
+    assignment: oppdrag,
+    model: opptakMed(modellUtkast),
+    retrieve: retrieve(contentHash),
+  })
+  check(
+    'modell-leddet produserte et forslag med sin egen leverandør og modell',
+    utkast.decision === 'drafted' &&
+      utkast.proposal?.generatedBy.producer === 'model' &&
+      utkast.proposal.generatedBy.provider === 'kjedeprove' &&
+      utkast.proposal.generatedBy.modelVersion === '2026-09-15',
+    utkast.reason ?? '',
+  )
+
+  // Forslaget går gjennom filformen på veien, som det gjør i drift: kjøreren
+  // skriver en fil, og registreringen leser den.
+  const modellForslag = parseExtractionProposal(
+    JSON.parse(JSON.stringify(serializeExtractionProposal(utkast.proposal!))) as unknown,
+  )
+  const modellKjede = await runReextraction({
+    ...reextractionPorts,
+    proposals: [{ label: 'modell-leddet.json', proposal: modellForslag }],
+  })
+  const modellItem = modellKjede.results[0]?.extraction.evidenceItemId ?? ''
+  check(
+    'forslaget fra modell-leddet gikk hele veien til et gyldig maskinbevis',
+    modellKjede.registered === 1 &&
+      modellKjede.unverified === 0 &&
+      psql(config, `select workflow.grounding_machine_proved(${q(modellItem)})::text`) === 'true',
+    modellKjede.results[0]?.unverifiedReason ?? '',
+  )
+  check(
+    'raden er ført som et KI-assistert forslag',
+    psql(
+      config,
+      `select extraction_method::text from knowledge.evidence_items where id = ${q(modellItem)}`,
+    ) === 'ai_assisted',
+  )
+  // Kjøringen beskriver seg selv: Antideps deterministiske registreringsvei, på
+  // det tidspunktet kommandoen ble kjørt. Den er ikke modellkjøringen.
+  check(
+    'kjøringen står med sine egne premisser, ikke med modellens',
+    psql(
+      config,
+      `select r.provider || '|' || r.model || '|' || r.model_version
+              || '|' || r.prompt_template_version || '|' || r.pipeline_version
+       from provenance.agent_runs r
+       join knowledge.evidence_items e on e.agent_run_id = r.id
+       where e.id = ${q(modellItem)}`,
+    ) ===
+      'antidep|proposal-grounded-extraction|1.0.0|evidence-extraction/proposal/1|antidep-evidence/1',
+  )
+  check(
+    'kontrollgrunnlaget viser hvem som laget verdiene, som en erklæring',
+    psql(
+      config,
+      `select (workflow.evidence_extraction_dossier(${q(modellItem)}) -> 'drafted_by' ->> 'producer')
+              || '|' || (workflow.evidence_extraction_dossier(${q(modellItem)})
+                         -> 'drafted_by' ->> 'model')
+              || '|' || (workflow.evidence_extraction_dossier(${q(modellItem)})
+                         -> 'drafted_by' ->> 'prompt_template_version')`,
+    ) === `model|opptaksmodell|${EXTRACTION_DRAFTING_PROMPT_VERSION}`,
+  )
+  // Utkastets eget tidspunkt og forespørselens avtrykk er det som gjør
+  // modellkjøringen identifiserbar i ettertid. Uten dem ville proveniensen bare
+  // hatt registreringens klokke.
+  check(
+    'og bærer utkastets eget tidspunkt og forespørselens avtrykk',
+    psql(
+      config,
+      `select (workflow.evidence_extraction_dossier(${q(modellItem)}) -> 'drafted_by' ->> 'drafted_at')
+              || '|' || (workflow.evidence_extraction_dossier(${q(modellItem)})
+                         -> 'drafted_by' ->> 'request_digest')`,
+    ) === `${utkast.proposal?.generatedBy.draftedAt ?? ''}|${utkast.requestDigest ?? ''}`,
+  )
+  check(
+    'og registreringens klokke er en annen enn utkastets',
+    psql(
+      config,
+      `select (workflow.evidence_extraction_dossier(${q(modellItem)})
+               -> 'registered_by' ->> 'started_at')
+              is distinct from
+              (workflow.evidence_extraction_dossier(${q(modellItem)})
+               -> 'drafted_by' ->> 'drafted_at')`,
+    ) === 't',
+  )
+
+  // Det samme utkastet, men erklært som et menneskes ekstraksjon. Verdien
+  // inngår i fingeravtrykket, så dette er en *annen* rad — ikke den samme raden
+  // som skifter mening.
+  const menneskeForslag = parseExtractionProposal({
+    ...(JSON.parse(JSON.stringify(serializeExtractionProposal(utkast.proposal!))) as Record<
+      string,
+      unknown
+    >),
+    generated_by: {
+      producer: 'human',
+      provider: 'human',
+      model: 'manuell-ekstraksjon',
+      model_version: 'not_applicable',
+      prompt_template_version: 'not_applicable',
+      drafted_at: '2026-09-15T08:00:00Z',
+    },
+  })
+  const menneskeKjede = await runReextraction({
+    ...reextractionPorts,
+    proposals: [{ label: 'samme-verdier-menneske.json', proposal: menneskeForslag }],
+  })
+  const menneskeItem = menneskeKjede.results[0]?.extraction.evidenceItemId ?? ''
+  check(
+    'de samme verdiene erklært av et menneske blir en annen rad, ført som manuell',
+    menneskeKjede.registered === 1 &&
+      menneskeItem !== modellItem &&
+      psql(
+        config,
+        `select extraction_method::text from knowledge.evidence_items where id = ${q(menneskeItem)}`,
+      ) === 'manual',
+  )
+  check(
+    'og modell-leddets rad står urørt ved siden av',
+    psql(
+      config,
+      `select extraction_method::text from knowledge.evidence_items where id = ${q(modellItem)}`,
+    ) === 'ai_assisted',
   )
 
   console.log(

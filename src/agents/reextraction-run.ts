@@ -101,7 +101,10 @@ export interface LabelledProposal {
 export interface ReextractionOptions {
   readonly extractionApi: EvidenceExtractionApi
   readonly verificationApi: ExtractionVerificationApi
-  readonly extractionPremises: AgentRunPremises
+  /**
+   * Kontrollens premisser. Ekstraksjonens står ikke her: de er forslagets egne,
+   * og hvert forslag i køen kan ha sin egen produsent (`pipeline-version.ts`).
+   */
   readonly verificationPremises: AgentRunPremises
   readonly proposals: readonly LabelledProposal[]
   /** Hent og kontroller, men registrer ingenting og kontroller ingenting. */
@@ -167,7 +170,6 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
   const {
     extractionApi,
     verificationApi,
-    extractionPremises,
     verificationPremises,
     proposals,
     dryRun = false,
@@ -182,7 +184,6 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
     log(`\n${label}`)
     const extraction = await runEvidenceExtraction({
       api: extractionApi,
-      premises: extractionPremises,
       proposal,
       dryRun,
       ...(retrieve === undefined ? {} : { retrieve }),

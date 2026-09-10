@@ -46,14 +46,6 @@ import { runExtractionVerification } from './extraction-verification-run'
 import type { RetrieveLike } from './extraction-verification-run'
 import { deriveExtractionVerification, type AnsweredCheck } from '../lib/control-session'
 
-const EXTRACTION_PREMISES: AgentRunPremises = {
-  provider: 'antidep',
-  model: 'proposal-grounded-extraction',
-  modelVersion: '1.0.0',
-  promptTemplateVersion: 'evidence-extraction/proposal/1',
-  pipelineVersion: 'antidep-evidence/1',
-}
-
 const VERIFICATION_PREMISES: AgentRunPremises = {
   provider: 'antidep',
   model: 'deterministic-extraction-check',
@@ -107,6 +99,14 @@ const SEMANTIC_FIELDS = REQUIRED_FIELDS.filter(
 async function proposal(): Promise<ExtractionProposal> {
   return parseExtractionProposal({
     proposal_version: EXTRACTION_PROPOSAL_VERSION,
+    generated_by: {
+      producer: 'model',
+      provider: 'antidep',
+      model: 'opptaksmodell',
+      model_version: '1',
+      prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+      drafted_at: '2026-09-15T09:00:00Z',
+    },
     source_id: SOURCE_ID,
     source_version_id: VERSION_ID,
     retrieved_from: RETRIEVED_FROM,
@@ -296,7 +296,6 @@ async function extract(): Promise<RegisterAgentExtractionArgs> {
   }
   const report = await runEvidenceExtraction({
     api,
-    premises: EXTRACTION_PREMISES,
     proposal: await proposal(),
     retrieve: retrieve(),
   })

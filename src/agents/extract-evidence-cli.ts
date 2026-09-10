@@ -28,7 +28,6 @@ import { EVIDENCE_EXTRACTION_CREDENTIAL, readAgentConfig } from './agent-environ
 import { redact } from './agent-credential.ts'
 import { buildExtractionProposalSchema } from './extraction-proposal-schema.ts'
 import { runEvidenceExtraction } from './extraction-run.ts'
-import { EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version.ts'
 import { readProposalFile } from './proposal-files.ts'
 
 const USAGE = `Bruk:
@@ -117,7 +116,6 @@ async function main(): Promise<number> {
     const { proposal } = await readProposalFile(options.proposalPath)
     const report = await runEvidenceExtraction({
       api,
-      premises: EVIDENCE_EXTRACTION_PREMISES,
       proposal,
       dryRun: options.dryRun,
       log: (line) => {

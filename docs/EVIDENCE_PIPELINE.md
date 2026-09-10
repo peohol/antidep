@@ -464,6 +464,31 @@ Extraction-agenten skal transformere rapportert informasjon til strukturerte `Ev
 
 Den skal **ikke** forsøke å skrive ferdig monografitekst.
 
+### 18.1 Det kjørende modell-leddet i dag
+
+Rollen er delt i **to operasjoner med hver sine rettigheter**, og delingen er ikke en implementasjonsdetalj: leddet som leser artikkelen, er det eneste i kjeden som tar imot utrygt eksternt innhold i en modellkontekst, og et ledd som gjør det, skal ikke samtidig kunne skrive en rad (§63).
+
+| Ledd | Hva den gjør | Hva den har |
+| --- | --- | --- |
+| Modell-leddet (`npm run agent:propose-extraction`) | Henter kildeversjonen, krever at fingeravtrykket er den registrerte, bygger den versjonerte prompten, spør et modelladapter, og skriver ett `ExtractionProposal` som fil | Nettilgang gjennom den samme adressekontrollen verifikatoren bruker. **Ingen databasetilgang, ingen agentlegitimasjon, ingen skrivevei** |
+| Ekstraksjonsagenten (`npm run agent:extract-evidence`) | Leser forslaget som data, henter kildeversjonen på nytt, prøver hvert utdrag ordrett igjen, og registrerer gjennom `api.register_agent_extraction` | Agentidentitet i rollen `evidence_extraction`, og bare den |
+
+**Forslaget er grensen mellom dem, og den er permanent.** Formen er den samme enten et menneske, ChatGPT utenfor Antidep eller modell-leddet skrev den, og den kontrolleres like strengt uansett. Et nytt leverandøradapter er derfor et nytt ledd foran den grensen, ikke en endring av den (`ANTIDEP_CONSTITUTION.md` §20, §66).
+
+**Modelleverandøren ligger bak et adapter med to metoder:** hvem som svarte, og én forespørsel inn, én tekst ut. Ingen verktøy, ingen funksjonskall, ingen tilgang til Antidep. Adapteret som finnes i dag, spiller av et **opptak** — et modellsvar lagret sammen med fingeravtrykket av forespørselen det svarte på — slik at hele kjeden kan kjøres deterministisk, om igjen, uten leverandørkonto. Et leverandøradapter føres opp som én oppføring i registeret; ingenting annet i kjeden endres.
+
+**Modellen får ikke velge fritt i katalogen.** Hvilket virkestoff og hvilket endepunkt et funn gjelder, er en faglig avgrensning en kvalifisert redaktør gjør, og den leveres som et *oppdrag*: kildeversjonen, og de identifikatorene funnet kan peke på. En modell som kunne valgt fritt, kunne flyttet funnet til et naboendepunkt uten at noe merket det — utdragene ville fortsatt stått ordrett i kilden, og den deterministiske kontrollen kontrollerer utdrag, ikke avgrensning.
+
+**Kildeteksten er data, og gjerdet rundt den er utledet av teksten selv.** Representasjonen står mellom to markører, og malen sier at alt mellom dem er data (§3.8). Markøren bærer de første tegnene av representasjonens eget fingeravtrykk: deterministisk, så et opptak kan spilles av igjen, og likevel ikke skrivbar inn i artikkelen — det ville krevd sha256 av en tekst som inneholder nettopp den markøren. Står markøren likevel i teksten, bygges ingen forespørsel.
+
+**Generatoren skriver ikke noe den vet er galt.** Før forslaget blir en fil, kontrollerer leddet sitt eget svar: at hver identifikator står i oppdraget, at hvert `source_excerpt` står ordrett i representasjonen, og at et eventuelt `source_quote` gjør det. Dette er *ikke* verifikasjonen — den er en separat operasjon, av en annen identitet, senere i kjeden (§3.2, §25). Forskjellen er hva som skjer ved et avvik: uten kontrollen her ville et oppdiktet utdrag blitt en fil, så en rad, så noe en kontrollør måtte avvise.
+
+**Utkastet og registreringen er to operasjoner, og proveniensen holder dem fra hverandre.** Utkastet lages utenfor Antidep, av en aktør uten legitimasjon her; registreringen gjøres av ekstraksjonsagenten når noen kjører kommandoen, kanskje dager senere. Premissekolonnene på kjøringen beskriver derfor kjøringen selv, mens forslagets `generated_by` — leverandør, modell, modellversjon, promptmalversjon, tidspunktet utkastet ble laget og fingeravtrykket av forespørselen — føres i kjøringens `input_manifest`, som er kolonnen for hva kjøringen fikk inn (§65). Lot premissene si hvilken modell som laget utkastet, ville starttidspunktet vært registreringens framfor modellkjøringens, manifestene ville beskrevet registreringen, og forespørselen modellen faktisk svarte på, ville ikke vært identifiserbar. Kontrollgrunnlaget viser de to som `drafted_by` og `registered_by`. Pipelineversjonen står ikke i forslaget: den er Antideps egen, og et forslag utenfra skal ikke kunne påstå noe om hvilken pipeline som registrerte det. `producer` — `model` eller `human` — avgjør om raden føres som et KI-assistert forslag eller som en menneskelig ekstraksjon, og verdien inngår i evidensfunnets fingeravtrykk: de samme verdiene erklært av hver av dem er to rader, ikke én rad som skifter mening.
+
+Når et leverandøradapter en dag kjører med sin egen legitimasjon, kan utkastet få sin egen kjøring i `provenance.agent_runs`, ved siden av registreringen. Datamodellen tar allerede imot det; det som mangler, er legitimasjonen.
+
+**Kjeden blir ikke kortere av at modell-leddet finnes.** Forslaget skal fortsatt registreres under de deterministiske kontrollene, kontrolleres maskinelt av en annen agentidentitet, og bekreftes felt for felt av et menneske før noe kan publiseres (`ANTIDEP_CONSTITUTION.md` §10, §11, §12). Kontrollflaten viser hvem som laget verdiene, fordi det å etterprøve et maskinutkast er noe annet enn å etterprøve en kollegas arbeid (§46).
+
 ## 19. Ekstraksjonen skal ligge tett på kilden
 
 Et `EvidenceItem` skal gjengi hva kilden faktisk rapporterer med minst mulig syntetisk fortolkning.

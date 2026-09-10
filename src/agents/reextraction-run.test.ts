@@ -35,13 +35,6 @@ import {
 import type { VerificationItem } from './verification-input'
 import type { Uuid } from '../types/api'
 
-const EXTRACTION_PREMISES: AgentRunPremises = {
-  provider: 'antidep',
-  model: 'proposal-grounded-extraction',
-  modelVersion: '1.0.0',
-  promptTemplateVersion: 'evidence-extraction/proposal/1',
-  pipelineVersion: 'antidep-evidence/1',
-}
 const VERIFICATION_PREMISES: AgentRunPremises = {
   provider: 'antidep',
   model: 'deterministic-extraction-check',
@@ -84,6 +77,14 @@ const PROPOSAL_EXTRACTION = {
 async function proposal(): Promise<ExtractionProposal> {
   return parseExtractionProposal({
     proposal_version: EXTRACTION_PROPOSAL_VERSION,
+    generated_by: {
+      producer: 'model',
+      provider: 'antidep',
+      model: 'opptaksmodell',
+      model_version: '1',
+      prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+      drafted_at: '2026-09-15T09:00:00Z',
+    },
     source_id: '50000000-0000-4000-8000-000000000001',
     source_version_id: '51000000-0000-4000-8000-000000000001',
     retrieved_from: 'https://eksempel.invalid/kilde',
@@ -225,7 +226,6 @@ describe('runReextraction', () => {
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
-      extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
       proposals: [{ label: 'fava.json', proposal: await proposal() }],
       retrieve: retrieveFixture(),
@@ -250,7 +250,6 @@ describe('runReextraction', () => {
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
-      extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
       proposals: [{ label: 'fava.json', proposal: forslag }],
       retrieve: retrieveFixture(),
@@ -271,7 +270,6 @@ describe('runReextraction', () => {
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
-      extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
       proposals: [{ label: 'fava.json', proposal: await proposal() }],
       dryRun: true,
@@ -307,7 +305,6 @@ describe('runReextraction', () => {
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
-      extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
       proposals: [{ label: 'fava.json', proposal: forslag }],
       retrieve: retrieveFixture(),
@@ -337,7 +334,6 @@ describe('runReextraction', () => {
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
-      extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
       proposals: [{ label: 'fava.json', proposal: forslag }],
       retrieve: retrieveFixture(),
@@ -356,6 +352,14 @@ describe('runReextraction', () => {
     const opprinnelig = await proposal()
     const rettet = parseExtractionProposal({
       proposal_version: EXTRACTION_PROPOSAL_VERSION,
+      generated_by: {
+        producer: 'model',
+        provider: 'antidep',
+        model: 'opptaksmodell',
+        model_version: '1',
+        prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+        drafted_at: '2026-09-15T09:00:00Z',
+      },
       source_id: opprinnelig.sourceId,
       source_version_id: opprinnelig.sourceVersionId,
       retrieved_from: opprinnelig.retrievedFrom,
@@ -377,7 +381,6 @@ describe('runReextraction', () => {
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
-      extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
       proposals: [{ label: 'rettet.json', proposal: rettet }],
       retrieve: retrieveFixture(),
@@ -408,7 +411,6 @@ describe('runReextraction', () => {
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
-      extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
       proposals: [{ label: 'fava.json', proposal: forslag }],
       retrieve: retrieveFixture(),
@@ -427,7 +429,6 @@ describe('runReextraction', () => {
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
-      extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
       proposals: [{ label: 'fava.json', proposal: await proposal() }],
       retrieve: retrieveFixture(),
@@ -444,6 +445,14 @@ describe('runReextraction', () => {
     const godt = await proposal()
     const daarlig = parseExtractionProposal({
       proposal_version: EXTRACTION_PROPOSAL_VERSION,
+      generated_by: {
+        producer: 'model',
+        provider: 'antidep',
+        model: 'opptaksmodell',
+        model_version: '1',
+        prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+        drafted_at: '2026-09-15T09:00:00Z',
+      },
       source_id: godt.sourceId,
       source_version_id: godt.sourceVersionId,
       retrieved_from: godt.retrievedFrom,
@@ -476,7 +485,6 @@ describe('runReextraction', () => {
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
-      extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
       proposals: [
         { label: 'daarlig.json', proposal: daarlig },

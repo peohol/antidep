@@ -20,15 +20,8 @@ import {
   type ExtractionProposal,
 } from './extraction-proposal'
 import { runEvidenceExtraction, type RetrieveLike } from './extraction-run'
+import { ANTIDEP_EVIDENCE_PIPELINE_VERSION, EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version'
 import { FIXTURE_SOURCE_TEXT } from './test-support'
-
-const PREMISSER: AgentRunPremises = {
-  provider: 'antidep',
-  model: 'proposal-grounded-extraction',
-  modelVersion: '1.0.0',
-  promptTemplateVersion: 'evidence-extraction/proposal/1',
-  pipelineVersion: 'antidep-evidence/1',
-}
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
 const ITEM_ID = '33333333-3333-4333-8333-333333333333'
@@ -36,6 +29,7 @@ const EXISTING_ITEM_ID = '44444444-4444-4444-8444-444444444444'
 
 interface FakeApi extends EvidenceExtractionApi {
   readonly registered: RegisterAgentExtractionArgs[]
+  readonly premises: AgentRunPremises[]
   readonly manifests: Record<string, unknown>[]
   readonly completions: {
     status: string
@@ -46,14 +40,17 @@ interface FakeApi extends EvidenceExtractionApi {
 
 function fakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   const registered: RegisterAgentExtractionArgs[] = []
+  const premises: AgentRunPremises[] = []
   const manifests: Record<string, unknown>[] = []
   const completions: FakeApi['completions'] = []
 
   return {
     registered,
+    premises,
     manifests,
     completions,
-    beginRun: (_premises, inputManifest) => {
+    beginRun: (runPremises, inputManifest) => {
+      premises.push(runPremises)
       manifests.push(inputManifest)
       return Promise.resolve(RUN_ID)
     },
@@ -85,10 +82,22 @@ function retrieveFixture(overrides: { content?: string; hash?: string } = {}): R
 }
 
 async function proposal(
-  overrides: { excerpt?: string; hash?: string } = {},
+  overrides: {
+    excerpt?: string
+    hash?: string
+    generatedBy?: Record<string, unknown>
+  } = {},
 ): Promise<ExtractionProposal> {
   return parseExtractionProposal({
     proposal_version: EXTRACTION_PROPOSAL_VERSION,
+    generated_by: overrides.generatedBy ?? {
+      producer: 'model',
+      provider: 'antidep',
+      model: 'opptaksmodell',
+      model_version: '1',
+      prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+      drafted_at: '2026-09-15T09:00:00Z',
+    },
     source_id: '50000000-0000-4000-8000-000000000001',
     source_version_id: '51000000-0000-4000-8000-000000000001',
     retrieved_from: 'https://eksempel.invalid/kilde',
@@ -135,7 +144,6 @@ describe('runEvidenceExtraction — den lykkede stien', () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
       api,
-      premises: PREMISSER,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
     })
@@ -151,7 +159,6 @@ describe('runEvidenceExtraction — den lykkede stien', () => {
     const api = fakeApi()
     await runEvidenceExtraction({
       api,
-      premises: PREMISSER,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
     })
@@ -169,7 +176,6 @@ describe('runEvidenceExtraction — den lykkede stien', () => {
     const api = fakeApi()
     await runEvidenceExtraction({
       api,
-      premises: PREMISSER,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
     })
@@ -178,7 +184,101 @@ describe('runEvidenceExtraction — den lykkede stien', () => {
       source_version_id: '51000000-0000-4000-8000-000000000001',
       retrieved_from: 'https://eksempel.invalid/kilde',
       grounded_fields: ['intervention_arm', 'sample_size'],
+      extraction_method: 'ai_assisted',
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Kjøringens premisser er kjøringens, og erklæringen er forslagets
+// ---------------------------------------------------------------------------
+
+describe('runEvidenceExtraction — hvem forslaget sier laget det', () => {
+  // Kjøringen er ikke leddet som leste artikkelen: den henter, kontrollerer og
+  // registrerer, deterministisk, på det tidspunktet noen kjører kommandoen. Lot
+  // premissene si hvilken modell som laget utkastet, ville `started_at` og
+  // manifestene beskrevet noe annet enn det som skjedde
+  // (ANTIDEP_CONSTITUTION.md §20, EVIDENCE_PIPELINE.md §65).
+  it('registrerer kjøringen med sine egne premisser, ikke med modellens', async () => {
+    const api = fakeApi()
+    await runEvidenceExtraction({
+      api,
+      proposal: await proposal({
+        generatedBy: {
+          producer: 'model',
+          provider: 'en-leverandør',
+          model: 'en-modell',
+          model_version: '2026-09-15',
+          prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+          drafted_at: '2026-09-15T09:00:00Z',
+        },
+      }),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(api.premises[0]).toEqual(EVIDENCE_EXTRACTION_PREMISES)
+    expect(api.premises[0]?.pipelineVersion).toBe(ANTIDEP_EVIDENCE_PIPELINE_VERSION)
+  })
+
+  // Erklæringen står i manifestet — kolonnen for hva kjøringen fikk inn — med
+  // utkastets eget tidspunkt og fingeravtrykket av forespørselen. Uten dem er
+  // modelloperasjonen ikke identifiserbar i ettertid.
+  it('fører forslagets erklæring ordrett i kjøringens manifest', async () => {
+    const api = fakeApi()
+    await runEvidenceExtraction({
+      api,
+      proposal: await proposal({
+        generatedBy: {
+          producer: 'model',
+          provider: 'en-leverandør',
+          model: 'en-modell',
+          model_version: '2026-09-15',
+          prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+          drafted_at: '2026-09-15T09:00:00Z',
+          request_digest: `sha256:${'b'.repeat(64)}`,
+        },
+      }),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(api.manifests[0]?.['generated_by']).toEqual({
+      producer: 'model',
+      provider: 'en-leverandør',
+      model: 'en-modell',
+      model_version: '2026-09-15',
+      prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+      drafted_at: '2026-09-15T09:00:00Z',
+      request_digest: `sha256:${'b'.repeat(64)}`,
+    })
+  })
+
+  // extraction_method sier hvordan raden ble til. En modell og et menneske er
+  // ikke det samme, og raden skal ikke påstå at de er det (§12).
+  it('registrerer et maskinutkast som ai_assisted og et menneskes forslag som manual', async () => {
+    const maskin = fakeApi()
+    await runEvidenceExtraction({
+      api: maskin,
+      proposal: await proposal(),
+      retrieve: retrieveFixture(),
+    })
+    expect(maskin.registered[0]?.extractionMethod).toBe('ai_assisted')
+
+    const menneske = fakeApi()
+    await runEvidenceExtraction({
+      api: menneske,
+      proposal: await proposal({
+        generatedBy: {
+          producer: 'human',
+          provider: 'human',
+          model: 'manuell-ekstraksjon',
+          model_version: 'not_applicable',
+          prompt_template_version: 'not_applicable',
+          drafted_at: '2026-09-15T08:00:00Z',
+        },
+      }),
+      retrieve: retrieveFixture(),
+    })
+    expect(menneske.registered[0]?.extractionMethod).toBe('manual')
   })
 })
 
@@ -189,7 +289,6 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
       api,
-      premises: PREMISSER,
       proposal: await proposal({ excerpt: 'Patients received paroxetine only.' }),
       retrieve: retrieveFixture(),
     })
@@ -207,7 +306,6 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
       api,
-      premises: PREMISSER,
       proposal: await proposal({ hash: `sha256:${'0'.repeat(64)}` }),
       retrieve: retrieveFixture(),
     })
@@ -221,7 +319,6 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
       api,
-      premises: PREMISSER,
       proposal: await proposal(),
       retrieve: () => Promise.resolve({ status: 'error', message: 'Tidsavbrudd mot kilden.' }),
     })
@@ -235,7 +332,6 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
       api,
-      premises: PREMISSER,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
       dryRun: true,
@@ -259,7 +355,6 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     await expect(
       runEvidenceExtraction({
         api,
-        premises: PREMISSER,
         proposal: await proposal(),
         retrieve: retrieveFixture(),
       }),
@@ -286,7 +381,6 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
 
     const report = await runEvidenceExtraction({
       api,
-      premises: PREMISSER,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
     })
@@ -323,7 +417,6 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     await expect(
       runEvidenceExtraction({
         api,
-        premises: PREMISSER,
         proposal: await proposal(),
         retrieve: retrieveFixture(),
       }),

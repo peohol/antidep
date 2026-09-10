@@ -9,17 +9,17 @@
 // ----------------------------------------------------------------------------
 // Hvorfor forslaget er sin egen modul, og leses fra en fil
 //
-// Leddet som *leser* en artikkel og foreslår strukturerte verdier, krever en
-// språkmodell, og dermed en leverandør og en konto (issue #63). Alt det andre i
-// kjeden er deterministisk og skal ikke vente på den: hentingen, den ordrette
-// kontrollen av hvert utdrag, kjøringens proveniens og selve registreringen.
+// Leddet som *leser* en artikkel og foreslår strukturerte verdier, er en
+// modelloperasjon. Alt det andre i kjeden er deterministisk og skal ikke ligge
+// i den samme prosessen: hentingen, den ordrette kontrollen av hvert utdrag,
+// kjøringens proveniens og selve registreringen.
 //
 // Forslaget er derfor grenseflaten mellom de to, og den er skrevet for å være
 // permanent (ANTIDEP_CONSTITUTION.md §20). Formen er den samme enten den er
-// skrevet av et menneske, av ChatGPT utenfor Antidep, eller en dag av et
-// innebygd modell-ledd — og den kontrolleres like strengt uansett hvem som
-// skrev den. Et framtidig modelladapter er derfor et nytt ledd foran denne
-// filen, ikke en endring av den.
+// skrevet av et menneske, av ChatGPT utenfor Antidep, eller av modell-leddet i
+// `drafting-run.ts` — og den kontrolleres like strengt uansett hvem som skrev
+// den. Et nytt modelladapter er derfor et nytt ledd foran denne filen, ikke en
+// endring av den.
 //
 // ----------------------------------------------------------------------------
 // Hva forslagsprodusenten *ikke* kan
@@ -30,6 +30,25 @@
 // data: det finnes ingen skrivevei som tar imot et forslag.
 //
 // ----------------------------------------------------------------------------
+// Hvorfor forslaget sier hvem som laget det
+//
+// `generated_by` er et krav og ikke en opplysning. `provenance.agent_runs`
+// krever leverandør, modell, modellversjon og promptmalversjon for hver
+// kjøring, og uten feltet ville kjøringen måttet oppgi en fast verdi for alle
+// forslag — altså registrert et menneskes ekstraksjon som en modells, og
+// omvendt (ANTIDEP_CONSTITUTION.md §14, §20, EVIDENCE_PIPELINE.md §65).
+//
+// `producer` er den ene opplysningen som ikke kan utledes av de andre: om det
+// var en modell eller et menneske som leste artikkelen. Den avgjør
+// `knowledge.evidence_items.extraction_method`, og den avgjør hva kontrolløren
+// faktisk holder på med — å etterprøve et maskinutkast er noe annet enn å
+// etterprøve en kollegas arbeid (§12).
+//
+// Feltet er en *erklæring* fra den som skrev filen, på samme måte som
+// kildeversjonen og utdragene er det. Databasen kan ikke kontrollere hvilken
+// modell som skrev en fil, men den kan kreve at påstanden står der og bevares.
+//
+// ----------------------------------------------------------------------------
 // Hvorfor formen kontrolleres her og ikke bare av databasen
 //
 // Databasen er fasiten, og dens avvisninger propageres uendret. Men en
@@ -38,17 +57,10 @@
 // det som faktisk mangler i forslaget. Kontrollen her sier hvilket felt i
 // forslaget som er galt, før noe skrives.
 //
-// Tre regler gjør kontrollen streng nok til å være en grense:
-//
-//   1. **Et ukjent felt er en feil, ikke noe som ignoreres.** Et forslag med
-//      `extimate` i stedet for `estimate` ville ellers blitt registrert uten
-//      estimatet, og feilen ville sett ut som en manglende verdi i kilden.
-//   2. **Ingenting fylles inn.** Et forslag uten en verdi er et forslag uten
-//      den verdien (§6). Manglende forankring blir ikke gjettet fram, verken
-//      fra andre felter eller fra en samlet tolkning.
-//   3. **Vokabularene er lukket.** De leses fra `src/types/api.ts`, som
-//      `tests/api-vocabularies.test.ts` holder identisk med enum-ene i
-//      migrasjonene. En verdi utenfor vokabularet avvises her, med feltnavnet.
+// Disiplinen — ukjent felt er en feil, ingenting fylles inn, vokabularene er
+// lukket — er `strict-fields.ts`, og deles med oppdraget og modellopptaket.
+// Vokabularene leses fra `src/types/api.ts`, som `tests/api-vocabularies.test.ts`
+// holder identisk med enum-ene i migrasjonene.
 //
 // Utrygg inndata: forslaget er data, aldri instruksjoner (CLAUDE.md). Ingenting
 // i det tolkes som noe annet enn verdier og tekst.
@@ -62,8 +74,28 @@ import {
   REPORTED_DIRECTIONS,
   STUDY_DESIGNS,
   VALUE_AVAILABILITIES,
+  type ExtractionMethod,
   type Uuid,
 } from '../types/api.ts'
+import {
+  asOptionalInteger,
+  asOptionalNumericText,
+  asOptionalText,
+  asOptionalUuid,
+  asOptionalVocabulary,
+  asText,
+  asUuid,
+  asVocabulary,
+  fieldsOf,
+  nestedFields,
+  problem,
+  raw,
+  rejectUnknown,
+  type Fields,
+} from './strict-fields.ts'
+
+/** Hva filen heter i en avvisning. */
+const PROPOSAL_SUBJECT = 'Ekstraksjonsforslaget'
 
 /**
  * Versjonen av selve kontrakten, oppgitt i hvert forslag.
@@ -72,8 +104,23 @@ import {
  * forslag skrevet mot en eldre form: begge ville manglet det samme feltet, og
  * bare det ene ville vært en feil. Verdien er et *krav*, ikke en opplysning —
  * et forslag som oppgir noe annet, avvises.
+ *
+ * `@2` la til `generated_by`. Et `@1`-forslag oppgir ikke hvem som laget det,
+ * og kan derfor ikke registreres med riktige premisser; det er en form som er
+ * ute, ikke en form som leses med standardverdier.
  */
-export const EXTRACTION_PROPOSAL_VERSION = 'antidep/extraction-proposal@1'
+export const EXTRACTION_PROPOSAL_VERSION = 'antidep/extraction-proposal@2'
+
+/**
+ * Hvem som leste artikkelen og foreslo verdiene.
+ *
+ * To verdier, og skillet er epistemisk og ikke teknisk: et maskinutkast er et
+ * forslag som venter på faglig kontroll, mens et menneskes ekstraksjon er et
+ * fagarbeid som fortsatt skal kontrolleres uavhengig
+ * (ANTIDEP_CONSTITUTION.md §10, §12).
+ */
+export const PROPOSAL_PRODUCERS = ['model', 'human'] as const
+export type ProposalProducer = (typeof PROPOSAL_PRODUCERS)[number]
 
 /**
  * Hvor kort et ordrett kildeutdrag kan være og fortsatt bære kontekst.
@@ -126,9 +173,63 @@ export interface ProposedExtraction {
   readonly sourceQuote: string | null
 }
 
-/** Hele forslaget: kontraktsversjonen, hvilken kilde, hvilken versjon, verdiene og forankringen. */
-export interface ExtractionProposal {
+/**
+ * Erklæringen om hvem som laget forslaget, og når.
+ *
+ * Erklæringen beskriver *utkastet*, ikke registreringen av det. De to er
+ * forskjellige operasjoner på forskjellige tidspunkter — utkastet lages
+ * utenfor Antidep, registreringen skjer når noen kjører kommandoen — og
+ * erklæringen føres derfor i registreringskjøringens `input_manifest`, som er
+ * kolonnen for hva kjøringen fikk inn. Premissekolonnene på
+ * `provenance.agent_runs` beskriver kjøringen selv (`pipeline-version.ts`).
+ *
+ * Pipelineversjonen står bevisst ikke her: den er Antideps egen, og et forslag
+ * utenfra skal ikke kunne påstå noe om hvilken pipeline som registrerte det.
+ */
+export interface GeneratedBy {
+  readonly producer: ProposalProducer
+  readonly provider: string
+  readonly model: string
+  readonly modelVersion: string
+  readonly promptTemplateVersion: string
+  /**
+   * Da utkastet ble laget — ikke da det ble registrert.
+   *
+   * Uten det ville det eneste tidspunktet i proveniensen vært
+   * registreringskjøringens `started_at`, som kan ligge dager etter at modellen
+   * faktisk leste artikkelen. «Hva ble kjørt når» ville da vært ubesvarlig for
+   * nettopp den operasjonen det gjelder (EVIDENCE_PIPELINE.md §65).
+   */
+  readonly draftedAt: string
+  /**
+   * Fingeravtrykket av forespørselen modellen svarte på, når det finnes.
+   *
+   * Det dekker representasjonen, katalogen i oppdraget og promptmalen, og er
+   * derfor den ene verdien som gjør en modellkjøring identifiserbar i ettertid.
+   * `null` for et menneskeskrevet forslag: der finnes ingen forespørsel.
+   */
+  readonly requestDigest: string | null
+}
+
+/**
+ * De to delene et modell-ledd faktisk produserer.
+ *
+ * Kildebindingen står ikke her, med vilje. Modellen får representasjonen og
+ * skal lese verdier ut av den; hvilken kildeversjon representasjonen *er*, er
+ * oppdragets opplysning og settes av kjøringen (`drafting-run.ts`). En modell
+ * som kunne oppgitt kildebindingen selv, kunne oppgitt feil kildebinding — og
+ * feilen ville vært usynlig, fordi utdragene ville stått ordrett i den teksten
+ * den faktisk fikk.
+ */
+export interface ExtractionDraft {
+  readonly extraction: ProposedExtraction
+  readonly fieldGroundings: readonly ProposedGrounding[]
+}
+
+/** Hele forslaget: kontraktsversjonen, opphavet, hvilken kilde, verdiene og forankringen. */
+export interface ExtractionProposal extends ExtractionDraft {
   readonly proposalVersion: typeof EXTRACTION_PROPOSAL_VERSION
+  readonly generatedBy: GeneratedBy
   readonly sourceId: Uuid
   readonly sourceVersionId: Uuid
   /**
@@ -148,170 +249,26 @@ export interface ExtractionProposal {
    */
   readonly retrievedFrom: string
   readonly contentHash: string
-  readonly extraction: ProposedExtraction
-  readonly fieldGroundings: readonly ProposedGrounding[]
 }
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
-
-function problem(where: string, what: string): never {
-  throw new Error(`Ekstraksjonsforslaget er ugyldig: ${where} ${what}.`)
-}
+const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
 /**
- * Én oppslagsbok med regnskap over hvilke nøkler som faktisk er lest.
+ * Ekstraksjonsmetoden et forslag fra denne produsenten blir registrert med.
  *
- * Regnskapet er hele poenget: uten det ville et felt med skrivefeil vært
- * usynlig, og forslaget ville blitt registrert uten verdien det trodde det
- * leverte.
+ * Oversettelsen står her, ved siden av vokabularet den oversetter, og ikke i
+ * kjøreren: `knowledge.extraction_method` er en egenskap ved *hvordan raden ble
+ * til*, og det er nøyaktig det `producer` sier. To steder som oversatte hver
+ * for seg, ville vært to steder å registrere et menneskes arbeid som en
+ * modells.
  */
-interface Fields {
-  readonly where: string
-  readonly record: Record<string, unknown>
-  readonly seen: Set<string>
+export function extractionMethodFor(producer: ProposalProducer): ExtractionMethod {
+  return producer === 'model' ? 'ai_assisted' : 'manual'
 }
 
-function fieldsOf(value: unknown, where: string): Fields {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    problem(where, 'er ikke et objekt')
-  }
-  return { where, record: value as Record<string, unknown>, seen: new Set() }
-}
-
-function raw(fields: Fields, key: string): unknown {
-  fields.seen.add(key)
-  return fields.record[key]
-}
-
-/**
- * Ingen ukjente felter slipper gjennom.
- *
- * `raw_extraction` navngis særskilt. Feltet finnes på raden i basen som
- * ekstraksjonens egen tolkning, men det er ikke noe et forslag skal levere:
- * verdiene er de strukturerte kolonnene, og grunnlaget er de ordrette utdragene.
- * Et forslag som sendte en samlet tolkning ved siden av, ville invitert til at
- * noen leste verdier ut av den (EVIDENCE_PIPELINE.md §21).
- */
-function rejectUnknown(fields: Fields): void {
-  const unknown = Object.keys(fields.record)
-    .filter((key) => !fields.seen.has(key))
-    .sort()
-  if (unknown.length === 0) {
-    return
-  }
-  if (unknown.includes('raw_extraction')) {
-    problem(
-      `${fields.where}.raw_extraction`,
-      'hører ikke hjemme i et forslag. De strukturerte verdiene er kolonnene, og grunnlaget er de ordrette utdragene per felt — en samlet tolkning ved siden av ville vært noe å lese verdier ut av',
-    )
-  }
-  problem(fields.where, `har ukjente felter: ${unknown.join(', ')}`)
-}
-
-function asText(fields: Fields, key: string): string {
-  const value = raw(fields, key)
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    problem(`${fields.where}.${key}`, 'mangler eller er tom')
-  }
-  return value
-}
-
-function asOptionalText(fields: Fields, key: string): string | null {
-  const value = raw(fields, key)
-  if (value === undefined || value === null) {
-    return null
-  }
-  if (typeof value !== 'string') {
-    problem(`${fields.where}.${key}`, 'er ikke tekst')
-  }
-  const trimmed = value.trim()
-  return trimmed.length === 0 ? null : value
-}
-
-function inVocabulary(
-  fields: Fields,
-  key: string,
-  vocabulary: readonly string[],
-  value: string,
-): string {
-  if (!vocabulary.includes(value)) {
-    problem(
-      `${fields.where}.${key}`,
-      `er ${JSON.stringify(value)}, som ikke er en kjent verdi. Gyldige verdier: ${vocabulary.join(', ')}`,
-    )
-  }
-  return value
-}
-
-function asVocabulary(fields: Fields, key: string, vocabulary: readonly string[]): string {
-  return inVocabulary(fields, key, vocabulary, asText(fields, key))
-}
-
-function asOptionalVocabulary(
-  fields: Fields,
-  key: string,
-  vocabulary: readonly string[],
-): string | null {
-  const value = asOptionalText(fields, key)
-  return value === null ? null : inVocabulary(fields, key, vocabulary, value)
-}
-
-function asUuid(fields: Fields, key: string): Uuid {
-  const value = asText(fields, key)
-  if (!UUID_PATTERN.test(value)) {
-    problem(`${fields.where}.${key}`, 'er ikke en uuid')
-  }
-  return value as Uuid
-}
-
-function asOptionalUuid(fields: Fields, key: string): Uuid | null {
-  const value = asOptionalText(fields, key)
-  if (value === null) {
-    return null
-  }
-  if (!UUID_PATTERN.test(value)) {
-    problem(`${fields.where}.${key}`, 'er ikke en uuid')
-  }
-  return value as Uuid
-}
-
-function asOptionalInteger(fields: Fields, key: string): number | null {
-  const value = raw(fields, key)
-  if (value === undefined || value === null) {
-    return null
-  }
-  if (typeof value !== 'number' || !Number.isInteger(value)) {
-    problem(`${fields.where}.${key}`, 'er ikke et heltall')
-  }
-  return value
-}
-
-/**
- * Et tall bevares som tekst, ordrett slik forslaget skrev det.
- *
- * `1.50` og `1.5` er samme tall, men ikke samme oppgitte verdi, og en tur
- * innom `Number` ville stille endret det som skal kontrolleres mot kilden.
- */
-function asOptionalNumericText(fields: Fields, key: string): string | null {
-  const value = raw(fields, key)
-  if (value === undefined || value === null) {
-    return null
-  }
-  if (typeof value === 'number') {
-    problem(
-      `${fields.where}.${key}`,
-      'er oppgitt som et tall. Tallverdier skal stå som tekst, slik at skrivemåten bevares ordrett',
-    )
-  }
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    problem(`${fields.where}.${key}`, 'er ikke et tall som tekst')
-  }
-  return value
-}
-
-function parseGrounding(value: unknown, index: number): ProposedGrounding {
-  const fields = fieldsOf(value, `field_groundings[${String(index)}]`)
+function parseGrounding(parent: Fields, value: unknown, index: number): ProposedGrounding {
+  const fields = nestedFields(parent, value, `field_groundings[${String(index)}]`)
   const grounding: ProposedGrounding = {
     checkField: asVocabulary(fields, 'check_field', EVIDENCE_CHECK_FIELDS),
     sourceExcerpt: asText(fields, 'source_excerpt'),
@@ -322,6 +279,7 @@ function parseGrounding(value: unknown, index: number): ProposedGrounding {
 
   if (grounding.sourceExcerpt.trim().length < MIN_SOURCE_EXCERPT_LENGTH) {
     problem(
+      fields.subject,
       `${fields.where}.source_excerpt`,
       `er kortere enn ${String(MIN_SOURCE_EXCERPT_LENGTH)} tegn og bærer derfor ikke nok kontekst til å være kontrollgrunnlag. Ta med setningen verdien står i, ordrett`,
     )
@@ -329,8 +287,20 @@ function parseGrounding(value: unknown, index: number): ProposedGrounding {
   return grounding
 }
 
-function parseExtraction(value: unknown): ProposedExtraction {
-  const fields = fieldsOf(value, 'extraction')
+/**
+ * `raw_extraction` navngis særskilt.
+ *
+ * Feltet finnes på raden i basen som ekstraksjonens egen tolkning, men det er
+ * ikke noe et forslag skal levere: verdiene er de strukturerte kolonnene, og
+ * grunnlaget er de ordrette utdragene. Et forslag som sendte en samlet tolkning
+ * ved siden av, ville invitert til at noen leste verdier ut av den
+ * (EVIDENCE_PIPELINE.md §21).
+ */
+const RAW_EXTRACTION_EXPLANATION =
+  'hører ikke hjemme i et forslag. De strukturerte verdiene er kolonnene, og grunnlaget er de ordrette utdragene per felt — en samlet tolkning ved siden av ville vært noe å lese verdier ut av'
+
+function parseExtraction(parent: Fields, value: unknown): ProposedExtraction {
+  const fields = nestedFields(parent, value, 'extraction')
   const extraction: ProposedExtraction = {
     designCode: asVocabulary(fields, 'design_code', STUDY_DESIGNS),
     populationId: asOptionalUuid(fields, 'population_id'),
@@ -365,8 +335,87 @@ function parseExtraction(value: unknown): ProposedExtraction {
     sourceLocator: asText(fields, 'source_locator'),
     sourceQuote: asOptionalText(fields, 'source_quote'),
   }
-  rejectUnknown(fields)
+  rejectUnknown(fields, { raw_extraction: RAW_EXTRACTION_EXPLANATION })
   return extraction
+}
+
+/**
+ * De to delene, lest ut av et objekt som allerede er åpnet.
+ *
+ * Skilt ut fordi modell-leddet leverer nøyaktig disse to og ingenting mer:
+ * kildebindingen er oppdragets, ikke modellens. Ved å lese dem med den samme
+ * koden kan et modellutkast ikke være gyldig etter en litt annen regel enn et
+ * forslag fra en fil.
+ */
+function parseBody(fields: Fields): ExtractionDraft {
+  const extraction = parseExtraction(fields, raw(fields, 'extraction'))
+
+  const groundings = raw(fields, 'field_groundings')
+  if (!Array.isArray(groundings) || groundings.length === 0) {
+    problem(fields.subject, 'field_groundings', 'mangler eller er tom')
+  }
+
+  const parsed = groundings.map((value, index) => parseGrounding(fields, value, index))
+  const seen = new Set<string>()
+  for (const grounding of parsed) {
+    if (seen.has(grounding.checkField)) {
+      problem(
+        fields.subject,
+        'field_groundings',
+        `forankrer «${grounding.checkField}» mer enn én gang`,
+      )
+    }
+    seen.add(grounding.checkField)
+  }
+
+  return { extraction, fieldGroundings: parsed }
+}
+
+/**
+ * Leser det et modell-ledd produserer: de strukturerte verdiene og forankringen.
+ *
+ * `subject` er hva svaret heter i en avvisning, slik at en feil i et modellsvar
+ * ikke ser ut som en feil i en fil noen har skrevet.
+ */
+export function parseExtractionDraft(value: unknown, subject: string): ExtractionDraft {
+  const fields = fieldsOf(value, subject, 'utkastet')
+  const draft = parseBody(fields)
+  rejectUnknown(fields, { raw_extraction: RAW_EXTRACTION_EXPLANATION })
+  return draft
+}
+
+function parseGeneratedBy(parent: Fields, value: unknown): GeneratedBy {
+  const fields = nestedFields(parent, value, 'generated_by')
+  const draftedAt = asText(fields, 'drafted_at')
+  if (!TIMESTAMP_PATTERN.test(draftedAt) || Number.isNaN(Date.parse(draftedAt))) {
+    problem(
+      fields.subject,
+      'generated_by.drafted_at',
+      'er ikke et tidspunkt på formen «2026-09-15T09:00:00Z», med tidssone',
+    )
+  }
+  const requestDigest = asOptionalText(fields, 'request_digest')
+  if (requestDigest !== null && !CONTENT_HASH_PATTERN.test(requestDigest)) {
+    problem(
+      fields.subject,
+      'generated_by.request_digest',
+      'har ikke formen «sha256:» etterfulgt av 64 heksadesimale tegn',
+    )
+  }
+  const generatedBy: GeneratedBy = {
+    producer: asVocabulary(fields, 'producer', PROPOSAL_PRODUCERS) as ProposalProducer,
+    provider: asText(fields, 'provider'),
+    model: asText(fields, 'model'),
+    modelVersion: asText(fields, 'model_version'),
+    promptTemplateVersion: asText(fields, 'prompt_template_version'),
+    draftedAt,
+    requestDigest,
+  }
+  rejectUnknown(fields, {
+    pipeline_version:
+      'hører ikke hjemme i et forslag. Pipelineversjonen er Antideps egen og settes av kjøringen, ikke av den som skrev forslaget',
+  })
+  return generatedBy
 }
 
 /**
@@ -378,51 +427,109 @@ function parseExtraction(value: unknown): ProposedExtraction {
  * av mennesket etterpå.
  */
 export function parseExtractionProposal(value: unknown): ExtractionProposal {
-  const fields = fieldsOf(value, 'forslaget')
+  const fields = fieldsOf(value, PROPOSAL_SUBJECT, 'forslaget')
 
   const version = asText(fields, 'proposal_version')
   if (version !== EXTRACTION_PROPOSAL_VERSION) {
     problem(
+      PROPOSAL_SUBJECT,
       'forslaget.proposal_version',
       `er ${JSON.stringify(version)}, men denne kjøreren leser ${JSON.stringify(EXTRACTION_PROPOSAL_VERSION)}`,
     )
   }
 
+  const generatedBy = parseGeneratedBy(fields, raw(fields, 'generated_by'))
   const sourceId = asUuid(fields, 'source_id')
   const sourceVersionId = asUuid(fields, 'source_version_id')
   const retrievedFrom = asText(fields, 'retrieved_from')
   const contentHash = asText(fields, 'content_hash')
   if (!CONTENT_HASH_PATTERN.test(contentHash)) {
     problem(
+      PROPOSAL_SUBJECT,
       'forslaget.content_hash',
       'har ikke formen «sha256:» etterfulgt av 64 heksadesimale tegn, som er den kildeversjonene er registrert med',
     )
   }
 
-  const extraction = parseExtraction(raw(fields, 'extraction'))
-
-  const groundings = raw(fields, 'field_groundings')
-  if (!Array.isArray(groundings) || groundings.length === 0) {
-    problem('field_groundings', 'mangler eller er tom')
-  }
-  rejectUnknown(fields)
-
-  const parsed = groundings.map(parseGrounding)
-  const seen = new Set<string>()
-  for (const grounding of parsed) {
-    if (seen.has(grounding.checkField)) {
-      problem('field_groundings', `forankrer «${grounding.checkField}» mer enn én gang`)
-    }
-    seen.add(grounding.checkField)
-  }
+  const body = parseBody(fields)
+  rejectUnknown(fields, { raw_extraction: RAW_EXTRACTION_EXPLANATION })
 
   return {
     proposalVersion: EXTRACTION_PROPOSAL_VERSION,
+    generatedBy,
     sourceId,
     sourceVersionId,
     retrievedFrom,
     contentHash,
-    extraction,
-    fieldGroundings: parsed,
+    ...body,
+  }
+}
+
+/**
+ * Forslaget som JSON-formen det leses fra.
+ *
+ * Motstykket til `parseExtractionProposal`, og skrevet ved siden av den med
+ * vilje: modell-leddet produserer et forslag i minnet, og den filen det skriver,
+ * skal være nøyaktig den formen kjøringen etterpå leser. To oversettelser i
+ * hver sin fil ville vært to steder å stave et feltnavn feil — og feilen ville
+ * først vist seg som en manglende verdi i en registrert rad.
+ *
+ * Valgfrie felter skrives ut med `null` framfor å utelates. En utelatt nøkkel
+ * og en nøkkel med `null` leses likt av parseren, men bare den ene sier
+ * eksplisitt at verdien ble vurdert og ikke funnet.
+ */
+export function serializeExtractionProposal(proposal: ExtractionProposal): unknown {
+  const e = proposal.extraction
+  return {
+    proposal_version: proposal.proposalVersion,
+    generated_by: {
+      producer: proposal.generatedBy.producer,
+      provider: proposal.generatedBy.provider,
+      model: proposal.generatedBy.model,
+      model_version: proposal.generatedBy.modelVersion,
+      prompt_template_version: proposal.generatedBy.promptTemplateVersion,
+      drafted_at: proposal.generatedBy.draftedAt,
+      request_digest: proposal.generatedBy.requestDigest,
+    },
+    source_id: proposal.sourceId,
+    source_version_id: proposal.sourceVersionId,
+    retrieved_from: proposal.retrievedFrom,
+    content_hash: proposal.contentHash,
+    extraction: {
+      design_code: e.designCode,
+      population_id: e.populationId,
+      population_availability: e.populationAvailability,
+      population_detail: e.populationDetail,
+      sample_size: e.sampleSize,
+      sample_size_availability: e.sampleSizeAvailability,
+      intervention_drug_id: e.interventionDrugId,
+      intervention_detail: e.interventionDetail,
+      comparator_kind: e.comparatorKind,
+      comparator_drug_id: e.comparatorDrugId,
+      comparator_detail: e.comparatorDetail,
+      outcome_concept_id: e.outcomeConceptId,
+      outcome_detail: e.outcomeDetail,
+      timepoint_min: e.timepointMin,
+      timepoint_max: e.timepointMax,
+      timepoint_availability: e.timepointAvailability,
+      reported_direction: e.reportedDirection,
+      effect_measure: e.effectMeasure,
+      estimate: e.estimate,
+      estimate_unit: e.estimateUnit,
+      estimate_availability: e.estimateAvailability,
+      ci_lower: e.ciLower,
+      ci_upper: e.ciUpper,
+      ci_level_percent: e.ciLevelPercent,
+      confidence_interval_availability: e.confidenceIntervalAvailability,
+      limitations_text: e.limitationsText,
+      source_locator: e.sourceLocator,
+      source_quote: e.sourceQuote,
+    },
+    field_groundings: proposal.fieldGroundings.map((grounding) => ({
+      check_field: grounding.checkField,
+      source_excerpt: grounding.sourceExcerpt,
+      source_locator: grounding.sourceLocator,
+      justification: grounding.justification,
+    })),
   }
 }

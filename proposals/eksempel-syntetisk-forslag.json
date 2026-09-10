@@ -1,5 +1,14 @@
 {
-  "proposal_version": "antidep/extraction-proposal@1",
+  "proposal_version": "antidep/extraction-proposal@2",
+  "generated_by": {
+    "producer": "human",
+    "provider": "human",
+    "model": "manuell-ekstraksjon",
+    "model_version": "not_applicable",
+    "prompt_template_version": "not_applicable",
+    "drafted_at": "2026-09-15T09:00:00Z",
+    "request_digest": null
+  },
   "source_id": "00000000-0000-4000-8000-000000000001",
   "source_version_id": "00000000-0000-4000-8000-000000000002",
   "retrieved_from": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=00000000&retmode=xml",

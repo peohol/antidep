@@ -157,6 +157,7 @@ export type AgentDatabase = {
           p_confidence_interval_availability: string
           p_source_locator: string
           p_field_groundings: readonly Record<string, string>[]
+          p_extraction_method: string
           p_population_id?: Uuid | null
           p_sample_size?: number | null
           p_intervention_detail?: string | null
@@ -287,6 +288,15 @@ export interface RegisterAgentExtractionArgs {
   readonly sourceVersionId: Uuid
   readonly extraction: ProposedExtraction
   readonly fieldGroundings: readonly ProposedGrounding[]
+  /**
+   * Hvordan raden ble til: `ai_assisted` når en modell leste kilden, `manual`
+   * når et menneske gjorde det (migrasjon 005ab).
+   *
+   * En parameter og ikke en fast verdi, fordi den samme skriveveien tar imot
+   * begge slags forslag. Verdien inngår i evidensfunnets fingeravtrykk, så de
+   * to er forskjellige rader — som de skal være: det er ikke det samme funnet.
+   */
+  readonly extractionMethod: string
 }
 
 /** Kallet ekstraksjonsagenten gjør, som én grenseflate. */
@@ -559,6 +569,7 @@ export function createEvidenceExtractionApi(
         p_estimate_availability: e.estimateAvailability,
         p_confidence_interval_availability: e.confidenceIntervalAvailability,
         p_source_locator: e.sourceLocator,
+        p_extraction_method: args.extractionMethod,
         p_field_groundings: args.fieldGroundings.map((grounding) => ({
           check_field: grounding.checkField,
           source_excerpt: grounding.sourceExcerpt,

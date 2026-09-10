@@ -1,12 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antidep.no/schema/extraction-proposal-1.json",
+  "$id": "https://antidep.no/schema/extraction-proposal-2.json",
   "title": "Antidep ExtractionProposal",
   "description": "Ett forslag om ett evidensfunn, lest ut av én bestemt kildeversjon. Forslaget skriver ingenting: det leses av npm run agent:extract-evidence, som henter kildeversjonen på nytt, krever at fingeravtrykket stemmer, og prøver hvert source_excerpt ordrett mot den før noe registreres. Ukjente felter avvises, og ingenting fylles inn automatisk.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "proposal_version",
+    "generated_by",
     "source_id",
     "source_version_id",
     "retrieved_from",
@@ -16,8 +17,64 @@
   ],
   "properties": {
     "proposal_version": {
-      "const": "antidep/extraction-proposal@1",
+      "const": "antidep/extraction-proposal@2",
       "description": "Versjonen av denne kontrakten. Et forslag med en annen verdi avvises."
+    },
+    "generated_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Hvem som leste kilden og foreslo verdiene. Registreres som premissene for agentkjøringen som skriver raden, og avgjør om funnet føres som et KI-assistert forslag eller som en menneskelig ekstraksjon. Pipelineversjonen hører ikke hjemme her: den er Antideps egen og settes av kjøringen.",
+      "required": [
+        "producer",
+        "provider",
+        "model",
+        "model_version",
+        "prompt_template_version",
+        "drafted_at"
+      ],
+      "properties": {
+        "producer": {
+          "type": "string",
+          "enum": [
+            "model",
+            "human"
+          ],
+          "description": "model når en språkmodell leste kilden, human når et menneske gjorde det. Verdien avgjør knowledge.evidence_items.extraction_method, og skal si hva som faktisk skjedde."
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Leverandøren av modellen, for eksempel openai. For et menneskeskrevet forslag: human."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Modellen som svarte, eller for et menneskeskrevet forslag en kort beskrivelse av arbeidsformen, for eksempel manuell-ekstraksjon."
+        },
+        "model_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Modellversjonen, så presist leverandøren oppgir den. For et menneskeskrevet forslag: not_applicable."
+        },
+        "prompt_template_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Versjonen av promptmalen forslaget ble laget med. For et menneskeskrevet forslag: not_applicable."
+        },
+        "drafted_at": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Da utkastet ble laget, med tidssone, for eksempel 2026-09-15T09:00:00Z. Ikke da det ble registrert: de to er forskjellige operasjoner på forskjellige tidspunkter."
+        },
+        "request_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Fingeravtrykket av forespørselen modellen svarte på. Dekker representasjonen, katalogen i oppdraget og promptmalen, og er det som gjør modellkjøringen identifiserbar i ettertid. Utelates for et menneskeskrevet forslag."
+        }
+      }
     },
     "source_id": {
       "type": "string",

@@ -53,6 +53,13 @@ npm run db:reset     # gjenskap lokal database (kjører migrasjoner når de finn
 npm run db:stop      # stopp lokal Supabase-stack
 ```
 
+Modell-leddet (ingen legitimasjon, ingen databasetilgang):
+
+```bash
+npm run agent:propose-extraction -- --assignment <fil> --prepare <katalog>   # skriv ut prompten og et tomt opptak
+npm run agent:propose-extraction -- --assignment <fil> --recording <fil> --out <fil>   # lag ett forslag
+```
+
 Agentkjørerne (krever legitimasjon, se `supabase/README.md`):
 
 ```bash
@@ -64,7 +71,8 @@ npm run agent:verify-extraction                                  # den determini
 npm run agent:verify-claims                                      # claim-verifikatoren
 ```
 
-Forslagsfilene og hvordan de lages, er beskrevet i `proposals/README.md`.
+Oppdragene modell-leddet leser, er beskrevet i `assignments/README.md`.
+Forslagsfilene det skriver, og hvordan de registreres, i `proposals/README.md`.
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) kjører lint, formatkontroll, typecheck,
 tester og produksjonsbygg på alle pull requests og på `main`, og verifiserer i en egen jobb
