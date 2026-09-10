@@ -52,6 +52,7 @@
 import type { Uuid } from '../types/api.ts'
 import type { EvidenceExtractionApi } from './agent-api.ts'
 import { collidingEvidenceItemId, isUniqueViolation } from './agent-api.ts'
+import { assignmentMismatch, type ExtractionAssignment } from './extraction-assignment.ts'
 import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
 import { extractionMethodFor } from './extraction-proposal.ts'
@@ -72,6 +73,21 @@ export interface ExtractionRunOptions {
    * ekstraksjon som en modells.
    */
   readonly proposal: ExtractionProposal
+  /**
+   * Oppdraget forslaget skal ha vært laget under, når kalleren har det.
+   *
+   * Oppgitt, kontrolleres forslaget mot det før noe skrives: kildebindingen og
+   * hver katalogverdi. Det er den ene kontrollen den ordrette kan ikke gjøre —
+   * et utdrag kan stå ordrett i kilden og likevel være ført på feil virkestoff.
+   *
+   * Grunnen til at den hører hjemme *her* og ikke bare i modell-leddet, er
+   * overleveringen: forslaget har vært innom en økt som leste utrygt eksternt
+   * innhold, og en kontroll som bare kjørte før den overleveringen, kontrollerer
+   * ikke det som faktisk blir registrert (EVIDENCE_PIPELINE.md §63).
+   *
+   * Oppdraget er redaktørens egen fil og kommer en annen vei enn forslaget.
+   */
+  readonly assignment?: ExtractionAssignment
   /** Kontroller og rapporter, men registrer ingenting. */
   readonly dryRun?: boolean
   readonly retrieve?: RetrieveLike
@@ -117,7 +133,22 @@ type Verdict = { readonly kind: 'skip'; readonly reason: string } | { readonly k
  * å søke, fordi et treff da ville vært i en annen utgave enn den ekstraksjonen
  * skal peke på.
  */
-function judge(proposal: ExtractionProposal, sourceText: string): Verdict {
+function judge(
+  proposal: ExtractionProposal,
+  sourceText: string,
+  assignment: ExtractionAssignment | undefined,
+): Verdict {
+  if (assignment !== undefined) {
+    const mismatch = assignmentMismatch(assignment, proposal)
+    if (mismatch !== null) {
+      return {
+        kind: 'skip',
+        reason:
+          `Forslaget holder seg ikke innenfor oppdraget: ${mismatch}. Ekstraksjonen ble ikke ` +
+          'registrert.',
+      }
+    }
+  }
   const projections = searchProjections(sourceText)
   const missing = proposal.fieldGroundings.filter(
     (grounding) => !verbatimOccursIn(projections, grounding.sourceExcerpt),
@@ -137,6 +168,7 @@ function judge(proposal: ExtractionProposal, sourceText: string): Verdict {
 async function fetchAndJudge(
   proposal: ExtractionProposal,
   retrieve: RetrieveLike,
+  assignment: ExtractionAssignment | undefined,
 ): Promise<Verdict> {
   const retrieved = await retrieve(proposal.retrievedFrom)
   if (retrieved.status === 'error') {
@@ -164,7 +196,7 @@ async function fetchAndJudge(
     }
   }
 
-  return judge(proposal, representation.content)
+  return judge(proposal, representation.content, assignment)
 }
 
 /**
@@ -219,6 +251,11 @@ export async function runEvidenceExtraction(
         request_digest: proposal.generatedBy.requestDigest,
       },
       extraction_method: extractionMethod,
+      // Om forslaget ble kontrollert mot oppdraget det skal ha vært laget
+      // under. `false` er en reell tilstand og ikke et hull: et forslag skrevet
+      // av en redaktør ut av en fulltekst har ikke noe oppdrag. Men valget skal
+      // kunne leses i ettertid, av den som bedømmer raden.
+      assignment_checked: options.assignment !== undefined,
       dry_run: dryRun,
     },
     proposal.sourceVersionId,
@@ -226,7 +263,7 @@ export async function runEvidenceExtraction(
   log(`Kjøring ${agentRunId} åpnet for kildeversjon ${proposal.sourceVersionId}.`)
 
   try {
-    const verdict = await fetchAndJudge(proposal, retrieve)
+    const verdict = await fetchAndJudge(proposal, retrieve, options.assignment)
 
     if (verdict.kind === 'skip') {
       log(`Ingenting registrert: ${verdict.reason}`)

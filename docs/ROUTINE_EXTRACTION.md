@@ -175,16 +175,21 @@ En transportkanal må velges bevisst når den trengs, og den skal ikke være
 «commit de kliniske arbeidsfilene» eller «kjør begge leddene i én skrivekapabel
 økt».
 
-**2. Byggarbeidsflyten gir PR-kode tilgang til et deploy-token.**
-`.github/workflows/vercel.yml` kjører på **alle** `pull_request`, legger
-`VERCEL_TOKEN` i jobbens miljø, sjekker ut PR-ens kode og kjører `vercel build` —
-som kjører byggskriptene fra den branchen. En pull request fra en branch i
-*samme* repo får repository-secrets, i motsetning til en fra en fork.
+**2. Repo-skrivetilgang er ikke noe en prompt kan ta bort — så veien videre er
+stengt der den fantes.** En Routine pusher `claude/`-brancher som alltid
+aksepteres, og det finnes ingen tilgangsmodus som slår det av under en kjøring.
+En instruks om «ikke push» er derfor ingen sikkerhetsgrense når hele poenget er å
+tåle promptinjeksjon.
 
-Det er en svakhet som gjelder alle med pushetilgang, og den fantes før dette
-arbeidet. Men den er grunnen til at Routine A **ikke** skal ha pushetilgang til
-dette repoet: uten den er veien stengt, med den er den åpen. Se `README.md`,
-avsnittet om denne arbeidsflyten, for hva som må avgjøres.
+`.github/workflows/vercel.yml` kjørte på **alle** `pull_request` med
+`VERCEL_TOKEN` i jobbens miljø, sjekket ut PR-ens kode og kjørte `vercel build` —
+altså byggskriptene fra den branchen. En pull request fra en branch i *samme*
+repo får repository-secrets. Det var den konkrete veien videre, og den er nå
+**fjernet**: arbeidsflyten kjører bare på `main`. Forhåndsvisninger lages av
+Vercels egen Git-integrasjon, som allerede gjorde det.
+
+Instruksene om ikke å pushe står fortsatt i ferdigheten og Routine-prompten. De
+er ryddighet, ikke grensen.
 
 ---
 
@@ -315,7 +320,7 @@ sier fra framfor å lukke et svar som ble lest ut av en annen tekst.
 ## 6. Registrering og kontroll: en egen, bevisst operasjon
 
 ```bash
-npm run agent:extract-evidence -- --proposal <sti>/forslag.json
+npm run agent:extract-evidence -- --proposal <sti>/forslag.json --assignment <sti>/oppdrag.json
 npm run agent:verify-extraction
 ```
 
@@ -347,6 +352,33 @@ skjer fordi en tidligere kjøring ble ferdig.
 Kjør derfor **ikke** registreringen i den samme økten som leste artikkelen. Da er
 grensen i avsnitt 3 borte.
 
+### 6.2 Forslaget er utrygg inndata, også etter `--close`
+
+Overleveringen går gjennom en økt som har lest en artikkel Antidep ikke
+kontrollerer, og som har skall. Filen `--close` skrev, kan endres etterpå, og en
+rapport kan gjengi noe annet enn filen. **Et forslag som har vært gjennom
+overleveringen, er derfor ikke et kontrollert artefakt.**
+
+Registreringen tar derfor imot **oppdraget** som en egen, tiltrodd inndata og
+kontrollerer forslaget mot det på nytt, før noe skrives:
+
+- kildebindingen — `source_id`, `source_version_id`, `retrieved_from`,
+  `content_hash` — må være oppdragets,
+- hver katalogverdi må stå i oppdraget.
+
+Det er nettopp den kontrollen den ordrette **ikke** kan gjøre. Et utdrag kan stå
+ordrett i kilden og likevel være ført på feil virkestoff eller et naboendepunkt;
+teksten ville vært like sann, og raden like gal.
+
+Oppdraget er redaktørens egen fil og kommer en annen vei enn forslaget. Det er
+hele poenget: to inndata fra to kilder, der bare den ene har vært innom
+modellen.
+
+Et forslag som er erklært laget av en modell, registreres **ikke** uten
+oppdraget sitt. Et forslag en redaktør har skrevet selv, har ikke noe oppdrag; da
+sies det uttrykkelig med `--no-assignment-check`, og valget føres i kjøringens
+manifest.
+
 Etter dette er funnet klart for den menneskelige kontrollen i appen. Ingenting
 publiseres uten den.
 
@@ -372,11 +404,11 @@ Oppsettet, i denne rekkefølgen:
    nettverkstilgangen til **Custom** med bare kildeleverandørens domener.
 2. **Fjern alle connectorer** i opprettelsesskjemaet. De er med som standard, og
    Routinen trenger ingen av dem.
-3. **Sørg for at Routinen ikke kan pushe til dette repoet.** Så lenge
-   byggarbeidsflyten gir PR-kode et deploy-token (3.5), er pushetilgang en vei
-   videre. Er det ikke mulig å skille i dag, er konklusjonen at modell-leddet
-   ikke skal kjøres som en sky-Routine mot dette repoet ennå — kjør det i en økt
-   du selv styrer, i et arbeidstre uten skrivekapabel legitimasjon.
+3. **Regn med at Routinen kan pushe.** Det kan den, og det kan ikke slås av
+   (3.5). Derfor er den konkrete veien videre stengt i repoet framfor forbudt i
+   en prompt: deploy-arbeidsflyten kjører ikke lenger på pull requests. Kommer
+   det en ny arbeidsflyt som kjører PR-kode med en hemmelighet, er den grensen
+   brutt igjen.
 4. **Lim oppdraget inn i prompten** (4.1). Det finnes ikke i en fersk klone.
 5. **Registreringen kjøres for seg** (6.1), ikke i den samme økten.
 

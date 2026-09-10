@@ -7016,16 +7016,31 @@ mot den ekte databasen, der forslaget `--close` skrev, går uendret gjennom de e
 til et gyldig maskinbevis, og kontrollgrunnlaget bærer identiteten aktøren erklærte i
 svarfilen.
 
+**Overleveringen kontrolleres på registreringssiden, mot redaktørens egen fil.** Et forslag som
+har vært innom en økt som leste utrygt eksternt innhold, er ikke et kontrollert artefakt: økten
+har skall, og filen kan endres etter at `--close` kjørte. Registreringen tar derfor imot
+oppdraget som en egen, tiltrodd inndata og kontrollerer kildebindingen og hver katalogverdi mot
+det før noe skrives. Avgrensningen mot katalogen er den ene kontrollen den ordrette ikke kan
+gjøre — et utdrag kan stå ordrett i kilden og likevel være ført på feil virkestoff — og den
+levde tidligere bare i modell-leddet, altså på feil side av overleveringen. Et forslag erklært
+laget av en modell registreres ikke uten oppdraget sitt; `--no-assignment-check` er kallerens
+uttrykkelige valg for et forslag en redaktør skrev selv, og føres i kjøringens manifest.
+
+**Deployveien er stengt der den fantes.** `.github/workflows/vercel.yml` kjørte på alle
+`pull_request` med `VERCEL_TOKEN` i jobbens miljø og bygde koden fra PR-branchen; en pull
+request fra en branch i samme repo får repository-secrets. En Routine pusher `claude/`-brancher
+som alltid aksepteres, og det finnes ingen tilgangsmodus som slår det av under en kjøring — så
+et krav om «ikke push» ville vært en regel uten håndhevelse. Arbeidsflyten kjører nå bare på
+`main`. Forhåndsvisninger lages av Vercels egen Git-integrasjon, som allerede gjorde det;
+arbeidsflyten laget en andre deploy av det samme, uten branch-alias.
+
 **Hva som ikke er etablert, og som ble tydeligere under review.** To Routine-kjøringer deler
 ikke filsystem: hver kjøring er en ny økt med en fersk klone av repoet, og grensesnittet i
 modell-leddet er lokale, gitignorerte filer. Oppdraget leveres derfor i Routinens egen prompt,
 og forslaget hentes ut av den økten som laget det; registreringen er en bevisst operasjon et
 menneske setter i gang. En transportkanal mellom to kjøringer finnes ikke, og skal velges
 bevisst når den trengs — ikke ved å commite kliniske arbeidsfiler eller ved å kjøre begge
-leddene i én skrivekapabel økt. I tillegg gir `.github/workflows/vercel.yml` kode på en
-PR-branch tilgang til et deploy-token, som er grunnen til at en aktør som leser eksternt
-kildemateriale, ikke skal ha pushetilgang til dette repoet. Begge deler står i
-`ROUTINE_EXTRACTION.md` §3.5, og begge krever en beslutning framfor mer kode.
+leddene i én skrivekapabel økt. Det står i `ROUTINE_EXTRACTION.md` §3.5, og krever en beslutning framfor mer kode.
 
 **Hva som gjenstår, og som ikke skal automatiseres bort.** Den første *reelle* ekstraksjonen
 fra en faktisk vitenskapelig artikkel er ikke gjort. Den skal gjøres av ChatGPT sammen med

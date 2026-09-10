@@ -19,6 +19,7 @@ import {
   parseExtractionProposal,
   type ExtractionProposal,
 } from './extraction-proposal'
+import { parseExtractionAssignment } from './extraction-assignment'
 import { runEvidenceExtraction, type RetrieveLike } from './extraction-run'
 import { ANTIDEP_EVIDENCE_PIPELINE_VERSION, EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version'
 import { FIXTURE_SOURCE_TEXT } from './test-support'
@@ -138,6 +139,120 @@ async function proposal(
     ],
   })
 }
+
+/** Oppdraget forslaget over holder seg innenfor. */
+async function oppdrag(overrides: Record<string, unknown> = {}) {
+  return parseExtractionAssignment({
+    assignment_version: 'antidep/extraction-assignment@1',
+    source_id: '50000000-0000-4000-8000-000000000001',
+    source_version_id: '51000000-0000-4000-8000-000000000001',
+    retrieved_from: 'https://eksempel.invalid/kilde',
+    content_hash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
+    drugs: [{ drug_id: '40000000-0000-4000-8000-000000000001', label: 'sertralin' }],
+    outcomes: [
+      { outcome_concept_id: '41000000-0000-4000-8000-000000000001', label: 'vektendring' },
+    ],
+    populations: [],
+    ...overrides,
+  })
+}
+
+// ----------------------------------------------------------------------------
+// Kontrollen mot oppdraget
+//
+// Avgrensningen mot katalogen er den ene kontrollen den ordrette ikke kan gjøre:
+// et utdrag kan stå ordrett i kilden og likevel være ført på feil virkestoff.
+// Den ble gjort i modell-leddet, men *før* forslaget ble overlevert fra en økt
+// som leste utrygt eksternt innhold — så den må gjøres om igjen her, mot
+// redaktørens egen oppdragsfil (EVIDENCE_PIPELINE.md §63).
+// ----------------------------------------------------------------------------
+
+describe('runEvidenceExtraction — kontrollen mot oppdraget', () => {
+  it('registrerer et forslag som holder seg innenfor oppdraget', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await proposal(),
+      assignment: await oppdrag(),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('registered')
+    expect(api.manifests[0]?.assignment_checked).toBe(true)
+  })
+
+  it('fører i manifestet når kjøringen ikke hadde noe oppdrag å kontrollere mot', async () => {
+    const api = fakeApi()
+    await runEvidenceExtraction({ api, proposal: await proposal(), retrieve: retrieveFixture() })
+
+    expect(api.manifests[0]?.assignment_checked).toBe(false)
+  })
+
+  it('registrerer ingenting når virkestoffet ikke står i oppdraget', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await proposal(),
+      assignment: await oppdrag({
+        drugs: [{ drug_id: '40000000-0000-4000-8000-0000000000ff', label: 'et annet virkestoff' }],
+      }),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('skipped')
+    expect(report.reason).toMatch(/intervention_drug_id/)
+    expect(api.registered).toEqual([])
+    expect(api.completions[0]?.status).toBe('aborted')
+  })
+
+  it('registrerer ingenting når endepunktet ikke står i oppdraget', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await proposal(),
+      assignment: await oppdrag({
+        outcomes: [
+          { outcome_concept_id: '41000000-0000-4000-8000-0000000000ff', label: 'et naboendepunkt' },
+        ],
+      }),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('skipped')
+    expect(report.reason).toMatch(/outcome_concept_id/)
+    expect(api.registered).toEqual([])
+  })
+
+  it('registrerer ingenting når forslaget peker på en annen kildeversjon enn oppdraget', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await proposal(),
+      assignment: await oppdrag({ source_version_id: '51000000-0000-4000-8000-0000000000ff' }),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('skipped')
+    expect(report.reason).toMatch(/source_version_id/)
+    expect(api.registered).toEqual([])
+  })
+
+  it('kontrollerer oppdraget før kilden i det hele tatt søkes i', async () => {
+    // Et forslag utenfor oppdraget skal avvises selv om utdragene er ordrett
+    // riktige. Det er nettopp den kombinasjonen kontrollen finnes for.
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await proposal(),
+      assignment: await oppdrag({
+        drugs: [{ drug_id: '40000000-0000-4000-8000-0000000000ff', label: 'et annet virkestoff' }],
+      }),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.reason).not.toMatch(/ordrett/)
+  })
+})
 
 describe('runEvidenceExtraction — den lykkede stien', () => {
   it('registrerer ekstraksjonen og lukker kjøringen', async () => {

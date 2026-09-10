@@ -23,24 +23,33 @@
 // Filen importeres aldri av appen og havner derfor ikke i klientbunten.
 // ============================================================================
 
+import { readFile } from 'node:fs/promises'
+
 import { createAgentClient, createEvidenceExtractionApi } from './agent-api.ts'
 import { EVIDENCE_EXTRACTION_CREDENTIAL, readAgentConfig } from './agent-environment.ts'
 import { redact } from './agent-credential.ts'
+import { parseAssignmentJson } from './extraction-assignment.ts'
 import { buildExtractionProposalSchema } from './extraction-proposal-schema.ts'
 import { runEvidenceExtraction } from './extraction-run.ts'
 import { readProposalFile } from './proposal-files.ts'
 
 const USAGE = `Bruk:
-  npm run agent:extract-evidence -- --proposal <fil> [valg]
+  npm run agent:extract-evidence -- --proposal <fil> --assignment <fil> [valg]
 
 Valg:
-  --proposal <fil>  JSON-filen med ekstraksjonsforslaget. Påkrevd.
-  --dry-run         Hent og kontroller, men registrer ingenting.
-  --schema          Skriv ut JSON Schema-formen av forslaget, og avslutt.
-  --help            Vis denne teksten.`
+  --proposal <fil>       JSON-filen med ekstraksjonsforslaget. Påkrevd.
+  --assignment <fil>     Oppdraget forslaget ble laget under. Påkrevd for et
+                         forslag laget av en modell.
+  --no-assignment-check  Registrer uten oppdraget. Bare for et forslag en
+                         redaktør har skrevet selv, uten et oppdrag.
+  --dry-run              Hent og kontroller, men registrer ingenting.
+  --schema               Skriv ut JSON Schema-formen av forslaget, og avslutt.
+  --help                 Vis denne teksten.`
 
 interface Options {
   readonly proposalPath: string
+  readonly assignmentPath: string | null
+  readonly skipAssignmentCheck: boolean
   readonly dryRun: boolean
 }
 
@@ -53,6 +62,8 @@ interface Options {
  */
 export function parseExtractionArguments(argv: readonly string[]): Options | 'help' | 'schema' {
   let proposalPath: string | null = null
+  let assignmentPath: string | null = null
+  let skipAssignmentCheck = false
   let dryRun = false
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -69,12 +80,20 @@ export function parseExtractionArguments(argv: readonly string[]): Options | 'he
       dryRun = true
       continue
     }
-    if (flag === '--proposal') {
+    if (flag === '--no-assignment-check') {
+      skipAssignmentCheck = true
+      continue
+    }
+    if (flag === '--proposal' || flag === '--assignment') {
       const value = argv[index + 1]
       if (value === undefined || value.startsWith('--')) {
-        throw new Error('--proposal krever en filsti.')
+        throw new Error(`${flag} krever en filsti.`)
       }
-      proposalPath = value
+      if (flag === '--proposal') {
+        proposalPath = value
+      } else {
+        assignmentPath = value
+      }
       index += 1
       continue
     }
@@ -84,8 +103,34 @@ export function parseExtractionArguments(argv: readonly string[]): Options | 'he
   if (proposalPath === null) {
     throw new Error('--proposal er påkrevd.')
   }
-  return { proposalPath, dryRun }
+  if (assignmentPath !== null && skipAssignmentCheck) {
+    throw new Error(
+      '--assignment og --no-assignment-check er to forskjellige valg. Oppgi ett av dem.',
+    )
+  }
+  return { proposalPath, assignmentPath, skipAssignmentCheck, dryRun }
 }
+
+/**
+ * Hvorfor et modellskrevet forslag ikke registreres uten oppdraget sitt.
+ *
+ * Avgrensningen mot katalogen er den ene kontrollen den ordrette ikke kan
+ * gjøre, og den ble gjort i modell-leddet — *før* forslaget ble overlevert fra
+ * en økt som leste utrygt eksternt innhold. En registrering som stolte på filen
+ * alene, ville tatt modellens ord for avgrensningen (EVIDENCE_PIPELINE.md §63).
+ *
+ * Et menneskeskrevet forslag har ikke noe oppdrag, og der er `--no-assignment-check`
+ * det riktige svaret. Valget er kallerens, ikke modellens, og det føres i
+ * kjøringens manifest.
+ */
+const ASSIGNMENT_REQUIRED =
+  'Forslaget er erklært laget av en modell, og registreres derfor ikke uten oppdraget det ble ' +
+  'laget under. Oppgi --assignment <fil> med den oppdragsfilen redaktøren eier.\n\n' +
+  'Avgrensningen mot katalogen ble kontrollert i modell-leddet, før forslaget ble overlevert. ' +
+  'Uten oppdraget her ville registreringen tatt modellens ord for hvilket virkestoff og hvilket ' +
+  'endepunkt funnet gjelder.\n\n' +
+  'Er forslaget skrevet av en redaktør uten et oppdrag, si det uttrykkelig med ' +
+  '--no-assignment-check. Valget føres i kjøringens manifest.'
 
 async function main(): Promise<number> {
   let options: Options
@@ -106,6 +151,35 @@ async function main(): Promise<number> {
     return 1
   }
 
+  // Filene leses før legitimasjonen. Et forslag som mangler oppdraget sitt, er en
+  // feil kalleren kan rette der og da, og den skal ikke skjule seg bak en
+  // melding om en manglende miljøvariabel — eller kreve legitimasjon for å bli
+  // sagt i det hele tatt.
+  let proposal
+  let assignment
+  try {
+    proposal = (await readProposalFile(options.proposalPath)).proposal
+
+    if (
+      proposal.generatedBy.producer === 'model' &&
+      options.assignmentPath === null &&
+      !options.skipAssignmentCheck
+    ) {
+      console.error(ASSIGNMENT_REQUIRED)
+      return 1
+    }
+    assignment =
+      options.assignmentPath === null
+        ? undefined
+        : parseAssignmentJson(
+            options.assignmentPath,
+            await readFile(options.assignmentPath, 'utf8'),
+          )
+  } catch (cause) {
+    console.error(cause instanceof Error ? cause.message : String(cause))
+    return 1
+  }
+
   const config = readAgentConfig(process.env, EVIDENCE_EXTRACTION_CREDENTIAL)
   const api = createEvidenceExtractionApi(
     createAgentClient({ url: config.url, publishableKey: config.publishableKey }),
@@ -113,10 +187,10 @@ async function main(): Promise<number> {
   )
 
   try {
-    const { proposal } = await readProposalFile(options.proposalPath)
     const report = await runEvidenceExtraction({
       api,
       proposal,
+      ...(assignment === undefined ? {} : { assignment }),
       dryRun: options.dryRun,
       log: (line) => {
         console.log(line)

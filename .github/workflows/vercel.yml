@@ -1,7 +1,31 @@
+# Produksjonsdeploy til Vercel.
+#
+# ----------------------------------------------------------------------------
+# Hvorfor denne ikke kjører på pull requests lenger
+#
+# `VERCEL_TOKEN` ligger i jobbens miljø, og jobben sjekker ut den utsjekkede
+# koden og kjører `vercel build` — altså byggskriptene fra den branchen. En pull
+# request fra en branch i *samme* repo får repository-secrets, i motsetning til
+# en fra en fork. Kode på en PR-branch kunne derfor kjøre med deploy-tokenet
+# tilgjengelig.
+#
+# Det var en åpen eskaleringsvei for enhver aktør med pushetilgang, og en aktør
+# som leser eksternt kildemateriale, skal ikke ha den (EVIDENCE_PIPELINE.md §63,
+# docs/ROUTINE_EXTRACTION.md §3.5). En instruks om «ikke push» er ingen grense
+# når poenget er å tåle promptinjeksjon; veien måtte stenges der den fantes.
+#
+# Forhåndsvisninger forsvinner ikke av det. Vercels egen Git-integrasjon deployer
+# hver branch og hver pull request selv, og det er den som gir lenken i
+# PR-kommentaren (`antidep-git-<branch>-…`). Denne arbeidsflyten laget en *andre*
+# deploy av det samme, uten branch-alias — se `README.md`.
+#
+# Produksjonsdeployen står igjen: den kjører bare på `main`, som er kode noen har
+# reviewet og merget.
+# ----------------------------------------------------------------------------
+
 name: Deploy to Vercel
 
 on:
-  pull_request:
   push:
     branches:
       - main
@@ -20,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
 
     environment:
-      name: ${{ github.event_name == 'push' && 'Production' || 'Preview' }}
+      name: Production
       url: ${{ steps.deploy.outputs.url }}
 
     steps:
@@ -36,29 +60,14 @@ jobs:
         run: npm install --global vercel@latest
 
       - name: Pull Vercel configuration
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-          else
-            vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
-          fi
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
 
       - name: Build
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            vercel build --prod --token="$VERCEL_TOKEN"
-          else
-            vercel build --token="$VERCEL_TOKEN"
-          fi
+        run: vercel build --prod --token="$VERCEL_TOKEN"
 
       - name: Deploy
         id: deploy
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
-          else
-            url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
-          fi
-
+          url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployment: $url" >> "$GITHUB_STEP_SUMMARY"

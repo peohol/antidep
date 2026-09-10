@@ -1339,6 +1339,42 @@ async function main(): Promise<void> {
           'true',
       routineKjede.results[0]?.unverifiedReason ?? '',
     )
+    // Overleveringen er utrygg: forslaget har vært innom en økt som leste utrygt
+    // eksternt innhold. Registreringen kontrollerer det derfor mot redaktørens
+    // egen oppdragsfil, og et forslag utenfor katalogen blir ingen rad — selv
+    // om hvert utdrag står ordrett i kilden.
+    const førUtenfor = psql(
+      config,
+      `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+    )
+    const utenfor = await runEvidenceExtraction({
+      api: reextractionPorts.extractionApi,
+      proposal: routineForslag.proposal,
+      assignment: parseExtractionAssignment({
+        assignment_version: 'antidep/extraction-assignment@1',
+        source_id: SOURCE,
+        source_version_id: VERSION,
+        retrieved_from: 'https://example.test/kjede',
+        content_hash: contentHash,
+        drugs: [{ drug_id: drugId, label: 'sertralin' }],
+        // Et annet endepunkt enn det forslaget peker på.
+        outcomes: [
+          { outcome_concept_id: '41000000-0000-4000-8000-0000000000ff', label: 'et naboendepunkt' },
+        ],
+        populations: [],
+      }),
+      retrieve: retrieve(contentHash),
+    })
+    check(
+      'et forslag utenfor oppdraget blir ingen rad, selv med ordrette utdrag',
+      utenfor.decision === 'skipped' &&
+        (utenfor.reason ?? '').includes('outcome_concept_id') &&
+        psql(
+          config,
+          `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+        ) === førUtenfor,
+      utenfor.reason ?? '',
+    )
     check(
       'og kontrollgrunnlaget bærer identiteten aktøren erklærte i svarfilen',
       psql(

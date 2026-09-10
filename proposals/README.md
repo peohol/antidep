@@ -115,7 +115,8 @@ skifter mening.
 ## 4. Tørrkjøring
 
 ```bash
-npm run agent:extract-evidence -- --proposal proposals/fava-2000.json --dry-run
+npm run agent:extract-evidence -- --proposal proposals/fava-2000.json --dry-run \
+  --assignment assignments/fava-2000.json
 ```
 
 Henter kildeversjonen, krever at fingeravtrykket stemmer, og prøver hvert utdrag
@@ -129,8 +130,19 @@ igjen.
 ## 5. Registrering
 
 ```bash
-npm run agent:extract-evidence -- --proposal proposals/fava-2000.json
+npm run agent:extract-evidence -- --proposal proposals/fava-2000.json --no-assignment-check
 ```
+
+**Oppdraget er en egen, tiltrodd inndata.** Et forslag laget av en modell
+registreres ikke uten oppdragsfilen det ble laget under: kjøringen kontrollerer
+kildebindingen og hver katalogverdi mot den før noe skrives. Grunnen er
+overleveringen — filen har vært innom en økt som leste utrygt eksternt innhold,
+og avgrensningen mot katalogen er den ene kontrollen den ordrette ikke kan gjøre.
+
+Et forslag en redaktør har skrevet selv, ut av en fulltekst, har ikke noe
+oppdrag. Da sies det uttrykkelig med `--no-assignment-check`, og valget føres i
+kjøringens manifest slik at den som senere bedømmer raden, kan lese det. Har du
+et oppdrag, oppgi det med `--assignment <fil>` framfor å slå kontrollen av.
 
 Samme kontroller, og deretter registrering gjennom
 `api.register_agent_extraction(...)`. Databasen avviser ekstraksjonen dersom
@@ -179,7 +191,9 @@ ChatGPT ut av en lovlig innhentet fulltekst, eller av et menneske. Et forslag fr
 kjøremappa registreres rett derfra:
 
 ```bash
-npm run agent:extract-evidence -- --proposal assignments/<navn>/forslag.json
+npm run agent:extract-evidence -- \
+  --proposal assignments/<navn>/forslag.json \
+  --assignment assignments/<navn>.json
 ```
 
 ## Flere artikler på én gang

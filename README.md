@@ -77,9 +77,9 @@ npm run agent:propose-extraction -- --assignment <fil> --recording <fil> --out <
 Agentkjørerne (krever legitimasjon, se `supabase/README.md`):
 
 ```bash
-npm run agent:extract-evidence -- --schema                       # kontrakten for et forslag
-npm run agent:extract-evidence -- --proposal <fil> --dry-run     # kontroller, skriv ingenting
-npm run agent:extract-evidence -- --proposal <fil>               # registrer ett forankret funn
+npm run agent:extract-evidence -- --schema                        # kontrakten for et forslag
+npm run agent:extract-evidence -- --proposal <fil> --assignment <fil> --dry-run  # kontroller, skriv ingenting
+npm run agent:extract-evidence -- --proposal <fil> --assignment <fil>            # registrer ett forankret funn
 npm run agent:reextract-evidence -- --directory proposals        # flere forslag, med kontroll etter hvert
 npm run agent:verify-extraction                                  # den deterministiske kontrollen
 npm run agent:verify-claims                                      # claim-verifikatoren
@@ -92,27 +92,17 @@ CI (GitHub Actions, `.github/workflows/ci.yml`) kjører lint, formatkontroll, ty
 tester og produksjonsbygg på alle pull requests og på `main`, og verifiserer i en egen jobb
 at den lokale Supabase-stacken booter fra clean checkout.
 
-### Åpen sikkerhetsvurdering: deploy-arbeidsflyten og pull requests
+### Forhåndsvisninger og deploy
 
-`.github/workflows/vercel.yml` kjører på **alle** `pull_request`, legger `VERCEL_TOKEN` i
-jobbens miljø, sjekker ut PR-ens kode og kjører `vercel build` — som kjører byggskriptene fra
-den branchen. En pull request fra en branch i _samme_ repo får repository-secrets, i
-motsetning til en fra en fork. Kode på en PR-branch kan derfor kjøre med deploy-tokenet
-tilgjengelig.
+`.github/workflows/vercel.yml` kjører **bare** på `main`. Den kjørte tidligere også på alle
+`pull_request`, med `VERCEL_TOKEN` i jobbens miljø, og bygde koden fra PR-branchen — og en pull
+request fra en branch i _samme_ repo får repository-secrets. Kode på en PR-branch kunne derfor
+kjøre med deploy-tokenet tilgjengelig. Veien er stengt fordi en autonom aktør som leser
+eksternt kildemateriale, ikke skal kunne nå den (`docs/ROUTINE_EXTRACTION.md` §3.5).
 
-Det gjelder alle med pushetilgang, og er ikke innført av evidenspipelinen. Men det er grunnen
-til at en autonom aktør som leser eksternt kildemateriale, **ikke** skal ha pushetilgang til
-dette repoet (`docs/ROUTINE_EXTRACTION.md` §3.5).
-
-Tre veier videre, som krever en beslutning framfor mer kode:
-
-1. La Vercels egen Git-integrasjon lage forhåndsvisninger, og fjern `pull_request` fra denne
-   arbeidsflyten.
-2. Behold arbeidsflyten, men legg **required reviewers** på `Preview`-miljøet i GitHub, slik
-   at secrets ikke deles ut før noen godkjenner kjøringen.
-3. Behold den som den er, med pushetilgang begrenset til mennesker.
-
-Valget påvirker hvordan forhåndsvisninger lages, og hører derfor til eieren av prosjektet.
+Forhåndsvisninger for pull requests lages av **Vercels egen Git-integrasjon**, som allerede
+gjorde det: det er den som gir `antidep-git-<branch>-…`-lenken i PR-kommentaren.
+Arbeidsflyten laget en andre deploy av det samme, uten branch-alias.
 
 ## Miljøvariabler
 

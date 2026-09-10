@@ -157,8 +157,17 @@ agentidentitet, og bekreftes deretter felt for felt av et menneske før noe kan
 publiseres.
 
 ```bash
-npm run agent:extract-evidence -- --proposal assignments/fava-2000/forslag.json
+npm run agent:extract-evidence -- \
+  --proposal assignments/fava-2000/forslag.json \
+  --assignment assignments/fava-2000.json
 ```
+
+**Oppdraget oppgis på nytt her, og det er ikke en gjentakelse.** Forslaget har
+vært innom en økt som leste utrygt eksternt innhold; oppdraget er redaktørens
+egen fil og kommer en annen vei. Registreringen kontrollerer kildebindingen og
+hver katalogverdi mot oppdraget før den skriver noe — den ene kontrollen den
+ordrette ikke kan gjøre, siden et utdrag kan stå ordrett i kilden og likevel være
+ført på feil virkestoff.
 
 Registreringen er en **egen** kommando, med sin egen legitimasjon, og skal kjøres
 for seg. Modell-leddet nekter å kjøre dersom en agenthemmelighet står i miljøet:
