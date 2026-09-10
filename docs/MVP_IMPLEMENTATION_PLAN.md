@@ -1390,7 +1390,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: add the human claim review and publication approval flow        (#59)  merget   migrasjon 008g, 005m, 005n, 006d, 005o, 005p, 006e, 006f
       feat: add the human extraction check and make publication operational (#61)  merget   migrasjon 005q, 005r, 005s, 005t, 006g, 006h
       feat: rebuild the human control flow as a guided session              (#62)  merget   migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å
-      feat: make the current review decision race-safe                      (#65)  åpen     migrasjon 006i
+      feat: make the current review decision race-safe                      (#65)  merget   migrasjon 006i, 007h
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1492,7 +1492,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2003 pgTAP-assertions over 61 testfiler.
+Databaselaget teller nå 2039 pgTAP-assertions over 62 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1660,17 +1660,17 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de sekstifire migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de sekstiseks migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
-   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å og 006i — i
+   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h og 003d — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0 og 0.
+   0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle sekstifire ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle sekstiseks ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -1701,9 +1701,11 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
    innsettingen ut i én delt funksjon uten å innføre noe vokabular, 005v tar imot de samme
    vokabularene som `text` og `jsonb` og caster dem i funksjonskroppen som 005k, 005w
    skriver én rad i et register som allerede finnes, og 003c skriver forankringsrader og
-   setter en kolonne som 003b nettopp opprettet. 005x er den siste, og innfører heller
-   ingen type: den legger til to kolonner, ett avtrykk og én forutsetning i en skrivevei
-   som allerede fantes.
+   setter en kolonne som 003b nettopp opprettet. 005x innfører heller ingen type: den
+   legger til to kolonner, ett avtrykk og én forutsetning i en skrivevei som allerede
+   fantes. Det gjør heller ikke de tre siste: 006i legger til et registreringsnummer,
+   007h gjenskaper én funksjon, og 003d legger til en kolonne og tre funksjoner over
+   vokabularer migrasjon 005 og 005u allerede eier.
    Viewene caster enum-kolonner til `text`, så den offentlige kontrakten er en streng
    fra et dokumentert vokabular, ikke PostgreSQL-typen. Et senere bytte til
    oppslagstabeller er dermed ikke en brytende API-endring. Castingen sparer også
@@ -6683,6 +6685,95 @@ den kanoniske identiteten.
 Samtidig prøves regelen re-ekstraksjonen finnes for: det gamle, uforankrede funnet står urørt
 ved siden av det nye, uten forankring lagt til i etterkant. Det var dette leddet som avdekket
 avbruddsfeilen over.
+
+---
+
+### 74.40 Kildeforankringen er en del av evidensfunnets identitet
+
+§74.39 lot dublettavvisningen navngi raden som kolliderte, og navnga samtidig det som stod
+igjen: `content_hash` ble regnet ut av kolonnene på `knowledge.evidence_items` alene, mens
+kildeforankringen ligger i sin egen tabell. Et forslag som bare rettet et `source_excerpt`, en
+`source_locator` eller en `justification`, ga nøyaktig den samme hashen, ble avvist som en
+dublett — og den gale forankringen ble stående. Ført som issue #66, med tre veier videre.
+
+**Én migrasjon.**
+
+| Migrasjon | Hva den gjør |
+| --- | --- |
+| 003d | Forankringen inngår i evidensfunnets identitet, gjennom en `content_hash`-versjon 3 og et eget avtrykk på raden som databasen krever stemmer med forankringen |
+
+**Valget er vei 1, og det følger av datamodellen.** Issue #66 satte opp tre alternativer: la
+forankringen inngå i avtrykket, la den rettes på plass som en egen append-only korreksjonsrad,
+eller la det stå. Den første er valgt, og begrunnelsen står i migrasjonen selv:
+`knowledge.evidence_field_groundings` er allerede append-only med den samme begrunnelsen som
+funnet, tabellens egen avvisningstekst sier allerede at «er forankringen feil, er ekstraksjonen
+feil», og `UNIQUE (evidence_item_id, check_field)` finnes nettopp for at ett felt ikke skal
+kunne ha to konkurrerende forankringer. En korreksjonsrad ville innført akkurat det den regelen
+hindrer, og krevd en «gjeldende forankring»-avledning ved siden av. Kontrollradene har den
+formen fordi en *vurdering* er en hendelse over tid; en ekstraksjon er det ikke.
+
+**Hvordan et avtrykk kan dekke en annen tabell.** `content_hash` settes av en BEFORE
+INSERT-trigger, og på det tidspunktet finnes forankringsradene ikke — de skrives etter funnet,
+fordi de peker på det. Raden bærer derfor forankringens eget avtrykk i kolonnen
+`grounding_digest`, og en utsatt `constraint trigger` krever ved commit at kolonnen stemmer med
+de radene som faktisk ble skrevet. Kontrollen står på begge tabellene og går dermed begge
+veier: den fanger både et funn som oppgir feil avtrykk, og en forankring som legges til på et
+allerede registrert funn. Det siste er ikke hypotetisk — det er nettopp «å legge forankring på
+en gammel rad», som re-ekstraksjonen finnes for å unngå.
+
+**Én kanonisering, brukt av alle.** `knowledge.canonical_field_groundings(jsonb)` normaliserer
+forslagets forankringsliste én gang. Både innsettingen i
+`knowledge.evidence_field_groundings` og avtrykket bygges av den, med den samme begrunnelsen
+006a hadde for å flytte kanoniseringen ut av triggerfunksjonen: to kopier som kunne komme fra
+hverandre, er nøyaktig den klassen feil. Rekkefølgen i et forslag er ikke informasjon — ett
+felt har én forankring — så avtrykket sorterer delene deterministisk med `collate "C"`, slik at
+det er byte-rekkefølge og ikke databasens lokaltilpassede kollasjon som avgjør. En flyttet
+linje i en fil blir dermed ikke feilaktig et nytt funn.
+
+**Eksisterende rader er migrert, ikke rørt.** `grounding_digest` fylles ut av den forankringen
+hver rad faktisk har — den tomme listen for alle funn registrert før 005u — og `content_hash`
+regnes ut på nytt etter den nye definisjonen, slik 006a gjorde det for v2. Ingen kanonisk
+kolonne røres. Rehashingen kan ikke kollidere: to rader som var distinkte under v2, hadde
+distinkte feltverdier, og v3 leser de samme feltene og ett til. Migrasjonen kontrollerer selv,
+før den commiter, at ingen rad står igjen på en eldre definisjon og at hvert avtrykk stemmer
+med forankringen.
+
+**Ingenting arves.** Det korrigerte funnet er en ny rad, og verifikasjoner, claim-lenker og
+publiseringsgodkjenninger peker på `evidence_item_id`. Maskinbeviset, den menneskelige
+ekstraksjonskontrollen, koblingen til en påstand og godkjenningen følger derfor ikke med. Det
+nye funnet må selv gjennom de samme portene før det kan brukes i publisering
+(ANTIDEP_CONSTITUTION.md §11, §12), og lenkingen til en påstand er som før en faglig vurdering
+en kvalifisert redaktør gjør.
+
+**Kjøreren fikk mindre å gjøre, ikke mer.** Re-ekstraksjonen sammenlignet tidligere
+forankringen på den navngitte raden selv, og meldte en «forankringskonflikt» når den var en
+annen — en tilstand som fantes bare fordi rettelsen ikke lot seg registrere. Den er borte:
+identiteten databasen slo opp på, dekker nå forankringen, så den navngitte raden *er*
+forslagets. Kjøringen avgjør bare om raden allerede bærer et gjeldende maskinbevis, og
+fullfører kontrollen hvis ikke. Et forslag der bare et utdrag er rettet, går den ordinære veien:
+registrering, deterministisk kontroll, ferdig.
+
+**Ingen regel er myket opp.** Ingen CHECK, constraint, trigger, policy eller grant er fjernet
+eller svekket, og ingen ny tabelltilgang er gitt til `anon` eller `authenticated`. Kolonnen har
+sin egen formatkontroll, den utsatte kontrollen er ny og strengere, og dublettregelen er
+strengere enn før: en dublett er nå den samme ekstraksjonen *med den samme forankringen*.
+
+**Testene.** `620` bærer migrasjonen: kontrakten på kolonnen, funksjonene og de to utsatte
+triggerne; at avtrykket er deterministisk, uavhengig av rekkefølge og lik en fast referanseverdi;
+at et rettet utdrag, en rettet peker og en rettet begrunnelse hver blir et nytt funn med
+identiske strukturerte verdier; at eksakt dublett fortsatt avvises og fortsatt navngir riktig
+rad; at avtrykket ikke kan lyve i noen av retningene; og at gammel og ny rad står med hver sin
+kontrollstatus. `100` og `280` er ført videre til v3, og `280`-kontrollen som krever at hver
+kanonisk kolonne påvirker fingeravtrykket, dekker den nye kolonnen uten endring.
+
+`scripts/agent-chain-test.ts` har fått et sjuende ledd, og det er den sterkeste vakten:
+rettelsen gjøres på det *publiserte* funnet fra ledd 1 til 4, altså den ene raden som faktisk
+bærer noe å arve. Prøven krever at den rettede forankringen blir en ny rad, at den går hele
+veien til et gyldig maskinbevis gjennom de ekte kjørerne og de ekte portene, at den verken
+arver den menneskelige kontrollen eller claim-lenken, at den gamle raden står med samme
+avtrykk, samme forankring og samme kontroller som før, og at den publiserte påstanden fortsatt
+viser bare det gamle funnet. Re-ekstraksjonens egne tester uten database er skrevet om til den
+nye regelen: en rettet forankring registreres og kontrolleres, framfor å meldes som en konflikt.
 
 ---
 

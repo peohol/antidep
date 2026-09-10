@@ -295,7 +295,7 @@
     "field_groundings": {
       "type": "array",
       "minItems": 1,
-      "description": "Én forankring per semantisk felt raden påstår noe om. Databasen avviser en ekstraksjon som ikke forankrer dem alle, og ingen forankring fylles inn automatisk.",
+      "description": "Én forankring per semantisk felt raden påstår noe om. Databasen avviser en ekstraksjon som ikke forankrer dem alle, og ingen forankring fylles inn automatisk. Forankringen er en del av evidensfunnets identitet: et forslag med de samme strukturerte verdiene, men et rettet utdrag, en rettet peker eller en rettet begrunnelse, registreres som et nytt funn ved siden av det gamle og må kontrolleres på nytt. Rekkefølgen i listen betyr ingenting.",
       "items": {
         "type": "object",
         "additionalProperties": false,

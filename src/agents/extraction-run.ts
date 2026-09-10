@@ -73,10 +73,12 @@ export interface ExtractionRunReport {
   readonly runStatus: 'succeeded' | 'aborted' | 'failed'
   /**
    * `already_registered` er ikke en feil. `evidence_items_content_hash_key`
-   * dekker hele radens faglige innhold, så nøyaktig det samme forslaget kjørt
-   * om igjen skriver ingenting — og det er nettopp det som gjør kjøringen
-   * idempotent. En korreksjon av et hvilket som helst felt gir en ny hash og
-   * registreres ved siden av den gamle; ingenting overskrives.
+   * dekker hele radens faglige innhold, kildeforankringen medregnet (migrasjon
+   * 003d), så nøyaktig det samme forslaget kjørt om igjen skriver ingenting — og
+   * det er nettopp det som gjør kjøringen idempotent. En korreksjon av et
+   * hvilket som helst felt, eller av et utdrag, en kildepeker eller en
+   * begrunnelse, gir en ny hash og registreres ved siden av den gamle;
+   * ingenting overskrives.
    */
   readonly decision: 'registered' | 'already_registered' | 'previewed' | 'skipped'
   readonly evidenceItemId?: Uuid
@@ -240,13 +242,14 @@ export async function runEvidenceExtraction(
         throw cause
       }
       // Den ene forventede avvisningen: raden finnes allerede, med nøyaktig
-      // det samme innholdet. Kjøringen lukkes som `aborted` fordi den ikke
-      // produserte noe, ikke fordi noe gikk galt — og det gamle funnet står
-      // urørt, som det skal (knowledge.evidence_items er append-only).
+      // det samme innholdet og den samme forankringen. Kjøringen lukkes som
+      // `aborted` fordi den ikke produserte noe, ikke fordi noe gikk galt — og
+      // det gamle funnet står urørt, som det skal (knowledge.evidence_items er
+      // append-only).
       const reason = cause instanceof Error ? cause.message : String(cause)
       const existingEvidenceItemId = collidingEvidenceItemId(cause)
       log(
-        'Ingenting registrert: de strukturerte verdiene er allerede registrert' +
+        'Ingenting registrert: den samme ekstraksjonen er allerede registrert' +
           (existingEvidenceItemId === null ? '.' : ` som ${existingEvidenceItemId}.`),
       )
       await api.completeRun(

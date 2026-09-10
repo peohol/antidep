@@ -513,6 +513,31 @@ For klinisk viktige felt bør systemet skille mellom minst:
 
 Dette kan implementeres med separate statusfelt for de feltene hvor skillet er viktig, eller en strukturert `missingness`-modell.
 
+### 19.2 Identiteten til et evidensfunn omfatter kildeforankringen
+
+`knowledge.evidence_items` er append-only, og `content_hash` er unik. Identiteten avgjør
+dermed hva som i det hele tatt kan rettes: to registreringer med samme fingeravtrykk er den
+samme, og den andre avvises.
+
+Fingeravtrykket skal derfor dekke både de strukturerte verdiene og den kildeforankringen
+funnet hviler på — det ordrette utdraget, den presise kildepekeren og begrunnelsen, per
+kontrollert felt. Begrunnelsen er den samme som for `raw_extraction` (§20): forankringen er
+nettopp det en verifikator og en kliniker prøver verdien mot, så et feil utdrag er en reell og
+alvorlig feilklasse som må kunne rettes. Dekket ikke fingeravtrykket forankringen, ville en
+rettelse av den vært en dublett, og den gale forankringen ville blitt stående.
+
+Forankringen ligger i sin egen tabell, og fingeravtrykket settes ved innsetting av funnet —
+altså før forankringsradene finnes. Raden bærer derfor et eget avtrykk av forankringen som en
+kolonne, og databasen krever ved commit at avtrykket stemmer med de radene som faktisk ble
+skrevet. Kolonnen er dermed ikke en påstand kalleren slipper unna med, og en forankring kan
+verken legges til eller endres etter at funnet er registrert.
+
+Konsekvensen er den append-only-modellen forutsetter: en rettet forankring er et *nytt*
+evidensfunn ved siden av det gamle. Det gamle består urørt, og det nye arver ingenting —
+verken maskinell verifikasjon, menneskelig kontroll, claim-lenker eller
+publiseringsgodkjenning. Det må selv gjennom de samme portene før det kan brukes i
+publisering.
+
 ## 20. Rå ekstraksjon og kanoniske felt
 
 Kildespesifikke eller ustrukturerte detaljer kan lagres som `jsonb`, men sentrale spørre- og valideringsfelter skal være relasjonelle kolonner/FK-er.

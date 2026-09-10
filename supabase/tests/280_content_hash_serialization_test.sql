@@ -225,7 +225,7 @@ select
   'not_reported', d.id, 'none', c.id, 'Testutfall', 'not_reported',
   'not_stated', 'not_reported', 'not_reported',
   'Serialiseringstest, forfalsket hash', 'ai_assisted',
-  'sha256-v2:' || repeat('0', 64), pg_temp.extraction_actor()
+  'sha256-v3:' || repeat('0', 64), pg_temp.extraction_actor()
 from knowledge.sources s
 join catalog.drugs d on d.canonical_name = 'sertralin'
 join catalog.clinical_concepts c on c.canonical_label = 'vektendring'
@@ -234,7 +234,7 @@ where s.title = 'Serialiseringstestkilde';
 select isnt(
   (select content_hash from knowledge.evidence_items
    where source_locator = 'Serialiseringstest, forfalsket hash'),
-  'sha256-v2:' || repeat('0', 64),
+  'sha256-v3:' || repeat('0', 64),
   'en hash oppgitt av kalleren ignoreres og overskrives av databasen'
 );
 
@@ -244,7 +244,7 @@ select isnt(
 select is_empty(
   $$
     select id, content_hash from knowledge.evidence_items
-    where content_hash !~ '^sha256-v2:[0-9a-f]{64}$'
+    where content_hash !~ '^sha256-v3:[0-9a-f]{64}$'
   $$,
   'ingen rad står igjen på en eldre hashdefinisjon etter rehashingen'
 );
@@ -253,7 +253,7 @@ select is(
   (select count(distinct content_hash) from knowledge.evidence_items e
    join knowledge.sources s on s.id = e.source_id
    where s.title <> 'Serialiseringstestkilde'
-     and e.content_hash ~ '^sha256-v2:[0-9a-f]{64}$'),
+     and e.content_hash ~ '^sha256-v3:[0-9a-f]{64}$'),
   2::bigint,
   'de to seedede evidensfunnene er rehashet til den nye definisjonen og har fortsatt hvert sitt fingeravtrykk'
 );

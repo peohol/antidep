@@ -52,6 +52,11 @@
 //
 // Samtidig prøves regelen re-ekstraksjonen finnes for: det gamle, uforankrede
 // funnet står urørt ved siden av det nye, uten forankring lagt til i etterkant.
+//
+// Og til slutt identitetsregelen fra migrasjon 003d: et forslag med de samme
+// strukturerte verdiene, men ett rettet ordrett utdrag, er et *nytt* evidensfunn.
+// Det går hele veien til et gyldig maskinbevis, mens den gamle raden står urørt
+// og beholder sin egen kontroll, sin claim-lenke og sin publiserte påstand.
 // ============================================================================
 
 import { execFileSync } from 'node:child_process'
@@ -324,66 +329,73 @@ async function main(): Promise<void> {
   const client = createAgentClient({ url: config.apiUrl, publishableKey: config.anonKey })
 
   // ---- Ledd 1: ekstraksjonen, gjennom den ekte porten -----------------------
+  //
+  // Forslaget står som data og ikke inne i kallet, fordi ledd 8 trenger nøyaktig
+  // de samme strukturerte verdiene med ett rettet utdrag. Var de skrevet av to
+  // ganger, kunne de kommet fra hverandre, og påstanden om at forankringen alene
+  // skiller de to radene ville sluttet å holde.
+  const kjedeForslag = {
+    proposal_version: EXTRACTION_PROPOSAL_VERSION,
+    source_id: SOURCE,
+    source_version_id: VERSION,
+    retrieved_from: 'https://example.test/kjede',
+    content_hash: contentHash,
+    extraction: {
+      design_code: 'randomized_controlled_trial',
+      population_availability: 'not_reported',
+      population_detail: 'Voksne.',
+      sample_size_availability: 'not_reported',
+      intervention_drug_id: psql(
+        config,
+        `select id from catalog.drugs where canonical_name = 'sertralin'`,
+      ),
+      comparator_kind: 'none',
+      outcome_concept_id: psql(
+        config,
+        `select id from catalog.clinical_concepts where canonical_label = 'vektendring'`,
+      ),
+      outcome_detail: 'Vektendring.',
+      timepoint_availability: 'not_reported',
+      reported_direction: 'increase',
+      estimate_availability: 'not_reported',
+      confidence_interval_availability: 'not_reported',
+      source_locator: 'Sammendrag',
+    },
+    field_groundings: [
+      {
+        check_field: 'intervention_arm',
+        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_locator: 'METHODS',
+        justification: 'Armen står i metodeavsnittet.',
+      },
+      {
+        check_field: 'outcome',
+        source_excerpt: 'Sertraline weight change increased from baseline.',
+        source_locator: 'RESULTS',
+        justification: 'Endepunktet står i resultatavsnittet.',
+      },
+      {
+        check_field: 'reported_direction',
+        source_excerpt: 'Sertraline weight change increased from baseline.',
+        source_locator: 'RESULTS',
+        justification: 'Retningen står i resultatavsnittet.',
+      },
+      {
+        check_field: 'availability_semantics',
+        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_locator: 'METHODS',
+        justification: 'Feltene uten verdi er ført som ikke rapportert.',
+      },
+    ],
+  }
+
   const extraction = await runEvidenceExtraction({
     api: createEvidenceExtractionApi(client, {
       identityKey: 'agent-identity:evidence-extraction-01',
       secret: agentSecret(secret),
     }),
     premises: EVIDENCE_EXTRACTION_PREMISES,
-    proposal: parseExtractionProposal({
-      proposal_version: EXTRACTION_PROPOSAL_VERSION,
-      source_id: SOURCE,
-      source_version_id: VERSION,
-      retrieved_from: 'https://example.test/kjede',
-      content_hash: contentHash,
-      extraction: {
-        design_code: 'randomized_controlled_trial',
-        population_availability: 'not_reported',
-        population_detail: 'Voksne.',
-        sample_size_availability: 'not_reported',
-        intervention_drug_id: psql(
-          config,
-          `select id from catalog.drugs where canonical_name = 'sertralin'`,
-        ),
-        comparator_kind: 'none',
-        outcome_concept_id: psql(
-          config,
-          `select id from catalog.clinical_concepts where canonical_label = 'vektendring'`,
-        ),
-        outcome_detail: 'Vektendring.',
-        timepoint_availability: 'not_reported',
-        reported_direction: 'increase',
-        estimate_availability: 'not_reported',
-        confidence_interval_availability: 'not_reported',
-        source_locator: 'Sammendrag',
-      },
-      field_groundings: [
-        {
-          check_field: 'intervention_arm',
-          source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
-          source_locator: 'METHODS',
-          justification: 'Armen står i metodeavsnittet.',
-        },
-        {
-          check_field: 'outcome',
-          source_excerpt: 'Sertraline weight change increased from baseline.',
-          source_locator: 'RESULTS',
-          justification: 'Endepunktet står i resultatavsnittet.',
-        },
-        {
-          check_field: 'reported_direction',
-          source_excerpt: 'Sertraline weight change increased from baseline.',
-          source_locator: 'RESULTS',
-          justification: 'Retningen står i resultatavsnittet.',
-        },
-        {
-          check_field: 'availability_semantics',
-          source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
-          source_locator: 'METHODS',
-          justification: 'Feltene uten verdi er ført som ikke rapportert.',
-        },
-      ],
-    }),
+    proposal: parseExtractionProposal(JSON.parse(JSON.stringify(kjedeForslag))),
     retrieve: retrieve(contentHash),
   })
 
@@ -802,17 +814,15 @@ async function main(): Promise<void> {
   )
 
   // Den eksakte dublettraden er nå kontrollert, mens naboen fortsatt står
-  // ukontrollert på den samme kildeversjonen. Det er ikke en rettet forankring,
-  // og skal ikke bli meldt som en konflikt.
+  // ukontrollert på den samme kildeversjonen. Kjøringen skal fortsatt melde at
+  // kjeden er komplett, og ikke dra naboen med seg.
   const enGangTil = await runReextraction({
     ...reextractionPorts,
     proposals: [{ label: 'avbrutt.json', proposal: avbruttForslag }],
   })
   check(
-    'og en tredje kjøring melder ingen konflikt selv om naboen står ukontrollert',
-    enGangTil.groundingConflicts === 0 &&
-      enGangTil.unverified === 0 &&
-      enGangTil.alreadyRegistered === 1,
+    'og en tredje kjøring melder kjeden komplett selv om naboen står ukontrollert',
+    enGangTil.unverified === 0 && enGangTil.alreadyRegistered === 1,
   )
   check(
     'og naboen står fortsatt ukontrollert',
@@ -823,37 +833,41 @@ async function main(): Promise<void> {
     ) === '0',
   )
 
-  // ---- Ledd 7: en rettet forankring er ikke en dublett ---------------------
+  // ---- Ledd 7: en rettet forankring er et nytt evidensfunn ----------------
   //
-  // content_hash dekker kolonnene på knowledge.evidence_items, ikke
-  // forankringen. Et forslag som bare retter et utdrag, treffer derfor den samme
-  // dublettregelen — og skal ikke rapporteres som «allerede gjort» (issue #66).
-  const konfliktBase = JSON.parse(JSON.stringify(reProposalInput)) as {
-    extraction: Record<string, unknown>
-    field_groundings: Record<string, unknown>[]
-  } & Record<string, unknown>
-  konfliktBase.extraction['outcome_detail'] = 'Vektendring, forankringskonflikt.'
-
-  const registrertVariant = parseExtractionProposal(konfliktBase)
-  const registrertKonflikt = await runEvidenceExtraction({
-    api: reextractionPorts.extractionApi,
-    premises: EVIDENCE_EXTRACTION_PREMISES,
-    proposal: registrertVariant,
-    retrieve: retrieve(contentHash),
-  })
-  check(
-    'et forankret funn er registrert og står ukontrollert',
-    registrertKonflikt.decision === 'registered',
+  // `content_hash` dekker fra migrasjon 003d også avtrykket av
+  // kildeforankringen. Et forslag med nøyaktig de samme strukturerte verdiene,
+  // men ett rettet ordrett utdrag, er derfor ikke en dublett: det registreres
+  // ved siden av det gamle og går gjennom den ordinære deterministiske
+  // kontrollen (issue #66).
+  //
+  // Rettelsen gjøres på det *publiserte* funnet fra ledd 1 til 4, fordi det er
+  // den raden som faktisk bærer noe å arve: et maskinbevis, en menneskelig
+  // ekstraksjonskontroll, en claim-lenke og en publisert påstand. Ingen av
+  // delene skal følge med over.
+  const gammelHash = psql(
+    config,
+    `select content_hash from knowledge.evidence_items where id = ${q(itemId)}`,
+  )
+  const gammelForankring = psql(
+    config,
+    `select string_agg(check_field::text || '=' || source_excerpt, '|' order by check_field)
+     from knowledge.evidence_field_groundings where evidence_item_id = ${q(itemId)}`,
+  )
+  const gammelKontroll = psql(
+    config,
+    `select count(*)::text from workflow.evidence_verifications
+     where evidence_item_id = ${q(itemId)}`,
   )
 
-  // Samme strukturerte verdier, ett annet ordrett utdrag. Utdraget står fortsatt
-  // i kilden, så ekstraksjonens egen kontroll slipper det gjennom — det er
-  // databasen som avviser raden.
+  // Bare ett ordrett utdrag er rettet. Det står fortsatt i kilden, så
+  // ekstraksjonens egen kontroll slipper det gjennom — det er databasens
+  // identitetsregel som avgjør om raden er ny.
   const rettetForslag = parseExtractionProposal({
-    ...JSON.parse(JSON.stringify(konfliktBase)),
-    field_groundings: konfliktBase.field_groundings.map((grounding) =>
-      grounding['check_field'] === 'outcome'
-        ? { ...grounding, source_excerpt: 'Sertraline patients were randomised for 8 weeks.' }
+    ...JSON.parse(JSON.stringify(kjedeForslag)),
+    field_groundings: kjedeForslag.field_groundings.map((grounding) =>
+      grounding.check_field === 'outcome'
+        ? { ...grounding, source_excerpt: 'Sertraline weight change increased' }
         : grounding,
     ),
   })
@@ -863,24 +877,66 @@ async function main(): Promise<void> {
     proposals: [{ label: 'rettet-forankring.json', proposal: rettetForslag }],
   })
   check(
-    'den rettede forankringen avvises som en dublett',
-    rettet.registered === 0 && rettet.alreadyRegistered === 1,
+    'den rettede forankringen registreres som et nytt funn framfor å avvises som dublett',
+    rettet.registered === 1 && rettet.alreadyRegistered === 0,
+    rettet.results[0]?.extraction.reason ?? '',
   )
+  const rettetItem = rettet.results[0]?.extraction.evidenceItemId ?? ''
+  check('og det er en annen rad enn den gamle', rettetItem !== '' && rettetItem !== itemId)
   check(
-    'og meldes som en forankringskonflikt, ikke som «allerede gjort»',
-    rettet.groundingConflicts === 1 && rettet.results[0]?.verified === false,
-  )
-  check(
-    'og ingen kontroll ble registrert på den fremmede raden',
+    'de to radene skiller seg bare i forankringen, og har hvert sitt avtrykk',
     psql(
       config,
-      `select count(*) from workflow.evidence_verifications
-       where evidence_item_id = ${q(registrertKonflikt.evidenceItemId ?? '')}`,
-    ) === '0',
+      `select (a.content_hash <> b.content_hash)::text
+              || '|' || (a.grounding_digest <> b.grounding_digest)::text
+              || '|' || (a.outcome_detail = b.outcome_detail)::text
+              || '|' || (a.source_locator = b.source_locator)::text
+       from knowledge.evidence_items a, knowledge.evidence_items b
+       where a.id = ${q(itemId)} and b.id = ${q(rettetItem)}`,
+    ) === 'true|true|true|true',
+  )
+  check(
+    'den nye raden går hele veien til et gyldig maskinbevis',
+    rettet.unverified === 0 &&
+      psql(config, `select workflow.grounding_machine_proved(${q(rettetItem)})::text`) === 'true',
+  )
+  check(
+    'og den arver verken den menneskelige kontrollen eller claim-lenken fra den gamle',
+    psql(
+      config,
+      `select (select count(*) from workflow.evidence_verifications
+               where evidence_item_id = ${q(rettetItem)} and agent_run_id is null)::text
+              || '|' || (select count(*) from knowledge.claim_evidence_links
+                         where evidence_item_id = ${q(rettetItem)})::text`,
+    ) === '0|0',
   )
 
   check(
-    'det gamle funnet står urørt, og har fortsatt ingen forankring',
+    'det gamle funnet står urørt: samme avtrykk, samme forankring, samme kontroller',
+    psql(config, `select content_hash from knowledge.evidence_items where id = ${q(itemId)}`) ===
+      gammelHash &&
+      psql(
+        config,
+        `select string_agg(check_field::text || '=' || source_excerpt, '|' order by check_field)
+         from knowledge.evidence_field_groundings where evidence_item_id = ${q(itemId)}`,
+      ) === gammelForankring &&
+      psql(
+        config,
+        `select count(*)::text from workflow.evidence_verifications
+         where evidence_item_id = ${q(itemId)}`,
+      ) === gammelKontroll,
+  )
+  check(
+    'og den publiserte påstanden viser fortsatt bare det gamle funnet',
+    psql(
+      config,
+      `select string_agg(distinct evidence_item_id::text, ',')
+       from api.published_claim_evidence where claim_revision_id = ${q(revision)}`,
+    ) === itemId,
+  )
+
+  check(
+    'det gamle, uforankrede funnet står urørt, og har fortsatt ingen forankring',
     psql(
       config,
       `select count(*) from knowledge.evidence_items e

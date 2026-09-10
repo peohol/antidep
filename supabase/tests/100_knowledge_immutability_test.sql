@@ -148,7 +148,7 @@ select is(
 select matches(
   (select content_hash from knowledge.evidence_items
    where source_locator = 'Sammendrag, immutabilitetstest'),
-  '^sha256-v2:[0-9a-f]{64}$',
+  '^sha256-v3:[0-9a-f]{64}$',
   'content_hash settes av databasen med versjonert algoritmeprefiks'
 );
 
@@ -165,7 +165,7 @@ select
   s.id, 'randomized_controlled_trial', 'not_extractable', 'Testpopulasjon',
   'not_reported', d.id, 'none', c.id, 'Testutfall', 'not_reported',
   'not_stated', 'not_reported', 'not_reported',
-  'Sammendrag, forfalsket hash', 'ai_assisted', 'sha256-v2:' || repeat('0', 64),
+  'Sammendrag, forfalsket hash', 'ai_assisted', 'sha256-v3:' || repeat('0', 64),
   pg_temp.extraction_actor()
 from knowledge.sources s
 join catalog.drugs d on d.canonical_name = 'sertralin'
@@ -175,7 +175,7 @@ where s.title = 'Immutabilitetstestkilde';
 select isnt(
   (select content_hash from knowledge.evidence_items
    where source_locator = 'Sammendrag, forfalsket hash'),
-  'sha256-v2:' || repeat('0', 64),
+  'sha256-v3:' || repeat('0', 64),
   'en hash oppgitt av kalleren ignoreres og overskrives av databasen'
 );
 

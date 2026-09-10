@@ -25,16 +25,19 @@
 // ----------------------------------------------------------------------------
 // Hvorfor den er idempotent, og hva som gjør den det
 //
-// `evidence_items_content_hash_key` dekker de strukturerte verdiene på raden.
-// Kjøres det samme forslaget om igjen, avviser databasen registreringen som en
-// dublett, og kjøringen rapporterer `already_registered` framfor å skrive noe.
-// Ingen lokal bokføring, ingen «har jeg gjort dette før?»-fil: fasiten er basen.
+// `evidence_items_content_hash_key` dekker de strukturerte verdiene på raden
+// *og* avtrykket av kildeforankringen (migrasjon 003d). Kjøres det samme
+// forslaget om igjen, avviser databasen registreringen som en dublett, og
+// kjøringen rapporterer `already_registered` framfor å skrive noe. Ingen lokal
+// bokføring, ingen «har jeg gjort dette før?»-fil: fasiten er basen.
 //
-// Avtrykket dekker *ikke* forankringen, som ligger i sin egen tabell. Et forslag
-// som bare retter et utdrag, en peker eller en begrunnelse, er derfor den samme
-// ekstraksjonen for databasen, og avvises som en dublett. Det er en reell
-// begrensning i datamodellen og ikke noe denne kjøreren kan rette; den sier det
-// i klartekst framfor å la det se ut som «allerede gjort».
+// En dublett betyr derfor noe strengere enn før: den samme ekstraksjonen med den
+// samme forankringen. Et forslag som bare retter et utdrag, en peker eller en
+// begrunnelse, er et *annet* evidensfunn og registreres ved siden av det gamle.
+// Det gamle består urørt, og det nye arver ingenting — verken maskinbeviset,
+// den menneskelige kontrollen, claim-lenkene eller en publiseringsgodkjenning.
+// Det går derfor gjennom den ordinære deterministiske kontrollen her, som
+// ethvert annet nytt funn.
 //
 // ----------------------------------------------------------------------------
 // En avbrutt kjøring skal kunne fullføres
@@ -53,22 +56,17 @@
 // samme kanoniske identiteten UNIQUE-regelen bruker. Kjøringen leser derfor
 // nøyaktig den raden — ikke en rad som ligner — og avgjør på den:
 //
-//   * Raden bærer forslagets forankring og har allerede et maskinbevis →
-//     kjeden er komplett. Ingenting skrives.
-//   * Raden bærer forslagets forankring, men mangler beviset → en avbrutt
-//     kjøring. Kontrollen fullføres, og ingen ny rad skrives.
-//   * Raden bærer en *annen* forankring → forslaget er ikke det som står i
-//     basen. Det er tilfellet der bare et utdrag, en peker eller en begrunnelse
-//     er rettet, og databasens avtrykk ikke skiller det fra en dublett
-//     (issue #66). Kjøringen rapporterer en konflikt framfor å la det se ut som
-//     «allerede gjort».
+//   * Raden har allerede et gjeldende maskinbevis → kjeden er komplett.
+//     Ingenting skrives.
+//   * Raden mangler beviset → en avbrutt kjøring. Kontrollen fullføres, og
+//     ingen ny rad skrives.
 //
-// Identiteten kommer fra databasen og ikke fra en likhet kjøreren finner på: to
-// funn fra den samme kildeversjonen kan legitimt dele forankring — det samme
-// utvalgsutdraget, den samme populasjonssetningen — og likevel gjelde ulike
-// utfall. En match på kildeversjon og forankring alene kunne derfor pekt på feil
-// rad, og en slutning fra hva som ellers ligger i arbeidskøen kunne meldt en
-// konflikt der det ikke var noen.
+// Kjøringen sammenligner ikke forankringen selv. Den er en del av identiteten
+// databasen slo opp på (migrasjon 003d), så den navngitte raden *er* forslagets
+// forankring; en sammenligning her ville bare kunnet ta feil. Identiteten kommer
+// fra databasen og ikke fra en likhet kjøreren finner på: to funn fra den samme
+// kildeversjonen kan legitimt dele forankring — det samme utvalgsutdraget, den
+// samme populasjonssetningen — og likevel gjelde ulike utfall.
 //
 // ----------------------------------------------------------------------------
 // Hvor den stopper, og hvorfor den stopper der
@@ -93,7 +91,6 @@ import { runEvidenceExtraction } from './extraction-run.ts'
 import type { RunReport } from './extraction-verification-run.ts'
 import { runExtractionVerification } from './extraction-verification-run.ts'
 import type { RetrieveOptions } from './source-retrieval.ts'
-import type { VerificationItem } from './verification-input.ts'
 
 /** Ett forslag, med navnet det ble lest under, slik rapporten kan navngi det. */
 export interface LabelledProposal {
@@ -136,14 +133,14 @@ export interface ReextractionResult {
    */
   readonly verified: boolean
   /**
-   * Satt når databasen avviste forslaget som en dublett, men basen bærer en
-   * *annen* forankring enn forslagets.
+   * Hvorfor funnet står uten registrert maskinbevis etter kjøringen.
    *
-   * Da er forslaget ikke det som står registrert, og det kan likevel ikke
-   * registreres: avtrykket dekker de strukturerte verdiene og ikke forankringen
-   * (issue #66). Teksten sier hva som ble observert.
+   * Bare satt når det finnes en rad som skulle vært kontrollert, og kontrollen
+   * ikke lot seg gjennomføre. En tørrkjøring og et forslag som ikke holdt mål
+   * har ingen rad, og har derfor ingen grunn å oppgi her — de rapporteres som
+   * `previewed` og `skipped` med `extraction.reason`.
    */
-  readonly groundingConflict?: string
+  readonly unverifiedReason?: string
 }
 
 export interface ReextractionReport {
@@ -156,57 +153,6 @@ export interface ReextractionReport {
   readonly skipped: number
   /** Funn som finnes, men står uten registrert maskinbevis etter kjøringen. */
   readonly unverified: number
-  /**
-   * Forslag der basen bærer de samme strukturerte verdiene, men en annen
-   * forankring. Verken registrert eller mulig å registrere (issue #66).
-   */
-  readonly groundingConflicts: number
-}
-
-/**
- * Om et funn i verifikatorens kø er nøyaktig det forslaget beskriver.
- *
- * Strengere enn databasens dublettregel, med hensikt: den dekker de strukturerte
- * verdiene, mens denne krever *også* at forankringen er den samme, felt for felt.
- * En legacy-rad uten forankring treffer derfor aldri, og et annet forslag på den
- * samme kildeversjonen treffer bare hvis det forankrer nøyaktig det samme — og
- * da er det den samme ekstraksjonen.
- */
-export function matchesProposal(item: VerificationItem, proposal: ExtractionProposal): boolean {
-  if (item.sourceVersion?.sourceVersionId !== proposal.sourceVersionId) {
-    return false
-  }
-  return groundingKey(item.fieldGroundings) === groundingKey(proposal.fieldGroundings)
-}
-
-/**
- * Forankringen som én sammenlignbar nøkkel.
- *
- * Lengdeprefikset per del, av samme grunn som databasens egne avtrykk er det: to
- * ulike forankringer skal ikke kunne skrives om til den samme strengen ved at et
- * skilletegn står inni en verdi.
- */
-function groundingKey(
-  groundings: readonly {
-    readonly checkField: string
-    readonly sourceExcerpt: string
-    readonly sourceLocator: string
-    readonly justification: string
-  }[],
-): string {
-  return groundings
-    .map((grounding) =>
-      [
-        grounding.checkField,
-        grounding.sourceExcerpt,
-        grounding.sourceLocator,
-        grounding.justification,
-      ]
-        .map((part) => `${String(part.length)}:${part}`)
-        .join('|'),
-    )
-    .sort()
-    .join('||')
 }
 
 /**
@@ -265,9 +211,9 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
     const evidenceItemId = extraction.evidenceItemId ?? extraction.existingEvidenceItemId
     if (evidenceItemId === undefined) {
       // Databasen kunne ikke slå opp den kolliderende raden. Da er det ingen rad
-      // å kontrollere, og kjøringen skal ikke påstå at kjeden er komplett.
+      // å kontrollere herfra, og kjøringen skal ikke påstå at kjeden er komplett.
       const reason =
-        'De strukturerte verdiene er allerede registrert, men databasen kunne ikke navngi ' +
+        'Den samme ekstraksjonen er allerede registrert, men databasen kunne ikke navngi ' +
         'raden det gjaldt. Kontrollen av den kan ikke fullføres herfra; kjør ' +
         'npm run agent:verify-extraction for arbeidskøen.'
       log(reason)
@@ -276,57 +222,34 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
         sourceVersionId: proposal.sourceVersionId,
         extraction,
         verified: false,
-        groundingConflict: reason,
+        unverifiedReason: reason,
       })
       continue
     }
 
     // Raden leses på id, så svaret gjelder den og ingen annen — også når den
-    // allerede er kontrollert. `select` avgjør hva som skal kontrolleres, og
-    // fanger samtidig raden slik at forankringen kan sammenlignes på den.
-    //
-    // Forankringen sammenlignes bare når raden var der fra før. Ble den nettopp
-    // skrevet, er den forslagets per konstruksjon, og en sammenligning ville
-    // bare kunnet ta feil.
-    const wasAlreadyThere = extraction.decision === 'already_registered'
-    let existing: VerificationItem | undefined
+    // allerede er kontrollert. `select` avgjør bare hva som faktisk skal
+    // kontrolleres av det kalleren allerede har pekt på.
     const verification = await runExtractionVerification({
       api: verificationApi,
       premises: verificationPremises,
       evidenceItemId,
-      select: (items) => {
-        existing = items[0]
-        // Et gjeldende maskinbevis betyr at kjeden allerede er komplett. En ny
-        // kontroll ville vært en ny rad uten et nytt svar, og ville brutt at
-        // den samme filen kjørt om igjen ikke skriver noe.
-        return items.filter(
-          (item) =>
-            (!wasAlreadyThere || matchesProposal(item, proposal)) && !item.groundingMachineProved,
-        )
-      },
+      // Et gjeldende maskinbevis betyr at kjeden allerede er komplett. En ny
+      // kontroll ville vært en ny rad uten et nytt svar, og ville brutt at den
+      // samme filen kjørt om igjen ikke skriver noe.
+      select: (items) => items.filter((item) => !item.groundingMachineProved),
       ...(retrieve === undefined ? {} : { retrieve }),
       ...(retrieveOptions === undefined ? {} : { retrieveOptions }),
       log,
     })
 
-    // Raden fantes fra før, men bærer en annen forankring enn forslagets. Da er
-    // forslaget en rettelse av forankringen, og den kan ikke registreres:
-    // avtrykket dekker de strukturerte verdiene og ikke forankringen (issue #66).
-    const conflict =
-      wasAlreadyThere && existing !== undefined && !matchesProposal(existing, proposal)
-        ? `De strukturerte verdiene er allerede registrert som ${evidenceItemId}, men ` +
-          'forankringen på den raden er en annen enn forslagets. Fingeravtrykket databasen ' +
-          'sammenligner, dekker verdiene og ikke forankringen, så en rettet forankring kan ' +
-          'ikke registreres som et nytt funn (issue #66).'
-        : undefined
-
     // En kontroll som ikke lot seg gjennomføre, er ikke en kontroll. Sto raden
     // allerede med et bevis, ble ingenting valgt — og da er det heller ingenting
     // som ble hoppet over.
-    const verified =
-      conflict === undefined && !verification.items.some((item) => item.decision === 'skipped')
+    const skipped = verification.items.find((item) => item.decision === 'skipped')
+    const verified = skipped === undefined
     if (!verified) {
-      log(conflict ?? `Funnet fra ${label} står uten registrert maskinbevis etter denne kjøringen.`)
+      log(`Funnet fra ${label} står uten registrert maskinbevis etter denne kjøringen.`)
     }
 
     results.push({
@@ -335,7 +258,7 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
       extraction,
       verification,
       verified,
-      ...(conflict === undefined ? {} : { groundingConflict: conflict }),
+      ...(skipped?.reason === undefined ? {} : { unverifiedReason: skipped.reason }),
     })
   }
 
@@ -346,12 +269,13 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
       (result) => result.extraction.decision === 'already_registered',
     ).length,
     skipped: results.filter((result) => result.extraction.decision === 'skipped').length,
+    // Bare de forslagene som faktisk har en rad i basen. En tørrkjøring og et
+    // forslag som ikke holdt mål, står ikke uten maskinbevis — de står uten rad.
     unverified: results.filter(
       (result) =>
-        result.verification !== undefined &&
         !result.verified &&
-        result.groundingConflict === undefined,
+        (result.extraction.decision === 'registered' ||
+          result.extraction.decision === 'already_registered'),
     ).length,
-    groundingConflicts: results.filter((result) => result.groundingConflict !== undefined).length,
   }
 }

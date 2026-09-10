@@ -673,18 +673,23 @@ ChatGPT, og leveres som filer. Formen er den samme uansett hvem som skrev den, o
 kontrolleres like strengt (`docs/ANTIDEP_CONSTITUTION.md` §20).
 
 **Kjøringen er idempotent.** `evidence_items_content_hash_key` dekker de strukturerte verdiene
-på raden, så det samme forslaget kjørt om igjen skriver ingenting og rapporteres som
-`already_registered`. Avtrykket dekker ikke forankringen, som ligger i sin egen tabell: et
-forslag som bare retter et utdrag, en peker eller en begrunnelse, er den samme ekstraksjonen
-for databasen og kan ikke registreres på nytt (issue #66). Re-ekstraksjonen skiller de to
-tilfellene fra hverandre: dublettavvisningen navngir raden som kolliderte (migrasjon 007h),
-slått opp med den kanoniske identiteten `UNIQUE`-regelen bruker, og forankringen sammenlignes på
-nettopp den raden. Er den en annen, meldes det som en **forankringskonflikt** og kommandoen
-avslutter med feil.
+på raden og avtrykket av kildeforankringen (migrasjon 003d), så det samme forslaget kjørt om
+igjen skriver ingenting og rapporteres som `already_registered`. Rekkefølgen på forankringene
+i filen er ikke en del av identiteten: den samme forankringen i en annen rekkefølge er fortsatt
+det samme funnet.
+
+**En rettet forankring er et nytt evidensfunn.** Et forslag med nøyaktig de samme strukturerte
+verdiene, men et rettet utdrag, en rettet kildepeker eller en rettet begrunnelse, er en annen
+ekstraksjon. Den registreres ved siden av den gamle og går gjennom den vanlige deterministiske
+kontrollen. Den gamle raden står urørt, og den nye arver ingenting fra den — verken
+maskinbeviset, den menneskelige ekstraksjonskontrollen, claim-lenkene eller en
+publiseringsgodkjenning. Skal det korrigerte funnet brukes i publisering, må det gjennom de
+samme portene selv, og en kvalifisert redaktør må lenke det til påstanden.
 
 **En avbrutt kjøring kan fullføres.** Registreringen og kontrollen er to skrivinger. Dør
 prosessen mellom dem, finnes raden uten maskinbevis, og en ny kjøring med det samme forslaget
-får «dublett» tilbake — men avvisningen navngir raden, så kontrollen av nøyaktig den kan
+får «dublett» tilbake — men avvisningen navngir raden (migrasjon 007h), slått opp med den
+kanoniske identiteten `UNIQUE`-regelen bruker, så kontrollen av nøyaktig den kan
 fullføres. Ingen annen rad røres, og ingen ny skrives. Bærer raden allerede et gjeldende
 maskinbevis, gjøres ingenting. Står et funn uten maskinbevis når kjøringen er ferdig, avslutter
 kommandoen med feil framfor å si at kjeden er komplett.
