@@ -100,18 +100,20 @@ Samme kontroller, og deretter registrering gjennom
 forankringen ikke dekker hvert semantiske felt raden påstår noe om.
 
 Kjøringen er idempotent: den samme filen kjørt om igjen skriver ingenting.
+Fingeravtrykket databasen sammenligner mot, dekker både de strukturerte verdiene
+og kildeforankringen. Rekkefølgen på forankringene i filen er ikke en del av det:
+de samme forankringene i en annen rekkefølge er fortsatt det samme funnet.
 
-**Én ting kan ikke rettes ved å kjøre på nytt.** Fingeravtrykket databasen
-sammenligner mot, dekker de strukturerte verdiene på funnet — ikke forankringen,
-som ligger i sin egen tabell. Et forslag som bare retter et utdrag, en peker
-eller en begrunnelse, er derfor den samme ekstraksjonen for databasen og avvises
-som en dublett. Skal en forankring rettes, må noe i `extraction` også være et
-annet; ellers står den gamle forankringen. Se issue #66.
+**En rettet forankring blir et nytt funn.** Retter du bare et `source_excerpt`,
+en `source_locator` eller en `justification`, og lar hver strukturerte verdi stå,
+registreres det som et **nytt** evidensfunn ved siden av det gamle. Det gamle
+består urørt — det er append-only, og en ekstraksjon som ble laget av et annet
+utdrag, er en annen ekstraksjon.
 
-`agent:reextract-evidence` sier fra når det skjer. Databasen navngir raden
-forslaget kolliderte med, kjøringen sammenligner forankringen på **nettopp den
-raden**, og melder en **forankringskonflikt** med feil framfor å la det se ut som
-«allerede gjort».
+Det nye funnet arver ingenting: verken maskinkontrollen, den menneskelige
+ekstraksjonskontrollen, koblingen til en påstand eller en publiseringsgodkjenning.
+Kjøringen kjører den deterministiske kontrollen på det med det samme; resten er
+faglig arbeid i adminflyten.
 
 ## 6. Den deterministiske kontrollen etterpå
 

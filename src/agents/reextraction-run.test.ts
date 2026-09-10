@@ -3,7 +3,8 @@
 //
 // Testene her prøver orkestreringen, ikke leddene: at kontrollen kjøres på
 // nøyaktig det funnet som nettopp ble registrert, at en dublett ikke skriver
-// noe, og at en tørrkjøring verken registrerer eller kontrollerer.
+// noe, at en rettet forankring går gjennom som et nytt funn, og at en
+// tørrkjøring verken registrerer eller kontrollerer.
 //
 // Ingen database og ingen nett: begge portene er doble, og kilden er fikstur.
 // Selve skriveveien er SQL og prøves i supabase/tests/590 og 600.
@@ -24,7 +25,7 @@ import {
   type ExtractionProposal,
 } from './extraction-proposal'
 import type { RetrieveLike } from './extraction-run'
-import { matchesProposal, runReextraction } from './reextraction-run'
+import { runReextraction } from './reextraction-run'
 import {
   FIXTURE_SOURCE_TEXT,
   sourceVersionFixture,
@@ -55,6 +56,31 @@ const ITEM_ID = '33333333-3333-4333-8333-333333333333' as Uuid
 const OTHER_ITEM_ID = '77777777-7777-4777-8777-777777777777' as Uuid
 const VERIFIER_ACTOR_ID = '44444444-4444-4444-8444-444444444444'
 
+/**
+ * De strukturerte verdiene, som en delt konstant.
+ *
+ * Delt fordi to av testene under skal skille seg fra hverandre *bare* i
+ * forankringen. Var verdiene skrevet av to ganger, kunne de kommet fra hverandre
+ * uten at testen sa fra, og påstanden om at forankringen alene gjør forskjellen,
+ * ville sluttet å holde.
+ */
+const PROPOSAL_EXTRACTION = {
+  design_code: 'randomized_controlled_trial',
+  population_availability: 'not_reported',
+  population_detail: 'Voksne med depressiv lidelse.',
+  sample_size: 284,
+  sample_size_availability: 'reported_value',
+  intervention_drug_id: '40000000-0000-4000-8000-000000000001',
+  comparator_kind: 'none',
+  outcome_concept_id: '41000000-0000-4000-8000-000000000001',
+  outcome_detail: 'Gjennomsnittlig vektendring.',
+  timepoint_availability: 'not_reported',
+  reported_direction: 'increase',
+  estimate_availability: 'not_reported',
+  confidence_interval_availability: 'not_reported',
+  source_locator: 'Sammendrag, resultatavsnittet',
+}
+
 async function proposal(): Promise<ExtractionProposal> {
   return parseExtractionProposal({
     proposal_version: EXTRACTION_PROPOSAL_VERSION,
@@ -62,22 +88,7 @@ async function proposal(): Promise<ExtractionProposal> {
     source_version_id: '51000000-0000-4000-8000-000000000001',
     retrieved_from: 'https://eksempel.invalid/kilde',
     content_hash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
-    extraction: {
-      design_code: 'randomized_controlled_trial',
-      population_availability: 'not_reported',
-      population_detail: 'Voksne med depressiv lidelse.',
-      sample_size: 284,
-      sample_size_availability: 'reported_value',
-      intervention_drug_id: '40000000-0000-4000-8000-000000000001',
-      comparator_kind: 'none',
-      outcome_concept_id: '41000000-0000-4000-8000-000000000001',
-      outcome_detail: 'Gjennomsnittlig vektendring.',
-      timepoint_availability: 'not_reported',
-      reported_direction: 'increase',
-      estimate_availability: 'not_reported',
-      confidence_interval_availability: 'not_reported',
-      source_locator: 'Sammendrag, resultatavsnittet',
-    },
+    extraction: PROPOSAL_EXTRACTION,
     field_groundings: [
       {
         check_field: 'sample_size',
@@ -248,7 +259,6 @@ describe('runReextraction', () => {
     expect(report.registered).toBe(0)
     expect(report.alreadyRegistered).toBe(1)
     expect(report.unverified).toBe(0)
-    expect(report.groundingConflicts).toBe(0)
     expect(spy.registered).toHaveLength(0)
     // Raden slås opp på den id-en databasen navnga, og den bar allerede et
     // maskinbevis: kjeden er komplett, og ingenting skrives.
@@ -339,48 +349,53 @@ describe('runReextraction', () => {
     expect(spy.verified).toEqual([])
   })
 
-  // Avtrykket databasen sammenligner, dekker de strukturerte verdiene og ikke
-  // forankringen. Et forslag som bare retter et utdrag, treffer derfor den samme
-  // dublettregelen — og skal ikke rapporteres som «allerede gjort».
-  it('skiller en rettet forankring fra et identisk forslag', async () => {
-    const forslag = await proposal()
-    const registrert = await grounded(forslag, { evidenceItemId: ITEM_ID })
-    const spy = spies({
-      duplicate: true,
-      queue: [
+  // Kildeforankringen er en del av identiteten (migrasjon 003d). Et forslag der
+  // bare et utdrag er rettet, er derfor ikke en dublett: det registreres som et
+  // nytt funn og kontrolleres som et hvilket som helst annet nytt funn.
+  it('registrerer en rettet forankring som et nytt funn og kontrollerer det', async () => {
+    const opprinnelig = await proposal()
+    const rettet = parseExtractionProposal({
+      proposal_version: EXTRACTION_PROPOSAL_VERSION,
+      source_id: opprinnelig.sourceId,
+      source_version_id: opprinnelig.sourceVersionId,
+      retrieved_from: opprinnelig.retrievedFrom,
+      content_hash: opprinnelig.contentHash,
+      extraction: PROPOSAL_EXTRACTION,
+      // Samme strukturerte verdier, ett annet ordrett utdrag — som fortsatt står
+      // i kilden, slik at ekstraksjonens egen kontroll slipper det gjennom.
+      field_groundings: [
         {
-          ...registrert,
-          // Den navngitte raden bærer en annen forankring enn forslagets.
-          fieldGroundings: registrert.fieldGroundings.map((grounding) => ({
-            ...grounding,
-            sourceExcerpt: 'Et helt annet utdrag enn det forslaget oppgir.',
-          })),
+          check_field: 'sample_size',
+          source_excerpt: 'Sertraline patients (N = 284)',
+          source_locator: 'Sammendrag, METHODS',
+          justification: 'Utvalgsstørrelsen står ved siden av armen.',
         },
       ],
     })
 
+    const spy = spies()
     const report = await runReextraction({
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       extractionPremises: EXTRACTION_PREMISES,
       verificationPremises: VERIFICATION_PREMISES,
-      proposals: [{ label: 'rettet.json', proposal: forslag }],
+      proposals: [{ label: 'rettet.json', proposal: rettet }],
       retrieve: retrieveFixture(),
     })
 
-    expect(report.groundingConflicts).toBe(1)
+    expect(report.registered).toBe(1)
+    expect(report.alreadyRegistered).toBe(0)
     expect(report.unverified).toBe(0)
-    expect(report.results[0]?.verified).toBe(false)
-    expect(report.results[0]?.groundingConflict).toMatch(/forankringen på den raden er en annen/)
-    // Ingenting skrives, verken en rad eller en kontroll av en fremmed rad.
-    expect(spy.registered).toHaveLength(0)
-    expect(spy.verified).toEqual([])
+    expect(spy.registered).toHaveLength(1)
+    // Det rettede utdraget er det som sendes videre — ikke det gamle.
+    expect(report.results[0]?.extraction.groundedFields).toEqual(['sample_size'])
+    expect(spy.readInputFor).toEqual([ITEM_ID])
   })
 
-  // Den eksakte dublettraden er allerede kontrollert, mens et *annet* forankret
-  // funn på den samme kildeversjonen fortsatt står ukontrollert. Det er ikke en
-  // rettet forankring, og skal ikke bli meldt som en konflikt.
-  it('melder ingen konflikt når et annet funn på kildeversjonen står ukontrollert', async () => {
+  // Kontrollen gjelder den raden databasen navnga, og ingen annen: et annet
+  // forankret funn på den samme kildeversjonen skal verken kontrolleres eller
+  // gjøre kjeden ufullstendig.
+  it('lar et annet funn på kildeversjonen stå urørt når den navngitte raden er kontrollert', async () => {
     const forslag = await proposal()
     const spy = spies({
       duplicate: true,
@@ -399,7 +414,6 @@ describe('runReextraction', () => {
       retrieve: retrieveFixture(),
     })
 
-    expect(report.groundingConflicts).toBe(0)
     expect(report.alreadyRegistered).toBe(1)
     expect(report.unverified).toBe(0)
     expect(spy.verified).toEqual([])
@@ -407,7 +421,7 @@ describe('runReextraction', () => {
 
   // Databasen kunne ikke navngi raden. Da finnes det ingen rad å kontrollere
   // herfra, og kjøringen skal ikke påstå at kjeden er komplett.
-  it('rapporterer en dublett uten navngitt rad som uavklart', async () => {
+  it('rapporterer en dublett uten navngitt rad som ukontrollert', async () => {
     const spy = spies({ duplicate: true, collidesWith: null })
 
     const report = await runReextraction({
@@ -419,8 +433,9 @@ describe('runReextraction', () => {
       retrieve: retrieveFixture(),
     })
 
-    expect(report.groundingConflicts).toBe(1)
+    expect(report.unverified).toBe(1)
     expect(report.results[0]?.verified).toBe(false)
+    expect(report.results[0]?.unverifiedReason).toMatch(/kunne ikke navngi/)
     expect(spy.readInputFor).toEqual([])
   })
 
@@ -473,75 +488,5 @@ describe('runReextraction', () => {
     expect(report.skipped).toBe(1)
     expect(report.registered).toBe(1)
     expect(report.results.map((result) => result.label)).toEqual(['daarlig.json', 'godt.json'])
-  })
-})
-
-describe('matchesProposal', () => {
-  it('treffer funnet som bærer nøyaktig forslagets forankring', async () => {
-    const forslag = await proposal()
-    const item = verificationItemFixture({
-      fieldGroundings: forslag.fieldGroundings.map((grounding) => ({
-        fieldGroundingId: '90000000-0000-4000-8000-000000000001',
-        checkField: grounding.checkField,
-        sourceExcerpt: grounding.sourceExcerpt,
-        sourceLocator: grounding.sourceLocator,
-        justification: grounding.justification,
-        createdAt: '2026-09-01T00:00:00+00:00',
-        createdByActorId: '99999999-9999-4999-8999-999999999999',
-      })),
-    })
-    expect(matchesProposal(item, forslag)).toBe(true)
-  })
-
-  // En legacy-rad har ingen forankring, og skal aldri kunne bli tatt for å være
-  // det forslaget beskriver.
-  it('treffer aldri et funn uten forankring', async () => {
-    expect(
-      matchesProposal(verificationItemFixture({ fieldGroundings: [] }), await proposal()),
-    ).toBe(false)
-  })
-
-  it('treffer ikke et funn fra en annen kildeversjon', async () => {
-    const forslag = await proposal()
-    const item = verificationItemFixture({
-      sourceVersion: {
-        sourceVersionId: '51000000-0000-4000-8000-000000000099',
-        retrievedAt: '2026-09-01T00:00:00+00:00',
-        retrievedFrom: 'https://eksempel.invalid/annen',
-        externalVersion: null,
-        contentHash: `sha256:${'b'.repeat(64)}`,
-        representation: 'abstract',
-        hasStorageReference: false,
-      },
-      fieldGroundings: forslag.fieldGroundings.map((grounding) => ({
-        fieldGroundingId: '90000000-0000-4000-8000-000000000001',
-        checkField: grounding.checkField,
-        sourceExcerpt: grounding.sourceExcerpt,
-        sourceLocator: grounding.sourceLocator,
-        justification: grounding.justification,
-        createdAt: '2026-09-01T00:00:00+00:00',
-        createdByActorId: '99999999-9999-4999-8999-999999999999',
-      })),
-    })
-    expect(matchesProposal(item, forslag)).toBe(false)
-  })
-
-  // Et rettet utdrag er en annen forankring. At databasen likevel avviser det
-  // som en dublett, er en begrensning i avtrykket — ikke noe utvalget her skal
-  // late som om det ikke finnes.
-  it('treffer ikke et funn der et utdrag er et annet', async () => {
-    const forslag = await proposal()
-    const item = verificationItemFixture({
-      fieldGroundings: forslag.fieldGroundings.map((grounding) => ({
-        fieldGroundingId: '90000000-0000-4000-8000-000000000001',
-        checkField: grounding.checkField,
-        sourceExcerpt: `${grounding.sourceExcerpt} (rettet)`,
-        sourceLocator: grounding.sourceLocator,
-        justification: grounding.justification,
-        createdAt: '2026-09-01T00:00:00+00:00',
-        createdByActorId: '99999999-9999-4999-8999-999999999999',
-      })),
-    })
-    expect(matchesProposal(item, forslag)).toBe(false)
   })
 })

@@ -101,11 +101,10 @@ export interface RunOptions {
    * 007h). Utvalget her gjenfinner altså ingenting; det avgjør bare hva som
    * faktisk skal kontrolleres av det kalleren allerede har pekt på.
    *
-   * Re-ekstraksjonen trenger det til to ting. Et funn som allerede bærer et
+   * Re-ekstraksjonen trenger det til én ting: et funn som allerede bærer et
    * gjeldende maskinbevis, skal ikke kontrolleres om igjen — en ny kontroll ville
    * vært en ny rad uten et nytt svar, og den samme filen kjørt om igjen skal ikke
-   * skrive noe. Og kalleren må kunne se raden som faktisk lå der, for å kunne
-   * sammenligne forankringen på nettopp den.
+   * skrive noe.
    *
    * Inndataen sendes derfor inn som den er, ikke som et ja eller nei. Ingen
    * kontroll blir løsere av det: hvert funn som slipper gjennom, kontrolleres

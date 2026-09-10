@@ -23,9 +23,13 @@
 // Idempotent
 //
 // Kjør den om igjen med de samme filene, og ingenting skrives:
-// `evidence_items_content_hash_key` dekker hele radens faglige innhold, og
-// databasen avviser dubletten. Kjøringen rapporterer det som
-// `already_registered` og går videre.
+// `evidence_items_content_hash_key` dekker hele radens faglige innhold, og fra
+// migrasjon 003d også kildeforankringen. Databasen avviser dubletten, og
+// kjøringen rapporterer det som `already_registered` og går videre.
+//
+// Et forslag der bare et utdrag, en kildepeker eller en begrunnelse er rettet,
+// er derimot et *annet* evidensfunn: det registreres ved siden av det gamle og
+// kontrolleres på nytt, mens det gamle står urørt uten å arve noe fra det nye.
 //
 // ----------------------------------------------------------------------------
 // Hvor den stopper
@@ -170,8 +174,7 @@ async function main(): Promise<number> {
       `\n${String(report.registered)} nye forankrede evidensfunn, ` +
         `${String(report.alreadyRegistered)} allerede registrert, ` +
         `${String(report.skipped)} ikke registrert, ` +
-        `${String(report.unverified)} uten maskinbevis, ` +
-        `${String(report.groundingConflicts)} med en annen forankring i basen.`,
+        `${String(report.unverified)} uten maskinbevis.`,
     )
 
     // Setningen under er en påstand om at kjeden er komplett, og skal bare stå
@@ -185,26 +188,22 @@ async function main(): Promise<number> {
           'registreringen ble avvist. Rett årsaken og kjør kommandoen om igjen; den skriver ' +
           'ingen ny rad, men fullfører kontrollen.',
       )
-    } else if (
-      report.groundingConflicts === 0 &&
-      (report.registered > 0 || report.alreadyRegistered > 0)
-    ) {
+    } else if (report.registered > 0 || report.alreadyRegistered > 0) {
       console.log(
         'Funnene er registrert og deterministisk kontrollert. Å lenke dem til en ' +
           'påstandsrevisjon er en faglig vurdering og gjøres av en kvalifisert redaktør.',
       )
     }
 
-    // En rettet forankring er ikke det samme som «allerede gjort», og skal ikke
-    // se slik ut. Kjøringen vet forskjellen: databasen navngir raden dubletten
-    // gjaldt, og forankringen på nettopp den raden er en annen enn forslagets.
+    // Hver rad som står uten maskinbevis, sier hvorfor. En samletelling alene
+    // ville sagt at noe mangler uten å si hva som må rettes.
     for (const result of report.results) {
-      if (result.groundingConflict !== undefined) {
-        console.error(`\n${result.label}: ${result.groundingConflict}`)
+      if (result.unverifiedReason !== undefined) {
+        console.error(`\n${result.label}: ${result.unverifiedReason}`)
       }
     }
 
-    return report.skipped > 0 || report.unverified > 0 || report.groundingConflicts > 0 ? 1 : 0
+    return report.skipped > 0 || report.unverified > 0 ? 1 : 0
   } catch (cause) {
     // Alt som skrives ut, går gjennom redact: en feilmelding fra PostgREST kan
     // i prinsippet gjengi det som ble sendt, og det som ble sendt inneholder
