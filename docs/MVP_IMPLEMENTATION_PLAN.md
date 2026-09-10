@@ -1393,6 +1393,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: make the current review decision race-safe                      (#65)  merget   migrasjon 006i, 007h
       db: make the source grounding part of an evidence item's identity    (#67)  merget   migrasjon 003d
       feat: add the model link that reads a source and drafts a proposal    (#68)  merget   migrasjon 005ab, 005ac
+      feat: make the model link runnable by a Claude Code Routine          (#69)  åpen     ingen migrasjon
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
