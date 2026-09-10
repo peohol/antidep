@@ -356,6 +356,32 @@ describe('parseExtractionProposal — generated_by', () => {
     ).toThrow(/drafted_at/)
   })
 
+  // Formen alene er ikke nok. Node normaliserer en dag utenfor måneden framfor
+  // å gi NaN, så «31. september» ville blitt 1. oktober og stått i proveniensen
+  // som et tidspunkt ingen kan peke på i en kalender. Kontrollen er den samme
+  // som modellsvarets `answered_at` bruker, fra `strict-fields.ts`.
+  it('krever at datoen finnes i kalenderen', () => {
+    for (const drafted of [
+      '2026-09-31T00:00:00Z',
+      '2026-02-29T00:00:00Z',
+      '2026-13-01T00:00:00Z',
+    ]) {
+      expect(() =>
+        parseExtractionProposal(
+          gyldig({ generated_by: gyldigGeneratedBy({ drafted_at: drafted }) }),
+        ),
+      ).toThrow(/drafted_at/)
+    }
+  })
+
+  it('godtar 29. februar i et skuddår', () => {
+    expect(
+      parseExtractionProposal(
+        gyldig({ generated_by: gyldigGeneratedBy({ drafted_at: '2028-02-29T00:00:00Z' }) }),
+      ).generatedBy.draftedAt,
+    ).toBe('2028-02-29T00:00:00Z')
+  })
+
   // Avtrykket er den ene verdien som gjør en modellkjøring identifiserbar i
   // ettertid. Et menneskeskrevet forslag har ingen forespørsel, og utelater det.
   it('godtar at fingeravtrykket av forespørselen mangler, men ikke at det er noe annet', () => {

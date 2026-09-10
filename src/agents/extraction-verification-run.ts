@@ -46,7 +46,7 @@ import type {
   RegisterVerificationArgs,
 } from './agent-api.ts'
 import { checkExtraction, type ExtractionCheckReport } from './extraction-checks.ts'
-import type { RetrievalResult, RetrieveOptions } from './source-retrieval.ts'
+import type { RetrieveLike, RetrieveOptions } from './source-retrieval.ts'
 import { retrieveRepresentation } from './source-retrieval.ts'
 import { parseVerificationInput, type VerificationItem } from './verification-input.ts'
 
@@ -78,7 +78,7 @@ export interface RunReport {
   readonly items: readonly ItemResult[]
 }
 
-export type RetrieveLike = (url: string) => Promise<RetrievalResult>
+export type { RetrieveLike }
 
 export interface RunOptions {
   readonly api: ExtractionVerificationApi

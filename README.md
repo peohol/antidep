@@ -12,6 +12,7 @@ All utvikling styres av dokumentene i [`docs/`](./docs):
 
 - [`ANTIDEP_CONSTITUTION.md`](./docs/ANTIDEP_CONSTITUTION.md) — ikke-forhandlingsbare prinsipper
 - [`MVP_IMPLEMENTATION_PLAN.md`](./docs/MVP_IMPLEMENTATION_PLAN.md) — implementeringsrekkefølge og status
+- [`ROUTINE_EXTRACTION.md`](./docs/ROUTINE_EXTRACTION.md) — hvordan modell-leddet kjøres av en Claude Code Routine
 - [`KNOWLEDGE_MODEL.md`](./docs/KNOWLEDGE_MODEL.md), [`EVIDENCE_PIPELINE.md`](./docs/EVIDENCE_PIPELINE.md),
   [`DATABASE_ARCHITECTURE.md`](./docs/DATABASE_ARCHITECTURE.md),
   [`CONTENT_GOVERNANCE.md`](./docs/CONTENT_GOVERNANCE.md),
@@ -56,6 +57,19 @@ npm run db:stop      # stopp lokal Supabase-stack
 Modell-leddet (ingen legitimasjon, ingen databasetilgang):
 
 ```bash
+npm run agent:draft-extraction -- --assignment <fil> --open      # hent kilden, skriv ut prompten
+npm run agent:draft-extraction -- --assignment <fil> --close     # les svaret, lag ett forslag
+npm run agent:draft-extraction -- --assignment <fil> --status    # hvor kjøringen står
+```
+
+Dette er veien en Claude Code Routine kjører leddet: to kommandoer med en fil
+imellom, og modellsvaret skrevet direkte i kjøremappa. Se
+[`docs/ROUTINE_EXTRACTION.md`](./docs/ROUTINE_EXTRACTION.md).
+
+Den eldre veien er beholdt for feilsøking og for å spille av en kjøring om igjen
+uten en modell:
+
+```bash
 npm run agent:propose-extraction -- --assignment <fil> --prepare <katalog>   # skriv ut prompten og et tomt opptak
 npm run agent:propose-extraction -- --assignment <fil> --recording <fil> --out <fil>   # lag ett forslag
 ```
@@ -63,10 +77,11 @@ npm run agent:propose-extraction -- --assignment <fil> --recording <fil> --out <
 Agentkjørerne (krever legitimasjon, se `supabase/README.md`):
 
 ```bash
-npm run agent:extract-evidence -- --schema                       # kontrakten for et forslag
-npm run agent:extract-evidence -- --proposal <fil> --dry-run     # kontroller, skriv ingenting
-npm run agent:extract-evidence -- --proposal <fil>               # registrer ett forankret funn
-npm run agent:reextract-evidence -- --directory proposals        # flere forslag, med kontroll etter hvert
+npm run agent:extract-evidence -- --schema                        # kontrakten for et forslag
+npm run agent:extract-evidence -- --proposal <fil> --assignment <fil>     # maskinutkast, med oppdraget
+npm run agent:extract-evidence -- --proposal <fil> --model-proposal       # maskinutkast uten oppdrag
+npm run agent:extract-evidence -- --proposal <fil> --human-proposal       # en redaktørs eget arbeid
+npm run agent:reextract-evidence -- --directory proposals --model-proposal   # flere forslag, med kontroll etter hvert
 npm run agent:verify-extraction                                  # den deterministiske kontrollen
 npm run agent:verify-claims                                      # claim-verifikatoren
 ```
@@ -77,6 +92,18 @@ Forslagsfilene det skriver, og hvordan de registreres, i `proposals/README.md`.
 CI (GitHub Actions, `.github/workflows/ci.yml`) kjører lint, formatkontroll, typecheck,
 tester og produksjonsbygg på alle pull requests og på `main`, og verifiserer i en egen jobb
 at den lokale Supabase-stacken booter fra clean checkout.
+
+### Forhåndsvisninger og deploy
+
+`.github/workflows/vercel.yml` kjører **bare** på `main`. Den kjørte tidligere også på alle
+`pull_request`, med `VERCEL_TOKEN` i jobbens miljø, og bygde koden fra PR-branchen — og en pull
+request fra en branch i _samme_ repo får repository-secrets. Kode på en PR-branch kunne derfor
+kjøre med deploy-tokenet tilgjengelig. Veien er stengt fordi en autonom aktør som leser
+eksternt kildemateriale, ikke skal kunne nå den (`docs/ROUTINE_EXTRACTION.md` §3.5).
+
+Forhåndsvisninger for pull requests lages av **Vercels egen Git-integrasjon**, som allerede
+gjorde det: det er den som gir `antidep-git-<branch>-…`-lenken i PR-kommentaren.
+Arbeidsflyten laget en andre deploy av det samme, uten branch-alias.
 
 ## Miljøvariabler
 

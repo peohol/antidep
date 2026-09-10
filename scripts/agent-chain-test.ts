@@ -30,6 +30,7 @@
 //   api.register_publication_approval        publiseringsbeslutningen
 //   api.publish_claim_revision               publiseringen
 //   runExtractionDrafting                    modell-leddet, med opptaksadapteret
+//   openDraftingJob / closeDraftingJob       Routine-grensesnittet, som filer
 //
 // De to første og de to neste går gjennom de ekte kjørerne
 // (`runEvidenceExtraction`, `runExtractionVerification`) med de ekte portene
@@ -81,6 +82,9 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHmac } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -100,11 +104,17 @@ import { runExtractionVerification } from '../src/agents/extraction-verification
 import type { RetrieveLike } from '../src/agents/extraction-verification-run.ts'
 import { EXTRACTION_VERIFICATION_PREMISES } from '../src/agents/pipeline-version.ts'
 import { runReextraction } from '../src/agents/reextraction-run.ts'
-import { parseExtractionAssignment } from '../src/agents/extraction-assignment.ts'
+import {
+  parseAssignmentJson,
+  parseExtractionAssignment,
+} from '../src/agents/extraction-assignment.ts'
 import { serializeExtractionProposal } from '../src/agents/extraction-proposal.ts'
 import { EXTRACTION_DRAFTING_PROMPT_VERSION } from '../src/agents/extraction-prompt.ts'
 import { createModelClient } from '../src/agents/model-adapters.ts'
 import { prepareDraftingRequest, runExtractionDrafting } from '../src/agents/drafting-run.ts'
+import { closeDraftingJob, JOB_FILES, openDraftingJob } from '../src/agents/drafting-job.ts'
+import { MODEL_ANSWER_VERSION } from '../src/agents/model-answer.ts'
+import { readProposalFile } from '../src/agents/proposal-files.ts'
 
 // ----------------------------------------------------------------------------
 // Miljøet
@@ -426,6 +436,7 @@ async function main(): Promise<void> {
   }
 
   const extraction = await runEvidenceExtraction({
+    mode: 'without_assignment',
     api: createEvidenceExtractionApi(client, {
       identityKey: 'agent-identity:evidence-extraction-01',
       secret: agentSecret(secret),
@@ -726,7 +737,11 @@ async function main(): Promise<void> {
   // Tørrkjøringen først. Den er den kommandoen som faktisk brukes før en ekte
   // registrering, og den skriver ingen evidensrad — men kjøringen registreres
   // og lukkes, slik at også en tørrkjøring er sporbar (§74.31).
-  const dryRun = await runReextraction({ ...reextractionPorts, dryRun: true })
+  const dryRun = await runReextraction({
+    ...reextractionPorts,
+    mode: 'without_assignment',
+    dryRun: true,
+  })
   check(
     'tørrkjøringen kontrollerte forslaget uten å registrere noe',
     dryRun.registered === 0 && dryRun.results[0]?.extraction.decision === 'previewed',
@@ -742,7 +757,10 @@ async function main(): Promise<void> {
     ) === 'aborted|true',
   )
 
-  const reextraction = await runReextraction(reextractionPorts)
+  const reextraction = await runReextraction({
+    ...reextractionPorts,
+    mode: 'without_assignment',
+  })
   check(
     're-ekstraksjonen registrerte et nytt forankret funn',
     reextraction.registered === 1,
@@ -759,7 +777,10 @@ async function main(): Promise<void> {
       'true',
   )
 
-  const igjen = await runReextraction(reextractionPorts)
+  const igjen = await runReextraction({
+    ...reextractionPorts,
+    mode: 'without_assignment',
+  })
   check(
     'kjørt om igjen skriver den ingenting',
     igjen.registered === 0 && igjen.alreadyRegistered === 1,
@@ -803,11 +824,13 @@ async function main(): Promise<void> {
   })
 
   const avbrutt = await runEvidenceExtraction({
+    mode: 'without_assignment',
     api: reextractionPorts.extractionApi,
     proposal: avbruttForslag,
     retrieve: retrieve(contentHash),
   })
   const nabo = await runEvidenceExtraction({
+    mode: 'without_assignment',
     api: reextractionPorts.extractionApi,
     proposal: naboForslag,
     retrieve: retrieve(contentHash),
@@ -829,6 +852,7 @@ async function main(): Promise<void> {
 
   const gjenopptatt = await runReextraction({
     ...reextractionPorts,
+    mode: 'without_assignment',
     proposals: [{ label: 'avbrutt.json', proposal: avbruttForslag }],
   })
   check(
@@ -858,6 +882,7 @@ async function main(): Promise<void> {
   // kjeden er komplett, og ikke dra naboen med seg.
   const enGangTil = await runReextraction({
     ...reextractionPorts,
+    mode: 'without_assignment',
     proposals: [{ label: 'avbrutt.json', proposal: avbruttForslag }],
   })
   check(
@@ -914,6 +939,7 @@ async function main(): Promise<void> {
 
   const rettet = await runReextraction({
     ...reextractionPorts,
+    mode: 'without_assignment',
     proposals: [{ label: 'rettet-forankring.json', proposal: rettetForslag }],
   })
   check(
@@ -1139,6 +1165,7 @@ async function main(): Promise<void> {
   )
   const modellKjede = await runReextraction({
     ...reextractionPorts,
+    mode: 'unchecked_model',
     proposals: [{ label: 'modell-leddet.json', proposal: modellForslag }],
   })
   const modellItem = modellKjede.results[0]?.extraction.evidenceItemId ?? ''
@@ -1224,6 +1251,7 @@ async function main(): Promise<void> {
   })
   const menneskeKjede = await runReextraction({
     ...reextractionPorts,
+    mode: 'without_assignment',
     proposals: [{ label: 'samme-verdier-menneske.json', proposal: menneskeForslag }],
   })
   const menneskeItem = menneskeKjede.results[0]?.extraction.evidenceItemId ?? ''
@@ -1243,6 +1271,188 @@ async function main(): Promise<void> {
       `select extraction_method::text from knowledge.evidence_items where id = ${q(modellItem)}`,
     ) === 'ai_assisted',
   )
+
+  // ---- Ledd 9: Routine-grensesnittet, fra oppdrag til registrert rad --------
+  //
+  // Det samme modell-leddet, men kjørt slik en Claude Code Routine kjører det:
+  // to kommandoer med en fil imellom. Det som prøves her og ikke kan prøves
+  // uten en ekte database, er at filen `--close` skriver, går uendret gjennom de
+  // ekte portene — og at proveniensen som når kontrollgrunnlaget, er den
+  // aktøren erklærte i svarfilen, ikke en fast verdi.
+  const kjoremappe = mkdtempSync(join(tmpdir(), 'antidep-kjede-routine-'))
+  try {
+    const oppdragsfil = join(kjoremappe, 'oppdrag.json')
+    writeFileSync(
+      oppdragsfil,
+      JSON.stringify({
+        assignment_version: 'antidep/extraction-assignment@1',
+        source_id: SOURCE,
+        source_version_id: VERSION,
+        retrieved_from: 'https://example.test/kjede',
+        content_hash: contentHash,
+        drugs: [{ drug_id: drugId, label: 'sertralin' }],
+        outcomes: [{ outcome_concept_id: outcomeId, label: 'vektendring' }],
+        populations: [],
+      }),
+      'utf8',
+    )
+    const runDirectory = join(kjoremappe, 'kjoring')
+    const åpnet = await openDraftingJob({
+      assignmentPath: oppdragsfil,
+      runDirectory,
+      retrieve: retrieve(contentHash),
+    })
+    check(
+      'Routine-grensesnittet legger igjen prompten og en tom svarfil',
+      åpnet.outcome === 'opened' && åpnet.job.state === 'awaiting_answer',
+    )
+
+    // Slik aktøren som utfører modellarbeidet, svarer: én fil, med sin egen
+    // identitet og sitt eget tidspunkt.
+    const førModell = psql(
+      config,
+      `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+    )
+    writeFileSync(
+      join(runDirectory, JOB_FILES.answer),
+      JSON.stringify({
+        answer_version: MODEL_ANSWER_VERSION,
+        request_digest: åpnet.job.requestDigest,
+        identity: { provider: 'kjedeprove', model: 'routine-modell', model_version: '2026-09-16' },
+        answered_at: new Date().toISOString(),
+        draft: {
+          ...modellUtkast,
+          extraction: {
+            ...modellUtkast.extraction,
+            outcome_detail: 'Vektendring, foreslått gjennom Routine-grensesnittet.',
+          },
+        },
+      }),
+      'utf8',
+    )
+    const lukket = await closeDraftingJob({
+      runDirectory,
+      assignmentPath: oppdragsfil,
+      retrieve: retrieve(contentHash),
+    })
+    check(
+      'og skriver et forslag av svaret, uten å røre en eneste rad',
+      lukket.outcome === 'drafted' &&
+        psql(
+          config,
+          `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+        ) === førModell,
+      lukket.reason ?? '',
+    )
+
+    // Filen leses av nøyaktig den leseren registreringen bruker.
+    const routineForslag = await readProposalFile(lukket.proposalPath)
+    const routineKjede = await runReextraction({
+      ...reextractionPorts,
+      mode: 'unchecked_model',
+      proposals: [routineForslag],
+    })
+    const routineItem = routineKjede.results[0]?.extraction.evidenceItemId ?? ''
+    check(
+      'og forslaget går hele veien til et gyldig maskinbevis',
+      routineKjede.registered === 1 &&
+        routineKjede.unverified === 0 &&
+        psql(config, `select workflow.grounding_machine_proved(${q(routineItem)})::text`) ===
+          'true',
+      routineKjede.results[0]?.unverifiedReason ?? '',
+    )
+    // Overleveringen er utrygg: forslaget har vært innom en økt som leste utrygt
+    // eksternt innhold. Registreringen kontrollerer det derfor mot redaktørens
+    // egen oppdragsfil, og et forslag utenfor katalogen blir ingen rad — selv
+    // om hvert utdrag står ordrett i kilden.
+    const førUtenfor = psql(
+      config,
+      `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+    )
+    const routineOppdrag = parseAssignmentJson(oppdragsfil, readFileSync(oppdragsfil, 'utf8'))
+    const utenfor = await runEvidenceExtraction({
+      mode: 'with_assignment',
+      api: reextractionPorts.extractionApi,
+      proposal: routineForslag.proposal,
+      assignment: parseExtractionAssignment({
+        assignment_version: 'antidep/extraction-assignment@1',
+        source_id: SOURCE,
+        source_version_id: VERSION,
+        retrieved_from: 'https://example.test/kjede',
+        content_hash: contentHash,
+        drugs: [{ drug_id: drugId, label: 'sertralin' }],
+        // Et annet endepunkt enn det forslaget peker på.
+        outcomes: [
+          { outcome_concept_id: '41000000-0000-4000-8000-0000000000ff', label: 'et naboendepunkt' },
+        ],
+        populations: [],
+      }),
+      retrieve: retrieve(contentHash),
+    })
+    check(
+      'et forslag utenfor oppdraget blir ingen rad, selv med ordrette utdrag',
+      utenfor.decision === 'skipped' &&
+        (utenfor.reason ?? '').includes('outcome_concept_id') &&
+        psql(
+          config,
+          `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+        ) === førUtenfor,
+      utenfor.reason ?? '',
+    )
+    // Den samme overleveringen, men med bare ett ord endret: `producer` fra
+    // «model» til «human». Alt annet passerer — katalogen, kildebindingen,
+    // utdragene — og raden ville blitt ført som en menneskelig ekstraksjon.
+    // Modusen kalleren registrerer under, er den tiltrodde halvdelen.
+    const førOmskrevet = psql(
+      config,
+      `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+    )
+    const omskrevet = parseExtractionProposal({
+      ...(JSON.parse(
+        JSON.stringify(serializeExtractionProposal(routineForslag.proposal)),
+      ) as Record<string, unknown>),
+      generated_by: {
+        producer: 'human',
+        provider: 'human',
+        model: 'manuell-ekstraksjon',
+        model_version: 'not_applicable',
+        prompt_template_version: 'not_applicable',
+        drafted_at: '2026-09-16T08:00:00Z',
+      },
+    })
+    let avvist = ''
+    try {
+      await runEvidenceExtraction({
+        api: reextractionPorts.extractionApi,
+        proposal: omskrevet,
+        assignment: routineOppdrag,
+        mode: 'with_assignment',
+        retrieve: retrieve(contentHash),
+      })
+    } catch (cause) {
+      avvist = cause instanceof Error ? cause.message : String(cause)
+    }
+    check(
+      'et maskinutkast omskrevet til «human» blir ingen rad, og ingen kjøring',
+      avvist.includes('erklært laget av «human»') &&
+        psql(
+          config,
+          `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+        ) === førOmskrevet,
+      avvist,
+    )
+    check(
+      'og kontrollgrunnlaget bærer identiteten aktøren erklærte i svarfilen',
+      psql(
+        config,
+        `select (workflow.evidence_extraction_dossier(${q(routineItem)}) -> 'drafted_by' ->> 'provider')
+                || '|' || (workflow.evidence_extraction_dossier(${q(routineItem)})
+                           -> 'drafted_by' ->> 'model')`,
+      ) === 'kjedeprove|routine-modell',
+    )
+  } finally {
+    rmSync(kjoremappe, { recursive: true, force: true })
+  }
 
   console.log(
     process.exitCode === 1 ? '\nMinst én påstand slo feil.' : '\nHele kjeden gikk gjennom.',

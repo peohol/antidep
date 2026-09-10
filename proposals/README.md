@@ -115,7 +115,8 @@ skifter mening.
 ## 4. Tørrkjøring
 
 ```bash
-npm run agent:extract-evidence -- --proposal proposals/fava-2000.json --dry-run
+npm run agent:extract-evidence -- --proposal proposals/fava-2000.json --dry-run \
+  --assignment assignments/fava-2000.json
 ```
 
 Henter kildeversjonen, krever at fingeravtrykket stemmer, og prøver hvert utdrag
@@ -129,8 +130,38 @@ igjen.
 ## 5. Registrering
 
 ```bash
-npm run agent:extract-evidence -- --proposal proposals/fava-2000.json
+npm run agent:extract-evidence -- --proposal proposals/fava-2000.json --model-proposal
 ```
+
+**Nøyaktig ett av `--assignment <fil>`, `--model-proposal` og `--human-proposal`
+er påkrevd**, for hver registrering. Valget sier både om forslaget kontrolleres
+mot et oppdrag, og om raden føres som KI-assistert eller manuell. Oppdraget er en egen, tiltrodd inndata: kjøringen
+kontrollerer kildebindingen og hver katalogverdi mot det før noe skrives.
+Grunnen er overleveringen — et forslag kan ha vært innom en økt som leste utrygt
+eksternt innhold — og avgrensningen mot katalogen er den ene kontrollen den
+ordrette ikke kan gjøre.
+
+Valget er **kallerens**, ikke forslagets. Sperren leser ikke `generated_by` for å
+avgjøre om oppdraget trengs; da ville et endret felt i filen kunnet slå
+kontrollen av.
+
+| Valg                 | For                                                                               | `extraction_method` |
+| -------------------- | --------------------------------------------------------------------------------- | ------------------- |
+| `--assignment <fil>` | Et maskinutkast, med oppdraget det ble laget under                                | `ai_assisted`       |
+| `--model-proposal`   | Et maskinutkast uten oppdrag — for eksempel skrevet av ChatGPT ut av en fulltekst | `ai_assisted`       |
+| `--human-proposal`   | En redaktørs eget arbeid                                                          | `manual`            |
+
+Forslagets `generated_by.producer` må stemme med valget, og et avvik avvises før
+kjøringen åpnes. Uten den bindingen kunne et maskinutkast blitt ført som en
+menneskelig ekstraksjon ved at ett ord ble endret i filen — og
+`extraction_method` er nettopp det som forteller kontrolløren hva hen
+etterprøver.
+
+Et forslag i denne katalogen har ikke noe oppdrag. Da er `--model-proposal` det
+riktige svaret for et maskinutkast, og `--human-proposal` for redaktørens eget
+arbeid. Valget føres i kjøringens manifest, slik at den som senere bedømmer
+raden, kan lese at forslaget ikke ble kontrollert mot noe oppdrag. Har du et
+oppdrag, oppgi det framfor å registrere uten kontrollen.
 
 Samme kontroller, og deretter registrering gjennom
 `api.register_agent_extraction(...)`. Databasen avviser ekstraksjonen dersom
@@ -165,25 +196,59 @@ ingen kliniker bekrefte funnet felt for felt i kontrolløkten.
 ## Å lage forslaget med modell-leddet
 
 ```bash
-npm run agent:propose-extraction -- --assignment <oppdrag> --prepare <katalog>
-npm run agent:propose-extraction -- --assignment <oppdrag> --recording <opptak> --out <fil>
+npm run agent:draft-extraction -- --assignment <oppdrag> --open
+npm run agent:draft-extraction -- --assignment <oppdrag> --close
 ```
 
-Leddet leser kildeversjonen og skriver et forslag her. Det har ingen
-databasetilgang, og skriver aldri en rad. Hele oppskriften står i
-`assignments/README.md`.
+Leddet leser kildeversjonen og skriver et forslag i kjøremappa si — ikke her.
+Det har ingen databasetilgang, og skriver aldri en rad. Hele oppskriften står i
+`assignments/README.md`, og hvordan en Claude Code Routine kjører den, i
+`docs/ROUTINE_EXTRACTION.md`.
+
+Katalogen her er derfor for forslag som er skrevet **utenfor** modell-leddet: av
+ChatGPT ut av en lovlig innhentet fulltekst, eller av et menneske. Et forslag fra
+kjøremappa registreres rett derfra:
+
+```bash
+npm run agent:extract-evidence -- \
+  --proposal assignments/<navn>/forslag.json \
+  --assignment assignments/<navn>.json
+```
 
 ## Flere artikler på én gang
 
 ```bash
-npm run agent:reextract-evidence -- --directory proposals --dry-run
-npm run agent:reextract-evidence -- --directory proposals
+npm run agent:reextract-evidence -- --directory proposals --model-proposal --dry-run
+npm run agent:reextract-evidence -- --directory proposals --model-proposal
 ```
 
 Kjører alle `.json`-forslagene i katalogen i navnerekkefølge, og kjører den
 deterministiske kontrollen på hvert nytt funn med det samme. Dette er veien for
 å re-ekstrahere de gamle evidensfunnene: det nye, forankrede funnet kommer **ved
 siden av** det gamle, og det gamle røres ikke.
+
+Arbeidsformen er påkrevd her også, og den gjelder **hele køen**: re-ekstraksjonen
+har ingen oppdrag å kontrollere mot, men hva slags arbeid forslagene er, skal
+sies av kalleren — ikke av filene.
+
+Derfor forutsetter eksempelet over at **hvert** forslag i katalogen er et
+maskinutkast. Inneholder `proposals/` både maskinutkast og redaktørens eget
+arbeid, kan de ikke kjøres i den samme køen: hvert forslags
+`generated_by.producer` må stemme med valget. Kjøringen prøver hele køen mot
+valget før den registrerer noe, og avviser hele køen dersom noe avviker — den
+skriver altså ikke halve katalogen først.
+
+To kjøringer av den _samme_ katalogen hjelper derfor ikke: den blandede
+katalogen avvises under begge valgene. Legg forslagene i hver sin katalog, eller
+navngi dem framfor katalogen. `--proposal` kan gjentas, og kjøres i den
+rekkefølgen de står:
+
+```bash
+npm run agent:reextract-evidence -- \
+  --proposal proposals/fava-2000.json \
+  --proposal proposals/rush-2006.json \
+  --human-proposal
+```
 
 Ble en tidligere kjøring avbrutt mellom registreringen og kontrollen, fullfører
 den neste kjøringen kontrollen framfor å skrive en ny rad. Databasen navngir da

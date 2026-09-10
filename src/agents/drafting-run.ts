@@ -57,7 +57,7 @@
 // ============================================================================
 
 import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
-import type { ExtractionAssignment } from './extraction-assignment.ts'
+import { catalogProblem, type ExtractionAssignment } from './extraction-assignment.ts'
 import {
   parseExtractionDraft,
   type ExtractionProposal,
@@ -65,8 +65,11 @@ import {
 } from './extraction-proposal.ts'
 import { buildExtractionDraftingRequest } from './extraction-prompt.ts'
 import { modelRequestDigest, type ModelClient, type ModelRequest } from './model-client.ts'
-import type { RetrieveLike } from './extraction-run.ts'
-import { retrieveRepresentation, type RetrieveOptions } from './source-retrieval.ts'
+import {
+  retrieveRepresentation,
+  type RetrieveLike,
+  type RetrieveOptions,
+} from './source-retrieval.ts'
 
 const DRAFT_SUBJECT = 'Modellsvaret'
 
@@ -187,32 +190,6 @@ function parseCompletionJson(text: string): unknown {
   const trimmed = text.trim()
   const fenced = /^```(?:json)?\s*\n([\s\S]*)\n```$/.exec(trimmed)
   return JSON.parse(fenced?.[1] ?? trimmed) as unknown
-}
-
-/** Katalogkontrollen: bare id-ene oppdraget faktisk åpnet for. */
-function catalogProblem(
-  assignment: ExtractionAssignment,
-  extraction: ExtractionProposal['extraction'],
-): string | null {
-  const known = (choices: readonly { readonly id: string }[], id: string): boolean =>
-    choices.some((choice) => choice.id === id)
-
-  if (!known(assignment.drugs, extraction.interventionDrugId)) {
-    return `intervention_drug_id ${extraction.interventionDrugId} står ikke blant virkestoffene i oppdraget`
-  }
-  if (
-    extraction.comparatorDrugId !== null &&
-    !known(assignment.drugs, extraction.comparatorDrugId)
-  ) {
-    return `comparator_drug_id ${extraction.comparatorDrugId} står ikke blant virkestoffene i oppdraget`
-  }
-  if (!known(assignment.outcomes, extraction.outcomeConceptId)) {
-    return `outcome_concept_id ${extraction.outcomeConceptId} står ikke blant endepunktene i oppdraget`
-  }
-  if (extraction.populationId !== null && !known(assignment.populations, extraction.populationId)) {
-    return `population_id ${extraction.populationId} står ikke blant populasjonene i oppdraget`
-  }
-  return null
 }
 
 /** Den ordrette kontrollen av modellens eget svar mot teksten den fikk. */

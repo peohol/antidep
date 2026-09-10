@@ -87,6 +87,7 @@ import {
   asUuid,
   asVocabulary,
   fieldsOf,
+  isCalendarTimestamp,
   nestedFields,
   problem,
   raw,
@@ -252,7 +253,6 @@ export interface ExtractionProposal extends ExtractionDraft {
 }
 
 const CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
-const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
 /**
  * Ekstraksjonsmetoden et forslag fra denne produsenten blir registrert med.
@@ -265,6 +265,97 @@ const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+
  */
 export function extractionMethodFor(producer: ProposalProducer): ExtractionMethod {
   return producer === 'model' ? 'ai_assisted' : 'manual'
+}
+
+// ----------------------------------------------------------------------------
+// Registreringsmodusen: den tiltrodde halvdelen av «hvem laget dette»
+//
+// `producer` avgjør `knowledge.evidence_items.extraction_method`, og den er
+// ikke pynt: migrasjon 005ab innførte feltet nettopp for at en kontrollør skal
+// vite om hen etterprøver et maskinutkast eller en kollegas arbeid, og verdien
+// inngår i evidensfunnets identitet (ANTIDEP_CONSTITUTION.md §8, §12, §14).
+//
+// Feltet står i forslaget, og forslaget er utrygg inndata: det har vært innom
+// en økt som leste en artikkel Antidep ikke kontrollerer, og som har skall.
+// Lot registreringen filen alene avgjøre verdien, kunne et maskinutkast blitt
+// ført som et menneskes arbeid ved å endre ett ord — og kontrolløren ville lest
+// raden som noe annet enn den er.
+//
+// Den tiltrodde halvdelen er hvilken *modus* kalleren registrerte under, og de
+// to modusene er de to reelle arbeidsformene:
+//
+//   * med oppdrag    — modell-leddets flyt. Oppdraget finnes fordi en modell
+//                      ikke skal velge fritt i katalogen.
+//   * uten oppdrag   — en redaktørs egen ekstraksjon ut av en fulltekst. Det
+//                      finnes ikke noe oppdrag, fordi avgrensningen *er* det
+//                      faglige arbeidet.
+//
+// Erklæringen i filen beholdes likevel, og må stemme. En modus som bare
+// overstyrte feltet, ville skjult at noen hadde endret det; et avvik skal si
+// fra.
+// ----------------------------------------------------------------------------
+
+/**
+ * Hvilken arbeidsform registreringen ble kjørt under. Kallerens valg, og
+ * påkrevd: uten den ville forslaget selv avgjort hva det ble registrert som.
+ *
+ *   `with_assignment`    modell-leddets flyt. Oppdraget følger med, og
+ *                        avgrensningen mot katalogen kontrolleres.
+ *   `without_assignment` en redaktørs egen ekstraksjon ut av en fulltekst.
+ *                        Det finnes ikke noe oppdrag, fordi avgrensningen *er*
+ *                        det faglige arbeidet.
+ *   `unchecked_model`    et modellforslag uten oppdrag. Det er en reell
+ *                        tilstand for forslag laget før oppdragene fantes, og
+ *                        for et utkast ChatGPT skrev utenfor Antidep. Raden
+ *                        føres som KI-assistert — den er det — og kjøringen
+ *                        fører at avgrensningen ikke ble kontrollert.
+ */
+export type RegistrationMode = 'with_assignment' | 'without_assignment' | 'unchecked_model'
+
+/**
+ * Produsenten en modus beskriver.
+ *
+ * To av tre modi er en modells. Det er med vilje: den ene tilstanden som *ikke*
+ * skal kunne oppstå av en endret fil, er at et maskinutkast føres som et
+ * menneskes arbeid — og `without_assignment` er den eneste veien til `human`,
+ * som en kaller må velge uttrykkelig.
+ */
+export function producerForMode(mode: RegistrationMode): ProposalProducer {
+  return mode === 'without_assignment' ? 'human' : 'model'
+}
+
+/** Om modusen krever at oppdraget følger med. Bare den ene gjør det. */
+export function modeRequiresAssignment(mode: RegistrationMode): boolean {
+  return mode === 'with_assignment'
+}
+
+/**
+ * Om forslagets egen erklæring stemmer med modusen det registreres under.
+ *
+ * Returnerer `null` når de stemmer, ellers én setning som sier hva som ikke
+ * gjorde det.
+ */
+export function registrationModeProblem(
+  mode: RegistrationMode,
+  producer: ProposalProducer,
+): string | null {
+  const expected = producerForMode(mode)
+  if (producer === expected) {
+    return null
+  }
+  if (mode === 'without_assignment') {
+    return (
+      `forslaget er erklært laget av «${producer}», men registreres som en redaktørs eget ` +
+      'arbeid. Et maskinutkast skal registreres som et maskinutkast, med oppdraget det ble laget ' +
+      'under der det finnes ett'
+    )
+  }
+  return (
+    `forslaget er erklært laget av «${producer}», men registreres som et maskinutkast. Verdien ` +
+    'ville blitt ført som en menneskelig ekstraksjon (extraction_method «manual»). Er det ' +
+    'virkelig en redaktørs eget arbeid, registrer det under den arbeidsformen; er det et ' +
+    'maskinutkast, skal producer være «model»'
+  )
 }
 
 function parseGrounding(parent: Fields, value: unknown, index: number): ProposedGrounding {
@@ -387,7 +478,7 @@ export function parseExtractionDraft(value: unknown, subject: string): Extractio
 function parseGeneratedBy(parent: Fields, value: unknown): GeneratedBy {
   const fields = nestedFields(parent, value, 'generated_by')
   const draftedAt = asText(fields, 'drafted_at')
-  if (!TIMESTAMP_PATTERN.test(draftedAt) || Number.isNaN(Date.parse(draftedAt))) {
+  if (!isCalendarTimestamp(draftedAt)) {
     problem(
       fields.subject,
       'generated_by.drafted_at',

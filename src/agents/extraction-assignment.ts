@@ -41,6 +41,7 @@
 // ============================================================================
 
 import type { Uuid } from '../types/api.ts'
+import type { ExtractionProposal, ProposedExtraction } from './extraction-proposal.ts'
 import {
   asObjectList,
   asOptionalObjectList,
@@ -177,4 +178,76 @@ export function parseAssignmentJson(path: string, text: string): ExtractionAssig
     const message = cause instanceof Error ? cause.message : String(cause)
     throw new Error(`${path}: ${message}`, { cause })
   }
+}
+
+// ----------------------------------------------------------------------------
+// Kontrollen av at et forslag holder seg innenfor oppdraget
+//
+// Avgrensningen er den ene tingen den ordrette kontrollen *ikke* kan fange. Et
+// utdrag kan stå ordrett i kilden og likevel være ført på feil virkestoff eller
+// et naboendepunkt; teksten ville vært like sann, og raden like gal.
+//
+// Kontrollen kjøres derfor to steder, og det er med hensikt:
+//
+//   * i modell-leddet, før et forslag i det hele tatt blir en fil, og
+//   * i registreringen, mot oppdragsfilen redaktøren eier.
+//
+// Den andre er ikke en gjentakelse av den første. Mellom dem ligger en
+// overlevering — en fil som har vært innom en økt som leste utrygt eksternt
+// innhold — og en kontroll som bare kjørte *før* den overleveringen, er ingen
+// kontroll av det som faktisk blir registrert (EVIDENCE_PIPELINE.md §63).
+// ----------------------------------------------------------------------------
+
+/** Katalogkontrollen: bare id-ene oppdraget faktisk åpnet for. */
+export function catalogProblem(
+  assignment: ExtractionAssignment,
+  extraction: ProposedExtraction,
+): string | null {
+  const known = (choices: readonly CatalogChoice[], id: string): boolean =>
+    choices.some((choice) => choice.id === id)
+
+  if (!known(assignment.drugs, extraction.interventionDrugId)) {
+    return `intervention_drug_id ${extraction.interventionDrugId} står ikke blant virkestoffene i oppdraget`
+  }
+  if (
+    extraction.comparatorDrugId !== null &&
+    !known(assignment.drugs, extraction.comparatorDrugId)
+  ) {
+    return `comparator_drug_id ${extraction.comparatorDrugId} står ikke blant virkestoffene i oppdraget`
+  }
+  if (!known(assignment.outcomes, extraction.outcomeConceptId)) {
+    return `outcome_concept_id ${extraction.outcomeConceptId} står ikke blant endepunktene i oppdraget`
+  }
+  if (extraction.populationId !== null && !known(assignment.populations, extraction.populationId)) {
+    return `population_id ${extraction.populationId} står ikke blant populasjonene i oppdraget`
+  }
+  return null
+}
+
+/**
+ * Om et forslag holder seg innenfor oppdraget det skal ha vært laget under.
+ *
+ * Kontrollerer både kildebindingen og katalogen. Kildebindingen først: et
+ * forslag som peker på en annen kildeversjon enn oppdraget, er ikke det
+ * oppdraget ba om, uansett hvor riktige verdiene måtte være.
+ *
+ * Returnerer `null` når alt stemmer, ellers én setning som sier hva som ikke
+ * gjorde det.
+ */
+export function assignmentMismatch(
+  assignment: ExtractionAssignment,
+  proposal: ExtractionProposal,
+): string | null {
+  const binding: readonly (readonly [string, string, string])[] = [
+    ['source_id', proposal.sourceId, assignment.sourceId],
+    ['source_version_id', proposal.sourceVersionId, assignment.sourceVersionId],
+    ['retrieved_from', proposal.retrievedFrom, assignment.retrievedFrom],
+    ['content_hash', proposal.contentHash, assignment.contentHash],
+  ]
+  for (const [key, proposed, expected] of binding) {
+    if (proposed !== expected) {
+      return `${key} er ${proposed} i forslaget, men ${expected} i oppdraget`
+    }
+  }
+  return catalogProblem(assignment, proposal.extraction)
 }

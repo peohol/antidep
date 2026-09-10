@@ -22,6 +22,7 @@ import { sourceVersionContentHash } from './content-hash'
 import {
   EXTRACTION_PROPOSAL_VERSION,
   parseExtractionProposal,
+  serializeExtractionProposal,
   type ExtractionProposal,
 } from './extraction-proposal'
 import type { RetrieveLike } from './extraction-run'
@@ -220,10 +221,169 @@ async function grounded(
   })
 }
 
+// ----------------------------------------------------------------------------
+// Bypass-en re-ekstraksjonen var
+//
+// Modusen var valgfri i `runEvidenceExtraction`, og denne veien oppga den ikke.
+// Dermed avgjorde forslagsfilen selv om raden ble ført som KI-assistert eller
+// manuell — den samme feilen som `agent:extract-evidence` allerede hadde lukket,
+// gjennom den andre registreringskommandoen.
+//
+// Modusen er nå påkrevd, og den gjelder hele køen.
+// ----------------------------------------------------------------------------
+
+describe('runReextraction — arbeidsformen er kallerens', () => {
+  it('fører køen som KI-assistert under modusen for maskinutkast', async () => {
+    const spy = spies()
+    await runReextraction({
+      mode: 'unchecked_model',
+      extractionApi: spy.extractionApi,
+      verificationApi: spy.verificationApi,
+      verificationPremises: VERIFICATION_PREMISES,
+      proposals: [{ label: 'fava.json', proposal: await proposal() }],
+      retrieve: retrieveFixture(),
+    })
+
+    expect((spy.registered[0] as { extractionMethod: string }).extractionMethod).toBe('ai_assisted')
+  })
+
+  it('skriver ingen rad når et maskinutkast er omskrevet til et menneskes arbeid', async () => {
+    // Regresjonen: den samme filen som `agent:extract-evidence --assignment`
+    // avviser, gikk tidligere rundt sperren her og ble en `manual` rad.
+    const spy = spies()
+    const omskrevet = parseExtractionProposal({
+      ...(JSON.parse(JSON.stringify(serializeExtractionProposal(await proposal()))) as Record<
+        string,
+        unknown
+      >),
+      generated_by: {
+        producer: 'human',
+        provider: 'human',
+        model: 'manuell-ekstraksjon',
+        model_version: 'not_applicable',
+        prompt_template_version: 'not_applicable',
+        drafted_at: '2026-09-15T09:00:00Z',
+      },
+    })
+
+    await expect(
+      runReextraction({
+        mode: 'unchecked_model',
+        extractionApi: spy.extractionApi,
+        verificationApi: spy.verificationApi,
+        verificationPremises: VERIFICATION_PREMISES,
+        proposals: [{ label: 'omskrevet.json', proposal: omskrevet }],
+        retrieve: retrieveFixture(),
+      }),
+    ).rejects.toThrow(/erklært laget av «human»/)
+
+    expect(spy.registered).toEqual([])
+  })
+
+  it('avviser en blandet kø før den skriver den første raden', async () => {
+    // Kontrollen finnes i registreringen også, men der slår den til midt i køen.
+    // En katalog med ni maskinutkast og ett menneskeskrevet forslag ville da
+    // skrevet ni rader og stanset på det tiende — og halve katalogen ville vært
+    // registrert under en arbeidsform kalleren nå får vite var feil. Modusen
+    // gjelder hele køen, så avviket er en feil ved kallet og skal oppdages før
+    // noe er skrevet.
+    const spy = spies()
+    const maskinutkast = await proposal()
+    const menneskeskrevet = parseExtractionProposal({
+      ...(JSON.parse(JSON.stringify(serializeExtractionProposal(maskinutkast))) as Record<
+        string,
+        unknown
+      >),
+      generated_by: {
+        producer: 'human',
+        provider: 'human',
+        model: 'manuell-ekstraksjon',
+        model_version: 'not_applicable',
+        prompt_template_version: 'not_applicable',
+        drafted_at: '2026-09-15T09:00:00Z',
+      },
+    })
+
+    await expect(
+      runReextraction({
+        mode: 'unchecked_model',
+        extractionApi: spy.extractionApi,
+        verificationApi: spy.verificationApi,
+        verificationPremises: VERIFICATION_PREMISES,
+        proposals: [
+          { label: 'a-maskin.json', proposal: maskinutkast },
+          { label: 'b-menneske.json', proposal: menneskeskrevet },
+        ],
+        retrieve: retrieveFixture(),
+      }),
+    ).rejects.toThrow(/b-menneske\.json/)
+
+    expect(spy.registered).toEqual([])
+    expect(spy.completions).toEqual([])
+  })
+
+  it('navngir hvert forslag som ikke stemmer, ikke bare det første', async () => {
+    const spy = spies()
+    const menneskeskrevet = parseExtractionProposal({
+      ...(JSON.parse(JSON.stringify(serializeExtractionProposal(await proposal()))) as Record<
+        string,
+        unknown
+      >),
+      generated_by: {
+        producer: 'human',
+        provider: 'human',
+        model: 'manuell-ekstraksjon',
+        model_version: 'not_applicable',
+        prompt_template_version: 'not_applicable',
+        drafted_at: '2026-09-15T09:00:00Z',
+      },
+    })
+
+    let melding = ''
+    try {
+      await runReextraction({
+        mode: 'unchecked_model',
+        extractionApi: spy.extractionApi,
+        verificationApi: spy.verificationApi,
+        verificationPremises: VERIFICATION_PREMISES,
+        proposals: [
+          { label: 'en.json', proposal: menneskeskrevet },
+          { label: 'to.json', proposal: menneskeskrevet },
+        ],
+        retrieve: retrieveFixture(),
+      })
+    } catch (cause) {
+      melding = cause instanceof Error ? cause.message : String(cause)
+    }
+
+    expect(melding).toMatch(/en\.json/)
+    expect(melding).toMatch(/to\.json/)
+    expect(melding).toMatch(/2 av 2/)
+  })
+
+  it('nekter en modus som krever et oppdrag, siden køen ikke har noe', async () => {
+    const spy = spies()
+
+    await expect(
+      runReextraction({
+        mode: 'with_assignment',
+        extractionApi: spy.extractionApi,
+        verificationApi: spy.verificationApi,
+        verificationPremises: VERIFICATION_PREMISES,
+        proposals: [{ label: 'fava.json', proposal: await proposal() }],
+        retrieve: retrieveFixture(),
+      }),
+    ).rejects.toThrow(/ikke noe oppdrag/)
+
+    expect(spy.registered).toEqual([])
+  })
+})
+
 describe('runReextraction', () => {
   it('registrerer funnet og kontrollerer nøyaktig det', async () => {
     const spy = spies()
     const report = await runReextraction({
+      mode: 'unchecked_model',
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       verificationPremises: VERIFICATION_PREMISES,
@@ -248,6 +408,7 @@ describe('runReextraction', () => {
       queue: [await grounded(forslag, { evidenceItemId: ITEM_ID, groundingMachineProved: true })],
     })
     const report = await runReextraction({
+      mode: 'unchecked_model',
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       verificationPremises: VERIFICATION_PREMISES,
@@ -268,6 +429,7 @@ describe('runReextraction', () => {
   it('skriver ingenting i en tørrkjøring', async () => {
     const spy = spies()
     const report = await runReextraction({
+      mode: 'unchecked_model',
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       verificationPremises: VERIFICATION_PREMISES,
@@ -303,6 +465,7 @@ describe('runReextraction', () => {
     })
 
     const report = await runReextraction({
+      mode: 'unchecked_model',
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       verificationPremises: VERIFICATION_PREMISES,
@@ -332,6 +495,7 @@ describe('runReextraction', () => {
     })
 
     const report = await runReextraction({
+      mode: 'unchecked_model',
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       verificationPremises: VERIFICATION_PREMISES,
@@ -379,6 +543,7 @@ describe('runReextraction', () => {
 
     const spy = spies()
     const report = await runReextraction({
+      mode: 'unchecked_model',
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       verificationPremises: VERIFICATION_PREMISES,
@@ -409,6 +574,7 @@ describe('runReextraction', () => {
     })
 
     const report = await runReextraction({
+      mode: 'unchecked_model',
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       verificationPremises: VERIFICATION_PREMISES,
@@ -427,6 +593,7 @@ describe('runReextraction', () => {
     const spy = spies({ duplicate: true, collidesWith: null })
 
     const report = await runReextraction({
+      mode: 'unchecked_model',
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       verificationPremises: VERIFICATION_PREMISES,
@@ -483,6 +650,7 @@ describe('runReextraction', () => {
     })
 
     const report = await runReextraction({
+      mode: 'unchecked_model',
       extractionApi: spy.extractionApi,
       verificationApi: spy.verificationApi,
       verificationPremises: VERIFICATION_PREMISES,

@@ -52,14 +52,26 @@
 import type { Uuid } from '../types/api.ts'
 import type { EvidenceExtractionApi } from './agent-api.ts'
 import { collidingEvidenceItemId, isUniqueViolation } from './agent-api.ts'
+import { assignmentMismatch, type ExtractionAssignment } from './extraction-assignment.ts'
 import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
-import { extractionMethodFor } from './extraction-proposal.ts'
+import {
+  extractionMethodFor,
+  modeRequiresAssignment,
+  producerForMode,
+  registrationModeProblem,
+  type RegistrationMode,
+} from './extraction-proposal.ts'
+import {
+  buildExtractionDraftingRequest,
+  EXTRACTION_DRAFTING_PROMPT_VERSION,
+} from './extraction-prompt.ts'
+import { modelRequestDigest } from './model-client.ts'
 import { EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version.ts'
-import type { RetrievalResult, RetrieveOptions } from './source-retrieval.ts'
+import type { RetrieveLike, RetrieveOptions } from './source-retrieval.ts'
 import { retrieveRepresentation } from './source-retrieval.ts'
 
-export type RetrieveLike = (url: string) => Promise<RetrievalResult>
+export type { RetrieveLike }
 
 export interface ExtractionRunOptions {
   readonly api: EvidenceExtractionApi
@@ -72,6 +84,35 @@ export interface ExtractionRunOptions {
    * ekstraksjon som en modells.
    */
   readonly proposal: ExtractionProposal
+  /**
+   * Oppdraget forslaget skal ha vært laget under, når kalleren har det.
+   *
+   * Oppgitt, kontrolleres forslaget mot det før noe skrives: kildebindingen og
+   * hver katalogverdi. Det er den ene kontrollen den ordrette kan ikke gjøre —
+   * et utdrag kan stå ordrett i kilden og likevel være ført på feil virkestoff.
+   *
+   * Grunnen til at den hører hjemme *her* og ikke bare i modell-leddet, er
+   * overleveringen: forslaget har vært innom en økt som leste utrygt eksternt
+   * innhold, og en kontroll som bare kjørte før den overleveringen, kontrollerer
+   * ikke det som faktisk blir registrert (EVIDENCE_PIPELINE.md §63).
+   *
+   * Oppdraget er redaktørens egen fil og kommer en annen vei enn forslaget.
+   */
+  readonly assignment?: ExtractionAssignment
+  /**
+   * Arbeidsformen kalleren registrerer under. **Påkrevd.**
+   *
+   * Forslagets egen `generated_by.producer` må stemme med den, og
+   * `extraction_method` utledes av modusen — ikke av filen. Forslaget er utrygg
+   * inndata: uten dette kunne et maskinutkast blitt ført som et menneskes
+   * arbeid ved å endre ett ord (`extraction-proposal.ts`).
+   *
+   * Feltet er påkrevd og ikke valgfritt med en fornuftig standardverdi, og det
+   * er hele poenget. Så lenge det kunne utelates, var invarianten valgfri: en
+   * kaller som glemte den, falt tilbake på at filen bestemte selv — og det
+   * gjorde en av dem.
+   */
+  readonly mode: RegistrationMode
   /** Kontroller og rapporter, men registrer ingenting. */
   readonly dryRun?: boolean
   readonly retrieve?: RetrieveLike
@@ -108,7 +149,10 @@ export interface ExtractionRunReport {
   readonly reason?: string
 }
 
-type Verdict = { readonly kind: 'skip'; readonly reason: string } | { readonly kind: 'ok' }
+type Verdict =
+  | { readonly kind: 'skip'; readonly reason: string }
+  /** `requestDigestChecked` sier om forespørselsavtrykket lot seg rekonstruere. */
+  | { readonly kind: 'ok'; readonly requestDigestChecked: boolean }
 
 /**
  * Representasjonen må være den registrerte, og hvert utdrag må stå i den.
@@ -117,26 +161,94 @@ type Verdict = { readonly kind: 'skip'; readonly reason: string } | { readonly k
  * å søke, fordi et treff da ville vært i en annen utgave enn den ekstraksjonen
  * skal peke på.
  */
-function judge(proposal: ExtractionProposal, sourceText: string): Verdict {
+function judge(
+  proposal: ExtractionProposal,
+  sourceText: string,
+  assignment: ExtractionAssignment | undefined,
+): string | null {
+  if (assignment !== undefined) {
+    const mismatch = assignmentMismatch(assignment, proposal)
+    if (mismatch !== null) {
+      return (
+        `Forslaget holder seg ikke innenfor oppdraget: ${mismatch}. Ekstraksjonen ble ikke ` +
+        'registrert.'
+      )
+    }
+  }
   const projections = searchProjections(sourceText)
   const missing = proposal.fieldGroundings.filter(
     (grounding) => !verbatimOccursIn(projections, grounding.sourceExcerpt),
   )
   if (missing.length > 0) {
     const fields = missing.map((grounding) => grounding.checkField).join(', ')
+    return (
+      `Kildeforankringen for ${fields} oppgir utdrag som ikke står ordrett i ` +
+      `representasjonen fra ${proposal.retrievedFrom}. Ekstraksjonen ble ikke registrert.`
+    )
+  }
+  return null
+}
+
+/**
+ * Forespørselsavtrykket, rekonstruert der det lar seg rekonstruere.
+ *
+ * `request_digest` er den ene verdien i `generated_by` som ikke bare er en
+ * påstand: forespørselen er en ren funksjon av oppdraget, representasjonen og
+ * promptmalen, og registreringen har alle tre — oppdraget fra redaktøren,
+ * representasjonen hentet på nytt, malen fra sin egen kode. Der er avtrykket
+ * *etterprøvbart*, og da skal det prøves framfor kopieres.
+ *
+ * Det lar seg ikke alltid gjøre, og det er en reell tilstand og ikke et hull:
+ *
+ *   * uten oppdrag finnes ikke halve inndataen,
+ *   * et menneskeskrevet forslag har ingen forespørsel,
+ *   * et utkast laget under en *eldre* promptmal ville gitt et annet avtrykk,
+ *     og det er malen som er endret — ikke utkastet som er galt,
+ *   * en representasjon som selv inneholder gjerdemarkøren, kan ikke bygges
+ *     til en forespørsel i det hele tatt.
+ *
+ * I de tilfellene forblir avtrykket en erklæring, og kjøringen fører at det var
+ * det. Å oppgi noe annet ville vært å kalle en påstand et bevis.
+ */
+async function requestDigestVerdict(
+  proposal: ExtractionProposal,
+  assignment: ExtractionAssignment | undefined,
+  sourceText: string,
+): Promise<Verdict> {
+  const declared = proposal.generatedBy.requestDigest
+  if (
+    assignment === undefined ||
+    declared === null ||
+    proposal.generatedBy.promptTemplateVersion !== EXTRACTION_DRAFTING_PROMPT_VERSION
+  ) {
+    return { kind: 'ok', requestDigestChecked: false }
+  }
+
+  let expected: string
+  try {
+    expected = await modelRequestDigest(
+      buildExtractionDraftingRequest({ assignment, representation: sourceText }),
+    )
+  } catch {
+    return { kind: 'ok', requestDigestChecked: false }
+  }
+
+  if (expected !== declared) {
     return {
       kind: 'skip',
       reason:
-        `Kildeforankringen for ${fields} oppgir utdrag som ikke står ordrett i ` +
-        `representasjonen fra ${proposal.retrievedFrom}. Ekstraksjonen ble ikke registrert.`,
+        `Forslaget oppgir forespørselsavtrykket ${declared}, men oppdraget og representasjonen ` +
+        `gir ${expected} under promptmalen ${EXTRACTION_DRAFTING_PROMPT_VERSION}. Utkastet kan ` +
+        'ikke ha vært lest ut av denne forespørselen. Ekstraksjonen ble ikke registrert.',
     }
   }
-  return { kind: 'ok' }
+  return { kind: 'ok', requestDigestChecked: true }
 }
 
 async function fetchAndJudge(
   proposal: ExtractionProposal,
   retrieve: RetrieveLike,
+  assignment: ExtractionAssignment | undefined,
 ): Promise<Verdict> {
   const retrieved = await retrieve(proposal.retrievedFrom)
   if (retrieved.status === 'error') {
@@ -164,7 +276,11 @@ async function fetchAndJudge(
     }
   }
 
-  return judge(proposal, representation.content)
+  const problem = judge(proposal, representation.content, assignment)
+  if (problem !== null) {
+    return { kind: 'skip', reason: problem }
+  }
+  return await requestDigestVerdict(proposal, assignment, representation.content)
 }
 
 /**
@@ -186,8 +302,37 @@ export async function runEvidenceExtraction(
     log = () => {},
   } = options
 
+  // Modusen kontrolleres før noe åpnes: en kjøring skal ikke registreres for å
+  // bli avvist på noe kalleren kunne fått vite uten å røre databasen. Kastet er
+  // med vilje — dette er en feil i kallet, ikke et normalt utfall som «kilden
+  // har endret seg».
+  //
+  // Først at modusen og oppdraget henger sammen. En modus som sa «kontrollert
+  // mot oppdraget» uten et oppdrag, ville vært en usann påstand i manifestet;
+  // et oppdrag under en modus som ikke kontrollerer det, ville vært en
+  // kontroll kalleren trodde den fikk.
+  if (modeRequiresAssignment(options.mode) && options.assignment === undefined) {
+    throw new Error(
+      'Registreringen ble ikke åpnet: arbeidsformen sier at forslaget kontrolleres mot ' +
+        'oppdraget, men det fulgte ikke noe oppdrag med.',
+    )
+  }
+  if (!modeRequiresAssignment(options.mode) && options.assignment !== undefined) {
+    throw new Error(
+      'Registreringen ble ikke åpnet: det fulgte et oppdrag med, men arbeidsformen kontrollerer ' +
+        'det ikke. Registrer forslaget under den arbeidsformen som gjør det.',
+    )
+  }
+  const problem = registrationModeProblem(options.mode, proposal.generatedBy.producer)
+  if (problem !== null) {
+    throw new Error(`Registreringen ble ikke åpnet: ${problem}.`)
+  }
+
   const groundedFields = proposal.fieldGroundings.map((grounding) => grounding.checkField)
-  const extractionMethod = extractionMethodFor(proposal.generatedBy.producer)
+  // Utledet av modusen, aldri av forslaget. Verdien sier om en kontrollør
+  // etterprøver et maskinutkast eller en kollegas arbeid, og den skal komme fra
+  // den tiltrodde halvdelen.
+  const extractionMethod = extractionMethodFor(producerForMode(options.mode))
   // Kildeversjonen oppgis strukturert, ikke bare i manifestet: den binder
   // evidensfunnet til nøyaktig den utgaven kjøringen leste, deklarativt
   // (evidence_items_agent_run_source_version_fkey, migrasjon 005z). Manifestet
@@ -219,6 +364,15 @@ export async function runEvidenceExtraction(
         request_digest: proposal.generatedBy.requestDigest,
       },
       extraction_method: extractionMethod,
+      // Om forslaget ble kontrollert mot oppdraget det skal ha vært laget
+      // under. `false` er en reell tilstand og ikke et hull: et forslag skrevet
+      // av en redaktør ut av en fulltekst har ikke noe oppdrag. Men valget skal
+      // kunne leses i ettertid, av den som bedømmer raden.
+      assignment_checked: options.assignment !== undefined,
+      // Hva kalleren registrerte under: den tiltrodde halvdelen av «hvem laget
+      // dette», og for `unchecked_model` også en opplysning om at
+      // avgrensningen mot katalogen ikke ble kontrollert.
+      registration_mode: options.mode,
       dry_run: dryRun,
     },
     proposal.sourceVersionId,
@@ -226,7 +380,7 @@ export async function runEvidenceExtraction(
   log(`Kjøring ${agentRunId} åpnet for kildeversjon ${proposal.sourceVersionId}.`)
 
   try {
-    const verdict = await fetchAndJudge(proposal, retrieve)
+    const verdict = await fetchAndJudge(proposal, retrieve, options.assignment)
 
     if (verdict.kind === 'skip') {
       log(`Ingenting registrert: ${verdict.reason}`)
@@ -252,7 +406,11 @@ export async function runEvidenceExtraction(
       await api.completeRun(
         agentRunId,
         'aborted',
-        { dry_run: true, grounded_fields: groundedFields },
+        {
+          dry_run: true,
+          grounded_fields: groundedFields,
+          request_digest_checked: verdict.requestDigestChecked,
+        },
         'Tørrkjøring: forslaget ble kontrollert, men ingen ekstraksjon ble registrert.',
       )
       return { agentRunId, runStatus: 'aborted', decision: 'previewed', groundedFields }
@@ -304,7 +462,14 @@ export async function runEvidenceExtraction(
     await api.completeRun(
       agentRunId,
       'succeeded',
-      { evidence_item_id: evidenceItemId, grounded_fields: groundedFields },
+      {
+        evidence_item_id: evidenceItemId,
+        grounded_fields: groundedFields,
+        // Om forespørselsavtrykket lot seg rekonstruere, eller forble en
+        // erklæring. Den som leser proveniensen senere, skal kunne se hvilken
+        // av de to det var.
+        request_digest_checked: verdict.requestDigestChecked,
+      },
       null,
     )
     return {

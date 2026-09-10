@@ -295,6 +295,7 @@ async function extract(): Promise<RegisterAgentExtractionArgs> {
     completeRun: () => Promise.resolve(),
   }
   const report = await runEvidenceExtraction({
+    mode: 'unchecked_model',
     api,
     proposal: await proposal(),
     retrieve: retrieve(),
