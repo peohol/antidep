@@ -631,6 +631,23 @@ describe('avbrutte kjøringer', () => {
     expect(igjen.outcome).toBe('already_drafted')
     expect(igjen.job.state).toBe('drafted')
   })
+
+  it('henter ikke kilden i det hele tatt for en ferdig kjøring', async () => {
+    const { assignmentPath, runDirectory } = await opened()
+    writeAnswer(runDirectory)
+    await closeDraftingJob(closeOptions(assignmentPath, runDirectory))
+
+    // Kilden er nede, eller endret. Filen neste ledd venter på, ligger der
+    // likevel, og en idempotent kommando skal ikke feile på en henting den ikke
+    // trenger å gjøre.
+    const aldri: RetrieveLike = () => {
+      throw new Error('kilden skulle ikke vært hentet')
+    }
+    const igjen = await openDraftingJob({ assignmentPath, runDirectory, retrieve: aldri })
+
+    expect(igjen.outcome).toBe('already_drafted')
+    expect(igjen.proposalPath).toBe(join(runDirectory, JOB_FILES.proposal))
+  })
 })
 
 describe('readDraftingJobStatus', () => {

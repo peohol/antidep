@@ -114,7 +114,17 @@ export function parseModelAnswer(value: unknown): ModelAnswer {
         'tidspunktet i proveniensen den gangen kjøringen ble lukket',
     )
   }
-  if (answeredAt !== null && !TIMESTAMP_PATTERN.test(answeredAt)) {
+  // Mønsteret alene er ikke nok: det ser bare på formen, så «2026-99-99T99:99:99Z»
+  // slipper gjennom det. Et slikt tidspunkt gir NaN, og NaN er verken større
+  // eller mindre enn noe — vindussjekken i `drafting-job.ts` ville derfor sagt
+  // ja, og verdien ville blitt skrevet inn i forslaget som da utkastet ble
+  // laget. `parseExtractionProposal` avviser den samme verdien, så kjøringen
+  // ville meldt «forslag skrevet» og registreringen ville nektet å lese filen.
+  // Kontrollen er den samme som den `drafted_at` allerede har der.
+  if (
+    answeredAt !== null &&
+    (!TIMESTAMP_PATTERN.test(answeredAt) || Number.isNaN(Date.parse(answeredAt)))
+  ) {
     problem(
       ANSWER_SUBJECT,
       'svaret.answered_at',

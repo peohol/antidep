@@ -133,4 +133,14 @@ describe('parseModelAnswer — proveniens som ville vært usann', () => {
   it('avviser et tidspunkt som ikke er et tidspunkt', () => {
     expect(() => parseModelAnswer(svar({ answered_at: '10. september' }))).toThrow(/answered_at/)
   })
+
+  it('avviser et tidspunkt som har formen, men ikke finnes', () => {
+    // Mønsteret alene slipper dette gjennom: alle feltene er siffer. Verdien
+    // gir NaN, og NaN er verken større eller mindre enn noe — vindussjekken i
+    // kjøremappa ville sagt ja, og et umulig tidspunkt ville blitt skrevet inn
+    // i forslaget som da utkastet ble laget.
+    expect(() => parseModelAnswer(svar({ answered_at: '2026-99-99T99:99:99Z' }))).toThrow(
+      /answered_at/,
+    )
+  })
 })

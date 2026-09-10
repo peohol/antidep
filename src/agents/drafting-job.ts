@@ -353,24 +353,38 @@ export async function openDraftingJob(options: OpenJobOptions): Promise<OpenJobR
     )
   }
 
+  // En ferdig kjøring svares ut før hentingen, ikke etter.
+  //
+  // Filen neste ledd venter på, ligger der allerede, og det er hele svaret. Ble
+  // kilden utilgjengelig eller endret etterpå, ville en henting her gjort den
+  // idempotente kommandoen til en som feiler — nettopp i den situasjonen en
+  // avbrutt Routine kjører den om igjen. `--close` gjør det samme.
+  if (
+    existing !== null &&
+    existing.state === 'drafted' &&
+    (await readJsonFile(proposalPath)).present
+  ) {
+    log(`Kjøringen er allerede lukket med et forslag: ${proposalPath}`)
+    return {
+      outcome: 'already_drafted',
+      runDirectory,
+      job: existing,
+      promptPath,
+      answerPath,
+      proposalPath,
+    }
+  }
+
   const { request, requestDigest } = await prepareDraftingRequest({
     assignment,
     ...retrievalPorts(options),
   })
 
-  if (existing !== null && existing.requestDigest === requestDigest) {
-    if (existing.state === 'drafted' && (await readJsonFile(proposalPath)).present) {
-      log(`Kjøringen er allerede lukket med et forslag: ${proposalPath}`)
-      return {
-        outcome: 'already_drafted',
-        runDirectory,
-        job: existing,
-        promptPath,
-        answerPath,
-        proposalPath,
-      }
-    }
-  } else if (existing !== null && (await answerFileHoldsAnAnswer(answerPath))) {
+  if (
+    existing !== null &&
+    existing.requestDigest !== requestDigest &&
+    (await answerFileHoldsAnAnswer(answerPath))
+  ) {
     // Avtrykket er et annet, og svarfilen bærer et svar. Svaret ble lest ut av
     // en annen tekst enn den kjøringen nå ville bygget, og et svar som ble
     // stående, ville blitt kontrollert mot feil forespørsel.
