@@ -179,6 +179,26 @@ describe('parseReextractionArguments', () => {
     )
   })
 
+  it('tar imot flere enkeltforslag, i den rekkefølgen de står', () => {
+    // Veien ut av en blandet katalog: arbeidsformen gjelder hele køen, så en
+    // katalog med både maskinutkast og en redaktørs eget arbeid avvises under
+    // begge valgene. `proposals/README.md` viser til nettopp denne formen.
+    expect(
+      parseReextractionArguments([
+        '--proposal',
+        'proposals/fava-2000.json',
+        '--proposal',
+        'proposals/rush-2006.json',
+        '--human-proposal',
+      ]),
+    ).toEqual({
+      directory: null,
+      proposalPaths: ['proposals/fava-2000.json', 'proposals/rush-2006.json'],
+      mode: 'without_assignment',
+      dryRun: false,
+    })
+  })
+
   it('nekter katalog og enkeltforslag samtidig', () => {
     expect(() =>
       parseReextractionArguments([...KØ, '--proposal', 'a.json', '--model-proposal']),

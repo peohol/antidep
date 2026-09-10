@@ -222,6 +222,11 @@ npm run agent:reextract-evidence -- --directory proposals --model-proposal --dry
 npm run agent:reextract-evidence -- --directory proposals --model-proposal
 ```
 
+Kjører alle `.json`-forslagene i katalogen i navnerekkefølge, og kjører den
+deterministiske kontrollen på hvert nytt funn med det samme. Dette er veien for
+å re-ekstrahere de gamle evidensfunnene: det nye, forankrede funnet kommer **ved
+siden av** det gamle, og det gamle røres ikke.
+
 Arbeidsformen er påkrevd her også, og den gjelder **hele køen**: re-ekstraksjonen
 har ingen oppdrag å kontrollere mot, men hva slags arbeid forslagene er, skal
 sies av kalleren — ikke av filene.
@@ -231,17 +236,19 @@ maskinutkast. Inneholder `proposals/` både maskinutkast og redaktørens eget
 arbeid, kan de ikke kjøres i den samme køen: hvert forslags
 `generated_by.producer` må stemme med valget. Kjøringen prøver hele køen mot
 valget før den registrerer noe, og avviser hele køen dersom noe avviker — den
-skriver altså ikke halve katalogen først. Legg dem i hver sin katalog, kjør
-katalogen to ganger med hvert sitt valg, eller kjør forslagene enkeltvis:
+skriver altså ikke halve katalogen først.
+
+To kjøringer av den _samme_ katalogen hjelper derfor ikke: den blandede
+katalogen avvises under begge valgene. Legg forslagene i hver sin katalog, eller
+navngi dem framfor katalogen. `--proposal` kan gjentas, og kjøres i den
+rekkefølgen de står:
 
 ```bash
-npm run agent:reextract-evidence -- --proposal proposals/fava-2000.json --human-proposal
+npm run agent:reextract-evidence -- \
+  --proposal proposals/fava-2000.json \
+  --proposal proposals/rush-2006.json \
+  --human-proposal
 ```
-
-Kjører alle `.json`-forslagene i katalogen i navnerekkefølge, og kjører den
-deterministiske kontrollen på hvert nytt funn med det samme. Dette er veien for
-å re-ekstrahere de gamle evidensfunnene: det nye, forankrede funnet kommer **ved
-siden av** det gamle, og det gamle røres ikke.
 
 Ble en tidligere kjøring avbrutt mellom registreringen og kontrollen, fullfører
 den neste kjøringen kontrollen framfor å skrive en ny rad. Databasen navngir da
