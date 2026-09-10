@@ -20,7 +20,7 @@ import {
   type ExtractionProposal,
 } from './extraction-proposal'
 import { runEvidenceExtraction, type RetrieveLike } from './extraction-run'
-import { ANTIDEP_EVIDENCE_PIPELINE_VERSION } from './pipeline-version'
+import { ANTIDEP_EVIDENCE_PIPELINE_VERSION, EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version'
 import { FIXTURE_SOURCE_TEXT } from './test-support'
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
@@ -96,6 +96,7 @@ async function proposal(
       model: 'opptaksmodell',
       model_version: '1',
       prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+      drafted_at: '2026-09-15T09:00:00Z',
     },
     source_id: '50000000-0000-4000-8000-000000000001',
     source_version_id: '51000000-0000-4000-8000-000000000001',
@@ -183,20 +184,22 @@ describe('runEvidenceExtraction — den lykkede stien', () => {
       source_version_id: '51000000-0000-4000-8000-000000000001',
       retrieved_from: 'https://eksempel.invalid/kilde',
       grounded_fields: ['intervention_arm', 'sample_size'],
-      producer: 'model',
       extraction_method: 'ai_assisted',
     })
   })
 })
 
 // ---------------------------------------------------------------------------
-// Premissene er forslagets, og pipelineversjonen er Antideps
+// Kjøringens premisser er kjøringens, og erklæringen er forslagets
 // ---------------------------------------------------------------------------
 
 describe('runEvidenceExtraction — hvem forslaget sier laget det', () => {
-  // En fast verdi her ville registrert hvert forslag som om det samme hadde
-  // laget det (ANTIDEP_CONSTITUTION.md §14, §20).
-  it('registrerer kjøringen med forslagets egen leverandør, modell og promptmal', async () => {
+  // Kjøringen er ikke leddet som leste artikkelen: den henter, kontrollerer og
+  // registrerer, deterministisk, på det tidspunktet noen kjører kommandoen. Lot
+  // premissene si hvilken modell som laget utkastet, ville `started_at` og
+  // manifestene beskrevet noe annet enn det som skjedde
+  // (ANTIDEP_CONSTITUTION.md §20, EVIDENCE_PIPELINE.md §65).
+  it('registrerer kjøringen med sine egne premisser, ikke med modellens', async () => {
     const api = fakeApi()
     await runEvidenceExtraction({
       api,
@@ -207,38 +210,46 @@ describe('runEvidenceExtraction — hvem forslaget sier laget det', () => {
           model: 'en-modell',
           model_version: '2026-09-15',
           prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+          drafted_at: '2026-09-15T09:00:00Z',
         },
       }),
       retrieve: retrieveFixture(),
     })
 
-    expect(api.premises[0]).toMatchObject({
-      provider: 'en-leverandør',
-      model: 'en-modell',
-      modelVersion: '2026-09-15',
-      promptTemplateVersion: 'evidence-extraction/proposal-drafting/1',
-    })
+    expect(api.premises[0]).toEqual(EVIDENCE_EXTRACTION_PREMISES)
+    expect(api.premises[0]?.pipelineVersion).toBe(ANTIDEP_EVIDENCE_PIPELINE_VERSION)
   })
 
-  // Pipelineversjonen er Antideps egen, og et forslag utenfra skal ikke kunne
-  // påstå noe om den.
-  it('lar pipelineversjonen være Antideps, uansett hva forslaget sier', async () => {
+  // Erklæringen står i manifestet — kolonnen for hva kjøringen fikk inn — med
+  // utkastets eget tidspunkt og fingeravtrykket av forespørselen. Uten dem er
+  // modelloperasjonen ikke identifiserbar i ettertid.
+  it('fører forslagets erklæring ordrett i kjøringens manifest', async () => {
     const api = fakeApi()
     await runEvidenceExtraction({
       api,
       proposal: await proposal({
         generatedBy: {
-          producer: 'human',
-          provider: 'human',
-          model: 'manuell-ekstraksjon',
-          model_version: 'not_applicable',
-          prompt_template_version: 'not_applicable',
+          producer: 'model',
+          provider: 'en-leverandør',
+          model: 'en-modell',
+          model_version: '2026-09-15',
+          prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+          drafted_at: '2026-09-15T09:00:00Z',
+          request_digest: `sha256:${'b'.repeat(64)}`,
         },
       }),
       retrieve: retrieveFixture(),
     })
 
-    expect(api.premises[0]?.pipelineVersion).toBe(ANTIDEP_EVIDENCE_PIPELINE_VERSION)
+    expect(api.manifests[0]?.['generated_by']).toEqual({
+      producer: 'model',
+      provider: 'en-leverandør',
+      model: 'en-modell',
+      model_version: '2026-09-15',
+      prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+      drafted_at: '2026-09-15T09:00:00Z',
+      request_digest: `sha256:${'b'.repeat(64)}`,
+    })
   })
 
   // extraction_method sier hvordan raden ble til. En modell og et menneske er
@@ -262,6 +273,7 @@ describe('runEvidenceExtraction — hvem forslaget sier laget det', () => {
           model: 'manuell-ekstraksjon',
           model_version: 'not_applicable',
           prompt_template_version: 'not_applicable',
+          drafted_at: '2026-09-15T08:00:00Z',
         },
       }),
       retrieve: retrieveFixture(),

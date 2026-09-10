@@ -84,9 +84,14 @@ Kjør `prompt.txt` der modellen faktisk kjører — i dag utenfor Antidep, for
 eksempel i ChatGPT. Lim svaret inn i `completion` i `opptak.json`, og fyll ut
 `identity` med leverandøren, modellen og modellversjonen som **faktisk** svarte.
 
-Identiteten er ikke pynt: verdiene havner i `provenance.agent_runs` som
-premissene kjøringen ble gjort under, og en plassholder som blir stående, er en
-usann proveniens (`docs/ANTIDEP_CONSTITUTION.md` §20).
+Identiteten er ikke pynt: verdiene registreres som premissene **utkastet** ble
+laget under, og en plassholder som blir stående, ville vært en usann proveniens
+(`docs/ANTIDEP_CONSTITUTION.md` §20). Kjøringen avviser derfor et opptak der
+identiteten fortsatt begynner på `SETT-INN-`.
+
+`--prepare` skriver ikke over et opptak som allerede bærer et svar. Svaret kan
+være eneste kopi, og filene her er gitignorerte arbeidsfiler. Vil du starte på
+nytt, flytt eller slett `opptak.json` først.
 
 Opptaket er nøklet på fingeravtrykket av forespørselen. Endres kildeteksten,
 katalogen i oppdraget eller promptmalen, gjelder ikke et gammelt svar — og det

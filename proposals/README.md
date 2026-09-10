@@ -79,12 +79,18 @@ Tre regler er verdt å ta med til den som skriver forslaget:
 ### `generated_by`: hvem som laget forslaget
 
 Feltet er påkrevd, og det er ikke en opplysning ved siden av — det avgjør to
-ting. Leverandøren, modellen, modellversjonen og promptmalversjonen registreres
-som **premissene** for agentkjøringen som skriver raden. Og `producer` avgjør om
-funnet føres som et KI-assistert forslag eller som en menneskelig ekstraksjon.
+ting. Erklæringen registreres i agentkjøringens manifest som **hvem som laget
+utkastet**, og `producer` avgjør om funnet føres som et KI-assistert forslag
+eller som en menneskelig ekstraksjon.
 
-Et forslag fra modell-leddet får blokken fylt ut automatisk. Skriver du
-forslaget selv, ut av en lovlig innhentet fulltekst, er dette blokken:
+`drafted_at` er da **utkastet** ble laget — ikke da det ble registrert. De to er
+forskjellige operasjoner på forskjellige tidspunkter, og registreringen kan skje
+dager senere. Uten feltet ville det eneste tidspunktet i proveniensen vært
+registreringskjøringens.
+
+Et forslag fra modell-leddet får blokken fylt ut automatisk, inkludert
+`request_digest` — fingeravtrykket av forespørselen modellen svarte på. Skriver
+du forslaget selv, ut av en lovlig innhentet fulltekst, er dette blokken:
 
 ```json
 "generated_by": {
@@ -92,9 +98,12 @@ forslaget selv, ut av en lovlig innhentet fulltekst, er dette blokken:
   "provider": "human",
   "model": "manuell-ekstraksjon",
   "model_version": "not_applicable",
-  "prompt_template_version": "not_applicable"
+  "prompt_template_version": "not_applicable",
+  "drafted_at": "2026-09-15T09:00:00Z"
 }
 ```
+
+`request_digest` utelates: et menneskeskrevet forslag har ingen forespørsel.
 
 Laget ChatGPT utkastet utenfor Antidep, er `producer` `model`, og `provider`,
 `model` og `model_version` skal si hvilken modell det faktisk var.

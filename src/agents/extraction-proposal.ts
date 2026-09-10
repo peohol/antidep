@@ -174,12 +174,17 @@ export interface ProposedExtraction {
 }
 
 /**
- * Erklæringen om hvem som laget forslaget.
+ * Erklæringen om hvem som laget forslaget, og når.
  *
- * De fire siste feltene er nøyaktig de `provenance.agent_runs` krever ved siden
- * av pipelineversjonen. Pipelineversjonen står bevisst *ikke* her: den er
- * Antideps egen, og et forslag utenfra skal ikke kunne påstå noe om hvilken
- * pipeline som registrerte det (`pipeline-version.ts`).
+ * Erklæringen beskriver *utkastet*, ikke registreringen av det. De to er
+ * forskjellige operasjoner på forskjellige tidspunkter — utkastet lages
+ * utenfor Antidep, registreringen skjer når noen kjører kommandoen — og
+ * erklæringen føres derfor i registreringskjøringens `input_manifest`, som er
+ * kolonnen for hva kjøringen fikk inn. Premissekolonnene på
+ * `provenance.agent_runs` beskriver kjøringen selv (`pipeline-version.ts`).
+ *
+ * Pipelineversjonen står bevisst ikke her: den er Antideps egen, og et forslag
+ * utenfra skal ikke kunne påstå noe om hvilken pipeline som registrerte det.
  */
 export interface GeneratedBy {
   readonly producer: ProposalProducer
@@ -187,6 +192,23 @@ export interface GeneratedBy {
   readonly model: string
   readonly modelVersion: string
   readonly promptTemplateVersion: string
+  /**
+   * Da utkastet ble laget — ikke da det ble registrert.
+   *
+   * Uten det ville det eneste tidspunktet i proveniensen vært
+   * registreringskjøringens `started_at`, som kan ligge dager etter at modellen
+   * faktisk leste artikkelen. «Hva ble kjørt når» ville da vært ubesvarlig for
+   * nettopp den operasjonen det gjelder (EVIDENCE_PIPELINE.md §65).
+   */
+  readonly draftedAt: string
+  /**
+   * Fingeravtrykket av forespørselen modellen svarte på, når det finnes.
+   *
+   * Det dekker representasjonen, katalogen i oppdraget og promptmalen, og er
+   * derfor den ene verdien som gjør en modellkjøring identifiserbar i ettertid.
+   * `null` for et menneskeskrevet forslag: der finnes ingen forespørsel.
+   */
+  readonly requestDigest: string | null
 }
 
 /**
@@ -230,6 +252,7 @@ export interface ExtractionProposal extends ExtractionDraft {
 }
 
 const CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
+const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
 /**
  * Ekstraksjonsmetoden et forslag fra denne produsenten blir registrert med.
@@ -363,12 +386,30 @@ export function parseExtractionDraft(value: unknown, subject: string): Extractio
 
 function parseGeneratedBy(parent: Fields, value: unknown): GeneratedBy {
   const fields = nestedFields(parent, value, 'generated_by')
+  const draftedAt = asText(fields, 'drafted_at')
+  if (!TIMESTAMP_PATTERN.test(draftedAt) || Number.isNaN(Date.parse(draftedAt))) {
+    problem(
+      fields.subject,
+      'generated_by.drafted_at',
+      'er ikke et tidspunkt på formen «2026-09-15T09:00:00Z», med tidssone',
+    )
+  }
+  const requestDigest = asOptionalText(fields, 'request_digest')
+  if (requestDigest !== null && !CONTENT_HASH_PATTERN.test(requestDigest)) {
+    problem(
+      fields.subject,
+      'generated_by.request_digest',
+      'har ikke formen «sha256:» etterfulgt av 64 heksadesimale tegn',
+    )
+  }
   const generatedBy: GeneratedBy = {
     producer: asVocabulary(fields, 'producer', PROPOSAL_PRODUCERS) as ProposalProducer,
     provider: asText(fields, 'provider'),
     model: asText(fields, 'model'),
     modelVersion: asText(fields, 'model_version'),
     promptTemplateVersion: asText(fields, 'prompt_template_version'),
+    draftedAt,
+    requestDigest,
   }
   rejectUnknown(fields, {
     pipeline_version:
@@ -447,6 +488,8 @@ export function serializeExtractionProposal(proposal: ExtractionProposal): unkno
       model: proposal.generatedBy.model,
       model_version: proposal.generatedBy.modelVersion,
       prompt_template_version: proposal.generatedBy.promptTemplateVersion,
+      drafted_at: proposal.generatedBy.draftedAt,
+      request_digest: proposal.generatedBy.requestDigest,
     },
     source_id: proposal.sourceId,
     source_version_id: proposal.sourceVersionId,

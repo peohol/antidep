@@ -55,7 +55,7 @@ import { collidingEvidenceItemId, isUniqueViolation } from './agent-api.ts'
 import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
 import { extractionMethodFor } from './extraction-proposal.ts'
-import { extractionPremisesFor } from './pipeline-version.ts'
+import { EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version.ts'
 import type { RetrievalResult, RetrieveOptions } from './source-retrieval.ts'
 import { retrieveRepresentation } from './source-retrieval.ts'
 
@@ -187,24 +187,37 @@ export async function runEvidenceExtraction(
   } = options
 
   const groundedFields = proposal.fieldGroundings.map((grounding) => grounding.checkField)
-  const premises = extractionPremisesFor(proposal.generatedBy)
   const extractionMethod = extractionMethodFor(proposal.generatedBy.producer)
   // Kildeversjonen oppgis strukturert, ikke bare i manifestet: den binder
   // evidensfunnet til nøyaktig den utgaven kjøringen leste, deklarativt
   // (evidence_items_agent_run_source_version_fkey, migrasjon 005z). Manifestet
   // er fortsatt dokumentasjonen av hva kjøringen fikk.
   const agentRunId = await api.beginRun(
-    premises,
+    EVIDENCE_EXTRACTION_PREMISES,
     {
       source_id: proposal.sourceId,
       source_version_id: proposal.sourceVersionId,
       retrieved_from: proposal.retrievedFrom,
       content_hash: proposal.contentHash,
       grounded_fields: groundedFields,
-      // Hvem som leste artikkelen, og hva raden derfor registreres som. Står i
-      // manifestet ved siden av premissene fordi manifestet er dokumentasjonen
-      // av hva kjøringen faktisk fikk inn (ANTIDEP_CONSTITUTION.md §14).
-      producer: proposal.generatedBy.producer,
+      // Erklæringen om hvem som laget utkastet, ordrett slik forslaget bar den.
+      //
+      // Den står i manifestet og ikke i premissekolonnene, fordi den beskriver
+      // en *annen* operasjon enn denne kjøringen: utkastet ble laget utenfor
+      // Antidep, på sitt eget tidspunkt, av en aktør uten legitimasjon her.
+      // Premissene beskriver kjøringen selv, og manifestet er kolonnen for hva
+      // kjøringen fikk inn (ANTIDEP_CONSTITUTION.md §14, §20,
+      // EVIDENCE_PIPELINE.md §65). `drafted_at` og `request_digest` er det som
+      // gjør modelloperasjonen identifiserbar i ettertid.
+      generated_by: {
+        producer: proposal.generatedBy.producer,
+        provider: proposal.generatedBy.provider,
+        model: proposal.generatedBy.model,
+        model_version: proposal.generatedBy.modelVersion,
+        prompt_template_version: proposal.generatedBy.promptTemplateVersion,
+        drafted_at: proposal.generatedBy.draftedAt,
+        request_digest: proposal.generatedBy.requestDigest,
+      },
       extraction_method: extractionMethod,
       dry_run: dryRun,
     },

@@ -146,13 +146,67 @@ async function readJson(path: string): Promise<unknown> {
   }
 }
 
+/**
+ * Om det allerede ligger et opptak med et svar i det.
+ *
+ * Opptaket er gitignorert lokal arbeidsdata, og modellsvaret i det kan være
+ * eneste kopi. En ny `--prepare` mot den samme katalogen ville ellers stille
+ * skrevet over det med en tom mal — og svaret ville vært borte uten at noen
+ * hadde bedt om det.
+ *
+ * En fil som ikke er gyldig JSON, teller også som besatt: da vet kjøringen ikke
+ * hva den ville ha slettet, og skal ikke gjette.
+ *
+ * Formen leses løst, og ikke med `parseModelRecording`: en tom mal fra en
+ * tidligere `--prepare` er *ikke* et gyldig opptak — identiteten står med
+ * plassholdere som leseren avviser — og den skal kunne skrives over. Det som
+ * beskyttes, er et svar, ikke en fil.
+ */
+async function holdsAnAnswer(path: string): Promise<boolean> {
+  let text: string
+  try {
+    text = await readFile(path, 'utf8')
+  } catch {
+    return false
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text) as unknown
+  } catch {
+    return true
+  }
+  const entries =
+    typeof parsed === 'object' && parsed !== null
+      ? (parsed as { readonly entries?: unknown }).entries
+      : undefined
+  if (!Array.isArray(entries)) {
+    return false
+  }
+  return entries.some((entry) => {
+    const completion =
+      typeof entry === 'object' && entry !== null
+        ? (entry as { readonly completion?: unknown }).completion
+        : undefined
+    return typeof completion === 'string' && completion.trim().length > 0
+  })
+}
+
 async function prepare(assignmentPath: string, directory: string): Promise<number> {
   const assignment = parseAssignmentJson(assignmentPath, await readFile(assignmentPath, 'utf8'))
+  const recordingPath = join(directory, 'opptak.json')
+  if (await holdsAnAnswer(recordingPath)) {
+    console.error(
+      `${recordingPath} finnes allerede og er ikke en tom mal. Den kan bære et modellsvar ` +
+        'som ikke finnes noe annet sted, og skrives derfor ikke over. Flytt eller slett filen ' +
+        'først, eller bruk en annen katalog.',
+    )
+    return 1
+  }
+
   const { request, requestDigest } = await prepareDraftingRequest({ assignment })
 
   await mkdir(directory, { recursive: true })
   const promptPath = join(directory, 'prompt.txt')
-  const recordingPath = join(directory, 'opptak.json')
   await writeFile(promptPath, `${request.system}\n\n${'='.repeat(78)}\n\n${request.user}\n`, 'utf8')
   await writeFile(
     recordingPath,

@@ -27,7 +27,6 @@
 // ============================================================================
 
 import type { AgentRunPremises } from './agent-api.ts'
-import type { GeneratedBy } from './extraction-proposal.ts'
 
 /**
  * Versjonen av Antideps egen evidenspipeline.
@@ -66,29 +65,30 @@ export const CLAIM_VERIFICATION_PREMISES: AgentRunPremises = {
 }
 
 /**
- * Ekstraksjonsagentens premisser, utledet av forslaget selv (migrasjon 005v, 005w).
+ * Ekstraksjonskjøringens egne premisser (migrasjon 005v, 005w).
  *
- * Ikke en konstant, og det er hele endringen fra da forslagene bare kom
- * utenfra. Leddet som *leser* artikkelen og foreslår verdier, er ikke det
- * samme som kjøringen som registrerer forslaget: den første er et menneske
- * eller en modell, den andre er Antideps deterministiske vei inn i basen. En
- * fast verdi her ville derfor registrert hvert eneste forslag som om det samme
- * hadde laget det — et menneskes ekstraksjon som en modells, og omvendt
- * (ANTIDEP_CONSTITUTION.md §14, §20, EVIDENCE_PIPELINE.md §65).
+ * Kjøringen som registrerer et forslag, er *ikke* leddet som leste artikkelen.
+ * Den henter representasjonen, krever at fingeravtrykket er den registrerte,
+ * prøver hvert utdrag ordrett og skriver raden — deterministisk, av Antideps
+ * egen kode, på det tidspunktet noen kjører kommandoen. Premissene sier derfor
+ * nøyaktig det.
  *
- * Leverandør, modell, modellversjon og promptmalversjon kommer derfor fra
- * `generated_by` i forslaget. Pipelineversjonen gjør det ikke: den er Antideps
- * egen, og et forslag utenfra skal ikke kunne påstå noe om hvilken pipeline som
- * registrerte det. Skillet er hele grunnen til at feltene er fri tekst — to
- * kjøringer med hver sin leverandør står ved siden av hverandre framfor å bli
- * forvekslet.
+ * Å la dem si hvilken modell som laget utkastet, ville vært en påstand om noe
+ * annet enn det som skjedde: `started_at` er registreringstidspunktet, og
+ * inn- og utdatamanifestet beskriver registreringen. Erklæringen om hvem som
+ * laget utkastet, føres derfor i `input_manifest` — kolonnen for hva kjøringen
+ * fikk inn — med sitt eget tidspunkt og sitt eget forespørselsavtrykk
+ * (`extraction-proposal.ts`, ANTIDEP_CONSTITUTION.md §20,
+ * EVIDENCE_PIPELINE.md §65).
+ *
+ * Når et leverandøradapter en dag kjører med sin egen legitimasjon, kan
+ * utkastet få sin egen kjøring med sine egne premisser, ved siden av denne.
+ * Datamodellen tar allerede imot det; det som mangler, er legitimasjonen.
  */
-export function extractionPremisesFor(generatedBy: GeneratedBy): AgentRunPremises {
-  return {
-    provider: generatedBy.provider,
-    model: generatedBy.model,
-    modelVersion: generatedBy.modelVersion,
-    promptTemplateVersion: generatedBy.promptTemplateVersion,
-    pipelineVersion: ANTIDEP_EVIDENCE_PIPELINE_VERSION,
-  }
+export const EVIDENCE_EXTRACTION_PREMISES: AgentRunPremises = {
+  provider: 'antidep',
+  model: 'proposal-grounded-extraction',
+  modelVersion: '1.0.0',
+  promptTemplateVersion: 'evidence-extraction/proposal/1',
+  pipelineVersion: ANTIDEP_EVIDENCE_PIPELINE_VERSION,
 }

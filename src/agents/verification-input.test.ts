@@ -126,57 +126,113 @@ function svarMedPremisser(draftedBy: string): unknown {
   )
 }
 
+function svarMedKjoring(registeredBy: string): unknown {
+  return fromApi(
+    svarMed({ estimate: '"1.5"' }).replace(
+      '"source_version": null,',
+      `"source_version": null, "registered_by": ${registeredBy},`,
+    ),
+  )
+}
+
 describe('parseVerificationInput — hvem som laget verdiene', () => {
-  it('leser premissene kjøringen ble gjort under', () => {
+  it('leser erklæringen om hvem som laget utkastet', () => {
     const parsed = parseVerificationInput(
       svarMedPremisser(`{
-        "agent_run_id": "d3e0f6a0-0000-4000-8000-00000000000a",
-        "agent_role": "evidence_extraction",
+        "producer": "model",
         "provider": "en-leverandør",
         "model": "en-modell",
         "model_version": "2026-09-15",
         "prompt_template_version": "evidence-extraction/proposal-drafting/1",
-        "pipeline_version": "antidep-evidence/1",
-        "started_at": "2026-09-15T09:00:00+00:00"
+        "drafted_at": "2026-09-15T09:00:00+00:00",
+        "request_digest": "sha256:${'b'.repeat(64)}"
       }`),
     )
     expect(parsed.items[0]?.draftedBy).toEqual({
-      agentRunId: 'd3e0f6a0-0000-4000-8000-00000000000a',
-      agentRole: 'evidence_extraction',
+      producer: 'model',
       provider: 'en-leverandør',
       model: 'en-modell',
       modelVersion: '2026-09-15',
       promptTemplateVersion: 'evidence-extraction/proposal-drafting/1',
-      pipelineVersion: 'antidep-evidence/1',
-      startedAt: '2026-09-15T09:00:00+00:00',
+      draftedAt: '2026-09-15T09:00:00+00:00',
+      requestDigest: `sha256:${'b'.repeat(64)}`,
     })
   })
 
-  // Et funn registrert på editorveien har ingen kjøring. Fraværet er en
+  // Et menneskeskrevet forslag har ingen forespørsel å vise til.
+  it('leser et manglende forespørselsavtrykk som fravær', () => {
+    const parsed = parseVerificationInput(
+      svarMedPremisser(`{
+        "producer": "human",
+        "provider": "human",
+        "model": "manuell-ekstraksjon",
+        "model_version": "not_applicable",
+        "prompt_template_version": "not_applicable",
+        "drafted_at": "2026-09-15T09:00:00+00:00",
+        "request_digest": null
+      }`),
+    )
+    expect(parsed.items[0]?.draftedBy?.requestDigest).toBeNull()
+  })
+
+  // Et funn registrert på editorveien bærer ingen erklæring. Fraværet er en
   // opplysning, ikke en struktur uten verdier (ANTIDEP_CONSTITUTION.md §6).
-  it('leser fravær av en agentkjøring som fravær', () => {
+  it('leser fravær av en erklæring som fravær', () => {
     expect(parseVerificationInput(svarMedPremisser('null')).items[0]?.draftedBy).toBeNull()
   })
 
   it('leser et svar fra en eldre projeksjon uten nøkkelen som fravær', () => {
     const parsed = parseVerificationInput(fromApi(svarMed({ estimate: '"1.5"' })))
     expect(parsed.items[0]?.draftedBy).toBeNull()
+    expect(parsed.items[0]?.registeredBy).toBeNull()
   })
 
   // En halv proveniens ser ut som en fullstendig én. Et svar som stille mistet
   // en premiss, skal si fra framfor å vise kontrolløren noe ufullstendig.
-  it('avviser premisser som mangler et felt', () => {
+  it('avviser en erklæring som mangler et felt', () => {
     expect(() =>
       parseVerificationInput(
         svarMedPremisser(`{
-          "agent_run_id": "d3e0f6a0-0000-4000-8000-00000000000a",
-          "agent_role": "evidence_extraction",
+          "producer": "model",
           "provider": "en-leverandør",
           "model": "en-modell",
-          "pipeline_version": "antidep-evidence/1",
-          "started_at": "2026-09-15T09:00:00+00:00"
+          "prompt_template_version": "evidence-extraction/proposal-drafting/1",
+          "drafted_at": "2026-09-15T09:00:00+00:00"
         }`),
       ),
     ).toThrow(/drafted_by\.model_version/)
+  })
+})
+
+describe('parseVerificationInput — kjøringen som registrerte raden', () => {
+  // Utkastet og registreringen er to operasjoner på to tidspunkter, og leses
+  // som to ting (migrasjon 005ac).
+  it('leser kjøringens egne premisser, atskilt fra erklæringen', () => {
+    const parsed = parseVerificationInput(
+      svarMedKjoring(`{
+        "agent_run_id": "d3e0f6a0-0000-4000-8000-00000000000a",
+        "agent_role": "evidence_extraction",
+        "provider": "antidep",
+        "model": "proposal-grounded-extraction",
+        "model_version": "1.0.0",
+        "prompt_template_version": "evidence-extraction/proposal/1",
+        "pipeline_version": "antidep-evidence/1",
+        "started_at": "2026-09-16T09:00:00+00:00"
+      }`),
+    )
+    expect(parsed.items[0]?.registeredBy).toEqual({
+      agentRunId: 'd3e0f6a0-0000-4000-8000-00000000000a',
+      agentRole: 'evidence_extraction',
+      provider: 'antidep',
+      model: 'proposal-grounded-extraction',
+      modelVersion: '1.0.0',
+      promptTemplateVersion: 'evidence-extraction/proposal/1',
+      pipelineVersion: 'antidep-evidence/1',
+      startedAt: '2026-09-16T09:00:00+00:00',
+    })
+  })
+
+  it('leser fravær av en kjøring som fravær', () => {
+    expect(parseVerificationInput(svarMedKjoring('null')).items[0]?.registeredBy).toBeNull()
   })
 })

@@ -29,7 +29,8 @@
         "provider",
         "model",
         "model_version",
-        "prompt_template_version"
+        "prompt_template_version",
+        "drafted_at"
       ],
       "properties": {
         "producer": {
@@ -59,6 +60,19 @@
           "type": "string",
           "minLength": 1,
           "description": "Versjonen av promptmalen forslaget ble laget med. For et menneskeskrevet forslag: not_applicable."
+        },
+        "drafted_at": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Da utkastet ble laget, med tidssone, for eksempel 2026-09-15T09:00:00Z. Ikke da det ble registrert: de to er forskjellige operasjoner på forskjellige tidspunkter."
+        },
+        "request_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Fingeravtrykket av forespørselen modellen svarte på. Dekker representasjonen, katalogen i oppdraget og promptmalen, og er det som gjør modellkjøringen identifiserbar i ettertid. Utelates for et menneskeskrevet forslag."
         }
       }
     },

@@ -1494,7 +1494,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2063 pgTAP-assertions over 63 testfiler.
+Databaselaget teller nå 2066 pgTAP-assertions over 63 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -6792,7 +6792,7 @@ prøves eller regresjonstestes.
 | Migrasjon | Hva den gjør |
 | --- | --- |
 | 005ab | Skriveveien tar imot `p_extraction_method` framfor å hardkode `ai_assisted` |
-| 005ac | Kontrollgrunnlaget bærer premissene kjøringen ble gjort under |
+| 005ac | Kontrollgrunnlaget skiller hvem som laget utkastet fra kjøringen som registrerte det |
 
 **Rollen er delt i to operasjoner med hver sine rettigheter.** Modell-leddet
 (`npm run agent:propose-extraction`) henter kildeversjonen, krever at fingeravtrykket er den
@@ -6847,12 +6847,23 @@ som skjer ved et avvik: uten kontrollen her ville et oppdiktet utdrag blitt en f
 så noe en kontrollør måtte avvise.
 
 **Kontrakten er versjon 2, og den sier hvem som laget forslaget.** `generated_by` er påkrevd:
-leverandør, modell, modellversjon og promptmalversjon registreres som premissene for
-agentkjøringen som skriver raden, og `producer` sier om det var en modell eller et menneske
-som leste artikkelen. Uten feltet måtte kjøringen oppgi en fast verdi for hvert forslag —
-altså registrere et menneskes ekstraksjon som en modells, og omvendt. Pipelineversjonen står
-bevisst *ikke* i filen: den er Antideps egen, og et forslag utenfra skal ikke kunne påstå noe
-om hvilken pipeline som registrerte det.
+leverandør, modell, modellversjon, promptmalversjon, tidspunktet utkastet ble laget og
+fingeravtrykket av forespørselen. `producer` sier om det var en modell eller et menneske som
+leste artikkelen. Uten feltet måtte kjøringen oppgi en fast verdi for hvert forslag — altså
+registrere et menneskes ekstraksjon som en modells, og omvendt. Pipelineversjonen står bevisst
+*ikke* i filen: den er Antideps egen, og et forslag utenfra skal ikke kunne påstå noe om
+hvilken pipeline som registrerte det.
+
+**Utkastet og registreringen er to operasjoner, og proveniensen holder dem fra hverandre.**
+Erklæringen føres i registreringskjøringens `input_manifest` — kolonnen for hva kjøringen fikk
+inn — mens premissekolonnene på kjøringen beskriver kjøringen selv: Antideps deterministiske
+registreringsvei, på det tidspunktet noen kjørte kommandoen. Lot premissene si hvilken modell
+som laget utkastet, ville `started_at` vært registreringstidspunktet framfor modellkjøringens,
+inn- og utdatamanifestet ville beskrevet registreringen, og forespørselen modellen faktisk
+svarte på, ville ikke vært identifiserbar i det hele tatt. Det siste er nettopp det
+`request_digest` finnes for: det dekker representasjonen, katalogen i oppdraget og promptmalen.
+Når et leverandøradapter en dag kjører med sin egen legitimasjon, kan utkastet få sin egen rad
+i `provenance.agent_runs`, ved siden av registreringen.
 
 **Derfor tar skriveveien nå imot ekstraksjonsmetoden.** Innvendingen mot en parameter var
 reell — raden skal si hvordan den ble til, og det er ikke noe en klient skal finne på — men
@@ -6862,13 +6873,16 @@ faktisk beskriver, `deterministic_import` avvises, og verdien inngår i `content
 samme verdiene erklært av et menneske og av en modell er derfor to rader, ikke én rad som
 skifter mening; append-only står.
 
-**Kontrollflaten viser hvem som laget verdiene.** Premissene fantes, men bare på
+**Kontrollflaten viser hvem som laget verdiene.** Opplysningene fantes, men bare i
 `provenance.agent_runs` — ikke i det bildet mennesket og den maskinelle kontrollen arbeider
 fra. En kontrollør som vet at verdiene er et maskinutkast fra en bestemt modell og en bestemt
 promptmal, leser dem annerledes enn en som tror en kollega skrev dem, og motsatt
-(EVIDENCE_PIPELINE.md §46). Nøkkelen ligger på den ene projeksjonen begge flatene leser, så de
-aldri kan kontrollere hvert sitt grunnlag, og den er `null` — ikke et objekt med tomme felter
-— for et funn ført inn i adminflyten uten kjøring.
+(EVIDENCE_PIPELINE.md §46). Grunnlaget bærer nå `drafted_by` — erklæringen, med sitt eget
+tidspunkt og sitt eget forespørselsavtrykk — og `registered_by` — kjøringen som skrev raden.
+Begge ligger på den ene projeksjonen begge flatene leser, så de aldri kan kontrollere hvert
+sitt grunnlag, og hver av dem er `null` — ikke et objekt med tomme felter — i den tilstanden
+fraværet faktisk betyr noe. `drafted_by` er merket som en erklæring også i UI-et: databasen
+kan ikke observere hvilken modell som leste en artikkel.
 
 **Ingen regel er myket opp.** Ingen CHECK, constraint, trigger, policy eller grant er fjernet
 eller svekket, og ingen ny tabelltilgang er gitt til `anon` eller `authenticated`.
@@ -6878,20 +6892,32 @@ kildeversjon med registrert representasjon, komplett forankring — og har fått
 **Testene.** `630` bærer de to migrasjonene: at den gamle signaturen ikke står igjen, at
 parameteren er påkrevd uten standardverdi, at rettighetene er uendret, at begge metodene
 registreres og gir hvert sitt fingeravtrykk, at `deterministic_import` og en ukjent verdi
-avvises uten å etterlate noe, at premissene står i grunnlaget med alle sine felter, at de er
-`null` uten agentkjøring, og at begge flatene bygges av den samme projeksjonen. Uten database
-prøves modellgrensesnittet, promptmalen, opptaket, adapterregisteret, oppdraget og selve
-modell-leddet — inkludert at et utkast med en katalogverdi utenfor oppdraget, et oppdiktet
-utdrag eller et omskrevet sitat aldri blir et forslag.
+avvises uten å etterlate noe, at både erklæringen og kjøringen står i grunnlaget med alle sine
+felter, at utkastets tidspunkt er et annet enn registreringens, at en kjøring uten erklæring
+gir `null` for utkastet men fortsatt bærer seg selv, at begge er `null` uten agentkjøring, og
+at begge flatene bygges av den samme projeksjonen. Uten database prøves modellgrensesnittet,
+promptmalen, opptaket, adapterregisteret, oppdraget og selve modell-leddet — inkludert at et
+utkast med en katalogverdi utenfor oppdraget, et oppdiktet utdrag eller et omskrevet sitat
+aldri blir et forslag, at en urørt plassholder i opptakets identitet avvises, og at klokka som
+leses, er den fra da modellen svarte.
 
 `scripts/agent-chain-test.ts` har fått et åttende ledd, og det er det sterkeste: modell-leddet
 kjøres med opptaksadapteret mot den ekte databasen, forslaget går gjennom filformen og de ekte
 portene til et gyldig maskinbevis, kjøringen bærer modellens egne premisser, kontrollgrunnlaget
-viser dem, og de samme verdiene erklært av et menneske blir en annen rad ført som `manual`. Et
-utkast med et oppdiktet utdrag prøves også: det blir ikke et forslag, og ingenting i basen
-endrer seg av det.
+viser dem som en erklæring med utkastets eget tidspunkt og forespørselens avtrykk, og de samme
+verdiene erklært av et menneske blir en annen rad ført som `manual`. Et utkast med et oppdiktet
+utdrag prøves også: det blir ikke et forslag, og ingenting i basen endrer seg av det.
 
-**Én rettelse på veien.** Kjedeprøven ryddet ikke `knowledge.publication_events` mellom
+**Tre rettelser etter teknisk review.** Den første er den bærende: premissene på
+registreringskjøringen sa opprinnelig hvilken modell som laget utkastet, og da beskrev
+`started_at`, inn- og utdatamanifestet noe annet enn det som faktisk skjedde. Erklæringen er
+flyttet til manifestet og har fått sitt eget tidspunkt og forespørselens avtrykk; kjøringen
+beskriver seg selv igjen. De to andre er mindre, men samme klasse: et opptak der identiteten
+fortsatt står med plassholderen fra `--prepare`, avvises framfor å bli en usann proveniens, og
+`--prepare` skriver ikke lenger over et opptak som bærer et modellsvar — det kan være eneste
+kopi.
+
+**Én rettelse til.** Kjedeprøven ryddet ikke `knowledge.publication_events` mellom
 kjøringene, så den andre kjøringen mot den samme databasen møtte forseglingen av en revisjon
 som hadde vært publisert. Den er nå med i opprydningen, og prøven kan kjøres om igjen slik
 hodekommentaren alltid har sagt at den skal.

@@ -250,7 +250,14 @@ export function buildExtractionProposalSchema(): Schema {
         additionalProperties: false,
         description:
           'Hvem som leste kilden og foreslo verdiene. Registreres som premissene for agentkjøringen som skriver raden, og avgjør om funnet føres som et KI-assistert forslag eller som en menneskelig ekstraksjon. Pipelineversjonen hører ikke hjemme her: den er Antideps egen og settes av kjøringen.',
-        required: ['producer', 'provider', 'model', 'model_version', 'prompt_template_version'],
+        required: [
+          'producer',
+          'provider',
+          'model',
+          'model_version',
+          'prompt_template_version',
+          'drafted_at',
+        ],
         properties: {
           producer: vocabulary(
             PROPOSAL_PRODUCERS,
@@ -268,6 +275,15 @@ export function buildExtractionProposalSchema(): Schema {
           prompt_template_version: text(
             'Versjonen av promptmalen forslaget ble laget med. For et menneskeskrevet forslag: not_applicable.',
           ),
+          drafted_at: text(
+            'Da utkastet ble laget, med tidssone, for eksempel 2026-09-15T09:00:00Z. Ikke da det ble registrert: de to er forskjellige operasjoner på forskjellige tidspunkter.',
+          ),
+          request_digest: {
+            type: ['string', 'null'],
+            pattern: CONTENT_HASH_PATTERN,
+            description:
+              'Fingeravtrykket av forespørselen modellen svarte på. Dekker representasjonen, katalogen i oppdraget og promptmalen, og er det som gjør modellkjøringen identifiserbar i ettertid. Utelates for et menneskeskrevet forslag.',
+          },
         },
       },
       source_id: uuid('Kilden funnet er hentet fra, slik den er registrert i knowledge.sources.'),

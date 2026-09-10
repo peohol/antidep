@@ -371,6 +371,7 @@ async function main(): Promise<void> {
       model: 'manuell-ekstraksjon',
       model_version: 'not_applicable',
       prompt_template_version: 'not_applicable',
+      drafted_at: '2026-09-15T08:00:00Z',
     },
     source_version_id: VERSION,
     retrieved_from: 'https://example.test/kjede',
@@ -653,6 +654,7 @@ async function main(): Promise<void> {
       model: 'manuell-ekstraksjon',
       model_version: 'not_applicable',
       prompt_template_version: 'not_applicable',
+      drafted_at: '2026-09-15T08:00:00Z',
     },
     source_version_id: VERSION,
     retrieved_from: 'https://example.test/kjede',
@@ -1154,8 +1156,10 @@ async function main(): Promise<void> {
       `select extraction_method::text from knowledge.evidence_items where id = ${q(modellItem)}`,
     ) === 'ai_assisted',
   )
+  // Kjøringen beskriver seg selv: Antideps deterministiske registreringsvei, på
+  // det tidspunktet kommandoen ble kjørt. Den er ikke modellkjøringen.
   check(
-    'og kjøringen bærer modellens egne premisser, ikke en fast verdi',
+    'kjøringen står med sine egne premisser, ikke med modellens',
     psql(
       config,
       `select r.provider || '|' || r.model || '|' || r.model_version
@@ -1164,16 +1168,41 @@ async function main(): Promise<void> {
        join knowledge.evidence_items e on e.agent_run_id = r.id
        where e.id = ${q(modellItem)}`,
     ) ===
-      `kjedeprove|opptaksmodell|2026-09-15|${EXTRACTION_DRAFTING_PROMPT_VERSION}|antidep-evidence/1`,
+      'antidep|proposal-grounded-extraction|1.0.0|evidence-extraction/proposal/1|antidep-evidence/1',
   )
   check(
-    'kontrollgrunnlaget viser hvem som laget verdiene',
+    'kontrollgrunnlaget viser hvem som laget verdiene, som en erklæring',
     psql(
       config,
-      `select (workflow.evidence_extraction_dossier(${q(modellItem)}) -> 'drafted_by' ->> 'model')
+      `select (workflow.evidence_extraction_dossier(${q(modellItem)}) -> 'drafted_by' ->> 'producer')
+              || '|' || (workflow.evidence_extraction_dossier(${q(modellItem)})
+                         -> 'drafted_by' ->> 'model')
               || '|' || (workflow.evidence_extraction_dossier(${q(modellItem)})
                          -> 'drafted_by' ->> 'prompt_template_version')`,
-    ) === `opptaksmodell|${EXTRACTION_DRAFTING_PROMPT_VERSION}`,
+    ) === `model|opptaksmodell|${EXTRACTION_DRAFTING_PROMPT_VERSION}`,
+  )
+  // Utkastets eget tidspunkt og forespørselens avtrykk er det som gjør
+  // modellkjøringen identifiserbar i ettertid. Uten dem ville proveniensen bare
+  // hatt registreringens klokke.
+  check(
+    'og bærer utkastets eget tidspunkt og forespørselens avtrykk',
+    psql(
+      config,
+      `select (workflow.evidence_extraction_dossier(${q(modellItem)}) -> 'drafted_by' ->> 'drafted_at')
+              || '|' || (workflow.evidence_extraction_dossier(${q(modellItem)})
+                         -> 'drafted_by' ->> 'request_digest')`,
+    ) === `${utkast.proposal?.generatedBy.draftedAt ?? ''}|${utkast.requestDigest ?? ''}`,
+  )
+  check(
+    'og registreringens klokke er en annen enn utkastets',
+    psql(
+      config,
+      `select (workflow.evidence_extraction_dossier(${q(modellItem)})
+               -> 'registered_by' ->> 'started_at')
+              is distinct from
+              (workflow.evidence_extraction_dossier(${q(modellItem)})
+               -> 'drafted_by' ->> 'drafted_at')`,
+    ) === 't',
   )
 
   // Det samme utkastet, men erklært som et menneskes ekstraksjon. Verdien
@@ -1190,6 +1219,7 @@ async function main(): Promise<void> {
       model: 'manuell-ekstraksjon',
       model_version: 'not_applicable',
       prompt_template_version: 'not_applicable',
+      drafted_at: '2026-09-15T08:00:00Z',
     },
   })
   const menneskeKjede = await runReextraction({

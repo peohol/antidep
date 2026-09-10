@@ -5,7 +5,7 @@
 -- Formål: kontrolløren som bedømmer en ekstraksjon felt for felt, kunne se
 -- *hva* som stod der og *hvem* raden var attribuert til, men ikke hvilken
 -- modell som faktisk leste artikkelen, hvilken modellversjon det var, eller
--- hvilken promptmal utkastet ble laget med. Opplysningene fantes — de står på
+-- hvilken promptmal utkastet ble laget med. Opplysningene fantes — de står i
 -- `provenance.agent_runs` — men ikke i det bildet mennesket og den maskinelle
 -- kontrollen arbeider fra.
 --
@@ -33,6 +33,39 @@
 -- som tror en kollega skrev dem — og motsatt. Blir en promptmal senere funnet å
 -- ha en systematisk svakhet, er «hvilke funn ble laget med den» et spørsmål
 -- kontrollflaten kan svare på, ikke bare en spørring noen må huske å skrive.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor to nøkler og ikke én
+--
+-- Utkastet og registreringen er to forskjellige operasjoner, på to forskjellige
+-- tidspunkter, av to forskjellige aktører. Utkastet lages utenfor Antidep av en
+-- modell eller et menneske uten legitimasjon her; registreringen gjøres av
+-- ekstraksjonsagenten når noen kjører kommandoen, kanskje dager senere.
+--
+-- Å la premissekolonnene på `provenance.agent_runs` bære modellens navn ville
+-- derfor gjort raden usann på tre måter samtidig: `started_at` ville vært
+-- registreringstidspunktet framfor modellkjøringens, inn- og utdatamanifestet
+-- ville beskrevet registreringen, og forespørselen modellen faktisk svarte på,
+-- ville ikke vært identifiserbar i det hele tatt.
+--
+--   * `registered_by` er kjøringen selv: rollen, Antideps egen deterministiske
+--     registreringsvei, og når den kjørte.
+--   * `drafted_by` er *erklæringen* forslaget bar med seg, lest ut av
+--     kjøringens `input_manifest` — kolonnen for hva kjøringen fikk inn — med
+--     utkastets eget tidspunkt og fingeravtrykket av forespørselen.
+--
+-- `drafted_by` er en påstand fra den som skrev forslaget, på samme måte som
+-- kildeversjonen og utdragene er det, og projeksjonen navngir den som det.
+-- Databasen kan ikke observere hvilken modell som leste en artikkel; den kan
+-- kreve at påstanden står der, og bevare den.
+--
+-- Nøklene plukkes eksplisitt ut av manifestet framfor å slippe hele objektet
+-- gjennom: projeksjonen skal ha en fast form, og et manifest med andre nøkler i
+-- skal ikke kunne endre hva kontrollflaten viser.
+--
+-- Når et leverandøradapter en dag kjører med sin egen legitimasjon, kan
+-- utkastet få sin egen rad i `provenance.agent_runs`, ved siden av
+-- registreringen. Datamodellen tar allerede imot det.
 --
 -- ----------------------------------------------------------------------------
 -- Hvorfor NULL, og ikke et tomt objekt
@@ -76,10 +109,25 @@ as $$
     'created_by_actor_type', creator.actor_type::text,
     'extraction_method', e.extraction_method::text,
     'content_hash', e.content_hash,
-    -- Premissene kjøringen som produserte raden, ble gjort under. NULL for et
-    -- funn registrert på editorveien: der finnes ingen kjøring, og et objekt
-    -- med tomme felter ville påstått at det gjorde det.
+    -- Erklæringen om hvem som laget utkastet, og når. NULL når kjøringen ikke
+    -- fikk en: et funn registrert på editorveien, eller før migrasjon 005ab.
+    -- Et objekt med tomme felter ville påstått at erklæringen fantes.
     'drafted_by', case
+      when ar.input_manifest -> 'generated_by' ->> 'producer' is null then null
+      else jsonb_build_object(
+        'producer', ar.input_manifest -> 'generated_by' ->> 'producer',
+        'provider', ar.input_manifest -> 'generated_by' ->> 'provider',
+        'model', ar.input_manifest -> 'generated_by' ->> 'model',
+        'model_version', ar.input_manifest -> 'generated_by' ->> 'model_version',
+        'prompt_template_version',
+          ar.input_manifest -> 'generated_by' ->> 'prompt_template_version',
+        'drafted_at', ar.input_manifest -> 'generated_by' ->> 'drafted_at',
+        'request_digest', ar.input_manifest -> 'generated_by' ->> 'request_digest'
+      )
+    end,
+    -- Kjøringen som faktisk skrev raden, med sine egne premisser. NULL for et
+    -- funn registrert på editorveien: der finnes ingen kjøring.
+    'registered_by', case
       when ar.id is null then null
       else jsonb_build_object(
         'agent_run_id', ar.id,
@@ -189,6 +237,6 @@ as $$
 $$;
 
 comment on function workflow.evidence_extraction_dossier(uuid) is
-  'Grunnlaget for én ekstraksjonskontroll: evidensfunnets identitet og opphav, premissene kjøringen som produserte det ble gjort under (drafted_by: rolle, leverandør, modell, modellversjon, promptmalversjon, pipelineversjon og starttidspunkt — NULL når funnet ble registrert på editorveien og ingen kjøring finnes), kilden med sin status og sine identifikatorer, kildeversjonen (eller null når ingen er registrert, med retrieved_from, content_hash og representasjonstype når den finnes), kildeforankringen per felt, feltsettene og maskinbeviset, og hele den strukturerte ekstraksjonen ordrett, inkludert source_locator og raw_extraction (ANTIDEP_CONSTITUTION.md §11, §12, §20, DATABASE_ARCHITECTURE.md §29, EVIDENCE_PIPELINE.md §46, §65). drafted_by er kontrollgrunnlag og ikke driftsinformasjon: en kontrollør leser et maskinutkast annerledes enn en kollegas ekstraksjon, og «hvilke funn ble laget med denne promptmalen» skal kunne besvares fra kontrollflaten. Uttrykket er den ene projeksjonen både den menneskelige kontrollflaten og den deterministiske verifikatoren leser, slik at de aldri kontrollerer hvert sitt grunnlag (§4, §9). storage_reference er ikke eksponert, bare om den finnes. Numeriske verdier er ::text, slik at et eksakt desimaltall ikke går veien om en IEEE-754 double før noen leser det. NULL når evidensfunnet ikke finnes. Tar ingen kaller-identitet og gjør ingen autorisasjon: den er et lesegrunnlag og ikke et endepunkt, og hver flate som eksponerer den autentiserer først. SECURITY DEFINER fordi knowledge, catalog og provenance har RLS med default deny; EXECUTE er revokert fra PUBLIC og gitt til ingen klientrolle.';
+  'Grunnlaget for én ekstraksjonskontroll: evidensfunnets identitet og opphav, hvem som laget utkastet (drafted_by: produsent, leverandør, modell, modellversjon, promptmalversjon, tidspunktet utkastet ble laget og fingeravtrykket av forespørselen — erklæringen forslaget bar med seg, lest ut av kjøringens input_manifest; NULL når ingen erklæring fulgte med), kjøringen som registrerte raden (registered_by: rolle, leverandør, modell, modellversjon, promptmalversjon, pipelineversjon og starttidspunkt — NULL når funnet ble registrert på editorveien og ingen kjøring finnes), kilden med sin status og sine identifikatorer, kildeversjonen (eller null når ingen er registrert, med retrieved_from, content_hash og representasjonstype når den finnes), kildeforankringen per felt, feltsettene og maskinbeviset, og hele den strukturerte ekstraksjonen ordrett, inkludert source_locator og raw_extraction (ANTIDEP_CONSTITUTION.md §11, §12, §20, DATABASE_ARCHITECTURE.md §29, EVIDENCE_PIPELINE.md §46, §65). De to er skilt fordi utkastet og registreringen er forskjellige operasjoner på forskjellige tidspunkter: registered_by.started_at er registreringstidspunktet, mens drafted_by.drafted_at er da modellen faktisk leste kilden. drafted_by er kontrollgrunnlag og ikke driftsinformasjon: en kontrollør leser et maskinutkast annerledes enn en kollegas ekstraksjon, og «hvilke funn ble laget med denne promptmalen» skal kunne besvares fra kontrollflaten. Uttrykket er den ene projeksjonen både den menneskelige kontrollflaten og den deterministiske verifikatoren leser, slik at de aldri kontrollerer hvert sitt grunnlag (§4, §9). storage_reference er ikke eksponert, bare om den finnes. Numeriske verdier er ::text, slik at et eksakt desimaltall ikke går veien om en IEEE-754 double før noen leser det. NULL når evidensfunnet ikke finnes. Tar ingen kaller-identitet og gjør ingen autorisasjon: den er et lesegrunnlag og ikke et endepunkt, og hver flate som eksponerer den autentiserer først. SECURITY DEFINER fordi knowledge, catalog og provenance har RLS med default deny; EXECUTE er revokert fra PUBLIC og gitt til ingen klientrolle.';
 
 commit;

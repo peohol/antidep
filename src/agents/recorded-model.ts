@@ -54,6 +54,20 @@ import {
 
 const RECORDING_SUBJECT = 'Modellopptaket'
 
+/**
+ * Plassholderne `emptyRecording` skriver, og som *må* rettes.
+ *
+ * Verdiene ender i `provenance.agent_runs` som premissene utkastet ble laget
+ * under. En plassholder som ble stående, ville derfor blitt en usann proveniens
+ * — en rad som påstår at «SETT-INN-MODELL» leste artikkelen
+ * (ANTIDEP_CONSTITUTION.md §14, §20). En dokumentert advarsel er ikke nok når
+ * koden kan avvise verdien.
+ *
+ * Prefikset og ikke de tre eksakte verdiene: en plassholder som blir *delvis*
+ * rettet — «SETT-INN-MODELL-2026» — er like usann som en urørt.
+ */
+const PLACEHOLDER_PREFIX = 'SETT-INN-'
+
 /** Versjonen av opptaksformen, oppgitt i hver fil. */
 export const MODEL_RECORDING_VERSION = 'antidep/model-recording@1'
 
@@ -81,6 +95,20 @@ function parseIdentity(parent: Fields, value: unknown): ModelIdentity {
     modelVersion: asText(fields, 'model_version'),
   }
   rejectUnknown(fields)
+
+  for (const [key, value] of [
+    ['provider', identity.provider],
+    ['model', identity.model],
+    ['model_version', identity.modelVersion],
+  ] as const) {
+    if (value.trimStart().startsWith(PLACEHOLDER_PREFIX)) {
+      problem(
+        fields.subject,
+        `${fields.where}.${key}`,
+        `står fortsatt med plassholderen fra --prepare. Verdien registreres som premissene utkastet ble laget under, og en plassholder ville vært en usann proveniens — fyll inn leverandøren, modellen og modellversjonen som faktisk svarte`,
+      )
+    }
+  }
   return identity
 }
 
@@ -182,17 +210,17 @@ export function createRecordedModelClient(recording: ModelRecording): ModelClien
  *
  * Skrives av `--prepare` sammen med selve prompten. Identiteten står med
  * plassholdere som den som kjørte modellen, skal rette: verdiene havner i
- * `provenance.agent_runs` som premissene kjøringen ble gjort under, og en
- * plassholder som ble stående, ville vært en usann proveniens
- * (ANTIDEP_CONSTITUTION.md §20).
+ * `provenance.agent_runs` som premissene utkastet ble laget under. En
+ * plassholder som blir stående, avvises av `parseModelRecording` framfor å bli
+ * en usann proveniens (ANTIDEP_CONSTITUTION.md §20).
  */
 export function emptyRecording(requestDigest: string, promptTemplateVersion: string): unknown {
   return {
     recording_version: MODEL_RECORDING_VERSION,
     identity: {
-      provider: 'SETT-INN-LEVERANDØR',
-      model: 'SETT-INN-MODELL',
-      model_version: 'SETT-INN-MODELLVERSJON',
+      provider: `${PLACEHOLDER_PREFIX}LEVERANDØR`,
+      model: `${PLACEHOLDER_PREFIX}MODELL`,
+      model_version: `${PLACEHOLDER_PREFIX}MODELLVERSJON`,
     },
     entries: [
       {

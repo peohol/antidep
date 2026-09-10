@@ -83,13 +83,56 @@ describe('parseModelRecording', () => {
     ).toThrow(/to svar på den samme forespørselen/)
   })
 
-  // Et opptak skrevet av --prepare har en tom plass. Den skal leses, ikke
-  // avvises: avvisningen hører hjemme der noen faktisk ber om svaret.
-  it('leser et tomt opptak fra --prepare', () => {
+  // Et opptak skrevet av --prepare har en tom plass. Den skal ikke avvises for
+  // å være tom: avvisningen hører hjemme der noen faktisk ber om svaret.
+  it('leser en tom plass som en tom plass', () => {
     const parsed = parseModelRecording(
-      emptyRecording(`sha256:${'b'.repeat(64)}`, REQUEST.promptTemplateVersion),
+      opptak({
+        entries: [
+          {
+            request_digest: `sha256:${'b'.repeat(64)}`,
+            prompt_template_version: REQUEST.promptTemplateVersion,
+            completion: '',
+          },
+        ],
+      }),
     )
     expect(parsed.entries[0]?.completion).toBe('')
+  })
+
+  // Verdiene ender i proveniensen som premissene utkastet ble laget under. En
+  // plassholder som ble stående, ville vært en rad som påstår at
+  // «SETT-INN-MODELL» leste artikkelen (ANTIDEP_CONSTITUTION.md §14, §20).
+  it('avviser malen fra --prepare så lenge identiteten står urørt', () => {
+    expect(() =>
+      parseModelRecording(
+        emptyRecording(`sha256:${'b'.repeat(64)}`, REQUEST.promptTemplateVersion),
+      ),
+    ).toThrow(/plassholderen fra --prepare/)
+  })
+
+  it('avviser en plassholder som bare er delvis rettet', () => {
+    expect(() =>
+      parseModelRecording(
+        opptak({
+          identity: {
+            provider: 'openai',
+            model: 'SETT-INN-MODELL-2026',
+            model_version: '2026-09-15',
+          },
+        }),
+      ),
+    ).toThrow(/identity\.model står fortsatt med plassholderen/)
+  })
+
+  it('godtar en identitet der alle tre er fylt ut', () => {
+    expect(
+      parseModelRecording(
+        opptak({
+          identity: { provider: 'openai', model: 'en-modell', model_version: '2026-09-15' },
+        }),
+      ).identity.model,
+    ).toBe('en-modell')
   })
 })
 

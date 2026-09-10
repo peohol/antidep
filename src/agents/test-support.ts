@@ -178,18 +178,27 @@ export function verificationItemFixture(
     createdByActorId: '99999999-9999-4999-8999-999999999999',
     createdByActorKey: 'agent:evidence-extraction',
     extractionMethod: 'ai_assisted',
-    // Premissene et maskinutkast ville hatt. Den positive kontrollen; at et
-    // funn uten agentkjøring står med `null`, prøves av testene som setter
-    // feltet selv.
+    // Erklæringen et maskinutkast ville hatt, og kjøringen som registrerte det.
+    // Den positive kontrollen; at et funn uten agentkjøring står med `null`,
+    // prøves av testene som setter feltene selv.
     draftedBy: {
+      producer: 'model',
+      provider: 'en-leverandør',
+      model: 'en-modell',
+      modelVersion: '2026-09-15',
+      promptTemplateVersion: 'evidence-extraction/proposal-drafting/1',
+      draftedAt: '2026-09-01T08:00:00+00:00',
+      requestDigest: `sha256:${'e'.repeat(64)}`,
+    },
+    registeredBy: {
       agentRunId: '77777777-7777-4777-8777-777777777777',
       agentRole: 'evidence_extraction',
       provider: 'antidep',
-      model: 'opptaksmodell',
-      modelVersion: '1',
-      promptTemplateVersion: 'evidence-extraction/proposal-drafting/1',
+      model: 'proposal-grounded-extraction',
+      modelVersion: '1.0.0',
+      promptTemplateVersion: 'evidence-extraction/proposal/1',
       pipelineVersion: 'antidep-evidence/1',
-      startedAt: '2026-09-01T00:00:00+00:00',
+      startedAt: '2026-09-01T09:00:00+00:00',
     },
     contentHash: 'sha256-v2:' + 'a'.repeat(64),
     sourceId: '50000000-0000-4000-8000-000000000001',

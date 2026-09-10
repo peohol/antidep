@@ -132,6 +132,7 @@ describe('runExtractionDrafting — den lykkede stien', () => {
       assignment: await oppdrag(),
       model: svarer(utkast()),
       retrieve: retrieveFixture(),
+      now: () => '2026-09-15T09:00:00Z',
     })
 
     expect(report.proposal?.generatedBy).toEqual({
@@ -140,7 +141,38 @@ describe('runExtractionDrafting — den lykkede stien', () => {
       model: 'en-modell',
       modelVersion: '2026-09-15',
       promptTemplateVersion: EXTRACTION_DRAFTING_PROMPT_VERSION,
+      draftedAt: '2026-09-15T09:00:00Z',
+      requestDigest: report.requestDigest,
     })
+  })
+
+  // Tidspunktet er utkastets, ikke registreringens: registreringen skjer når
+  // noen kjører kommandoen, kanskje dager senere. Uten dette ville det eneste
+  // tidspunktet i proveniensen vært registreringskjøringens
+  // (EVIDENCE_PIPELINE.md §65).
+  it('leser klokka når modellen svarte, ikke når filen registreres', async () => {
+    const tidspunkter = ['2026-09-15T09:00:00Z', '2026-09-16T09:00:00Z']
+    const report = await runExtractionDrafting({
+      assignment: await oppdrag(),
+      model: svarer(utkast()),
+      retrieve: retrieveFixture(),
+      now: () => tidspunkter.shift() ?? 'brukt opp',
+    })
+
+    expect(report.proposal?.generatedBy.draftedAt).toBe('2026-09-15T09:00:00Z')
+  })
+
+  // Avtrykket dekker representasjonen, katalogen i oppdraget og promptmalen, og
+  // er det som gjør modellkjøringen identifiserbar i ettertid.
+  it('binder forslaget til fingeravtrykket av forespørselen modellen svarte på', async () => {
+    const report = await runExtractionDrafting({
+      assignment: await oppdrag(),
+      model: svarer(utkast()),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.proposal?.generatedBy.requestDigest).toBe(report.requestDigest)
+    expect(report.requestDigest).toMatch(/^sha256:[0-9a-f]{64}$/)
   })
 
   // Filen leddet skriver, skal være nøyaktig den formen neste ledd leser.

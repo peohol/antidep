@@ -49,6 +49,7 @@ function gyldigGeneratedBy(overrides: Record<string, unknown> = {}): Record<stri
     model: 'opptaksmodell',
     model_version: '1',
     prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+    drafted_at: '2026-09-15T09:00:00Z',
     ...overrides,
   }
 }
@@ -288,6 +289,8 @@ describe('parseExtractionProposal — generated_by', () => {
       model: 'opptaksmodell',
       modelVersion: '1',
       promptTemplateVersion: 'evidence-extraction/proposal-drafting/1',
+      draftedAt: '2026-09-15T09:00:00Z',
+      requestDigest: null,
     })
   })
 
@@ -306,8 +309,14 @@ describe('parseExtractionProposal — generated_by', () => {
     ).toThrow(/producer er "agent"/)
   })
 
-  it('krever hver av de fire premissene', () => {
-    for (const felt of ['provider', 'model', 'model_version', 'prompt_template_version']) {
+  it('krever hver av premissene', () => {
+    for (const felt of [
+      'provider',
+      'model',
+      'model_version',
+      'prompt_template_version',
+      'drafted_at',
+    ]) {
       const uten = gyldigGeneratedBy()
       delete uten[felt]
       expect(() => parseExtractionProposal(gyldig({ generated_by: uten }))).toThrow(
@@ -329,6 +338,38 @@ describe('parseExtractionProposal — generated_by', () => {
   it('oversetter produsenten til ekstraksjonsmetoden raden registreres med', () => {
     expect(extractionMethodFor('model')).toBe('ai_assisted')
     expect(extractionMethodFor('human')).toBe('manual')
+  })
+
+  // Tidspunktet er utkastets, og registreringen skjer senere. Uten det ville
+  // det eneste tidspunktet i proveniensen vært registreringskjøringens
+  // (EVIDENCE_PIPELINE.md §65).
+  it('krever at tidspunktet er et tidspunkt med tidssone', () => {
+    expect(() =>
+      parseExtractionProposal(
+        gyldig({ generated_by: gyldigGeneratedBy({ drafted_at: '15.09.2026' }) }),
+      ),
+    ).toThrow(/drafted_at/)
+    expect(() =>
+      parseExtractionProposal(
+        gyldig({ generated_by: gyldigGeneratedBy({ drafted_at: '2026-09-15T09:00:00' }) }),
+      ),
+    ).toThrow(/drafted_at/)
+  })
+
+  // Avtrykket er den ene verdien som gjør en modellkjøring identifiserbar i
+  // ettertid. Et menneskeskrevet forslag har ingen forespørsel, og utelater det.
+  it('godtar at fingeravtrykket av forespørselen mangler, men ikke at det er noe annet', () => {
+    expect(parseExtractionProposal(gyldig()).generatedBy.requestDigest).toBeNull()
+    expect(
+      parseExtractionProposal(
+        gyldig({
+          generated_by: gyldigGeneratedBy({ request_digest: `sha256:${'a'.repeat(64)}` }),
+        }),
+      ).generatedBy.requestDigest,
+    ).toBe(`sha256:${'a'.repeat(64)}`)
+    expect(() =>
+      parseExtractionProposal(gyldig({ generated_by: gyldigGeneratedBy({ request_digest: 'x' }) })),
+    ).toThrow(/request_digest/)
   })
 
   it('avviser et forslag skrevet mot den forrige versjonen av kontrakten', () => {

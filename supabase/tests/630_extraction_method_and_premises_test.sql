@@ -9,19 +9,21 @@
 -- noe, og at de to verdiene gir to forskjellige rader — fordi metoden inngår i
 -- evidensfunnets fingeravtrykk, og append-only står.
 --
--- 005ac: kontrollgrunnlaget bærer premissene kjøringen ble gjort under, slik at
--- den som bedømmer verdiene, vet om hen etterprøver et maskinutkast fra en
--- bestemt modell og promptmal, eller en kollegas ekstraksjon
--- (EVIDENCE_PIPELINE.md §46, §65). Filen dekker at nøkkelen finnes med alle
--- premissene, at den er NULL når funnet ble registrert uten agentkjøring, og at
--- begge flatene som eksponerer grunnlaget, leser den samme ene projeksjonen.
+-- 005ac: kontrollgrunnlaget bærer to ting som er forskjellige og som ikke skal
+-- forveksles — `drafted_by`, erklæringen om hvem som laget utkastet og når, lest
+-- ut av kjøringens `input_manifest`, og `registered_by`, kjøringen som faktisk
+-- skrev raden, med sine egne premisser og sitt eget tidspunkt
+-- (EVIDENCE_PIPELINE.md §46, §65). Filen dekker at begge finnes med alle sine
+-- felter, at hver av dem er NULL i den tilstanden fraværet faktisk betyr noe,
+-- og at begge flatene som eksponerer grunnlaget, leser den samme ene
+-- projeksjonen.
 --
 -- SQLSTATE 22023 = invalid_parameter_value.
 begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(24);
+select plan(27);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten på skriveveien
@@ -124,26 +126,39 @@ grant select, insert on run to anon;
 create temporary table registered (name text primary key, id uuid not null) on commit drop;
 grant select, insert on registered to anon;
 
--- Premissene kjøringen registreres med. Verdiene er dem modell-leddet ville
--- oppgitt: leverandøren og modellen som faktisk svarte, og promptmalversjonen
--- utkastet ble laget med.
+-- Kjøringen registreres med sine *egne* premisser — Antideps deterministiske
+-- registreringsvei — mens erklæringen om hvem som laget utkastet, ligger i
+-- manifestet, som er kolonnen for hva kjøringen fikk inn. De to beskriver
+-- forskjellige operasjoner på forskjellige tidspunkter.
 set local role anon;
 insert into run
 select 'draft', api.begin_agent_run(
   p_identity_key := 'agent-identity:evidence-extraction-01',
   p_secret := (select secret from cred where label = 'extractor'),
   p_agent_role := 'evidence_extraction',
-  p_provider := 'en-leverandør', p_model := 'en-modell',
-  p_model_version := '2026-09-15',
-  p_prompt_template_version := 'evidence-extraction/proposal-drafting/1',
+  p_provider := 'antidep', p_model := 'proposal-grounded-extraction',
+  p_model_version := '1.0.0',
+  p_prompt_template_version := 'evidence-extraction/proposal/1',
   p_pipeline_version := 'antidep-evidence/1',
   p_input_source_version_id := '63000000-0000-4000-8000-000000000021',
-  p_input_manifest := '{"mode": "test-630"}'::jsonb
+  p_input_manifest := jsonb_build_object(
+    'mode', 'test-630',
+    'generated_by', jsonb_build_object(
+      'producer', 'model',
+      'provider', 'en-leverandør',
+      'model', 'en-modell',
+      'model_version', '2026-09-15',
+      'prompt_template_version', 'evidence-extraction/proposal-drafting/1',
+      'drafted_at', '2026-09-15T09:00:00+00:00',
+      'request_digest', 'sha256:' || repeat('f', 64)
+    )
+  )
 );
 reset role;
 
 -- Kallet, med nøyaktig de feltene fiksturraden påstår noe om.
-create function pg_temp.extract(p_method text, p_detail text) returns uuid
+create function pg_temp.extract(p_method text, p_detail text, p_run text default 'draft')
+  returns uuid
   language plpgsql as $$
 declare
   v_id uuid;
@@ -152,7 +167,7 @@ begin
   v_id := api.register_agent_extraction(
     p_identity_key := 'agent-identity:evidence-extraction-01',
     p_secret := (select secret from cred where label = 'extractor'),
-    p_agent_run_id := (select id from run where label = 'draft'),
+    p_agent_run_id := (select id from run where label = p_run),
     p_source_id := '63000000-0000-4000-8000-000000000001',
     p_source_version_id := '63000000-0000-4000-8000-000000000021',
     p_design_code := 'randomized_controlled_trial',
@@ -250,23 +265,26 @@ select is(
 );
 
 -- ===========================================================================
--- Del 4 — Kontrollgrunnlaget bærer premissene
+-- Del 4 — Kontrollgrunnlaget skiller utkastet fra registreringen
 -- ===========================================================================
 select is(
   (select workflow.evidence_extraction_dossier(
-            (select id from registered where name = 'ai')) -> 'drafted_by' ->> 'provider'),
-  'en-leverandør',
-  'grunnlaget sier hvilken leverandør som svarte'
+            (select id from registered where name = 'ai')) -> 'drafted_by' ->> 'producer'),
+  'model',
+  'grunnlaget sier at en modell, og ikke et menneske, laget utkastet'
 );
 
 select is(
+  (select workflow.evidence_extraction_dossier(
+            (select id from registered where name = 'ai')) -> 'drafted_by' ->> 'provider')
+  || '|' ||
   (select workflow.evidence_extraction_dossier(
             (select id from registered where name = 'ai')) -> 'drafted_by' ->> 'model')
   || '|' ||
   (select workflow.evidence_extraction_dossier(
             (select id from registered where name = 'ai')) -> 'drafted_by' ->> 'model_version'),
-  'en-modell|2026-09-15',
-  'grunnlaget sier hvilken modell og modellversjon som svarte'
+  'en-leverandør|en-modell|2026-09-15',
+  'grunnlaget sier hvilken leverandør, modell og modellversjon som svarte'
 );
 
 select is(
@@ -277,33 +295,100 @@ select is(
   'grunnlaget sier hvilken promptmal utkastet ble laget med'
 );
 
+-- Tidspunktet er utkastets, ikke registreringens. Uten det ville det eneste
+-- tidspunktet i proveniensen vært kjøringens started_at, som kan ligge dager
+-- etter at modellen faktisk leste artikkelen.
+select isnt(
+  (select workflow.evidence_extraction_dossier(
+            (select id from registered where name = 'ai')) -> 'drafted_by' ->> 'drafted_at'),
+  (select workflow.evidence_extraction_dossier(
+            (select id from registered where name = 'ai')) -> 'registered_by' ->> 'started_at'),
+  'utkastets tidspunkt er et annet enn registreringens'
+);
+
+-- Avtrykket dekker representasjonen, katalogen i oppdraget og promptmalen, og
+-- er det som gjør modellkjøringen identifiserbar i ettertid.
+select is(
+  (select workflow.evidence_extraction_dossier(
+            (select id from registered where name = 'ai')) -> 'drafted_by' ->> 'request_digest'),
+  'sha256:' || repeat('f', 64),
+  'grunnlaget navngir forespørselen modellen svarte på'
+);
+
+select is(
+  (select workflow.evidence_extraction_dossier(
+            (select id from registered where name = 'ai')) -> 'registered_by' ->> 'provider')
+  || '|' ||
+  (select workflow.evidence_extraction_dossier(
+            (select id from registered where name = 'ai')) -> 'registered_by' ->> 'model'),
+  'antidep|proposal-grounded-extraction',
+  'kjøringen står med sine egne premisser, ikke med modellens'
+);
+
 select is(
   (select workflow.evidence_extraction_dossier(
             (select id from registered where name = 'ai'))
-          -> 'drafted_by' ->> 'pipeline_version'),
+          -> 'registered_by' ->> 'pipeline_version'),
   'antidep-evidence/1',
-  'grunnlaget sier hvilken pipelineversjon kjøringen var en del av'
+  'kjøringen sier hvilken pipelineversjon den var en del av'
 );
 
 select is(
   (select workflow.evidence_extraction_dossier(
-            (select id from registered where name = 'ai')) -> 'drafted_by' ->> 'agent_role'),
-  'evidence_extraction',
-  'grunnlaget sier hvilken rolle kjøringen handlet i'
+            (select id from registered where name = 'ai')) -> 'registered_by' ->> 'agent_role')
+  || '|' ||
+  ((select workflow.evidence_extraction_dossier(
+             (select id from registered where name = 'ai'))
+           -> 'registered_by' ->> 'agent_run_id') is not null)::text
+  || '|' ||
+  ((select workflow.evidence_extraction_dossier(
+             (select id from registered where name = 'ai'))
+           -> 'registered_by' ->> 'started_at') is not null)::text,
+  'evidence_extraction|true|true',
+  'kjøringen navngir seg selv, sin rolle og når den startet'
 );
 
-select isnt_empty(
-  $$
-    select 1 from registered r
-    where (workflow.evidence_extraction_dossier(r.id) -> 'drafted_by' ->> 'started_at') is not null
-      and (workflow.evidence_extraction_dossier(r.id) -> 'drafted_by' ->> 'agent_run_id') is not null
-    limit 1
-  $$,
-  'grunnlaget navngir kjøringen og når den startet'
+-- En kjøring uten erklæring i manifestet: tilstanden alle funn registrert før
+-- migrasjon 005ab er i. Kjøringen finnes, erklæringen gjør det ikke, og de to
+-- svarene skal være uavhengige.
+set local role anon;
+select api.complete_agent_run(
+  p_identity_key := 'agent-identity:evidence-extraction-01',
+  p_secret := (select secret from cred where label = 'extractor'),
+  p_agent_run_id := (select id from run where label = 'draft'),
+  p_status := 'succeeded',
+  p_output_manifest := '{"mode": "test-630"}'::jsonb
+);
+insert into run
+select 'uten', api.begin_agent_run(
+  p_identity_key := 'agent-identity:evidence-extraction-01',
+  p_secret := (select secret from cred where label = 'extractor'),
+  p_agent_role := 'evidence_extraction',
+  p_provider := 'antidep', p_model := 'proposal-grounded-extraction',
+  p_model_version := '1.0.0',
+  p_prompt_template_version := 'evidence-extraction/proposal/1',
+  p_pipeline_version := 'antidep-evidence/1',
+  p_input_source_version_id := '63000000-0000-4000-8000-000000000021',
+  p_input_manifest := '{"mode": "test-630-uten-erklæring"}'::jsonb
+);
+reset role;
+
+insert into registered
+select 'uten', pg_temp.extract('ai_assisted', 'Vektendring, uten erklæring.', 'uten');
+
+select is(
+  (workflow.evidence_extraction_dossier((select id from registered where name = 'uten'))
+   -> 'drafted_by')::text
+  || '|' ||
+  ((workflow.evidence_extraction_dossier((select id from registered where name = 'uten'))
+    -> 'registered_by') is not null)::text,
+  'null|true',
+  'en kjøring uten erklæring gir null for utkastet, men bærer fortsatt seg selv'
 );
 
--- Et funn registrert uten agentkjøring har ingen premisser. Fravær skal vises
--- som fravær, aldri som et objekt med tomme felter (ANTIDEP_CONSTITUTION.md §6).
+-- Et funn registrert uten agentkjøring har verken erklæring eller kjøring.
+-- Fravær skal vises som fravær, aldri som et objekt med tomme felter
+-- (ANTIDEP_CONSTITUTION.md §6).
 insert into knowledge.evidence_items
   (id, source_id, source_version_id, design_code, population_availability, population_detail,
    sample_size_availability, intervention_drug_id, comparator_kind, outcome_concept_id,
@@ -319,8 +404,10 @@ values ('63000000-0000-4000-8000-000000000031', '63000000-0000-4000-8000-0000000
 
 select ok(
   (workflow.evidence_extraction_dossier('63000000-0000-4000-8000-000000000031')
-   -> 'drafted_by') = 'null'::jsonb,
-  'et funn uten agentkjøring har ingen premisser, og sier det med null'
+   -> 'drafted_by') = 'null'::jsonb
+  and (workflow.evidence_extraction_dossier('63000000-0000-4000-8000-000000000031')
+       -> 'registered_by') = 'null'::jsonb,
+  'et funn uten agentkjøring har verken erklæring eller kjøring, og sier det med null'
 );
 
 -- ===========================================================================
@@ -372,7 +459,7 @@ select is(
      ) -> 'items'
    ) as item),
   'en-modell',
-  'verifikatoren ser premissene i sitt eget lesegrunnlag'
+  'verifikatoren ser erklæringen i sitt eget lesegrunnlag'
 );
 reset role;
 
@@ -383,7 +470,8 @@ select is_empty(
     select k
     from unnest(array['evidence_item_id', 'extraction_method', 'content_hash', 'source',
                       'source_version', 'field_groundings', 'semantic_check_fields',
-                      'grounded_check_fields', 'grounding_machine_proved', 'extraction']) as k
+                      'grounded_check_fields', 'grounding_machine_proved', 'extraction',
+                      'drafted_by', 'registered_by']) as k
     where not (workflow.evidence_extraction_dossier(
                  (select id from registered where name = 'ai')) ? k)
   $$,

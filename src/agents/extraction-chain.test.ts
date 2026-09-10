@@ -105,6 +105,7 @@ async function proposal(): Promise<ExtractionProposal> {
       model: 'opptaksmodell',
       model_version: '1',
       prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+      drafted_at: '2026-09-15T09:00:00Z',
     },
     source_id: SOURCE_ID,
     source_version_id: VERSION_ID,

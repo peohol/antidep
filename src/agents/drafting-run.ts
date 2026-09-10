@@ -75,6 +75,14 @@ export interface DraftingRunOptions {
   readonly model: ModelClient
   readonly retrieve?: RetrieveLike
   readonly retrieveOptions?: RetrieveOptions
+  /**
+   * Klokka, injisert.
+   *
+   * Tidspunktet er en del av proveniensen — det sier når utkastet faktisk ble
+   * laget, i motsetning til når det senere ble registrert — og da må det kunne
+   * festes i en prøve. Standardverdien er den ekte klokka.
+   */
+  readonly now?: () => string
   readonly log?: (line: string) => void
 }
 
@@ -237,7 +245,7 @@ function verbatimProblem(
  * en modellkjøring som ikke ga et brukbart svar, og den skal si det.
  */
 export async function runExtractionDrafting(options: DraftingRunOptions): Promise<DraftingReport> {
-  const { assignment, model, log = () => {} } = options
+  const { assignment, model, now = () => new Date().toISOString(), log = () => {} } = options
   const retrieve =
     options.retrieve ?? ((url: string) => retrieveRepresentation(url, options.retrieveOptions))
 
@@ -261,6 +269,9 @@ export async function runExtractionDrafting(options: DraftingRunOptions): Promis
   )
 
   const completion = await model.complete(request)
+  // Tidspunktet leses her og ikke ved slutten: det er da modellen svarte, og
+  // det er den operasjonen erklæringen beskriver.
+  const draftedAt = now()
 
   let draft
   try {
@@ -305,6 +316,8 @@ export async function runExtractionDrafting(options: DraftingRunOptions): Promis
       model: model.identity.model,
       modelVersion: model.identity.modelVersion,
       promptTemplateVersion: version,
+      draftedAt,
+      requestDigest,
     },
     sourceId: assignment.sourceId,
     sourceVersionId: assignment.sourceVersionId,
