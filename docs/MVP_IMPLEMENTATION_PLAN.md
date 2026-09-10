@@ -1391,6 +1391,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: add the human extraction check and make publication operational (#61)  merget   migrasjon 005q, 005r, 005s, 005t, 006g, 006h
       feat: rebuild the human control flow as a guided session              (#62)  merget   migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å
       feat: make the current review decision race-safe                      (#65)  merget   migrasjon 006i, 007h
+      db: make the source grounding part of an evidence item's identity    (#67)  åpen     migrasjon 003d
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
