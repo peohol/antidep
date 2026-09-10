@@ -1,0 +1,12 @@
+# Originaldokumentene er lokale arbeidsfiler, ikke faglig innhold, og de skal
+# aldri commites: en forskningsartikkel er opphavsrettslig beskyttet, og Antidep
+# har ikke rett til å redistribuere fullteksten (EVIDENCE_PIPELINE.md §14).
+#
+# Antidep lagrer heller ikke dokumentene i databasen. Det som lagres, er
+# fingeravtrykket av dem og oppskriften teksten ble hentet ut med — nok til at
+# en tredjepart med sin egen lovlige kopi kan etterprøve alt.
+#
+# Denne teksten er unntaket. Den er dokumentasjon.
+*
+!.gitignore
+!README.md

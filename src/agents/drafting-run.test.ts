@@ -34,7 +34,7 @@ const QUOTE = 'mean weight change of 1.5 kg'
 
 async function oppdrag(overrides: Record<string, unknown> = {}) {
   return parseExtractionAssignment({
-    assignment_version: 'antidep/extraction-assignment@1',
+    assignment_version: 'antidep/extraction-assignment@2',
     source_id: '50000000-0000-4000-8000-000000000001',
     source_version_id: '51000000-0000-4000-8000-000000000001',
     retrieved_from: 'https://eksempel.invalid/kilde',

@@ -206,7 +206,7 @@ lages og hvor verdiene står. Kort:
 
 ```json
 {
-  "assignment_version": "antidep/extraction-assignment@1",
+  "assignment_version": "antidep/extraction-assignment@2",
   "source_id": "…",
   "source_version_id": "…",
   "retrieved_from": "https://…",

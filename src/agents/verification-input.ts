@@ -14,6 +14,8 @@
 // (DATABASE_ARCHITECTURE.md §29).
 // ============================================================================
 
+import { parseDocumentBindingValue, type DocumentBinding } from './document-binding.ts'
+
 /** Kildeversjonen et evidensfunn ble lest ut av, når en er registrert. */
 export interface VerificationSourceVersion {
   readonly sourceVersionId: string
@@ -31,6 +33,15 @@ export interface VerificationSourceVersion {
    * på en versjon uten den.
    */
   readonly representation: string | null
+  /**
+   * Originaldokumentet representasjonen ble hentet ut av (migrasjon 003e).
+   *
+   * `null` betyr at representasjonen er teksten som lå på adressen. Verdien
+   * avgjør hvordan et kontrollerende ledd i det hele tatt kan skaffe teksten på
+   * nytt: en dokumentbundet versjon hentes aldri over nett
+   * (`source-binding.ts`).
+   */
+  readonly document: DocumentBinding | null
   readonly hasStorageReference: boolean
 }
 
@@ -373,6 +384,7 @@ function parseSourceVersion(value: unknown): VerificationSourceVersion | null {
     externalVersion: asOptionalString(record['external_version']),
     contentHash: asOptionalString(record['content_hash']),
     representation: asOptionalString(record['representation']),
+    document: parseDocumentBindingValue(record['document'], 'Kontrollgrunnlaget', 'source_version'),
     hasStorageReference: record['has_storage_reference'] === true,
   }
 }

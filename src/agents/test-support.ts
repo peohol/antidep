@@ -41,6 +41,7 @@ export function sourceVersionFixture(
     externalVersion: null,
     contentHash: `sha256:${'a'.repeat(64)}`,
     representation: 'full_text',
+    document: null,
     hasStorageReference: false,
     ...overrides,
   }

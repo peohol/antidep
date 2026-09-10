@@ -334,7 +334,7 @@ select distinct
   m[1] as funksjonsreferanse
 from pg_temp.commented_object x
 cross join lateral
-  regexp_matches(x.description, '([a-z_]+\.[a-z_]+\([a-z_, .]*\))', 'g') m
+  regexp_matches(x.description, '([a-z_]+\.[a-z_0-9]+\([a-z_,\[\] .]*\))', 'g') m
 where x.schema_name in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
   and to_regprocedure(m[1]) is null;
 

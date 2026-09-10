@@ -1025,7 +1025,7 @@ async function main(): Promise<void> {
     `select id from catalog.clinical_concepts where canonical_label = 'vektendring'`,
   )
   const oppdrag = parseExtractionAssignment({
-    assignment_version: 'antidep/extraction-assignment@1',
+    assignment_version: 'antidep/extraction-assignment@2',
     source_id: SOURCE,
     source_version_id: VERSION,
     retrieved_from: 'https://example.test/kjede',
@@ -1285,7 +1285,7 @@ async function main(): Promise<void> {
     writeFileSync(
       oppdragsfil,
       JSON.stringify({
-        assignment_version: 'antidep/extraction-assignment@1',
+        assignment_version: 'antidep/extraction-assignment@2',
         source_id: SOURCE,
         source_version_id: VERSION,
         retrieved_from: 'https://example.test/kjede',
@@ -1375,7 +1375,7 @@ async function main(): Promise<void> {
       api: reextractionPorts.extractionApi,
       proposal: routineForslag.proposal,
       assignment: parseExtractionAssignment({
-        assignment_version: 'antidep/extraction-assignment@1',
+        assignment_version: 'antidep/extraction-assignment@2',
         source_id: SOURCE,
         source_version_id: VERSION,
         retrieved_from: 'https://example.test/kjede',

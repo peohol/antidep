@@ -192,8 +192,47 @@ export type Database = {
           p_retrieved_content: string
           p_external_version?: string | null
           p_storage_reference?: string | null
+          /** Hva slags representasjon som ble hentet (migrasjon 003b). */
+          p_representation?: string | null
         }
         Returns: Uuid
+      }
+      // 003e: kildeversjonen som er utledet av et originaldokument. Kalleren
+      // sender **bytene** som base64, ikke fingeravtrykket: hashen, størrelsen
+      // og mediatypen avleses av databasen av dokumentet selv, slik at ingen av
+      // dem er en påstand kalleren skriver om seg selv. Dokumentet lagres ikke.
+      create_source_version_from_document: {
+        Args: {
+          p_source_id: Uuid
+          p_retrieved_at: string
+          p_retrieved_from: string
+          /** Originaldokumentet, base64-kodet, byte for byte slik filen er. */
+          p_document_base64: string
+          /** Teksten oppskriften ga. Databasen hasher den til content_hash. */
+          p_extracted_text: string
+          /** Påkrevd her, til forskjell fra tekstveien (migrasjon 003e). */
+          p_representation: string
+          p_text_extraction_tool: string
+          p_text_extraction_tool_version: string
+          p_text_extraction_arguments: string
+          p_external_version?: string | null
+          p_storage_reference?: string | null
+        }
+        Returns: Uuid
+      }
+      // 007i: hele ekstraksjonsoppdraget, bygget av databasens egne rader.
+      // Svaret er `unknown` og ikke en form, av samme grunn som lesegrunnlagene
+      // under: det er jsonb, og en jsonb-form har ingen kolonnetyper PostgREST
+      // kan håndheve. Det leses av `parseExtractionAssignment`, som avviser alt
+      // som ikke er kontrakten framfor å gjette.
+      build_extraction_assignment: {
+        Args: {
+          p_source_version_id: Uuid
+          p_drug_names: readonly string[]
+          p_outcome_labels: readonly string[]
+          p_population_labels?: readonly string[]
+        }
+        Returns: unknown
       }
       // De tre neste er den menneskelige reviewflyten (migrasjon 005n, 005o og
       // 006d). Lesegrunnlaget og de to beslutningene er tre kall og ikke ett:

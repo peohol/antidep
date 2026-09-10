@@ -1,5 +1,5 @@
 {
-  "proposal_version": "antidep/extraction-proposal@2",
+  "proposal_version": "antidep/extraction-proposal@3",
   "generated_by": {
     "producer": "human",
     "provider": "human",
@@ -13,6 +13,7 @@
   "source_version_id": "00000000-0000-4000-8000-000000000002",
   "retrieved_from": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=00000000&retmode=xml",
   "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "document": null,
   "extraction": {
     "design_code": "randomized_controlled_trial",
     "population_availability": "not_reported",

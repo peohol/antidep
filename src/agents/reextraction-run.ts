@@ -86,13 +86,13 @@ import type {
   ExtractionVerificationApi,
 } from './agent-api.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
-import type { ExtractionRunReport, RetrieveLike } from './extraction-run.ts'
+import type { ExtractionRunReport } from './extraction-run.ts'
 import { runEvidenceExtraction } from './extraction-run.ts'
 import type { RegistrationMode } from './extraction-proposal.ts'
 import { registrationModeProblem } from './extraction-proposal.ts'
 import type { RunReport } from './extraction-verification-run.ts'
 import { runExtractionVerification } from './extraction-verification-run.ts'
-import type { RetrieveOptions } from './source-retrieval.ts'
+import type { ResolvePorts } from './source-binding.ts'
 
 /** Ett forslag, med navnet det ble lest under, slik rapporten kan navngi det. */
 export interface LabelledProposal {
@@ -100,7 +100,7 @@ export interface LabelledProposal {
   readonly proposal: ExtractionProposal
 }
 
-export interface ReextractionOptions {
+export interface ReextractionOptions extends ResolvePorts {
   readonly extractionApi: EvidenceExtractionApi
   readonly verificationApi: ExtractionVerificationApi
   /**
@@ -125,8 +125,6 @@ export interface ReextractionOptions {
   readonly mode: RegistrationMode
   /** Hent og kontroller, men registrer ingenting og kontroller ingenting. */
   readonly dryRun?: boolean
-  readonly retrieve?: RetrieveLike
-  readonly retrieveOptions?: RetrieveOptions
   readonly log?: (line: string) => void
 }
 
@@ -191,6 +189,8 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
     dryRun = false,
     retrieve,
     retrieveOptions,
+    documents,
+    runTool,
     log = () => {},
   } = options
 
@@ -227,6 +227,8 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
       dryRun,
       ...(retrieve === undefined ? {} : { retrieve }),
       ...(retrieveOptions === undefined ? {} : { retrieveOptions }),
+      ...(documents === undefined ? {} : { documents }),
+      ...(runTool === undefined ? {} : { runTool }),
       log,
     })
 
@@ -280,6 +282,8 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
       select: (items) => items.filter((item) => !item.groundingMachineProved),
       ...(retrieve === undefined ? {} : { retrieve }),
       ...(retrieveOptions === undefined ? {} : { retrieveOptions }),
+      ...(documents === undefined ? {} : { documents }),
+      ...(runTool === undefined ? {} : { runTool }),
       log,
     })
 

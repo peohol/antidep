@@ -5,7 +5,9 @@
 //
 //   api.begin_agent_run                  premissene registreres
 //   api.extraction_verification_input    grunnlaget hentes (005h)
-//   retrieveRepresentation               kilden hentes på nytt, over nett
+//   resolveRepresentation                kilden skaffes på nytt: hentet fra
+//                                        adressen, eller hentet ut av
+//                                        originaldokumentet
 //   checkExtraction                      kontrollen gjøres, deterministisk
 //   api.register_extraction_verification resultatet registreres (005g)
 //   api.complete_agent_run               kjøringen lukkes
@@ -46,8 +48,8 @@ import type {
   RegisterVerificationArgs,
 } from './agent-api.ts'
 import { checkExtraction, type ExtractionCheckReport } from './extraction-checks.ts'
-import type { RetrieveLike, RetrieveOptions } from './source-retrieval.ts'
-import { retrieveRepresentation } from './source-retrieval.ts'
+import { resolveRepresentation, type ResolvePorts } from './source-binding.ts'
+import type { RetrieveLike } from './source-retrieval.ts'
 import { parseVerificationInput, type VerificationItem } from './verification-input.ts'
 
 /**
@@ -80,7 +82,7 @@ export interface RunReport {
 
 export type { RetrieveLike }
 
-export interface RunOptions {
+export interface RunOptions extends ResolvePorts {
   readonly api: ExtractionVerificationApi
   readonly premises: AgentRunPremises
   /** Ett bestemt evidensfunn, eller `null` for hele arbeidskøen. */
@@ -89,8 +91,6 @@ export interface RunOptions {
   readonly dryRun?: boolean
   /** Hvor mange funn kjøringen tar i ett. `null` for alle. */
   readonly limit?: number | null
-  readonly retrieve?: RetrieveLike
-  readonly retrieveOptions?: RetrieveOptions
   /**
    * Et snevrere utvalg av inndataen enn `evidenceItemId` alene gir.
    *
@@ -132,13 +132,13 @@ function summarize(item: VerificationItem): string {
  */
 async function evaluateItem(
   item: VerificationItem,
-  retrieve: RetrieveLike,
+  ports: ResolvePorts,
 ): Promise<
   | { readonly kind: 'skip'; readonly reason: string }
   | { readonly kind: 'checked'; readonly report: ExtractionCheckReport }
 > {
   try {
-    return await evaluateItemUnguarded(item, retrieve)
+    return await evaluateItemUnguarded(item, ports)
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
     return {
@@ -150,7 +150,7 @@ async function evaluateItem(
 
 async function evaluateItemUnguarded(
   item: VerificationItem,
-  retrieve: RetrieveLike,
+  ports: ResolvePorts,
 ): Promise<
   | { readonly kind: 'skip'; readonly reason: string }
   | { readonly kind: 'checked'; readonly report: ExtractionCheckReport }
@@ -173,36 +173,29 @@ async function evaluateItemUnguarded(
     }
   }
 
-  const retrieved = await retrieve(version.retrievedFrom)
-  if (retrieved.status === 'error') {
-    return { kind: 'skip', reason: retrieved.message }
-  }
-
-  const representation = retrieved.representation
-  if (!representation.bytesAreUtf8) {
-    return {
-      kind: 'skip',
-      reason:
-        `Svaret fra ${version.retrievedFrom} er ikke ren UTF-8, så fingeravtrykket kan ikke ` +
-        'sammenlignes byte for byte med den registrerte kildeversjonen.',
-    }
-  }
-
-  if (representation.contentHash !== version.contentHash) {
-    return {
-      kind: 'skip',
-      reason:
-        `Kilden har endret seg: ${version.retrievedFrom} gir nå ${representation.contentHash}, ` +
-        `mens kildeversjonen er registrert med ${version.contentHash}. Kontrollen ville ` +
-        'gjeldt en annen utgave enn ekstraksjonen ble gjort fra.',
-    }
+  // Hvordan representasjonen skaffes, avgjøres av den registrerte raden og ikke
+  // av kjøringen: en dokumentbundet versjon hentes ut av originaldokumentet med
+  // den registrerte oppskriften, aldri over nett, og en tekstversjon hentes fra
+  // adressen (`source-binding.ts`, migrasjon 003e). Uten dokumentet konkluderer
+  // kontrollen ikke — den henter aldri adressen i stedet, for da ville den
+  // gjeldt en annen tekst enn ekstraksjonen ble gjort fra.
+  const resolved = await resolveRepresentation(
+    {
+      retrievedFrom: version.retrievedFrom,
+      contentHash: version.contentHash,
+      document: version.document,
+    },
+    ports,
+  )
+  if (resolved.status === 'error') {
+    return { kind: 'skip', reason: resolved.message }
   }
 
   return {
     kind: 'checked',
     report: checkExtraction({
       item,
-      sourceText: representation.content,
+      sourceText: resolved.text,
       representationReproduced: true,
     }),
   }
@@ -225,9 +218,6 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     limit = null,
     log = () => {},
   } = options
-  const retrieve: RetrieveLike =
-    options.retrieve ?? ((url) => retrieveRepresentation(url, options.retrieveOptions ?? {}))
-
   const inputManifest: Record<string, unknown> = {
     // `selected` sier at kjøringen arbeidet på et utvalg av køen, ikke på hele
     // den. Uten det ville manifestet påstått «queue» om en kjøring som bevisst
@@ -260,7 +250,7 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     }
 
     for (const item of queue) {
-      const evaluation = await evaluateItem(item, retrieve)
+      const evaluation = await evaluateItem(item, options)
 
       if (evaluation.kind === 'skip') {
         log(`— ${summarize(item)}: ingen verifikasjon registrert. ${evaluation.reason}`)

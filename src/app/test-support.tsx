@@ -591,6 +591,13 @@ export function editorSourceVersionRow(
     retrieved_from: 'https://eksempel.invalid/testkilde-b',
     external_version: null,
     content_hash: null,
+    representation: null,
+    document_sha256: null,
+    document_byte_size: null,
+    document_media_type: null,
+    text_extraction_tool: null,
+    text_extraction_tool_version: null,
+    text_extraction_arguments: null,
     ...overrides,
   }
 }

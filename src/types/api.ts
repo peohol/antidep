@@ -770,6 +770,28 @@ export type EditorSourceVersionRow = {
   external_version: string | null
   /** `null` betyr at det ikke ble hashet noe øyeblikksbilde. */
   content_hash: string | null
+  /**
+   * Hva slags representasjon som faktisk ble hentet (EVIDENCE_PIPELINE.md §13).
+   *
+   * `null` betyr at opplysningen ikke er registrert — tilstanden alle versjoner
+   * registrert før migrasjon 003b er i — aldri at representasjonen er ukjent
+   * men brukbar.
+   */
+  representation: SourceRepresentation | null
+  /**
+   * Fingeravtrykket av originaldokumentet representasjonen ble hentet ut av.
+   *
+   * `null` betyr at representasjonen er teksten som lå på adressen, ikke at
+   * dokumentet er ukjent (migrasjon 003e). De seks dokumentkolonnene er
+   * alt-eller-ingenting.
+   */
+  document_sha256: string | null
+  document_byte_size: number | null
+  document_media_type: string | null
+  text_extraction_tool: string | null
+  text_extraction_tool_version: string | null
+  /** Argumentene verktøyet ble kjørt med. Sammen med de to over: hele oppskriften. */
+  text_extraction_arguments: string | null
 }
 
 /** Ett virkestoff i katalogen, som intervensjon eller komparator. */

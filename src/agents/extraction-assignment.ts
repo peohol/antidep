@@ -43,6 +43,13 @@
 import type { Uuid } from '../types/api.ts'
 import type { ExtractionProposal, ProposedExtraction } from './extraction-proposal.ts'
 import {
+  documentBindingMismatch,
+  parseDocumentBinding,
+  serializeDocumentBinding,
+  type DocumentBinding,
+  type RepresentationBinding,
+} from './document-binding.ts'
+import {
   asObjectList,
   asOptionalObjectList,
   asText,
@@ -61,8 +68,14 @@ const ASSIGNMENT_SUBJECT = 'Oppdraget'
  *
  * Samme begrunnelse som `EXTRACTION_PROPOSAL_VERSION`: uten den kan en fil
  * skrevet mot en eldre form ikke skilles fra en fil med et manglende felt.
+ *
+ * `@2` la til `document`: hvilket originaldokument kildeversjonen er utledet
+ * av, og med hvilken oppskrift. Et `@1`-oppdrag sier ingenting om det, og et
+ * ledd som leste det med `document = null` som standardverdi, ville hentet en
+ * fulltekstversjon som om den var tekst på en adresse. Formen er derfor ute,
+ * ikke lest med standardverdier.
  */
-export const EXTRACTION_ASSIGNMENT_VERSION = 'antidep/extraction-assignment@1'
+export const EXTRACTION_ASSIGNMENT_VERSION = 'antidep/extraction-assignment@2'
 
 /** Ett valg i katalogen, med id-en som registreres og navnet modellen leser. */
 export interface CatalogChoice {
@@ -76,6 +89,15 @@ export interface ExtractionAssignment {
   readonly sourceVersionId: Uuid
   readonly retrievedFrom: string
   readonly contentHash: string
+  /**
+   * Originaldokumentet kildeversjonen er utledet av, når den er det.
+   *
+   * `null` betyr at representasjonen er teksten på adressen, som for en
+   * MEDLINE-post. Verdien avgjør hvordan kjeden skaffer teksten, og den er
+   * databasens egen opplysning — ikke et valg den som kjører, tar
+   * (`source-binding.ts`).
+   */
+  readonly document: DocumentBinding | null
   /** Virkestoffene funnet kan gjelde. Minst ett; ellers er det ikke et oppdrag. */
   readonly drugs: readonly CatalogChoice[]
   /** Endepunktene funnet kan gjelde. Minst ett. */
@@ -146,6 +168,8 @@ export function parseExtractionAssignment(value: unknown): ExtractionAssignment 
     )
   }
 
+  const document = parseDocumentBinding(fields)
+
   const drugEntries = asObjectList(fields, 'drugs')
   const outcomeEntries = asObjectList(fields, 'outcomes')
   const populationEntries = asOptionalObjectList(fields, 'populations')
@@ -157,9 +181,40 @@ export function parseExtractionAssignment(value: unknown): ExtractionAssignment 
     sourceVersionId,
     retrievedFrom,
     contentHash,
+    document,
     drugs: parseChoices(fields, 'drugs', 'drug_id', drugEntries),
     outcomes: parseChoices(fields, 'outcomes', 'outcome_concept_id', outcomeEntries),
     populations: parseChoices(fields, 'populations', 'population_id', populationEntries),
+  }
+}
+
+/** Kildebindingen i oppdraget, slik hvert ledd i kjeden trenger den. */
+export function assignmentBinding(assignment: ExtractionAssignment): RepresentationBinding {
+  return {
+    retrievedFrom: assignment.retrievedFrom,
+    contentHash: assignment.contentHash,
+    document: assignment.document,
+  }
+}
+
+/** Oppdraget som JSON-formen det leses fra. Motstykket til parseren. */
+export function serializeExtractionAssignment(assignment: ExtractionAssignment): unknown {
+  return {
+    assignment_version: assignment.assignmentVersion,
+    source_id: assignment.sourceId,
+    source_version_id: assignment.sourceVersionId,
+    retrieved_from: assignment.retrievedFrom,
+    content_hash: assignment.contentHash,
+    document: serializeDocumentBinding(assignment.document),
+    drugs: assignment.drugs.map((choice) => ({ drug_id: choice.id, label: choice.label })),
+    outcomes: assignment.outcomes.map((choice) => ({
+      outcome_concept_id: choice.id,
+      label: choice.label,
+    })),
+    populations: assignment.populations.map((choice) => ({
+      population_id: choice.id,
+      label: choice.label,
+    })),
   }
 }
 
@@ -248,6 +303,13 @@ export function assignmentMismatch(
     if (proposed !== expected) {
       return `${key} er ${proposed} i forslaget, men ${expected} i oppdraget`
     }
+  }
+  // Dokumentbindingen er en del av kildebindingen, ikke et tillegg til den: et
+  // forslag som peker på det samme `content_hash`, men et annet dokument eller
+  // en annen oppskrift, er lest ut av noe annet enn oppdraget ba om.
+  const documentIssue = documentBindingMismatch(assignment.document, proposal.document)
+  if (documentIssue !== null) {
+    return documentIssue
   }
   return catalogProblem(assignment, proposal.extraction)
 }

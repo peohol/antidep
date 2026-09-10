@@ -161,6 +161,7 @@ async function matchingItem(): Promise<VerificationItem> {
       externalVersion: null,
       contentHash: await sourceVersionContentHash(FIXTURE_SOURCE_TEXT),
       representation: 'full_text',
+      document: null,
       hasStorageReference: false,
     },
   })
@@ -219,6 +220,7 @@ describe('runExtractionVerification — når ingenting skal registreres', () => 
           externalVersion: null,
           contentHash: null,
           representation: 'full_text',
+          document: null,
           hasStorageReference: false,
         },
       }),

@@ -75,7 +75,7 @@ function readContract(sql: string): ContractRow[] {
     if (line.length === 0) {
       continue
     }
-    const match = /^\('([a-z_]+)', '([a-z_]+)', '([a-z[\] ]+)', (true|false)\),?$/.exec(line)
+    const match = /^\('([a-z_]+)', '([a-z0-9_]+)', '([a-z[\] ]+)', (true|false)\),?$/.exec(line)
     if (match === null) {
       throw new Error(`kontraktslinjen lar seg ikke lese i ${CONTRACT_SQL}: ${line}`)
     }

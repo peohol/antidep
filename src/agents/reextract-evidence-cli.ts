@@ -64,6 +64,7 @@ import { EXTRACTION_VERIFICATION_PREMISES } from './pipeline-version.ts'
 import { readProposalDirectory, readProposalFile } from './proposal-files.ts'
 import type { LabelledProposal } from './reextraction-run.ts'
 import { runReextraction } from './reextraction-run.ts'
+import { documentsFromEnv } from './source-document.ts'
 
 const USAGE = `Bruk:
   npm run agent:reextract-evidence -- (--directory <katalog> | --proposal <fil>...) \
@@ -113,6 +114,7 @@ async function main(): Promise<number> {
         : await readProposalDirectory(options.directory)
 
     const report = await runReextraction({
+      documents: documentsFromEnv(process.env),
       extractionApi: createEvidenceExtractionApi(client, extractionConfig.credential),
       verificationApi: createExtractionVerificationApi(client, verificationConfig.credential),
       verificationPremises: EXTRACTION_VERIFICATION_PREMISES,
