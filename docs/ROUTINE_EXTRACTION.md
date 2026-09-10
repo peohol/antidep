@@ -211,14 +211,42 @@ lages og hvor verdiene står. Kort:
   "source_version_id": "…",
   "retrieved_from": "https://…",
   "content_hash": "sha256:…",
+  "document": null,
   "drugs": [{ "drug_id": "…", "label": "sertralin" }],
   "outcomes": [{ "outcome_concept_id": "…", "label": "vektendring" }],
   "populations": []
 }
 ```
 
+Oppdraget skrives ikke for hånd. `npm run editor:assignment` bygger det av
+databasens egne rader, av kanoniske navn — og registrerer fullteksten av en
+original-PDF først, når `--pdf` er oppgitt (migrasjon 003e, 007i).
+
 Dette er det eneste steget som krever et menneske med `editor`-rolle, og det er
 med hensikt.
+
+### 4.2 Når kildeversjonen er utledet av en PDF
+
+`document` er da ikke `null`, men fingeravtrykket av originaldokumentet og
+oppskriften teksten ble hentet ut med. Det endrer to ting for Routinen:
+
+- **Dokumentet må ligge i dokumentkatalogen.** Leddene slår det opp på
+  fingeravtrykket sitt, i `documents/` eller der `ANTIDEP_DOCUMENT_DIR` peker
+  (`documents/README.md`). Filnavnet spiller ingen rolle.
+- **`pdftotext` fra poppler må være installert.** Teksten hentes ut på nytt ved
+  hvert ledd, med nøyaktig den registrerte oppskriften, og sammenlignes med
+  `content_hash`.
+
+Finner et ledd ikke dokumentet, **stopper det**. Det henter aldri
+`retrieved_from` i stedet: da ville kontrollen hvilt på noe annet enn det
+ekstraksjonen ble lest av — for eksempel på sammendraget av den samme
+artikkelen.
+
+En fulltekst-PDF er opphavsrettslig beskyttet og skal aldri commites
+(`EVIDENCE_PIPELINE.md` §14). En Routine-kjøring som skal lese en fulltekst, må
+derfor ha dokumentet i kjøremiljøet sitt — på samme måte som oppdraget må inn
+gjennom prompten (4.1). Det er den samme begrensningen som 3.5 beskriver, og den
+skal løses bevisst når den trengs.
 
 ### 4.1 Hvordan oppdraget kommer inn i økten
 

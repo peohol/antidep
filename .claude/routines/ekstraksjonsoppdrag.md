@@ -22,6 +22,17 @@ finnes ikke i økten (`docs/ROUTINE_EXTRACTION.md` §4.1).
   et deploy-token (`docs/ROUTINE_EXTRACTION.md` §3.5). Er det ikke mulig å skille
   i dag, kjør modell-leddet i en økt du selv styrer framfor som en sky-Routine.
 
+**Er kildeversjonen utledet av en fulltekst-PDF?** Da har oppdraget en
+`document`-blokk, og kjøringen henter teksten ut av dokumentet framfor over nett.
+Økten må da ha to ting til: originaldokumentet i dokumentkatalogen
+(`documents/`, eller der `ANTIDEP_DOCUMENT_DIR` peker) og `pdftotext` fra
+poppler. Mangler dokumentet, stopper kjøringen — den henter aldri adressen i
+stedet (`docs/ROUTINE_EXTRACTION.md` §4.2).
+
+En fulltekst-PDF er opphavsrettslig beskyttet og skal aldri commites. Skal en
+sky-Routine lese en fulltekst, må dokumentet inn i kjøremiljøet på en bevisst
+måte; er ikke det på plass, kjør modell-leddet i en økt du selv styrer.
+
 Registrering og kontroll er en **egen** Routine, i et **annet** miljø. Se
 `docs/ROUTINE_EXTRACTION.md` avsnitt 3 og 6.
 

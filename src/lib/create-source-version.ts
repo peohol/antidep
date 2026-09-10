@@ -35,6 +35,14 @@ export interface CreateSourceVersionInput {
   readonly retrievedFrom: string
   /** Representasjonen ordrett, slik den ble hentet. Databasen hasher den. */
   readonly retrievedContent: string
+  /**
+   * Hva slags representasjon dette er (EVIDENCE_PIPELINE.md §13).
+   *
+   * Kolonnen er nullbar, men skjemaet krever verdien: en versjon uten den kan
+   * ikke bære en agentekstraksjon (migrasjon 005v), og en standardverdi ville
+   * vært en gjetning om hva noen faktisk lastet ned.
+   */
+  readonly representation: string
   readonly externalVersion: string | null
   readonly storageReference: string | null
 }
@@ -58,6 +66,7 @@ export async function createSourceVersion(
     p_retrieved_at: input.retrievedAt,
     p_retrieved_from: input.retrievedFrom,
     p_retrieved_content: input.retrievedContent,
+    p_representation: input.representation,
     p_external_version: input.externalVersion,
     p_storage_reference: input.storageReference,
   })

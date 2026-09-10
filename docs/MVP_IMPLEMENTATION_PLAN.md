@@ -1393,7 +1393,8 @@ PR G  db: add publication events and gate                                   (#15
       feat: make the current review decision race-safe                      (#65)  merget   migrasjon 006i, 007h
       db: make the source grounding part of an evidence item's identity    (#67)  merget   migrasjon 003d
       feat: add the model link that reads a source and drafts a proposal    (#68)  merget   migrasjon 005ab, 005ac
-      feat: make the model link runnable by a Claude Code Routine          (#69)  åpen     ingen migrasjon
+      feat: make the model link runnable by a Claude Code Routine          (#69)  merget   ingen migrasjon
+      feat: extract from a local full-text PDF, end to end                 (#70)  åpen     migrasjon 003e, 007i
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1495,7 +1496,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2066 pgTAP-assertions over 63 testfiler.
+Databaselaget teller nå 2118 pgTAP-assertions over 65 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1663,18 +1664,18 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de sekstiseks migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de sytti migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
-   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab
-   og 005ac — i
+   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab,
+   005ac, 003e og 007i — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle sekstiåtte ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle sytti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -7072,6 +7073,108 @@ Peder, som validering av prompten, kontrakten og hele arbeidsflyten, før tilsva
 overlates til en Routine. Maskineriet er prøvd mot en ekte adresse over nett — henting,
 fingeravtrykk, gjerdet rundt kildeteksten, den ordrette kontrollen og filskrivingen — men det
 er en prøve av mekanikken, ikke av det faglige.
+
+### 74.43 Fulltekst er bundet til originaldokumentet, og oppdraget bygges av databasen
+
+§74.42 gjorde modell-leddet kjørbart av en Routine. Det som fortsatt manglet, var
+**noe å lese**: hver kildeversjon Antidep hadde, var et sammendrag hentet fra en adresse, og
+begge de seedede evidensfunnene står med verdier sammendraget ikke oppgir (migrasjon 003).
+En fulltekstartikkel er en PDF en redaktør har lovlig tilgang til lokalt — den ligger ikke på
+en åpen adresse, den er ikke tekst, og Antidep har ikke rett til å redistribuere den
+(EVIDENCE_PIPELINE.md §14).
+
+**Dokumentet får et fingeravtrykk, og databasen eier det.**
+`api.create_source_version_from_document(...)` tar imot **bytene**, ikke hashen: databasen
+beregner sha256 og størrelsen, og leser mediatypen av dokumentets egen signatur. Ingen av de
+tre er noe kalleren oppgir, av nøyaktig samme grunn som `content_hash` ikke er det (§74.32).
+Dokumentet **lagres ikke** — bytene forsvinner med transaksjonen, og det som blir stående, er
+fingeravtrykket.
+
+**Oppskriften er den andre halvdelen.** Tekstuttrekking er ikke én operasjon: to verktøy gir
+to forskjellige tekster av den samme PDF-en. Raden bærer derfor verktøyet, versjonen og
+argumentene ordrett. Kontrakten utad blir en kommando: *kjør denne på dokumentet med dette
+fingeravtrykket, og sha256 av resultatet skal være `content_hash`.* Den krever ingen
+kjennskap til Antidep, og den er den samme kontrollen kjeden selv gjør ved hvert eneste ledd.
+
+**De to veiene kan ikke bytte plass.** En dokumentbundet kildeversjon hentes **aldri** over
+nett, og en tekstversjon hentes aldri fra et dokument (`src/agents/source-binding.ts`). Det
+er ikke ryddighet, men selve invarianten: kunne en fulltekstversjon tilfredsstilles av det
+som lå på `retrieved_from`, ville sammendraget fra PubMed kunnet bli kontrollgrunnlaget for
+en ekstraksjon registrert som fulltekst. Mangler dokumentet, **stopper** leddet; det henter
+ikke adressen i stedet.
+
+**En PDF kommer ikke gjennom tekstveien lenger.** `api.create_source_version(...)`,
+registreringsskjemaet og hentingen over nett avviser alle tre innhold som begynner med
+PDF-signaturen, med en setning som sier hvilken vei som gjelder. Det er den ene feilen
+dokumentveien gjør *lettere* å gjøre — en PDF hashet som tekst gir et fingeravtrykk ingen kan
+reprodusere med `sha256sum` på filen — og derfor den ene som er stengt eksplisitt.
+Registreringsskjemaet krever samtidig at representasjonstypen velges: kolonnen har vært
+nullbar siden 003b, og en versjon uten den kan ikke bære en agentekstraksjon.
+
+**Oppdraget skrives ikke lenger for hånd.** `api.build_extraction_assignment(...)` bygger hele
+ekstraksjonsoppdraget av databasens egne rader, av kanoniske navn — «sertralin»,
+«vektendring», «voksne med depressiv lidelse» — og `npm run editor:assignment` er de to
+stegene i ett: registrer fullteksten av PDF-en, og skriv oppdraget. Ingen uuid, ingen hash og
+ingen kildebinding settes sammen for hånd.
+
+Det er ikke bare bekvemmelighet. Oppdraget er en **tiltrodd** inndata: registreringen
+kontrollerer forslaget mot det (§74.42), så oppdraget er halvparten av kontrollen. Et oppdrag
+satt sammen av kopierte verdier er en kontroll mot en kopi — og en kildebinding med adressen
+fra én rad og fingeravtrykket fra en annen ville sendt hele kjeden til feil tekst uten at noe
+merket det. Modell-leddet får fortsatt bare filen: funksjonen krever `editor`-rollen, som
+modell-leddet ikke har og ikke skal ha.
+
+**Registreringen kontrollerer oppdraget før den henter noe.** Rekkefølgen var motsatt, og det
+ga riktig utfall av feil grunn: et forslag som pekte på et annet dokument, ble avvist med
+«fant ingen fil» framfor med avviket mot redaktørens egen oppdragsfil. Kildebindingen i et
+forslag avgjør *hvor* teksten skaffes fra, og forslaget er utrygg inndata.
+
+**Prøvene.** Uten database prøves bindingens form, fingeravtrykket av bytene, oppslaget på
+fingeravtrykk framfor filnavn, en oppskrift som gir en annen tekst, en fil som ikke er en PDF,
+og at et ledd uten dokumentet aldri henter adressen i stedet. pgTAP prøver at databasen eier
+begge fingeravtrykkene, at dokumentbindingen er alt-eller-ingenting og uforanderlig, at det
+samme innholdet ikke kan registreres på nytt under en annen representasjonstype, og at et
+ukjent katalognavn gir en avvisning framfor et oppdrag med én avgrensning mindre.
+`scripts/agent-chain-test.ts` har fått et tiende ledd: en syntetisk, men ekte PDF går gjennom
+skriveveien, oppdragsbyggeren, modell-leddet, registreringen og den maskinelle kontrollen —
+hvert ledd med teksten hentet ut av dokumentet på nytt med `pdftotext` — til et gyldig
+maskinbevis, med feiltilfellene i den samme kjeden.
+
+**Hva som gjenstår, og hvorfor det ikke kunne gjøres her.** De to reelle ekstraksjonene —
+Fava 2000 × sertralin og Versiani 2005 × mirtazapin, begge × vektendring × voksne med
+depressiv lidelse — er **ikke** registrert. Grunnen er ikke faglig og ikke teknisk: begge
+artiklene er bak betalingsmur (kontrollert mot PMC og OpenAlex; ingen av dem har en åpen
+fulltekst), og de lovlige PDF-ene finnes bare som lokale arbeidsfiler hos redaktøren. Ingen
+sesjon som ikke har filene, kan produsere de ordrette utdragene kjeden krever — og et utdrag
+som ikke står i teksten, er nettopp det hele kjeden er bygget for å avvise
+(ANTIDEP_CONSTITUTION.md §4, §11).
+
+Med PDF-ene på plass er hvert av de to funnene to kommandoer, og ingen av dem krever at noen
+finner en uuid:
+
+```bash
+npm run editor:assignment -- \
+  --source "Fava" --pdf <fava-2000.pdf> \
+  --retrieved-from "https://doi.org/10.4088/jcp.v61n1109" \
+  --drug sertralin --outcome vektendring --population "voksne med depressiv lidelse"
+
+npm run editor:assignment -- \
+  --source "Versiani" --pdf <versiani-2005.pdf> \
+  --retrieved-from "https://doi.org/10.2165/00023210-200519020-00004" \
+  --drug mirtazapin --outcome vektendring --population "voksne med depressiv lidelse"
+```
+
+Deretter den uendrede kjeden per oppdrag: `agent:draft-extraction --open`, aktørens svar,
+`--close`, `agent:extract-evidence --assignment`, `agent:verify-extraction`, og den
+menneskelige kontrollen felt for felt.
+
+Fullteksten er en **ny** kildeversjon ved siden av sammendraget, ikke en erstatning: det
+gamle funnet står urørt med sin egen representasjonstype, og et evidensfunn lest av
+fullteksten er en egen rad. Verdiene fulltekstresearchen har etablert — sertralin +1,0 % over
+26–32 uker med n = 48, mirtazapin +0,8 kg med SD 2,7 kg over 8 uker — er begge **innen-arm**
+gjennomsnittsendringer, og skal derfor registreres med `effect_measure = mean_change` og
+`comparator_kind = none`: studienes aktive komparatorer gjør dem ikke til
+mellom-gruppeestimater, og 2,7 kg er et standardavvik og ikke et konfidensintervall.
 
 ---
 

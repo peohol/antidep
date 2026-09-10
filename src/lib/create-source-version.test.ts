@@ -15,6 +15,7 @@ const INPUT = {
   retrievedAt: '2026-09-07T09:15:00.000Z',
   retrievedFrom: 'https://eksempel.invalid/kilde',
   retrievedContent: '  innhold med blanktegn i begge ender  ',
+  representation: 'abstract',
   externalVersion: null,
   storageReference: null,
 } as const
@@ -28,6 +29,7 @@ describe('createSourceVersion', () => {
       p_retrieved_at: INPUT.retrievedAt,
       p_retrieved_from: INPUT.retrievedFrom,
       p_retrieved_content: INPUT.retrievedContent,
+      p_representation: 'abstract',
       p_external_version: null,
       p_storage_reference: null,
     })

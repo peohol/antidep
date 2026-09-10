@@ -43,6 +43,11 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
   - 007e adminflytens andre kontrollerte skrivevei: `api.create_evidence_item(...)` med
     auditskriveren over evidensregistrering, og scope på
     `knowledge.assert_editor_authorized(uuid)`
+  - 003e originaldokumentet: fingeravtrykket av PDF-en, oppskriften teksten ble hentet ut
+    med, og `api.create_source_version_from_document(...)`. Databasen beregner begge
+    fingeravtrykkene selv, og dokumentet lagres ikke
+  - 007i `api.build_extraction_assignment(...)`: hele ekstraksjonsoppdraget bygget av
+    databasens egne rader, av kanoniske navn framfor av id-er
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at
