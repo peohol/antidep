@@ -133,16 +133,21 @@ igjen.
 npm run agent:extract-evidence -- --proposal proposals/fava-2000.json --no-assignment-check
 ```
 
-**Oppdraget er en egen, tiltrodd inndata.** Et forslag laget av en modell
-registreres ikke uten oppdragsfilen det ble laget under: kjøringen kontrollerer
-kildebindingen og hver katalogverdi mot den før noe skrives. Grunnen er
-overleveringen — filen har vært innom en økt som leste utrygt eksternt innhold,
-og avgrensningen mot katalogen er den ene kontrollen den ordrette ikke kan gjøre.
+**Nøyaktig ett av `--assignment <fil>` og `--no-assignment-check` er påkrevd**,
+for hver registrering. Oppdraget er en egen, tiltrodd inndata: kjøringen
+kontrollerer kildebindingen og hver katalogverdi mot det før noe skrives.
+Grunnen er overleveringen — et forslag kan ha vært innom en økt som leste utrygt
+eksternt innhold — og avgrensningen mot katalogen er den ene kontrollen den
+ordrette ikke kan gjøre.
 
-Et forslag en redaktør har skrevet selv, ut av en fulltekst, har ikke noe
-oppdrag. Da sies det uttrykkelig med `--no-assignment-check`, og valget føres i
-kjøringens manifest slik at den som senere bedømmer raden, kan lese det. Har du
-et oppdrag, oppgi det med `--assignment <fil>` framfor å slå kontrollen av.
+Valget er **kallerens**, ikke forslagets. Sperren leser ikke `generated_by` for å
+avgjøre om oppdraget trengs; da ville et endret felt i filen kunnet slå
+kontrollen av.
+
+Et forslag i denne katalogen er som regel skrevet av en redaktør ut av en
+fulltekst og har ikke noe oppdrag. Da er `--no-assignment-check` det riktige
+svaret, og valget føres i kjøringens manifest slik at den som senere bedømmer
+raden, kan lese det. Har du et oppdrag, oppgi det framfor å slå kontrollen av.
 
 Samme kontroller, og deretter registrering gjennom
 `api.register_agent_extraction(...)`. Databasen avviser ekstraksjonen dersom

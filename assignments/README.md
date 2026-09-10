@@ -162,7 +162,9 @@ npm run agent:extract-evidence -- \
   --assignment assignments/fava-2000.json
 ```
 
-**Oppdraget oppgis på nytt her, og det er ikke en gjentakelse.** Forslaget har
+**Oppdraget oppgis på nytt her, og det er ikke en gjentakelse.** Nøyaktig ett av
+`--assignment` og `--no-assignment-check` er påkrevd for hver registrering, og
+valget er kallerens — ikke forslagets. Forslaget har
 vært innom en økt som leste utrygt eksternt innhold; oppdraget er redaktørens
 egen fil og kommer en annen vei. Registreringen kontrollerer kildebindingen og
 hver katalogverdi mot oppdraget før den skriver noe — den ene kontrollen den

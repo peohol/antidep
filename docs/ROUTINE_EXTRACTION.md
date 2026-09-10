@@ -374,10 +374,15 @@ Oppdraget er redaktørens egen fil og kommer en annen vei enn forslaget. Det er
 hele poenget: to inndata fra to kilder, der bare den ene har vært innom
 modellen.
 
-Et forslag som er erklært laget av en modell, registreres **ikke** uten
-oppdraget sitt. Et forslag en redaktør har skrevet selv, har ikke noe oppdrag; da
-sies det uttrykkelig med `--no-assignment-check`, og valget føres i kjøringens
-manifest.
+**Valget er kallerens, og det er påkrevd.** Hver registrering krever nøyaktig ett
+av `--assignment <fil>` og `--no-assignment-check`. Sperren leser *ikke*
+`generated_by.producer` i forslaget for å avgjøre om oppdraget trengs: da ville
+filen bestemt om den skulle kontrolleres, og en endret `producer` ville slått
+kontrollen av. Fravær av kontroll er en handling noen gjorde, og den føres i
+kjøringens manifest.
+
+`--no-assignment-check` er for et forslag som ikke *har* noe oppdrag — et en
+redaktør har skrevet selv ut av en fulltekst.
 
 Etter dette er funnet klart for den menneskelige kontrollen i appen. Ingenting
 publiseres uten den.

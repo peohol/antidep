@@ -148,3 +148,101 @@ export function parseDraftArguments(argv: readonly string[]): DraftCliOptions | 
   }
   return { assignmentPath, runDirectory, step: steps[0] as DraftStep }
 }
+
+// ----------------------------------------------------------------------------
+// Registreringen
+//
+// Ett forslag, og ett uttrykkelig valg om hvorvidt det kontrolleres mot
+// oppdraget sitt.
+//
+// ----------------------------------------------------------------------------
+// Hvorfor valget er påkrevd, og ikke utledet av forslaget
+//
+// Forslaget er utrygg inndata. Det har vært innom en økt som leste en artikkel
+// Antidep ikke kontrollerer, og som har skall — filen kan være endret etter at
+// kontrollen i modell-leddet kjørte.
+//
+// En sperre som leste `generated_by.producer` for å avgjøre om oppdraget var
+// påkrevd, ville derfor latt *filen* bestemme om den skulle kontrolleres: en
+// endret `producer` fra `model` til `human`, og katalogkontrollen var hoppet
+// over. Det er den eneste feilen en slik sperre kan gjøre som gjør den verdiløs.
+//
+// Valget er derfor kallerens, alltid, og det er lukket: nøyaktig ett av de to.
+// Fravær av kontroll er da en handling noen gjorde, ikke en tilstand som oppsto.
+// ----------------------------------------------------------------------------
+
+export interface RegistrationCliOptions {
+  readonly proposalPath: string
+  /** Oppdraget forslaget kontrolleres mot, eller `null` når kalleren valgte bort kontrollen. */
+  readonly assignmentPath: string | null
+  readonly dryRun: boolean
+}
+
+/**
+ * Leser argumentlisten til registreringen, eller kaster med en setning som sier
+ * hva som er galt.
+ *
+ * `'schema'` og `'help'` er egne utfall: begge kan besvares uten legitimasjon,
+ * uten database og uten et forslag.
+ */
+export function parseRegistrationArguments(
+  argv: readonly string[],
+): RegistrationCliOptions | 'help' | 'schema' {
+  let proposalPath: string | null = null
+  let assignmentPath: string | null = null
+  let skipAssignmentCheck = false
+  let dryRun = false
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index]
+    if (flag === '--help' || flag === '-h') {
+      return 'help'
+    }
+    // Skjemaet er kontrakten og kan skrives ut uten en operasjon mot basen.
+    if (flag === '--schema') {
+      return 'schema'
+    }
+    if (flag === '--dry-run') {
+      dryRun = true
+      continue
+    }
+    if (flag === '--no-assignment-check') {
+      skipAssignmentCheck = true
+      continue
+    }
+    if (flag === '--proposal' || flag === '--assignment') {
+      const value = argv[index + 1]
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error(`${flag} krever en filsti.`)
+      }
+      if (flag === '--proposal') {
+        proposalPath = value
+      } else {
+        assignmentPath = value
+      }
+      index += 1
+      continue
+    }
+    throw new Error(`Ukjent valg: ${String(flag)}`)
+  }
+
+  if (proposalPath === null) {
+    throw new Error('--proposal er påkrevd.')
+  }
+  if (assignmentPath !== null && skipAssignmentCheck) {
+    throw new Error(
+      '--assignment og --no-assignment-check er to forskjellige valg. Oppgi ett av dem.',
+    )
+  }
+  if (assignmentPath === null && !skipAssignmentCheck) {
+    throw new Error(
+      'Oppgi --assignment <fil> med oppdraget forslaget ble laget under, eller ' +
+        '--no-assignment-check dersom forslaget ikke har noe oppdrag.\n\n' +
+        'Valget er påkrevd for hver registrering, og det er kallerens. Avgrensningen mot ' +
+        'katalogen — hvilket virkestoff og hvilket endepunkt funnet gjelder — er den ene ' +
+        'kontrollen den ordrette ikke kan gjøre, og forslaget er utrygg inndata som ikke får ' +
+        'avgjøre om den kjøres.',
+    )
+  }
+  return { proposalPath, assignmentPath, dryRun }
+}

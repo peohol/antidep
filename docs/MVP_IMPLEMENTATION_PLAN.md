@@ -7022,9 +7022,12 @@ har skall, og filen kan endres etter at `--close` kjørte. Registreringen tar de
 oppdraget som en egen, tiltrodd inndata og kontrollerer kildebindingen og hver katalogverdi mot
 det før noe skrives. Avgrensningen mot katalogen er den ene kontrollen den ordrette ikke kan
 gjøre — et utdrag kan stå ordrett i kilden og likevel være ført på feil virkestoff — og den
-levde tidligere bare i modell-leddet, altså på feil side av overleveringen. Et forslag erklært
-laget av en modell registreres ikke uten oppdraget sitt; `--no-assignment-check` er kallerens
-uttrykkelige valg for et forslag en redaktør skrev selv, og føres i kjøringens manifest.
+levde tidligere bare i modell-leddet, altså på feil side av overleveringen. Nøyaktig ett av
+`--assignment` og `--no-assignment-check` er påkrevd for hver registrering, og valget er
+kallerens. En sperre som leste forslagets egen `generated_by.producer` for å avgjøre om
+oppdraget trengtes, ville latt den utrygge filen bestemme om den skulle kontrolleres — en
+endret `producer` fra `model` til `human`, og kontrollen var hoppet over. Valget føres i
+kjøringens manifest, slik at fravær av kontroll er en handling noen gjorde.
 
 **Deployveien er stengt der den fantes.** `.github/workflows/vercel.yml` kjørte på alle
 `pull_request` med `VERCEL_TOKEN` i jobbens miljø og bygde koden fra PR-branchen; en pull

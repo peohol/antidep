@@ -237,6 +237,34 @@ describe('runEvidenceExtraction — kontrollen mot oppdraget', () => {
     expect(api.registered).toEqual([])
   })
 
+  it('kontrollerer like strengt uansett hvem forslaget sier at laget det', async () => {
+    // Kontrollen er ikke betinget av `generated_by.producer`. Et forslag som
+    // påstår at et menneske skrev det, kontrolleres like strengt mot oppdraget
+    // — proveniensen i filen er en erklæring, ikke et fripass.
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await proposal({
+        generatedBy: {
+          producer: 'human',
+          provider: 'human',
+          model: 'manuell-ekstraksjon',
+          model_version: 'not_applicable',
+          prompt_template_version: 'not_applicable',
+          drafted_at: '2026-09-15T09:00:00Z',
+        },
+      }),
+      assignment: await oppdrag({
+        drugs: [{ drug_id: '40000000-0000-4000-8000-0000000000ff', label: 'et annet virkestoff' }],
+      }),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('skipped')
+    expect(report.reason).toMatch(/intervention_drug_id/)
+    expect(api.registered).toEqual([])
+  })
+
   it('kontrollerer oppdraget før kilden i det hele tatt søkes i', async () => {
     // Et forslag utenfor oppdraget skal avvises selv om utdragene er ordrett
     // riktige. Det er nettopp den kombinasjonen kontrollen finnes for.
