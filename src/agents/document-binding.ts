@@ -67,6 +67,71 @@ export interface RepresentationBinding {
   readonly document: DocumentBinding | null
 }
 
+// ----------------------------------------------------------------------------
+// Oppskriften er en lukket liste, ikke et fritekstfelt
+//
+// Oppskriften er den ene registrerte verdien som senere blir en **prosess**:
+// etterprøvingen kjører verktøyet med argumentene som står i raden. Var feltet
+// fritt, kunne en redaktør skrevet `sh` i det, og en verdi lest ut av basen
+// ville blitt en kommando kjørt med rettighetene og miljøet til den som
+// kontrollerer — altså kodekjøring ut av en skriverettighet. Det bryter med den
+// ene regelen som gjelder alt importert og lagret innhold: data blir aldri
+// instruksjoner (CLAUDE.md).
+//
+// Antidep støtter i dag nøyaktig én oppskrift, og den er derfor skrevet ned som
+// nøyaktig én. Listen håndheves to steder — av CHECK-en på
+// `knowledge.source_versions` (migrasjon 003f) og her, umiddelbart før en
+// prosess startes (`document-text.ts`) — fordi de to grensene er forskjellige
+// grenser: den ene stenger for at verdien blir lagret, den andre for at en
+// verdi som likevel er lagret, blir kjørt.
+//
+// Versjonen er med vilje ikke med i listen. Den er en opplysning, ikke noe som
+// kjøres: den forklarer et avvik når to bygg gir forskjellig tekst, og fasiten
+// er uansett fingeravtrykket av teksten.
+// ----------------------------------------------------------------------------
+
+/**
+ * Verktøyet Antidep bruker, og valgene det brukes med.
+ *
+ * `-layout` beholder kolonner og tabeller slik de står på siden, som er
+ * forskjellen på et lesbart resultatavsnitt og en tabell som er blitt til én
+ * lang linje. `-enc UTF-8` og `-eol unix` gjør resultatet uavhengig av
+ * maskinen: uten dem ville den samme PDF-en gitt forskjellige byte på Windows
+ * og Linux, og fingeravtrykket ville beskrevet operativsystemet.
+ *
+ * Sideskift beholdes (ingen `-nopgbrk`): skilletegnet er det eneste i teksten
+ * som sier hvor en side slutter, og et kildeutdrag skal kunne stedfestes.
+ *
+ * Verdiene står ordrett likt i migrasjon 003f. De er den samme kontrakten sett
+ * fra hver sin side av databasegrensen, og pinnes derfor av en prøve på begge.
+ */
+export const PDF_TEXT_TOOL = 'pdftotext'
+export const PDF_TEXT_ARGUMENTS = '-layout -enc UTF-8 -eol unix'
+
+/**
+ * Hvorfor en oppskrift ikke er en Antidep kan kjøre, eller `null` når den er det.
+ *
+ * Svarer med én setning, slik at avvisningen sier hva som var galt uten å
+ * gjenta den forbudte verdien som om den var et forslag.
+ */
+export function disallowedRecipeReason(recipe: TextExtractionRecipe): string | null {
+  if (recipe.tool !== PDF_TEXT_TOOL) {
+    return (
+      `Oppskriften oppgir verktøyet ${JSON.stringify(recipe.tool)}, og Antidep kjører bare ` +
+      `«${PDF_TEXT_TOOL}». Et registrert verktøynavn blir en prosess ved etterprøving, og ` +
+      'listen over hva som kan kjøres, er derfor lukket.'
+    )
+  }
+  if (recipe.arguments !== PDF_TEXT_ARGUMENTS) {
+    return (
+      `Oppskriften oppgir argumentene ${JSON.stringify(recipe.arguments)}, og Antidep kjører ` +
+      `«${PDF_TEXT_TOOL}» bare med «${PDF_TEXT_ARGUMENTS}». Argumentene er en del av det som ` +
+      'kjøres, og er derfor like lukket som verktøyet selv.'
+    )
+  }
+  return null
+}
+
 const DOCUMENT_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
 
 /** Om en verdi har formen `knowledge.source_versions.document_sha256` krever. */

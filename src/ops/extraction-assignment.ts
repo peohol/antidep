@@ -253,12 +253,15 @@ async function storeDocument(document: LoadedDocument, directory: string): Promi
  * Returnerer `null` når raden beskriver nøyaktig det samme og trygt kan
  * gjenbrukes, ellers én setning som sier hva som er forskjellig.
  *
- * Tre ting sammenlignes, og verktøyversjonen er med vilje ikke én av dem.
+ * Fire ting sammenlignes, og verktøyversjonen er med vilje ikke én av dem.
  * Fasiten er fingeravtrykket av teksten, og den er allerede lik: gir en nyere
  * poppler byte for byte den samme teksten, er teksten den samme, og en
  * avvisning på versjonsnummeret ville stengt en riktig kjøring uten vei videre —
  * en ny rad er umulig, siden `source_versions_source_content_key` avviser den.
- * Argumentene er derimot en del av oppskriften kjeden faktisk kjører.
+ * Verktøyet og argumentene er derimot det oppskriften faktisk *kjører*, og
+ * begge er derfor med. At den lukkede listen (migrasjon 003f) i praksis gjør
+ * dem like uansett, er ikke en grunn til å la være å se etter: gjenbruken skal
+ * ikke hvile på at en annen regel holder.
  */
 function reuseDifference(
   existing: EditorSourceVersionRow,
@@ -271,6 +274,12 @@ function reuseDifference(
   }
   if (existing.document_sha256 !== digest) {
     return `utledet av et annet originaldokument (${existing.document_sha256})`
+  }
+  if (existing.text_extraction_tool !== recipe.tool) {
+    return (
+      `hentet ut med et annet verktøy («${existing.text_extraction_tool ?? 'ingen'}» mot ` +
+      `«${recipe.tool}»)`
+    )
   }
   if (existing.text_extraction_arguments !== recipe.arguments) {
     return (

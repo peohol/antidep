@@ -1496,7 +1496,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2118 pgTAP-assertions over 65 testfiler.
+Databaselaget teller nå 2123 pgTAP-assertions over 65 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1664,18 +1664,18 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de sytti migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de syttien migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
    007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab,
-   005ac, 003e og 007i — i
+   005ac, 003e, 007i og 003f — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle sytti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle syttien ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -7096,6 +7096,20 @@ argumentene ordrett. Kontrakten utad blir en kommando: *kjør denne på dokument
 fingeravtrykket, og sha256 av resultatet skal være `content_hash`.* Den krever ingen
 kjennskap til Antidep, og den er den samme kontrollen kjeden selv gjør ved hvert eneste ledd.
 
+**Og oppskriften er en lukket liste.** Den er den ene lagrede verdien i Antidep som senere
+blir en **prosess**: hver ekstraksjon og hver maskinelle kontroll henter teksten ut på nytt
+med verktøyet og argumentene som står i raden. Var feltet fritt, kunne en redaktør skrevet
+`sh` i det, og en verdi lest ut av basen ville blitt en kommando kjørt med rettighetene og
+miljøet til den som kontrollerer — kodekjøring ut av en skriverettighet, og et brudd på
+regelen om at lagret innhold aldri blir instruksjoner (EVIDENCE_PIPELINE.md §3.8). Antidep
+støtter i dag nøyaktig én oppskrift, og migrasjon 003f skriver den ned som nøyaktig én:
+`pdftotext` med `-layout -enc UTF-8 -eol unix`, håndhevet av en CHECK på tabellen og av en
+lesbar avvisning i inngangspunktet. Kjørerne kontrollerer den samme listen på nytt
+umiddelbart før de starter en prosess. Det er ikke det samme stedet to ganger: den ene
+grensen stenger for at verdien blir lagret, den andre for at en verdi som likevel er lagret,
+blir kjørt. Versjonen av verktøyet er med vilje fri — den er en opplysning som forklarer et
+avvik, ikke noe som kjøres, og fasiten er uansett fingeravtrykket av teksten.
+
 **De to veiene kan ikke bytte plass.** En dokumentbundet kildeversjon hentes **aldri** over
 nett, og en tekstversjon hentes aldri fra et dokument (`src/agents/source-binding.ts`). Det
 er ikke ryddighet, men selve invarianten: kunne en fulltekstversjon tilfredsstilles av det
@@ -7131,10 +7145,15 @@ forslag avgjør *hvor* teksten skaffes fra, og forslaget er utrygg inndata.
 
 **Prøvene.** Uten database prøves bindingens form, fingeravtrykket av bytene, oppslaget på
 fingeravtrykk framfor filnavn, en oppskrift som gir en annen tekst, en fil som ikke er en PDF,
-og at et ledd uten dokumentet aldri henter adressen i stedet. pgTAP prøver at databasen eier
-begge fingeravtrykkene, at dokumentbindingen er alt-eller-ingenting og uforanderlig, at det
-samme innholdet ikke kan registreres på nytt under en annen representasjonstype, og at et
-ukjent katalognavn gir en avvisning framfor et oppdrag med én avgrensning mindre.
+og at et ledd uten dokumentet aldri henter adressen i stedet. En egen fil prøver den lukkede
+oppskriften der den blir en prosess: et verktøy eller argumenter utenfor listen gir en
+avvisning **uten at verktøyet i det hele tatt blir kalt**, også når verdien kommer fra en rad
+kjeden allerede har fått — og den samme filen krever at koden og migrasjonen staver listen
+likt. pgTAP prøver at databasen eier begge fingeravtrykkene, at dokumentbindingen er
+alt-eller-ingenting og uforanderlig, at det samme innholdet ikke kan registreres på nytt under
+en annen representasjonstype, at oppskriften avvises både av inngangspunktet og av CHECK-en
+mens versjonen forblir fri, og at et ukjent katalognavn gir en avvisning framfor et oppdrag
+med én avgrensning mindre.
 `scripts/agent-chain-test.ts` har fått et tiende ledd: en syntetisk, men ekte PDF går gjennom
 skriveveien, oppdragsbyggeren, modell-leddet, registreringen og den maskinelle kontrollen —
 hvert ledd med teksten hentet ut av dokumentet på nytt med `pdftotext` — til et gyldig

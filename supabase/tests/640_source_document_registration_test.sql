@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(31);
+select plan(36);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -264,7 +264,7 @@ select throws_ok(
     select api.create_source_version_from_document(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-ikke-pdf',
       (select value from fixture where name = 'ikke_pdf'), 'noe tekst',
-      'full_text', 'pdftotext', 'pdftotext 24.02.0', '-layout')
+      'full_text', 'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix')
   $$,
   '22023', 'Originaldokumentet er ikke en PDF.',
   'et dokument som ikke er en PDF, avvises på sin egen signatur'
@@ -273,7 +273,7 @@ select throws_ok(
   $$
     select api.create_source_version_from_document(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-tom',
-      '', 'noe tekst', 'full_text', 'pdftotext', 'pdftotext 24.02.0', '-layout')
+      '', 'noe tekst', 'full_text', 'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix')
   $$,
   '22023', 'Originaldokumentet mangler, og da kan ingen dokumentbundet kildeversjon registreres.',
   'et manglende dokument avvises'
@@ -283,7 +283,7 @@ select throws_ok(
     select api.create_source_version_from_document(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-uten-type',
       (select value from fixture where name = 'annen_pdf'), 'noe tekst',
-      '  ', 'pdftotext', 'pdftotext 24.02.0', '-layout')
+      '  ', 'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix')
   $$,
   '22023', 'Representasjonstypen mangler.',
   'en dokumentutledet versjon uten representasjonstype avvises — det er den tilstanden veien finnes for å unngå'
@@ -294,7 +294,7 @@ select throws_ok(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-pdf-som-tekst',
       (select value from fixture where name = 'annen_pdf'),
       '%PDF-1.4' || chr(10) || 'dokumentet en gang til',
-      'full_text', 'pdftotext', 'pdftotext 24.02.0', '-layout')
+      'full_text', 'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix')
   $$,
   '22023', 'Den uttrukne teksten er selv en PDF, og er dermed ikke tekst noen kan lese et ordrett utdrag ut av.',
   'dokumentet sendt inn som «tekst» avvises'
@@ -304,7 +304,7 @@ select throws_ok(
     select api.create_source_version_from_document(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-igjen',
       (select value from fixture where name = 'annen_pdf'), 'Mean weight change 1.0%.',
-      'abstract', 'pdftotext', 'pdftotext 24.02.0', '-layout')
+      'abstract', 'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix')
   $$,
   '23505', 'Nøyaktig samme innhold er allerede registrert som en kildeversjon for denne kilden.',
   'den samme teksten kan ikke registreres på nytt under en annen representasjonstype'
@@ -323,8 +323,59 @@ select throws_ok(
   'tekstveien avviser en PDF, og sier hvilken vei som gjelder i stedet'
 );
 
+-- ===========================================================================
+-- Del 7b — Oppskriften er en lukket liste (migrasjon 003f)
+--
+-- Oppskriften er den ene lagrede verdien som senere blir en **prosess**: ved
+-- ekstraksjon og etterprøving leses verktøyet og argumentene ut av basen og
+-- kjøres. Var feltet fritt, ville en editor-tilgang vært en vei til kodekjøring
+-- hos den som kontrollerer. Kjørersiden er prøvd i
+-- src/agents/document-text.test.ts; her prøves grensen verdien må gjennom for i
+-- det hele tatt å bli lagret.
+-- ===========================================================================
+select throws_ok(
+  $$
+    select api.create_source_version_from_document(
+      '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-sh',
+      (select value from fixture where name = 'annen_pdf'), 'noe tekst',
+      'full_text', 'sh', 'GNU bash 5.2', '-c "cat /etc/passwd"')
+  $$,
+  '22023', 'Oppskriften er ikke en Antidep kjører.',
+  'et annet verktøy avvises: et navn som blir kjørt, skal ikke kunne skrives fritt'
+);
+select throws_ok(
+  $$
+    select api.create_source_version_from_document(
+      '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-argumenter',
+      (select value from fixture where name = 'annen_pdf'), 'noe tekst',
+      'full_text', 'pdftotext', 'pdftotext 24.02.0', '-raw')
+  $$,
+  '22023', 'Oppskriften er ikke en Antidep kjører.',
+  'andre argumenter avvises: de er like mye en del av det som kjøres som verktøyet'
+);
+
+-- Versjonen er derimot fri, og det er ikke en forglemmelse: den er en
+-- opplysning som forklarer et avvik, ikke noe som kjøres, og fasiten er
+-- fingeravtrykket av teksten.
+insert into fixture (name, value)
+select 'annen_versjon', api.create_source_version_from_document(
+  '50640000-0000-4000-8000-000000000001',
+  now() - interval '2 hours',
+  'https://eksempel.invalid/640-nyere-poppler',
+  (select value from fixture where name = 'annen_pdf'),
+  'En annen tekst fra en nyere poppler.',
+  'full_text', 'pdftotext', 'pdftotext 25.01.0', '-layout -enc UTF-8 -eol unix'
+)::text;
+
 reset role;
 select set_config('request.jwt.claims', '', true);
+
+select is(
+  (select sv.text_extraction_tool_version from knowledge.source_versions sv
+   where sv.id = (select value from fixture where name = 'annen_versjon')::uuid),
+  'pdftotext 25.01.0',
+  'verktøyversjonen er fri: den opplyser om et avvik, den er ikke noe som kjøres'
+);
 
 -- ===========================================================================
 -- Del 8 — Alt-eller-ingenting, prøvd der regelen bor
@@ -353,7 +404,7 @@ select throws_ok(
        retrieved_by_actor_id)
     values ('50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-oppskrift',
             'sha256:' || repeat('d', 64), 'full_text',
-            'pdftotext', 'pdftotext 24.02.0', '-layout',
+            'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix',
             'ac640000-0000-4000-8000-00000000000b')
   $$,
   '23514', null,
@@ -369,7 +420,7 @@ select throws_ok(
     values ('50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-uten-rep',
             'sha256:' || repeat('c', 64),
             'sha256:' || repeat('b', 64), 1234, 'application/pdf',
-            'pdftotext', 'pdftotext 24.02.0', '-layout',
+            'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix',
             'ac640000-0000-4000-8000-00000000000b')
   $$,
   '23514', null,
@@ -385,11 +436,35 @@ select throws_ok(
     values ('50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-tekstmedia',
             'sha256:' || repeat('9', 64), 'full_text',
             'sha256:' || repeat('8', 64), 1234, 'text/plain',
-            'pdftotext', 'pdftotext 24.02.0', '-layout',
+            'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix',
             'ac640000-0000-4000-8000-00000000000b')
   $$,
   '23514', null,
   'et «dokument» med en tekstlig mediatype avvises: er representasjonen tekst, er den sitt eget fingeravtrykk'
+);
+select throws_ok(
+  $$
+    insert into knowledge.source_versions
+      (source_id, retrieved_at, retrieved_from, content_hash, representation,
+       document_sha256, document_byte_size, document_media_type,
+       text_extraction_tool, text_extraction_tool_version, text_extraction_arguments,
+       retrieved_by_actor_id)
+    values ('50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-fritt-verktoy',
+            'sha256:' || repeat('7', 64), 'full_text',
+            'sha256:' || repeat('6', 64), 1234, 'application/pdf',
+            'sh', 'GNU bash 5.2', '-c "cat /etc/passwd"',
+            'ac640000-0000-4000-8000-00000000000b')
+  $$,
+  '23514', null,
+  'CHECK-en er fasiten for den lukkede oppskriften, uansett hvilken skrivevei som en dag fører hit'
+);
+select ok(
+  (select exists (
+     select 1 from pg_constraint c
+     where c.conrelid = 'knowledge.source_versions'::regclass
+       and c.conname = 'source_versions_text_extraction_recipe_allowlist_check'
+   )),
+  'den lukkede oppskriften har sin egen navngitte constraint, som kan leses av den som skal forstå regelen'
 );
 
 -- ===========================================================================

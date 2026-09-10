@@ -21,6 +21,17 @@
 // Antidep.
 //
 // ----------------------------------------------------------------------------
+// Oppskriften er en lukket liste
+//
+// Oppskriften er den ene registrerte verdien som senere blir en **prosess**.
+// Var den fri, ville en verdi lest ut av basen kunnet bli en kommando kjørt med
+// rettighetene til den som kontrollerer — kodekjøring ut av en skriverettighet.
+// Antidep støtter i dag nøyaktig én oppskrift, og listen står i
+// `document-binding.ts`. Den håndheves ved databasegrensen (migrasjon 003f) og
+// på nytt her, umiddelbart før prosessen startes: en oppskrift utenfor listen
+// gir en avvisning uten at verktøyet i det hele tatt blir kalt.
+//
+// ----------------------------------------------------------------------------
 // Hvorfor versjonen ikke er et krav, men en opplysning
 //
 // Kjøringen nekter *ikke* å kjøre fordi den installerte versjonen er en annen
@@ -46,24 +57,19 @@
 import { execFile } from 'node:child_process'
 
 import { sourceVersionContentHash } from './content-hash.ts'
-import type { TextExtractionRecipe } from './document-binding.ts'
+import {
+  disallowedRecipeReason,
+  PDF_TEXT_ARGUMENTS,
+  PDF_TEXT_TOOL,
+  type TextExtractionRecipe,
+} from './document-binding.ts'
 
 export type { TextExtractionRecipe }
 
-/**
- * Verktøyet Antidep bruker, og valgene det brukes med.
- *
- * `-layout` beholder kolonner og tabeller slik de står på siden, som er
- * forskjellen på et lesbart resultatavsnitt og en tabell som er blitt til én
- * lang linje. `-enc UTF-8` og `-eol unix` gjør resultatet uavhengig av
- * maskinen: uten dem ville den samme PDF-en gitt forskjellige byte på Windows
- * og Linux, og fingeravtrykket ville beskrevet operativsystemet.
- *
- * Sideskift beholdes (ingen `-nopgbrk`): skilletegnet er det eneste i teksten
- * som sier hvor en side slutter, og et kildeutdrag skal kunne stedfestes.
- */
-export const PDF_TEXT_TOOL = 'pdftotext'
-export const PDF_TEXT_ARGUMENTS = '-layout -enc UTF-8 -eol unix'
+// Oppskriften Antidep kjører, og kontrollen av den, hører til formen og ligger
+// derfor i `document-binding.ts` — den modulen har ingen Node-avhengighet, og
+// den samme lukkede listen leses også der ingen prosess kan startes.
+export { disallowedRecipeReason, PDF_TEXT_ARGUMENTS, PDF_TEXT_TOOL }
 
 /** Hvor lenge tekstuttrekkingen får holde på før den regnes som mislykket. */
 const EXTRACTION_TIMEOUT_MS = 120_000
@@ -158,6 +164,14 @@ export async function readToolVersion(
   tool: string = PDF_TEXT_TOOL,
   run: RunTool = runToolWithNode,
 ): Promise<VersionResult> {
+  if (tool !== PDF_TEXT_TOOL) {
+    // Også versjonsavlesningen starter en prosess på et verktøynavn, og et
+    // navn utenfor listen skal ikke bli en kommando her heller.
+    return {
+      status: 'error',
+      message: `Antidep leser bare versjonen av «${PDF_TEXT_TOOL}», ikke av ${JSON.stringify(tool)}.`,
+    }
+  }
   const result = await run(tool, ['-v'])
   if (result.status === 'failed') {
     return { status: 'error', message: result.message }
@@ -189,9 +203,10 @@ export type ExtractionResult =
 /**
  * Deler argumentstrengen slik den skal sendes til verktøyet.
  *
- * Bevisst enkel: argumentene er Antideps egne og står i basen som én streng.
- * Splitting på mellomrom er derfor nok, og alternativet — et skall — ville
- * gjort en registrert verdi til noe som kunne kjøres.
+ * Bevisst enkel: argumentene er kontrollert mot den lukkede listen før dette
+ * kalles, så strengen er nøyaktig `PDF_TEXT_ARGUMENTS` og splittingen gir
+ * nøyaktig de leddene den består av. Ingen del av den går gjennom et skall, og
+ * ingen del av dokumentet blir noen gang et argument.
  */
 export function recipeArguments(recipe: TextExtractionRecipe): readonly string[] {
   return recipe.arguments.split(/\s+/).filter((argument) => argument.length > 0)
@@ -209,6 +224,13 @@ export async function extractDocumentText(options: {
   readonly recipe: TextExtractionRecipe
   readonly run?: RunTool
 }): Promise<ExtractionResult> {
+  // Kontrollen står her, og ikke bare ved databasegrensen, fordi det er her
+  // en registrert verdi ville blitt en prosess. `run` er ikke kalt ennå, og
+  // skal ikke bli det: en oppskrift utenfor listen er ikke noe å prøve.
+  const disallowed = disallowedRecipeReason(options.recipe)
+  if (disallowed !== null) {
+    return { status: 'error', message: disallowed }
+  }
   const run = options.run ?? runToolWithNode
   const args = [...recipeArguments(options.recipe), '-', '-']
   const result = await run(options.recipe.tool, args, options.bytes)

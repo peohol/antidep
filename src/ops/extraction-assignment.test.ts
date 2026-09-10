@@ -333,6 +333,31 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
     expect(catalog.registered).toHaveLength(0)
   })
 
+  it('gjenbruker ikke en rad hentet ut med et annet verktøy', async () => {
+    // Verktøyet er det oppskriften faktisk kjører. Den lukkede listen
+    // (migrasjon 003f) gjør en slik rad umulig å registrere, men gjenbruken
+    // skal ikke hvile på at en annen regel holder.
+    const catalog = katalog({
+      versions: [
+        versjon({
+          source_version_id: NY_VERSJON,
+          representation: 'full_text',
+          content_hash: await sourceVersionContentHash(TEKST),
+          document_sha256: await documentDigest(PDF),
+          document_byte_size: PDF.length,
+          document_media_type: 'application/pdf',
+          text_extraction_tool: 'pdftohtml',
+          text_extraction_tool_version: 'pdftohtml 24.02.0',
+          text_extraction_arguments: PDF_TEXT_ARGUMENTS,
+        }),
+      ],
+    })
+    await expect(
+      buildAssignmentFromCatalog({ ...grunnlag, catalog, documentPath: await pdfPaDisk() }),
+    ).rejects.toThrow(/et annet verktøy/)
+    expect(catalog.registered).toHaveLength(0)
+  })
+
   it('gjenbruker ikke en rad hentet ut med andre argumenter', async () => {
     // Argumentene er en del av oppskriften kjeden faktisk kjører. En rad
     // registrert med andre argumenter beskriver en annen operasjon, selv om

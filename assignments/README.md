@@ -62,7 +62,10 @@ Antidep lagrer **ikke** dokumentet. Det som skjer, er:
    dokumentets egen signatur. Ingen av de tre er noe kalleren oppgir — de er
    observasjoner, ikke påstander (migrasjon 003e).
 3. Teksten hentes ut med `pdftotext`, og **oppskriften** — verktøy, versjon,
-   argumenter — lagres sammen med sha256 av teksten.
+   argumenter — lagres sammen med sha256 av teksten. Oppskriften er en lukket
+   liste: den er den ene lagrede verdien som senere blir _kjørt_, og databasen
+   godtar bare `pdftotext` med Antideps faste argumenter (migrasjon 003f).
+   Versjonen er fri — den forklarer et avvik, den kjøres ikke.
 4. PDF-en legges i `documents/` under fingeravtrykket sitt, slik at resten av
    kjeden finner den igjen uten et filnavn (`../documents/README.md`).
 
