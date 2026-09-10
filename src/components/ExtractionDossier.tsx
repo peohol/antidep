@@ -59,7 +59,10 @@ import type {
   ExtractionVerificationRecord,
   LinkedClaimRevision,
 } from '../lib/extraction-review'
-import type { VerificationItem } from '../agents/verification-input'
+import type {
+  DraftingPremises as DraftingPremisesRecord,
+  VerificationItem,
+} from '../agents/verification-input'
 
 /** En verdi som ikke er registrert. Aldri en tom celle. */
 function Absent({ children }: { readonly children: string }) {
@@ -176,8 +179,39 @@ export function ExtractionSourcePanel({ item }: { readonly item: VerificationIte
             )}
           </DetailNote>
         </Detail>
+        <Detail label="Verdiene ble laget under">
+          <DraftingPremises premises={item.draftedBy} />
+        </Detail>
       </DetailList>
     </section>
+  )
+}
+
+/**
+ * Premissene verdiene ble laget under, eller fraværet av dem.
+ *
+ * Kontrollgrunnlag og ikke driftsinformasjon: den som skal bedømme om verdiene
+ * følger av kilden, leser et maskinutkast fra en bestemt modell og en bestemt
+ * promptmal annerledes enn en kollegas egen ekstraksjon
+ * (ANTIDEP_CONSTITUTION.md §12, §20, EVIDENCE_PIPELINE.md §46).
+ *
+ * Fravær vises som fravær: et funn ført inn i adminflyten har ingen kjøring, og
+ * det er en opplysning — ikke tomme felter, og aldri noe som fylles inn fra
+ * ekstraksjonsmetoden.
+ */
+function DraftingPremises({ premises }: { readonly premises: DraftingPremisesRecord | null }) {
+  if (premises === null) {
+    return (
+      <Absent>Ingen agentkjøring er registrert. Verdiene ble ført inn direkte i adminflyten</Absent>
+    )
+  }
+  return (
+    <>
+      {premises.provider}/{premises.model} {premises.modelVersion}
+      <DetailNote>Promptmal {premises.promptTemplateVersion}</DetailNote>
+      <DetailNote>Pipeline {premises.pipelineVersion}</DetailNote>
+      <DetailNote>Kjørt {whenText(premises.startedAt)}</DetailNote>
+    </>
   )
 }
 

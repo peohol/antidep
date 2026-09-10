@@ -15,7 +15,10 @@ import { describe, expect, it } from 'vitest'
 import {
   EXTRACTION_PROPOSAL_VERSION,
   MIN_SOURCE_EXCERPT_LENGTH,
+  extractionMethodFor,
+  parseExtractionDraft,
   parseExtractionProposal,
+  serializeExtractionProposal,
 } from './extraction-proposal'
 
 const EXCERPT = 'Patients received sertraline 50 mg daily for eight weeks.'
@@ -39,9 +42,21 @@ function gyldigExtraction(overrides: Record<string, unknown> = {}): Record<strin
   }
 }
 
+function gyldigGeneratedBy(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    producer: 'model',
+    provider: 'antidep',
+    model: 'opptaksmodell',
+    model_version: '1',
+    prompt_template_version: 'evidence-extraction/proposal-drafting/1',
+    ...overrides,
+  }
+}
+
 function gyldig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     proposal_version: EXTRACTION_PROPOSAL_VERSION,
+    generated_by: gyldigGeneratedBy(),
     source_id: '50000000-0000-4000-8000-000000000001',
     source_version_id: '51000000-0000-4000-8000-000000000001',
     retrieved_from: 'https://eksempel.invalid/kilde',
@@ -257,5 +272,117 @@ describe('parseExtractionProposal — tallverdier', () => {
   it('krever at utvalgsstørrelsen er et heltall', () => {
     const somTekst = gyldig({ extraction: gyldigExtraction({ sample_size: '284' }) })
     expect(() => parseExtractionProposal(somTekst)).toThrow(/sample_size/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Hvem som laget forslaget
+// ---------------------------------------------------------------------------
+
+describe('parseExtractionProposal — generated_by', () => {
+  it('leser erklæringen om hvem som laget forslaget', () => {
+    const parsed = parseExtractionProposal(gyldig())
+    expect(parsed.generatedBy).toEqual({
+      producer: 'model',
+      provider: 'antidep',
+      model: 'opptaksmodell',
+      modelVersion: '1',
+      promptTemplateVersion: 'evidence-extraction/proposal-drafting/1',
+    })
+  })
+
+  // Uten feltet ville kjøringen måttet oppgi en fast verdi for hvert forslag,
+  // altså registrert et menneskes ekstraksjon som en modells og omvendt
+  // (ANTIDEP_CONSTITUTION.md §14, §20).
+  it('krever at forslaget sier hvem som laget det', () => {
+    const uten = gyldig()
+    delete uten['generated_by']
+    expect(() => parseExtractionProposal(uten)).toThrow(/generated_by/)
+  })
+
+  it('avviser en produsent utenfor vokabularet', () => {
+    expect(() =>
+      parseExtractionProposal(gyldig({ generated_by: gyldigGeneratedBy({ producer: 'agent' }) })),
+    ).toThrow(/producer er "agent"/)
+  })
+
+  it('krever hver av de fire premissene', () => {
+    for (const felt of ['provider', 'model', 'model_version', 'prompt_template_version']) {
+      const uten = gyldigGeneratedBy()
+      delete uten[felt]
+      expect(() => parseExtractionProposal(gyldig({ generated_by: uten }))).toThrow(
+        new RegExp(`generated_by\\.${felt}`),
+      )
+    }
+  })
+
+  // Pipelineversjonen er Antideps egen. Et forslag utenfra skal ikke kunne
+  // påstå noe om hvilken pipeline som registrerte det.
+  it('navngir pipeline_version særskilt som noe forslaget ikke skal oppgi', () => {
+    expect(() =>
+      parseExtractionProposal(
+        gyldig({ generated_by: gyldigGeneratedBy({ pipeline_version: 'antidep-evidence/1' }) }),
+      ),
+    ).toThrow(/Pipelineversjonen er Antideps egen/)
+  })
+
+  it('oversetter produsenten til ekstraksjonsmetoden raden registreres med', () => {
+    expect(extractionMethodFor('model')).toBe('ai_assisted')
+    expect(extractionMethodFor('human')).toBe('manual')
+  })
+
+  it('avviser et forslag skrevet mot den forrige versjonen av kontrakten', () => {
+    expect(() =>
+      parseExtractionProposal(gyldig({ proposal_version: 'antidep/extraction-proposal@1' })),
+    ).toThrow(/proposal_version/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Modellens utkast, og veien tilbake til en fil
+// ---------------------------------------------------------------------------
+
+describe('parseExtractionDraft', () => {
+  it('leser de to delene et modell-ledd produserer', () => {
+    const draft = parseExtractionDraft(
+      { extraction: gyldigExtraction(), field_groundings: gyldig()['field_groundings'] },
+      'Modellsvaret',
+    )
+    expect(draft.extraction.designCode).toBe('randomized_controlled_trial')
+    expect(draft.fieldGroundings).toHaveLength(1)
+  })
+
+  // Kildebindingen er oppdragets og settes av kjøringen. En modell som kunne
+  // oppgitt den, kunne oppgitt feil utgave uten at noe merket det.
+  it('avviser en kildebinding i modellens utkast', () => {
+    expect(() =>
+      parseExtractionDraft(
+        {
+          extraction: gyldigExtraction(),
+          field_groundings: gyldig()['field_groundings'],
+          source_version_id: '51000000-0000-4000-8000-000000000001',
+        },
+        'Modellsvaret',
+      ),
+    ).toThrow(/Modellsvaret er ugyldig.*source_version_id/s)
+  })
+
+  it('navngir svaret i avvisningen framfor å kalle det en fil', () => {
+    expect(() => parseExtractionDraft({ extraction: {} }, 'Modellsvaret')).toThrow(
+      /^Modellsvaret er ugyldig/,
+    )
+  })
+})
+
+describe('serializeExtractionProposal', () => {
+  // Filen modell-leddet skriver, skal være nøyaktig den formen kjøringen
+  // etterpå leser. To oversettelser ville vært to steder å stave et feltnavn
+  // feil, og feilen ville først vist seg som en manglende verdi i en rad.
+  it('gir en form leseren tar imot uendret', () => {
+    const original = parseExtractionProposal(gyldig())
+    const tilbake = parseExtractionProposal(
+      JSON.parse(JSON.stringify(serializeExtractionProposal(original))) as unknown,
+    )
+    expect(tilbake).toEqual(original)
   })
 })

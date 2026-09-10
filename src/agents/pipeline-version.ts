@@ -27,13 +27,24 @@
 // ============================================================================
 
 import type { AgentRunPremises } from './agent-api.ts'
+import type { GeneratedBy } from './extraction-proposal.ts'
+
+/**
+ * Versjonen av Antideps egen evidenspipeline.
+ *
+ * Ett sted, brukt av hvert ledd: den sier hvilken kjede kjøringen var en del
+ * av, og den er vår uansett hvem som produserte inndataen. Ville den vært
+ * skrevet av på tre steder, kunne to ledd i den samme kjøringen oppgitt hver
+ * sin pipeline.
+ */
+export const ANTIDEP_EVIDENCE_PIPELINE_VERSION = 'antidep-evidence/1'
 
 export const EXTRACTION_VERIFICATION_PREMISES: AgentRunPremises = {
   provider: 'antidep',
   model: 'deterministic-extraction-check',
   modelVersion: '1.0.0',
   promptTemplateVersion: 'extraction-verification/deterministic/1',
-  pipelineVersion: 'antidep-evidence/1',
+  pipelineVersion: ANTIDEP_EVIDENCE_PIPELINE_VERSION,
 }
 
 /**
@@ -51,26 +62,33 @@ export const CLAIM_VERIFICATION_PREMISES: AgentRunPremises = {
   model: 'deterministic-claim-check',
   modelVersion: '1.0.0',
   promptTemplateVersion: 'claim-verification/deterministic/1',
-  pipelineVersion: 'antidep-evidence/1',
+  pipelineVersion: ANTIDEP_EVIDENCE_PIPELINE_VERSION,
 }
 
 /**
- * Ekstraksjonsagenten (migrasjon 005v, 005w).
+ * Ekstraksjonsagentens premisser, utledet av forslaget selv (migrasjon 005v, 005w).
  *
- * Leddet som *leser* en artikkel og foreslår strukturerte verdier, krever en
- * språkmodell — og dermed en leverandør og en konto (issue #63). Kjøringen som
- * finnes i dag, tar forslaget som inndata og gjør resten deterministisk:
- * henter representasjonen, prøver hvert utdrag ordrett mot den, og registrerer.
+ * Ikke en konstant, og det er hele endringen fra da forslagene bare kom
+ * utenfra. Leddet som *leser* artikkelen og foreslår verdier, er ikke det
+ * samme som kjøringen som registrerer forslaget: den første er et menneske
+ * eller en modell, den andre er Antideps deterministiske vei inn i basen. En
+ * fast verdi her ville derfor registrert hvert eneste forslag som om det samme
+ * hadde laget det — et menneskes ekstraksjon som en modells, og omvendt
+ * (ANTIDEP_CONSTITUTION.md §14, §20, EVIDENCE_PIPELINE.md §65).
  *
- * Premissene sier nøyaktig det. Når modell-leddet kobles på, registrerer det
- * sin egen leverandør, modell og modellversjon, og de to kjøringene står ved
- * siden av hverandre framfor å bli forvekslet — som er hele grunnen til at
- * feltene er fri tekst (ANTIDEP_CONSTITUTION.md §20, EVIDENCE_PIPELINE.md §65).
+ * Leverandør, modell, modellversjon og promptmalversjon kommer derfor fra
+ * `generated_by` i forslaget. Pipelineversjonen gjør det ikke: den er Antideps
+ * egen, og et forslag utenfra skal ikke kunne påstå noe om hvilken pipeline som
+ * registrerte det. Skillet er hele grunnen til at feltene er fri tekst — to
+ * kjøringer med hver sin leverandør står ved siden av hverandre framfor å bli
+ * forvekslet.
  */
-export const EVIDENCE_EXTRACTION_PREMISES: AgentRunPremises = {
-  provider: 'antidep',
-  model: 'proposal-grounded-extraction',
-  modelVersion: '1.0.0',
-  promptTemplateVersion: 'evidence-extraction/proposal/1',
-  pipelineVersion: 'antidep-evidence/1',
+export function extractionPremisesFor(generatedBy: GeneratedBy): AgentRunPremises {
+  return {
+    provider: generatedBy.provider,
+    model: generatedBy.model,
+    modelVersion: generatedBy.modelVersion,
+    promptTemplateVersion: generatedBy.promptTemplateVersion,
+    pipelineVersion: ANTIDEP_EVIDENCE_PIPELINE_VERSION,
+  }
 }

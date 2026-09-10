@@ -112,3 +112,71 @@ describe('parseVerificationInput — kliniske tallverdier', () => {
     expect(input.items[0]?.extraction.estimate).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Premissene funnet ble laget under (migrasjon 005ac)
+// ---------------------------------------------------------------------------
+
+function svarMedPremisser(draftedBy: string): unknown {
+  return fromApi(
+    svarMed({ estimate: '"1.5"' }).replace(
+      '"source_version": null,',
+      `"source_version": null, "drafted_by": ${draftedBy},`,
+    ),
+  )
+}
+
+describe('parseVerificationInput — hvem som laget verdiene', () => {
+  it('leser premissene kjøringen ble gjort under', () => {
+    const parsed = parseVerificationInput(
+      svarMedPremisser(`{
+        "agent_run_id": "d3e0f6a0-0000-4000-8000-00000000000a",
+        "agent_role": "evidence_extraction",
+        "provider": "en-leverandør",
+        "model": "en-modell",
+        "model_version": "2026-09-15",
+        "prompt_template_version": "evidence-extraction/proposal-drafting/1",
+        "pipeline_version": "antidep-evidence/1",
+        "started_at": "2026-09-15T09:00:00+00:00"
+      }`),
+    )
+    expect(parsed.items[0]?.draftedBy).toEqual({
+      agentRunId: 'd3e0f6a0-0000-4000-8000-00000000000a',
+      agentRole: 'evidence_extraction',
+      provider: 'en-leverandør',
+      model: 'en-modell',
+      modelVersion: '2026-09-15',
+      promptTemplateVersion: 'evidence-extraction/proposal-drafting/1',
+      pipelineVersion: 'antidep-evidence/1',
+      startedAt: '2026-09-15T09:00:00+00:00',
+    })
+  })
+
+  // Et funn registrert på editorveien har ingen kjøring. Fraværet er en
+  // opplysning, ikke en struktur uten verdier (ANTIDEP_CONSTITUTION.md §6).
+  it('leser fravær av en agentkjøring som fravær', () => {
+    expect(parseVerificationInput(svarMedPremisser('null')).items[0]?.draftedBy).toBeNull()
+  })
+
+  it('leser et svar fra en eldre projeksjon uten nøkkelen som fravær', () => {
+    const parsed = parseVerificationInput(fromApi(svarMed({ estimate: '"1.5"' })))
+    expect(parsed.items[0]?.draftedBy).toBeNull()
+  })
+
+  // En halv proveniens ser ut som en fullstendig én. Et svar som stille mistet
+  // en premiss, skal si fra framfor å vise kontrolløren noe ufullstendig.
+  it('avviser premisser som mangler et felt', () => {
+    expect(() =>
+      parseVerificationInput(
+        svarMedPremisser(`{
+          "agent_run_id": "d3e0f6a0-0000-4000-8000-00000000000a",
+          "agent_role": "evidence_extraction",
+          "provider": "en-leverandør",
+          "model": "en-modell",
+          "pipeline_version": "antidep-evidence/1",
+          "started_at": "2026-09-15T09:00:00+00:00"
+        }`),
+      ),
+    ).toThrow(/drafted_by\.model_version/)
+  })
+})

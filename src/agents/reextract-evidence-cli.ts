@@ -59,10 +59,7 @@ import {
   readAgentConfig,
 } from './agent-environment.ts'
 import { redact } from './agent-credential.ts'
-import {
-  EVIDENCE_EXTRACTION_PREMISES,
-  EXTRACTION_VERIFICATION_PREMISES,
-} from './pipeline-version.ts'
+import { EXTRACTION_VERIFICATION_PREMISES } from './pipeline-version.ts'
 import { readProposalDirectory, readProposalFile } from './proposal-files.ts'
 import type { LabelledProposal } from './reextraction-run.ts'
 import { runReextraction } from './reextraction-run.ts'
@@ -161,7 +158,6 @@ async function main(): Promise<number> {
     const report = await runReextraction({
       extractionApi: createEvidenceExtractionApi(client, extractionConfig.credential),
       verificationApi: createExtractionVerificationApi(client, verificationConfig.credential),
-      extractionPremises: EVIDENCE_EXTRACTION_PREMISES,
       verificationPremises: EXTRACTION_VERIFICATION_PREMISES,
       proposals,
       dryRun: options.dryRun,

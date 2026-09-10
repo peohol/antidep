@@ -34,6 +34,27 @@ export interface VerificationSourceVersion {
   readonly hasStorageReference: boolean
 }
 
+/**
+ * Premissene kjøringen som produserte evidensfunnet, ble gjort under
+ * (migrasjon 005ac).
+ *
+ * Kontrollgrunnlag og ikke driftsinformasjon: en kontrollør leser et
+ * maskinutkast fra en bestemt modell og en bestemt promptmal annerledes enn en
+ * kollegas egen ekstraksjon, og «hvilke funn ble laget med denne malen» er et
+ * spørsmål kontrollflaten skal kunne svare på (ANTIDEP_CONSTITUTION.md §12,
+ * §20, EVIDENCE_PIPELINE.md §46, §65).
+ */
+export interface DraftingPremises {
+  readonly agentRunId: string
+  readonly agentRole: string
+  readonly provider: string
+  readonly model: string
+  readonly modelVersion: string
+  readonly promptTemplateVersion: string
+  readonly pipelineVersion: string
+  readonly startedAt: string
+}
+
 /** En global bibliografisk identifikator for kilden. */
 export interface SourceIdentifier {
   /** `doi` eller `pmid`. */
@@ -157,6 +178,15 @@ export interface VerificationItem {
   readonly sourceIdentifiers: readonly SourceIdentifier[]
   readonly sourceVersion: VerificationSourceVersion | null
   /**
+   * Premissene funnet ble laget under, eller `null`.
+   *
+   * `null` betyr at funnet ble registrert på editorveien, uten en agentkjøring
+   * — ikke at premissene er ukjente. Fraværet skal vises som fravær, og aldri
+   * fylles inn fra `extractionMethod`: den sier hvordan raden ble til, ikke
+   * hvilken modell eller hvilken promptmal som gjorde det.
+   */
+  readonly draftedBy: DraftingPremises | null
+  /**
    * Kildeforankringen per kontrollfelt, i vokabularets egen rekkefølge.
    *
    * Tom liste betyr at ingen forankring er registrert — tilstanden alle funn
@@ -256,6 +286,34 @@ function asOptionalNumericText(value: unknown, field: string): string | null {
 
 function asOptionalInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) ? value : null
+}
+
+/**
+ * Premissene, eller `null` når funnet ikke kom fra en agentkjøring.
+ *
+ * En manglende nøkkel leses som `null` og ikke som en feil: et svar fra en
+ * projeksjonsversjon eldre enn 005ac har den ikke. Er nøkkelen der, leses hvert
+ * felt strengt — en premiss som stille manglet, ville vist kontrolløren en
+ * halv proveniens, og en halv proveniens ser ut som en fullstendig én.
+ */
+function parseDraftedBy(value: unknown): DraftingPremises | null {
+  if (value === null || value === undefined) {
+    return null
+  }
+  const record = asRecord(value, 'drafted_by')
+  return {
+    agentRunId: asString(record['agent_run_id'], 'drafted_by.agent_run_id'),
+    agentRole: asString(record['agent_role'], 'drafted_by.agent_role'),
+    provider: asString(record['provider'], 'drafted_by.provider'),
+    model: asString(record['model'], 'drafted_by.model'),
+    modelVersion: asString(record['model_version'], 'drafted_by.model_version'),
+    promptTemplateVersion: asString(
+      record['prompt_template_version'],
+      'drafted_by.prompt_template_version',
+    ),
+    pipelineVersion: asString(record['pipeline_version'], 'drafted_by.pipeline_version'),
+    startedAt: asString(record['started_at'], 'drafted_by.started_at'),
+  }
 }
 
 function parseSourceVersion(value: unknown): VerificationSourceVersion | null {
@@ -445,6 +503,7 @@ export function parseVerificationItem(value: unknown): VerificationItem {
     sourceStatusNote: asOptionalString(source['status_note']),
     sourceIdentifiers: parseSourceIdentifiers(source['identifiers']),
     sourceVersion: parseSourceVersion(record['source_version']),
+    draftedBy: parseDraftedBy(record['drafted_by']),
     fieldGroundings: parseFieldGroundings(record['field_groundings']),
     semanticCheckFields: parseCheckFieldList(
       record['semantic_check_fields'],

@@ -1,0 +1,15 @@
+{
+  "assignment_version": "antidep/extraction-assignment@1",
+  "source_id": "00000000-0000-4000-8000-000000000001",
+  "source_version_id": "00000000-0000-4000-8000-000000000002",
+  "retrieved_from": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=00000000&retmode=xml",
+  "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "drugs": [
+    { "drug_id": "00000000-0000-4000-8000-00000000000a", "label": "sertralin" },
+    { "drug_id": "00000000-0000-4000-8000-00000000000c", "label": "escitalopram" }
+  ],
+  "outcomes": [
+    { "outcome_concept_id": "00000000-0000-4000-8000-00000000000b", "label": "vektendring" }
+  ],
+  "populations": []
+}

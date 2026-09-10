@@ -15,14 +15,16 @@
 // Hva denne kjøringen er, og hva den ikke er
 //
 // Den er *ikke* leddet som leser en artikkel og bestemmer at utvalget var 48.
-// Det krever en språkmodell, og dermed en leverandør og en konto (issue #63).
-// Forslaget kommer derfor utenfra, som data (`extraction-proposal.ts`).
+// Det er `drafting-run.ts`, som er en modelloperasjon uten databasetilgang, og
+// forslaget kommer hit som data (`extraction-proposal.ts`) — enten det er
+// skrevet av modell-leddet, av ChatGPT utenfor Antidep eller av et menneske.
 //
 // Den er alt det andre, og det er den delen som må være deterministisk:
 // kjøringens proveniens, at representasjonen er nøyaktig den registrerte
 // kildeversjonen, at hvert utdrag faktisk står i den, og selve registreringen.
-// Et modell-ledd som skriver forslagsformen, kobles på uten at noe av dette
-// endres — og går gjennom nøyaktig de samme kontrollene.
+// Kontrollene er de samme uansett hvem som skrev forslaget; det eneste som
+// følger med produsenten, er premissene kjøringen registreres under og hvilken
+// `extraction_method` raden får (`pipeline-version.ts`).
 //
 // ----------------------------------------------------------------------------
 // Hvorfor utdragene kontrolleres her og ikke bare av verifikatoren
@@ -48,10 +50,12 @@
 // ============================================================================
 
 import type { Uuid } from '../types/api.ts'
-import type { AgentRunPremises, EvidenceExtractionApi } from './agent-api.ts'
+import type { EvidenceExtractionApi } from './agent-api.ts'
 import { collidingEvidenceItemId, isUniqueViolation } from './agent-api.ts'
 import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
+import { extractionMethodFor } from './extraction-proposal.ts'
+import { extractionPremisesFor } from './pipeline-version.ts'
 import type { RetrievalResult, RetrieveOptions } from './source-retrieval.ts'
 import { retrieveRepresentation } from './source-retrieval.ts'
 
@@ -59,7 +63,14 @@ export type RetrieveLike = (url: string) => Promise<RetrievalResult>
 
 export interface ExtractionRunOptions {
   readonly api: EvidenceExtractionApi
-  readonly premises: AgentRunPremises
+  /**
+   * Forslaget kjøringen registrerer.
+   *
+   * Kjøringens premisser tas ut av det (`extractionPremisesFor`) framfor å
+   * oppgis av kalleren: hvem som leste artikkelen, er en egenskap ved forslaget,
+   * og en kaller som kunne oppgitt noe annet, kunne registrert et menneskes
+   * ekstraksjon som en modells.
+   */
   readonly proposal: ExtractionProposal
   /** Kontroller og rapporter, men registrer ingenting. */
   readonly dryRun?: boolean
@@ -169,7 +180,6 @@ export async function runEvidenceExtraction(
 ): Promise<ExtractionRunReport> {
   const {
     api,
-    premises,
     proposal,
     dryRun = false,
     retrieve = (url) => retrieveRepresentation(url, options.retrieveOptions),
@@ -177,6 +187,8 @@ export async function runEvidenceExtraction(
   } = options
 
   const groundedFields = proposal.fieldGroundings.map((grounding) => grounding.checkField)
+  const premises = extractionPremisesFor(proposal.generatedBy)
+  const extractionMethod = extractionMethodFor(proposal.generatedBy.producer)
   // Kildeversjonen oppgis strukturert, ikke bare i manifestet: den binder
   // evidensfunnet til nøyaktig den utgaven kjøringen leste, deklarativt
   // (evidence_items_agent_run_source_version_fkey, migrasjon 005z). Manifestet
@@ -189,6 +201,11 @@ export async function runEvidenceExtraction(
       retrieved_from: proposal.retrievedFrom,
       content_hash: proposal.contentHash,
       grounded_fields: groundedFields,
+      // Hvem som leste artikkelen, og hva raden derfor registreres som. Står i
+      // manifestet ved siden av premissene fordi manifestet er dokumentasjonen
+      // av hva kjøringen faktisk fikk inn (ANTIDEP_CONSTITUTION.md §14).
+      producer: proposal.generatedBy.producer,
+      extraction_method: extractionMethod,
       dry_run: dryRun,
     },
     proposal.sourceVersionId,
@@ -236,6 +253,7 @@ export async function runEvidenceExtraction(
         sourceVersionId: proposal.sourceVersionId,
         extraction: proposal.extraction,
         fieldGroundings: proposal.fieldGroundings,
+        extractionMethod,
       })
     } catch (cause) {
       if (!isUniqueViolation(cause)) {

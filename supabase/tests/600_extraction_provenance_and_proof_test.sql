@@ -150,6 +150,7 @@ insert into registered select 'item', api.register_agent_extraction(
   p_estimate_availability := 'not_reported',
   p_confidence_interval_availability := 'not_reported',
   p_source_locator := 'Avsnitt for 600',
+  p_extraction_method := 'ai_assisted',
   p_field_groundings := jsonb_build_array(
     jsonb_build_object('check_field', 'intervention_arm', 'source_excerpt', 'Patients received sertraline.',
                        'source_locator', 'Metode', 'justification', 'Armen står i metodeavsnittet.'),
@@ -545,6 +546,7 @@ insert into registered select 'item-b', api.register_agent_extraction(
   p_estimate_availability := 'not_reported',
   p_confidence_interval_availability := 'not_reported',
   p_source_locator := 'Avsnitt B for 600',
+  p_extraction_method := 'ai_assisted',
   p_field_groundings := jsonb_build_array(
     jsonb_build_object('check_field', 'intervention_arm', 'source_excerpt', 'Patients received sertraline.',
                        'source_locator', 'Metode', 'justification', 'Armen står i metodeavsnittet.'),

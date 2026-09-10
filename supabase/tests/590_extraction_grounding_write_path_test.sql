@@ -163,6 +163,7 @@ begin
     p_estimate_availability => 'not_reported',
     p_confidence_interval_availability => 'not_reported',
     p_source_locator => 'Avsnitt for 590',
+    p_extraction_method => 'ai_assisted',
     p_field_groundings => p_groundings,
     p_source_quote => 'Weight change was 1.7 kg in the sertraline arm.'
   );

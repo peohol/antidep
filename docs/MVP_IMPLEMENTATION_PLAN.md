@@ -1391,7 +1391,8 @@ PR G  db: add publication events and gate                                   (#15
       feat: add the human extraction check and make publication operational (#61)  merget   migrasjon 005q, 005r, 005s, 005t, 006g, 006h
       feat: rebuild the human control flow as a guided session              (#62)  merget   migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å
       feat: make the current review decision race-safe                      (#65)  merget   migrasjon 006i, 007h
-      db: make the source grounding part of an evidence item's identity    (#67)  åpen     migrasjon 003d
+      db: make the source grounding part of an evidence item's identity    (#67)  merget   migrasjon 003d
+      feat: add the model link that reads a source and drafts a proposal    (#68)  åpen     migrasjon 005ab, 005ac
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1493,7 +1494,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2039 pgTAP-assertions over 62 testfiler.
+Databaselaget teller nå 2063 pgTAP-assertions over 63 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1665,13 +1666,14 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
-   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h og 003d — i
+   007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab
+   og 005ac — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0 og 0.
+   0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle sekstiseks ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle sekstiåtte ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -6775,6 +6777,130 @@ arver den menneskelige kontrollen eller claim-lenken, at den gamle raden står m
 avtrykk, samme forankring og samme kontroller som før, og at den publiserte påstanden fortsatt
 viser bare det gamle funnet. Re-ekstraksjonens egne tester uten database er skrevet om til den
 nye regelen: en rettet forankring registreres og kontrolleres, framfor å meldes som en konflikt.
+
+---
+
+### 74.41 Modell-leddet finnes, og leverandøren ligger bak et adapter
+
+Issue #63 førte ett ledd som gjenstående: det som *leser* en artikkel og foreslår de
+strukturerte verdiene for ett evidensfunn. Punkt 1, 3, 4 og 5 var bygget; punkt 2 manglet.
+Det er nå bygget — og bygget slik at det ikke krever en leverandørkonto for å kunne kjøres,
+prøves eller regresjonstestes.
+
+**To migrasjoner.**
+
+| Migrasjon | Hva den gjør |
+| --- | --- |
+| 005ab | Skriveveien tar imot `p_extraction_method` framfor å hardkode `ai_assisted` |
+| 005ac | Kontrollgrunnlaget bærer premissene kjøringen ble gjort under |
+
+**Rollen er delt i to operasjoner med hver sine rettigheter.** Modell-leddet
+(`npm run agent:propose-extraction`) henter kildeversjonen, krever at fingeravtrykket er den
+registrerte, bygger den versjonerte prompten, spør et modelladapter, og skriver ett
+ekstraksjonsforslag som fil. Det har **ingen databasetilgang, ingen agentlegitimasjon og
+ingen skrivevei**. Registreringen er som før ekstraksjonsagentens, med sin egen identitet og
+sin egen rolle. Delingen er ikke kosmetikk: leddet er det eneste i kjeden som tar imot utrygt
+eksternt innhold i en modellkontekst, og et ledd som gjør det, skal ikke samtidig kunne
+skrive en rad (EVIDENCE_PIPELINE.md §63).
+
+**Leverandøren er to metoder.** `ModelClient` er hvem som svarte, og én forespørsel inn, én
+tekst ut. Ingen verktøy, ingen funksjonskall, ingen tilgang til Antidep. Svaret er ren tekst
+med vilje: strukturerte utdata heter forskjellige ting hos hver leverandør, og et grensesnitt
+som forutsatte én av formene, ville vært bundet til den ene i praksis. Kontrollen av formen
+ligger derfor der den uansett måtte ligge — i `parseExtractionDraft`, som avviser alt som ikke
+er kontrakten. Garantien er vår, ikke leverandørens (§62).
+
+**Adapteret som finnes, spiller av et opptak.** Et opptak er et modellsvar lagret sammen med
+fingeravtrykket av forespørselen det svarte på. Det er ikke en test-dobbel: det er
+arbeidsformen i dag. `--prepare` skriver ut prompten og et tomt opptak med riktig avtrykk,
+prompten kjøres der modellen faktisk kjører — utenfor Antidep — og svaret limes inn. Hele
+kjeden fra kilde til publisert påstand kan dermed kjøres, om igjen og om igjen, uten kostnad.
+Et leverandøradapter er **én oppføring** i `src/agents/model-adapters.ts`; kontrakten,
+kjøringen, kontrollene og databasen er uendret (ANTIDEP_CONSTITUTION.md §20, §66).
+
+**Oppslaget er på avtrykket, ikke på et navn.** Forespørselen inneholder hele
+representasjonen, katalogen i oppdraget og promptmalversjonen. Et opptak nøklet på et filnavn
+kunne blitt spilt av for en *annen* artikkel — altså et svar som ikke var lest ut av noe. Nå
+finnes svaret ikke lenger når én av delene endrer seg, og det er riktig utfall.
+
+**Modellen får ikke velge fritt i katalogen.** Hvilket virkestoff og hvilket endepunkt et funn
+gjelder, er en faglig avgrensning, og den leveres som et *oppdrag* (`assignments/`): den
+kildeversjonen som skal leses, og de identifikatorene funnet kan peke på. En modell som kunne
+valgt fritt, kunne flyttet funnet til et naboendepunkt uten at noe merket det — utdragene
+ville fortsatt stått ordrett i kilden, og den deterministiske kontrollen kontrollerer utdrag,
+ikke avgrensning. Oppdraget lages av en kvalifisert redaktør, som har leseflaten inn i
+katalogen; modell-leddet har den ikke.
+
+**Kildeteksten er data, og gjerdet er utledet av teksten selv.** Representasjonen står mellom
+to markører, og malen sier at alt mellom dem er data (§3.8). Markøren bærer de første tegnene
+av representasjonens eget fingeravtrykk. Det gir to egenskaper samtidig: deterministisk, så
+et opptak kan spilles av igjen, og likevel ikke skrivbar inn i artikkelen — det ville krevd
+sha256 av en tekst som inneholder nettopp den markøren. Står markøren likevel der, bygges
+ingen forespørsel.
+
+**Generatoren skriver ikke noe den vet er galt.** Før forslaget blir en fil, kontrollerer
+leddet sitt eget svar: at hver identifikator står i oppdraget, at hvert `source_excerpt` står
+ordrett i representasjonen, og at et eventuelt `source_quote` gjør det. Dette er ikke *den*
+kontrollen — den er fortsatt en separat operasjon, av en annen identitet, senere i kjeden, og
+uten den kan ingen menneskelig bekreftelse registreres (migrasjon 005x). Forskjellen er hva
+som skjer ved et avvik: uten kontrollen her ville et oppdiktet utdrag blitt en fil, så en rad,
+så noe en kontrollør måtte avvise.
+
+**Kontrakten er versjon 2, og den sier hvem som laget forslaget.** `generated_by` er påkrevd:
+leverandør, modell, modellversjon og promptmalversjon registreres som premissene for
+agentkjøringen som skriver raden, og `producer` sier om det var en modell eller et menneske
+som leste artikkelen. Uten feltet måtte kjøringen oppgi en fast verdi for hvert forslag —
+altså registrere et menneskes ekstraksjon som en modells, og omvendt. Pipelineversjonen står
+bevisst *ikke* i filen: den er Antideps egen, og et forslag utenfra skal ikke kunne påstå noe
+om hvilken pipeline som registrerte det.
+
+**Derfor tar skriveveien nå imot ekstraksjonsmetoden.** Innvendingen mot en parameter var
+reell — raden skal si hvordan den ble til, og det er ikke noe en klient skal finne på — men
+alternativet var ikke «ingen påstand», det var *en usann påstand*: `ai_assisted` for hvert
+eneste forslag et menneske har skrevet. Vokabularet er lukket til de to verdiene denne veien
+faktisk beskriver, `deterministic_import` avvises, og verdien inngår i `content_hash`. De
+samme verdiene erklært av et menneske og av en modell er derfor to rader, ikke én rad som
+skifter mening; append-only står.
+
+**Kontrollflaten viser hvem som laget verdiene.** Premissene fantes, men bare på
+`provenance.agent_runs` — ikke i det bildet mennesket og den maskinelle kontrollen arbeider
+fra. En kontrollør som vet at verdiene er et maskinutkast fra en bestemt modell og en bestemt
+promptmal, leser dem annerledes enn en som tror en kollega skrev dem, og motsatt
+(EVIDENCE_PIPELINE.md §46). Nøkkelen ligger på den ene projeksjonen begge flatene leser, så de
+aldri kan kontrollere hvert sitt grunnlag, og den er `null` — ikke et objekt med tomme felter
+— for et funn ført inn i adminflyten uten kjøring.
+
+**Ingen regel er myket opp.** Ingen CHECK, constraint, trigger, policy eller grant er fjernet
+eller svekket, og ingen ny tabelltilgang er gitt til `anon` eller `authenticated`.
+Skriveveien beholder hvert vilkår den hadde — autentisering for rollen, åpen kjøring, påkrevd
+kildeversjon med registrert representasjon, komplett forankring — og har fått ett til.
+
+**Testene.** `630` bærer de to migrasjonene: at den gamle signaturen ikke står igjen, at
+parameteren er påkrevd uten standardverdi, at rettighetene er uendret, at begge metodene
+registreres og gir hvert sitt fingeravtrykk, at `deterministic_import` og en ukjent verdi
+avvises uten å etterlate noe, at premissene står i grunnlaget med alle sine felter, at de er
+`null` uten agentkjøring, og at begge flatene bygges av den samme projeksjonen. Uten database
+prøves modellgrensesnittet, promptmalen, opptaket, adapterregisteret, oppdraget og selve
+modell-leddet — inkludert at et utkast med en katalogverdi utenfor oppdraget, et oppdiktet
+utdrag eller et omskrevet sitat aldri blir et forslag.
+
+`scripts/agent-chain-test.ts` har fått et åttende ledd, og det er det sterkeste: modell-leddet
+kjøres med opptaksadapteret mot den ekte databasen, forslaget går gjennom filformen og de ekte
+portene til et gyldig maskinbevis, kjøringen bærer modellens egne premisser, kontrollgrunnlaget
+viser dem, og de samme verdiene erklært av et menneske blir en annen rad ført som `manual`. Et
+utkast med et oppdiktet utdrag prøves også: det blir ikke et forslag, og ingenting i basen
+endrer seg av det.
+
+**Én rettelse på veien.** Kjedeprøven ryddet ikke `knowledge.publication_events` mellom
+kjøringene, så den andre kjøringen mot den samme databasen møtte forseglingen av en revisjon
+som hadde vært publisert. Den er nå med i opprydningen, og prøven kan kjøres om igjen slik
+hodekommentaren alltid har sagt at den skal.
+
+**Hva som fortsatt krever et menneske.** Alt som krevde det før. Forslaget er et forslag:
+det registreres under de deterministiske kontrollene, kontrolleres maskinelt av en annen
+identitet, bekreftes felt for felt av en kvalifisert redaktør, lenkes til en påstand som en
+faglig vurdering, og godkjennes før publisering (ANTIDEP_CONSTITUTION.md §10, §11, §12).
+Kjeden ble ikke kortere; den fikk et ledd til i forkant.
 
 ---
 

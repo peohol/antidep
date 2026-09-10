@@ -1,0 +1,11 @@
+# Oppdrag er lokal inndata, ikke faglig innhold. De skal ikke commites: et
+# oppdrag peker på en kildeversjon i et bestemt miljø, og id-ene i det gjelder
+# bare der. Det samme gjelder alt --prepare skriver: prompten og opptaket er
+# arbeidsfiler, og modellsvaret hører hjemme i en registrert rad med proveniens
+# — ikke som en fil i repoet.
+#
+# Eksempelet og denne teksten er unntakene. De er kildekode.
+*
+!.gitignore
+!README.md
+!eksempel-syntetisk-oppdrag.json
