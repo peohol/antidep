@@ -92,6 +92,28 @@ CI (GitHub Actions, `.github/workflows/ci.yml`) kjører lint, formatkontroll, ty
 tester og produksjonsbygg på alle pull requests og på `main`, og verifiserer i en egen jobb
 at den lokale Supabase-stacken booter fra clean checkout.
 
+### Åpen sikkerhetsvurdering: deploy-arbeidsflyten og pull requests
+
+`.github/workflows/vercel.yml` kjører på **alle** `pull_request`, legger `VERCEL_TOKEN` i
+jobbens miljø, sjekker ut PR-ens kode og kjører `vercel build` — som kjører byggskriptene fra
+den branchen. En pull request fra en branch i _samme_ repo får repository-secrets, i
+motsetning til en fra en fork. Kode på en PR-branch kan derfor kjøre med deploy-tokenet
+tilgjengelig.
+
+Det gjelder alle med pushetilgang, og er ikke innført av evidenspipelinen. Men det er grunnen
+til at en autonom aktør som leser eksternt kildemateriale, **ikke** skal ha pushetilgang til
+dette repoet (`docs/ROUTINE_EXTRACTION.md` §3.5).
+
+Tre veier videre, som krever en beslutning framfor mer kode:
+
+1. La Vercels egen Git-integrasjon lage forhåndsvisninger, og fjern `pull_request` fra denne
+   arbeidsflyten.
+2. Behold arbeidsflyten, men legg **required reviewers** på `Preview`-miljøet i GitHub, slik
+   at secrets ikke deles ut før noen godkjenner kjøringen.
+3. Behold den som den er, med pushetilgang begrenset til mennesker.
+
+Valget påvirker hvordan forhåndsvisninger lages, og hører derfor til eieren av prosjektet.
+
 ## Miljøvariabler
 
 Kopier `.env.example` til `.env.local` og fyll inn verdier ved behov; for lokal utvikling

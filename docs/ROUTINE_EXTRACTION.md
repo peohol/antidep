@@ -44,11 +44,13 @@ sier hvordan den grensen settes, og hvorfor den må settes der.
 ```text
 registrert kildeversjon
   → ekstraksjonsoppdrag            (en kvalifisert redaktør avgrenser)
-  → npm run agent:draft-extraction --open
-  → Claude Code leser prompt.txt og skriver svar.json
-  → npm run agent:draft-extraction --close
-        form-, katalog- og ordretthetskontroll
-  → forslag.json
+┌─ modell-leddet ─────────────────────────────────────────── én økt ─┐
+│  → npm run agent:draft-extraction --open                            │
+│  → aktøren leser prompt.txt og skriver svar.json                    │
+│  → npm run agent:draft-extraction --close                           │
+│        form-, katalog- og ordretthetskontroll                       │
+│  → forslag.json                                                     │
+└─────────────────────────────────────────────────────────────────────┘
   → npm run agent:extract-evidence   (registrering, egen identitet)
   → npm run agent:verify-extraction  (separat maskinell kontroll, egen identitet)
   → menneskelig kontroll og godkjenning før publisering
@@ -57,17 +59,22 @@ registrert kildeversjon
 Ingen av leddene faller bort fordi en Routine kjører det første. Kjeden er den
 samme; den har fått en aktør i forkant.
 
+**Rammen i midten er ikke pynt.** Alt innenfor den skjer i én økt, med ett
+filsystem. Alt utenfor er egne operasjoner med egen legitimasjon. Hvordan
+oppdraget kommer *inn* i rammen og forslaget kommer *ut* av den, er ikke en
+detalj — se avsnitt 3.5.
+
 ---
 
-## 3. To Routines, og grensen mellom dem
+## 3. Grensen rundt modell-leddet
 
-Det anbefalte oppsettet er **to** Routines. Skillet er en sikkerhetsgrense, ikke en
-oppdeling av bekvemmelighet.
+Modell-leddet og registreringen er **to operasjoner med hver sine rettigheter**.
+Skillet er en sikkerhetsgrense, ikke en oppdeling av bekvemmelighet.
 
-| Routine | Hva den gjør | Kjøremiljø | Connectorer |
-| --- | --- | --- | --- |
-| **A — modell-leddet** | Åpner kjøringen, leser kilden, skriver svaret, lukker kjøringen | Eget miljø **uten** skrivekapable hemmeligheter | **Ingen** |
-| **B — registrering og kontroll** | Registrerer forslaget og kjører den deterministiske kontrollen | Eget miljø med agentlegitimasjonen | Ingen |
+| Ledd | Hva det gjør | Kjøremiljø | Connectorer | Repo-tilgang |
+| --- | --- | --- | --- | --- |
+| **A — modell-leddet** | Åpner kjøringen, leser kilden, skriver svaret, lukker kjøringen | Eget miljø **uten** skrivekapable hemmeligheter | **Ingen** | Må **ikke** kunne pushe til dette repoet |
+| **B — registrering og kontroll** | Registrerer forslaget og kjører den deterministiske kontrollen | Eget miljø med agentlegitimasjonen | Ingen | Trenger ingen |
 
 ### 3.1 Hvorfor grensen må ligge i kjøremiljøet
 
@@ -84,16 +91,22 @@ kalle enhver connector som er inkludert, «including writes, without asking for
 permission during a run», og alle tilkoblede connectorer er **med som standard**
 når en Routine opprettes.
 
-Det betyr at grensen ikke kan ligge i Antideps kode alene. **Kjøremiljøet og
-connectorlisten er den primære grensen.** En modell som har lest en artikkel med
-noe instruksjonslignende i seg, kan bruke hva som helst sesjonen faktisk har — og
-det eneste som gjør at den ikke kan skrive til produksjon, er at den ikke har noe
-å skrive med.
+Det betyr at grensen ikke kan ligge i Antideps kode alene. **Kjøremiljøet,
+connectorlisten og repo-tilgangen er den primære grensen** — de tre tingene
+Anthropics dokumentasjon selv sier avgjør hva en Routine kan nå. En modell som
+har lest en artikkel med noe instruksjonslignende i seg, kan bruke hva som helst
+økten faktisk har, og det eneste som gjør at den ikke kan skrive til produksjon,
+er at den ikke har noe å skrive med.
 
-### 3.2 Hva Routine A ikke skal ha
+Repo-tilgangen er den som er lettest å overse. En Routine pusher `claude/`-brancher
+som standard, med **din** GitHub-identitet, og kan åpne pull requests. Det er ikke
+en tilgang til Antideps kunnskapsbase, men det er en tilgang til koden — og i
+dette repoet er det en vei videre, se 3.5.
 
-Bruk et **eget kjøremiljø** for Routine A, ikke det samme som B eller som annet
-arbeid. Miljøet skal ikke inneholde:
+### 3.2 Hva økten som leser artikkelen, ikke skal ha
+
+Bruk et **eget kjøremiljø** for modell-leddet, ikke det samme som registreringen
+eller annet arbeid. Miljøet skal ikke inneholde:
 
 - `SUPABASE_ACCESS_TOKEN` — Management-API-tokenet. `scripts/deploy-migrations.sh`
   i dette repoet kjører vilkårlig SQL mot produksjonsbasen med det.
@@ -102,7 +115,7 @@ arbeid. Miljøet skal ikke inneholde:
 - En service-role- eller secret-nøkkel til Supabase.
 - `ANTIDEP_*_SECRET` — agentlegitimasjonen.
 
-**Fjern alle connectorer fra Routine A.** Den trenger ingen. En Supabase-connector
+**Fjern alle connectorer.** Modell-leddet trenger ingen. En Supabase-connector
 er en skrivevei rett forbi hele kjeden, og en hvilken som helst annen
 skrivekapabel connector er det samme.
 
@@ -131,7 +144,7 @@ Derfor: kjøremiljø og connectorliste først, vakten som et lag under.
 
 ### 3.4 Hva et brudd faktisk ville gitt
 
-Selv om Routine A skulle klare å skrive til basen forbi `--close`, ville det
+Selv om økten skulle klare å skrive til basen forbi `--close`, ville det
 **ikke** gitt en publisert påstand. Registreringen henter kildeversjonen på nytt,
 krever at fingeravtrykket er den registrerte, og prøver hvert utdrag ordrett; den
 maskinelle kontrollen av en annen identitet står igjen; og den menneskelige
@@ -139,6 +152,39 @@ kontrollen felt for felt står igjen. Det som ville vært omgått, er **avgrensn
 mot oppdragets katalog** — altså hvilket virkestoff og hvilket endepunkt funnet
 sies å gjelde. Det er alvorlig nok til at grensen skal være reell, og ikke bare
 dokumentert.
+
+### 3.5 To ting som ikke er løst, og som begrenser hva som kan automatiseres i dag
+
+Dette avsnittet står her framfor i en issue, fordi det avgjør hva oppsettet
+faktisk kan være — ikke bare hva som kunne vært bedre.
+
+**1. To Routine-kjøringer deler ikke filsystem.** Hver kjøring starter som en ny
+sky-økt, og hvert repo klones på nytt fra default branch. Grensesnittet i
+modell-leddet er lokale, gitignorerte filer: oppdraget, kjøremappa og forslaget.
+En fersk kjøring har derfor verken det reelle oppdraget eller et forslag en
+tidligere kjøring laget. **Det finnes ingen transportkanal mellom to Routines i
+dag**, og en beskrivelse av «Routine A leverer til Routine B» ville vært en flyt
+som ikke kan kjøre.
+
+Konsekvensen er avsnitt 4 og 6: oppdraget kommer inn gjennom Routinens **prompt**,
+og forslaget hentes ut av **den samme økten** som laget det. Registreringen er en
+egen, bevisst operasjon — ikke en andre Routine som magisk har filene til den
+første.
+
+En transportkanal må velges bevisst når den trengs, og den skal ikke være
+«commit de kliniske arbeidsfilene» eller «kjør begge leddene i én skrivekapabel
+økt».
+
+**2. Byggarbeidsflyten gir PR-kode tilgang til et deploy-token.**
+`.github/workflows/vercel.yml` kjører på **alle** `pull_request`, legger
+`VERCEL_TOKEN` i jobbens miljø, sjekker ut PR-ens kode og kjører `vercel build` —
+som kjører byggskriptene fra den branchen. En pull request fra en branch i
+*samme* repo får repository-secrets, i motsetning til en fra en fork.
+
+Det er en svakhet som gjelder alle med pushetilgang, og den fantes før dette
+arbeidet. Men den er grunnen til at Routine A **ikke** skal ha pushetilgang til
+dette repoet: uten den er veien stengt, med den er den åpen. Se `README.md`,
+avsnittet om denne arbeidsflyten, for hva som må avgjøres.
 
 ---
 
@@ -167,9 +213,24 @@ lages og hvor verdiene står. Kort:
 Dette er det eneste steget som krever et menneske med `editor`-rolle, og det er
 med hensikt.
 
+### 4.1 Hvordan oppdraget kommer inn i økten
+
+Oppdragsfiler er gitignorerte (`assignments/.gitignore`), og en Routine-kjøring
+klone repoet på nytt hver gang. Et oppdrag som bare ligger lokalt hos redaktøren,
+finnes derfor ikke i økten.
+
+**Oppdraget leveres derfor i Routinens prompt**, som JSON, og aktøren skriver det
+til en fil før den kjører kommandoene. Prompten er lagret på kontoen av en
+autorisert økt, og er Routinens egen instruks — ikke innhold hentet under
+kjøringen. `.claude/routines/ekstraksjonsoppdrag.md` har plassen der oppdraget
+limes inn.
+
+Det er redaktøren som skriver oppdraget uansett; det som er nytt, er at det
+limes inn i Routinen framfor å legges i en katalog aktøren ikke kan se.
+
 ---
 
-## 5. Routine A: modell-leddet
+## 5. Modell-leddet, steg for steg
 
 ### 5.1 Kommandoene
 
@@ -251,10 +312,10 @@ sier fra framfor å lukke et svar som ble lest ut av en annen tekst.
 
 ---
 
-## 6. Routine B: registrering og kontroll
+## 6. Registrering og kontroll: en egen, bevisst operasjon
 
 ```bash
-npm run agent:extract-evidence -- --proposal assignments/<navn>/forslag.json
+npm run agent:extract-evidence -- --proposal <sti>/forslag.json
 npm run agent:verify-extraction
 ```
 
@@ -267,6 +328,24 @@ generering og verifikasjon er to operasjoner, av to aktører
 Legitimasjonen settes som beskrevet i
 [`../supabase/README.md`](../supabase/README.md), avsnittet «Legitimasjon til
 agentidentiteten».
+
+### 6.1 Hvordan forslaget kommer ut av økten
+
+Dette er ikke automatisert, og skal ikke late som om det er det (3.5). Forslaget
+ligger i kjøremappa til den økten som laget det, og kommer videre på én av to
+måter:
+
+- **Kjøringen åpnes.** Hver Routine-kjøring er en økt som blir stående, og som et
+  menneske kan åpne og arbeide videre i. Filen ligger der.
+- **Aktøren skriver ut forslaget** til slutt, og et menneske tar det med til der
+  registreringen kjøres.
+
+Begge krever et menneske i mellomleddet, og det er inntil videre riktig: en
+skrivende operasjon mot kunnskapsbasen er en bevisst handling, ikke noe som
+skjer fordi en tidligere kjøring ble ferdig.
+
+Kjør derfor **ikke** registreringen i den samme økten som leste artikkelen. Da er
+grensen i avsnitt 3 borte.
 
 Etter dette er funnet klart for den menneskelige kontrollen i appen. Ingenting
 publiseres uten den.
@@ -286,18 +365,28 @@ Prompten er kort med vilje: den peker på ferdigheten
 som ligger i repoet og derfor følger med hver endring av arbeidsflyten. Da kan
 ikke Routinen og repoet komme i utakt.
 
-Anbefalt oppsett, i denne rekkefølgen:
+Oppsettet, i denne rekkefølgen:
 
-1. **Lag et eget kjøremiljø for Routine A.** Ingen `SUPABASE_ACCESS_TOKEN`, ingen
+1. **Lag et eget kjøremiljø.** Ingen `SUPABASE_ACCESS_TOKEN`, ingen
    databasepassord eller service-role-nøkkel, ingen `ANTIDEP_*_SECRET`. Sett
    nettverkstilgangen til **Custom** med bare kildeleverandørens domener.
-2. **Fjern alle connectorer fra Routine A** i opprettelsesskjemaet. De er med som
-   standard, og Routinen trenger ingen av dem.
-3. **Routine A** kjøres på forespørsel, med oppdragsfilen som eneste variabel.
-4. **Routine B** kjøres etter A, i et *annet* miljø, med agentlegitimasjonen.
+2. **Fjern alle connectorer** i opprettelsesskjemaet. De er med som standard, og
+   Routinen trenger ingen av dem.
+3. **Sørg for at Routinen ikke kan pushe til dette repoet.** Så lenge
+   byggarbeidsflyten gir PR-kode et deploy-token (3.5), er pushetilgang en vei
+   videre. Er det ikke mulig å skille i dag, er konklusjonen at modell-leddet
+   ikke skal kjøres som en sky-Routine mot dette repoet ennå — kjør det i en økt
+   du selv styrer, i et arbeidstre uten skrivekapabel legitimasjon.
+4. **Lim oppdraget inn i prompten** (4.1). Det finnes ikke i en fersk klone.
+5. **Registreringen kjøres for seg** (6.1), ikke i den samme økten.
 
-Punkt 1 og 2 er selve sikkerhetsgrensen (avsnitt 3). Hopper man over dem, er
+Punkt 1, 2 og 3 er selve sikkerhetsgrensen (avsnitt 3). Hopper man over dem, er
 resten bare dokumentasjon.
+
+**Full automatisering av hele kjeden er ikke klar.** Det som er klart, er
+modell-leddet: kommandoene, filformene, kontraktene, kontrollene og instruksene.
+Det som gjenstår, står i 3.5, og begge delene krever en beslutning framfor mer
+kode.
 
 ---
 

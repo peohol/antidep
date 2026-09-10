@@ -7016,6 +7016,17 @@ mot den ekte databasen, der forslaget `--close` skrev, går uendret gjennom de e
 til et gyldig maskinbevis, og kontrollgrunnlaget bærer identiteten aktøren erklærte i
 svarfilen.
 
+**Hva som ikke er etablert, og som ble tydeligere under review.** To Routine-kjøringer deler
+ikke filsystem: hver kjøring er en ny økt med en fersk klone av repoet, og grensesnittet i
+modell-leddet er lokale, gitignorerte filer. Oppdraget leveres derfor i Routinens egen prompt,
+og forslaget hentes ut av den økten som laget det; registreringen er en bevisst operasjon et
+menneske setter i gang. En transportkanal mellom to kjøringer finnes ikke, og skal velges
+bevisst når den trengs — ikke ved å commite kliniske arbeidsfiler eller ved å kjøre begge
+leddene i én skrivekapabel økt. I tillegg gir `.github/workflows/vercel.yml` kode på en
+PR-branch tilgang til et deploy-token, som er grunnen til at en aktør som leser eksternt
+kildemateriale, ikke skal ha pushetilgang til dette repoet. Begge deler står i
+`ROUTINE_EXTRACTION.md` §3.5, og begge krever en beslutning framfor mer kode.
+
 **Hva som gjenstår, og som ikke skal automatiseres bort.** Den første *reelle* ekstraksjonen
 fra en faktisk vitenskapelig artikkel er ikke gjort. Den skal gjøres av ChatGPT sammen med
 Peder, som validering av prompten, kontrakten og hele arbeidsflyten, før tilsvarende arbeid
