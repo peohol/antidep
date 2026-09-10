@@ -89,6 +89,7 @@ import type { ExtractionProposal } from './extraction-proposal.ts'
 import type { ExtractionRunReport, RetrieveLike } from './extraction-run.ts'
 import { runEvidenceExtraction } from './extraction-run.ts'
 import type { RegistrationMode } from './extraction-proposal.ts'
+import { registrationModeProblem } from './extraction-proposal.ts'
 import type { RunReport } from './extraction-verification-run.ts'
 import { runExtractionVerification } from './extraction-verification-run.ts'
 import type { RetrieveOptions } from './source-retrieval.ts'
@@ -192,6 +193,28 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
     retrieveOptions,
     log = () => {},
   } = options
+
+  // Hele køen prøves mot modusen *før* den første registreringen.
+  //
+  // Kontrollen finnes i registreringen også, og den er den bindende. Men der
+  // slår den til midt i køen: en katalog med ni maskinutkast og ett
+  // menneskeskrevet forslag ville skrevet ni rader og så stanset. Modusen
+  // gjelder hele køen, så et avvik er en feil ved kallet, ikke ved den ene
+  // filen — og en feil ved kallet skal oppdages før noe er skrevet.
+  const mismatched = proposals
+    .map(({ label, proposal }) => ({
+      label,
+      problem: registrationModeProblem(options.mode, proposal.generatedBy.producer),
+    }))
+    .filter((entry): entry is { label: string; problem: string } => entry.problem !== null)
+  if (mismatched.length > 0) {
+    throw new Error(
+      `Køen ble ikke åpnet: ${String(mismatched.length)} av ${String(proposals.length)} forslag ` +
+        'stemmer ikke med arbeidsformen kjøringen ble startet under. Arbeidsformen gjelder hele ' +
+        'køen, så en blandet katalog må kjøres i to omganger — eller forslagene deles i hver sin ' +
+        `katalog. ${mismatched.map((entry) => `${entry.label}: ${entry.problem}`).join('. ')}.`,
+    )
+  }
 
   const results: ReextractionResult[] = []
 

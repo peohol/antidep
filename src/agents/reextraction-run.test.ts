@@ -280,6 +280,87 @@ describe('runReextraction — arbeidsformen er kallerens', () => {
     expect(spy.registered).toEqual([])
   })
 
+  it('avviser en blandet kø før den skriver den første raden', async () => {
+    // Kontrollen finnes i registreringen også, men der slår den til midt i køen.
+    // En katalog med ni maskinutkast og ett menneskeskrevet forslag ville da
+    // skrevet ni rader og stanset på det tiende — og halve katalogen ville vært
+    // registrert under en arbeidsform kalleren nå får vite var feil. Modusen
+    // gjelder hele køen, så avviket er en feil ved kallet og skal oppdages før
+    // noe er skrevet.
+    const spy = spies()
+    const maskinutkast = await proposal()
+    const menneskeskrevet = parseExtractionProposal({
+      ...(JSON.parse(JSON.stringify(serializeExtractionProposal(maskinutkast))) as Record<
+        string,
+        unknown
+      >),
+      generated_by: {
+        producer: 'human',
+        provider: 'human',
+        model: 'manuell-ekstraksjon',
+        model_version: 'not_applicable',
+        prompt_template_version: 'not_applicable',
+        drafted_at: '2026-09-15T09:00:00Z',
+      },
+    })
+
+    await expect(
+      runReextraction({
+        mode: 'unchecked_model',
+        extractionApi: spy.extractionApi,
+        verificationApi: spy.verificationApi,
+        verificationPremises: VERIFICATION_PREMISES,
+        proposals: [
+          { label: 'a-maskin.json', proposal: maskinutkast },
+          { label: 'b-menneske.json', proposal: menneskeskrevet },
+        ],
+        retrieve: retrieveFixture(),
+      }),
+    ).rejects.toThrow(/b-menneske\.json/)
+
+    expect(spy.registered).toEqual([])
+    expect(spy.completions).toEqual([])
+  })
+
+  it('navngir hvert forslag som ikke stemmer, ikke bare det første', async () => {
+    const spy = spies()
+    const menneskeskrevet = parseExtractionProposal({
+      ...(JSON.parse(JSON.stringify(serializeExtractionProposal(await proposal()))) as Record<
+        string,
+        unknown
+      >),
+      generated_by: {
+        producer: 'human',
+        provider: 'human',
+        model: 'manuell-ekstraksjon',
+        model_version: 'not_applicable',
+        prompt_template_version: 'not_applicable',
+        drafted_at: '2026-09-15T09:00:00Z',
+      },
+    })
+
+    let melding = ''
+    try {
+      await runReextraction({
+        mode: 'unchecked_model',
+        extractionApi: spy.extractionApi,
+        verificationApi: spy.verificationApi,
+        verificationPremises: VERIFICATION_PREMISES,
+        proposals: [
+          { label: 'en.json', proposal: menneskeskrevet },
+          { label: 'to.json', proposal: menneskeskrevet },
+        ],
+        retrieve: retrieveFixture(),
+      })
+    } catch (cause) {
+      melding = cause instanceof Error ? cause.message : String(cause)
+    }
+
+    expect(melding).toMatch(/en\.json/)
+    expect(melding).toMatch(/to\.json/)
+    expect(melding).toMatch(/2 av 2/)
+  })
+
   it('nekter en modus som krever et oppdrag, siden køen ikke har noe', async () => {
     const spy = spies()
 

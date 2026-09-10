@@ -7023,8 +7023,8 @@ oppdraget som en egen, tiltrodd inndata og kontrollerer kildebindingen og hver k
 det før noe skrives. Avgrensningen mot katalogen er den ene kontrollen den ordrette ikke kan
 gjøre — et utdrag kan stå ordrett i kilden og likevel være ført på feil virkestoff — og den
 levde tidligere bare i modell-leddet, altså på feil side av overleveringen. Nøyaktig ett av
-`--assignment` og `--no-assignment-check` er påkrevd for hver registrering, og valget er
-kallerens. En sperre som leste forslagets egen `generated_by.producer` for å avgjøre om
+`--assignment`, `--model-proposal` og `--human-proposal` er påkrevd for hver registrering, og
+valget er kallerens. En sperre som leste forslagets egen `generated_by.producer` for å avgjøre om
 oppdraget trengtes, ville latt den utrygge filen bestemme om den skulle kontrolleres — en
 endret `producer` fra `model` til `human`, og kontrollen var hoppet over. Valget føres i
 kjøringens manifest, slik at fravær av kontroll er en handling noen gjorde.
@@ -7041,7 +7041,9 @@ re-ekstraksjonen av eldre forslag utelot den — altså en åpen vei rundt kontr
 andre registreringskommandoen. De tre arbeidsformene er den oppdragsbaserte modellflyten, et
 maskinutkast uten oppdrag, og en redaktørs eget arbeid; to av tre er en modells, fordi den ene
 tilstanden som ikke skal kunne oppstå av en endret fil, er at et maskinutkast føres som et
-menneskes arbeid. Av resten av
+menneskes arbeid. Arbeidsformen gjelder **hele** køen i re-ekstraksjonen, så den prøves mot
+hvert forslag før den første registreringen: en blandet katalog avvises samlet, framfor å
+skrive de forslagene som stemte og stanse på det første som ikke gjorde det. Av resten av
 `generated_by` er `request_digest` den ene verdien som er etterprøvbar: forespørselen er en ren
 funksjon av oppdraget, representasjonen og promptmalen, og registreringen har alle tre. Den
 rekonstrueres derfor framfor å kopieres, og et avvik gir ingen rad. Lar den seg ikke

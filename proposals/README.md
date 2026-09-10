@@ -157,9 +157,11 @@ menneskelig ekstraksjon ved at ett ord ble endret i filen — og
 `extraction_method` er nettopp det som forteller kontrolløren hva hen
 etterprøver.
 
-Et forslag i denne katalogen har ikke noe oppdrag. Da er `--no-assignment-check` det riktige
-svaret, og valget føres i kjøringens manifest slik at den som senere bedømmer
-raden, kan lese det. Har du et oppdrag, oppgi det framfor å slå kontrollen av.
+Et forslag i denne katalogen har ikke noe oppdrag. Da er `--model-proposal` det
+riktige svaret for et maskinutkast, og `--human-proposal` for redaktørens eget
+arbeid. Valget føres i kjøringens manifest, slik at den som senere bedømmer
+raden, kan lese at forslaget ikke ble kontrollert mot noe oppdrag. Har du et
+oppdrag, oppgi det framfor å registrere uten kontrollen.
 
 Samme kontroller, og deretter registrering gjennom
 `api.register_agent_extraction(...)`. Databasen avviser ekstraksjonen dersom
@@ -220,9 +222,21 @@ npm run agent:reextract-evidence -- --directory proposals --model-proposal --dry
 npm run agent:reextract-evidence -- --directory proposals --model-proposal
 ```
 
-Arbeidsformen er påkrevd her også, og den gjelder hele køen: re-ekstraksjonen
+Arbeidsformen er påkrevd her også, og den gjelder **hele køen**: re-ekstraksjonen
 har ingen oppdrag å kontrollere mot, men hva slags arbeid forslagene er, skal
 sies av kalleren — ikke av filene.
+
+Derfor forutsetter eksempelet over at **hvert** forslag i katalogen er et
+maskinutkast. Inneholder `proposals/` både maskinutkast og redaktørens eget
+arbeid, kan de ikke kjøres i den samme køen: hvert forslags
+`generated_by.producer` må stemme med valget. Kjøringen prøver hele køen mot
+valget før den registrerer noe, og avviser hele køen dersom noe avviker — den
+skriver altså ikke halve katalogen først. Legg dem i hver sin katalog, kjør
+katalogen to ganger med hvert sitt valg, eller kjør forslagene enkeltvis:
+
+```bash
+npm run agent:reextract-evidence -- --proposal proposals/fava-2000.json --human-proposal
+```
 
 Kjører alle `.json`-forslagene i katalogen i navnerekkefølge, og kjører den
 deterministiske kontrollen på hvert nytt funn med det samme. Dette er veien for
