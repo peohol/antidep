@@ -63,6 +63,21 @@ export type RetrievalResult =
   | { readonly status: 'ok'; readonly representation: RetrievedRepresentation }
   | { readonly status: 'error'; readonly message: string }
 
+/**
+ * Hentingen som en injiserbar grenseflate: én adresse inn, ett utfall ut.
+ *
+ * Typen bor her, sammen med `retrieveRepresentation`, og ikke i hvert ledd som
+ * henter en kilde. Den stod tre steder med nøyaktig den samme definisjonen, og
+ * det var tre steder å glemme det samme.
+ *
+ * Plasseringen er dessuten en grense og ikke bare ryddighet: modell-leddet
+ * trenger denne typen, og hentet den før fra `extraction-run.ts` — modulen som
+ * importerer agentporten. Importen var typeonly og kunne ikke bære en skrivevei,
+ * men den gjorde importgrafen til modell-leddet umulig å lese som en garanti.
+ * Nå kan den leses som en (`drafting-no-write-path.test.ts`).
+ */
+export type RetrieveLike = (url: string) => Promise<RetrievalResult>
+
 /** Hentingen som en grenseflate, slik at tester slipper å gå på nett. */
 export type HttpGet = (
   url: string,

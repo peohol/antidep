@@ -30,6 +30,7 @@
 //   api.register_publication_approval        publiseringsbeslutningen
 //   api.publish_claim_revision               publiseringen
 //   runExtractionDrafting                    modell-leddet, med opptaksadapteret
+//   openDraftingJob / closeDraftingJob       Routine-grensesnittet, som filer
 //
 // De to første og de to neste går gjennom de ekte kjørerne
 // (`runEvidenceExtraction`, `runExtractionVerification`) med de ekte portene
@@ -81,6 +82,9 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHmac } from 'node:crypto'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -105,6 +109,9 @@ import { serializeExtractionProposal } from '../src/agents/extraction-proposal.t
 import { EXTRACTION_DRAFTING_PROMPT_VERSION } from '../src/agents/extraction-prompt.ts'
 import { createModelClient } from '../src/agents/model-adapters.ts'
 import { prepareDraftingRequest, runExtractionDrafting } from '../src/agents/drafting-run.ts'
+import { closeDraftingJob, JOB_FILES, openDraftingJob } from '../src/agents/drafting-job.ts'
+import { MODEL_ANSWER_VERSION } from '../src/agents/model-answer.ts'
+import { readProposalFile } from '../src/agents/proposal-files.ts'
 
 // ----------------------------------------------------------------------------
 // Miljøet
@@ -1243,6 +1250,107 @@ async function main(): Promise<void> {
       `select extraction_method::text from knowledge.evidence_items where id = ${q(modellItem)}`,
     ) === 'ai_assisted',
   )
+
+  // ---- Ledd 9: Routine-grensesnittet, fra oppdrag til registrert rad --------
+  //
+  // Det samme modell-leddet, men kjørt slik en Claude Code Routine kjører det:
+  // to kommandoer med en fil imellom. Det som prøves her og ikke kan prøves
+  // uten en ekte database, er at filen `--close` skriver, går uendret gjennom de
+  // ekte portene — og at proveniensen som når kontrollgrunnlaget, er den
+  // aktøren erklærte i svarfilen, ikke en fast verdi.
+  const kjoremappe = mkdtempSync(join(tmpdir(), 'antidep-kjede-routine-'))
+  try {
+    const oppdragsfil = join(kjoremappe, 'oppdrag.json')
+    writeFileSync(
+      oppdragsfil,
+      JSON.stringify({
+        assignment_version: 'antidep/extraction-assignment@1',
+        source_id: SOURCE,
+        source_version_id: VERSION,
+        retrieved_from: 'https://example.test/kjede',
+        content_hash: contentHash,
+        drugs: [{ drug_id: drugId, label: 'sertralin' }],
+        outcomes: [{ outcome_concept_id: outcomeId, label: 'vektendring' }],
+        populations: [],
+      }),
+      'utf8',
+    )
+    const runDirectory = join(kjoremappe, 'kjoring')
+    const åpnet = await openDraftingJob({
+      assignmentPath: oppdragsfil,
+      runDirectory,
+      retrieve: retrieve(contentHash),
+    })
+    check(
+      'Routine-grensesnittet legger igjen prompten og en tom svarfil',
+      åpnet.outcome === 'opened' && åpnet.job.state === 'awaiting_answer',
+    )
+
+    // Slik aktøren som utfører modellarbeidet, svarer: én fil, med sin egen
+    // identitet og sitt eget tidspunkt.
+    const førModell = psql(
+      config,
+      `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+    )
+    writeFileSync(
+      join(runDirectory, JOB_FILES.answer),
+      JSON.stringify({
+        answer_version: MODEL_ANSWER_VERSION,
+        request_digest: åpnet.job.requestDigest,
+        identity: { provider: 'kjedeprove', model: 'routine-modell', model_version: '2026-09-16' },
+        answered_at: new Date().toISOString(),
+        draft: {
+          ...modellUtkast,
+          extraction: {
+            ...modellUtkast.extraction,
+            outcome_detail: 'Vektendring, foreslått gjennom Routine-grensesnittet.',
+          },
+        },
+      }),
+      'utf8',
+    )
+    const lukket = await closeDraftingJob({
+      runDirectory,
+      assignmentPath: oppdragsfil,
+      retrieve: retrieve(contentHash),
+    })
+    check(
+      'og skriver et forslag av svaret, uten å røre en eneste rad',
+      lukket.outcome === 'drafted' &&
+        psql(
+          config,
+          `select count(*) from knowledge.evidence_items where source_id = ${q(SOURCE)}`,
+        ) === førModell,
+      lukket.reason ?? '',
+    )
+
+    // Filen leses av nøyaktig den leseren registreringen bruker.
+    const routineForslag = await readProposalFile(lukket.proposalPath)
+    const routineKjede = await runReextraction({
+      ...reextractionPorts,
+      proposals: [routineForslag],
+    })
+    const routineItem = routineKjede.results[0]?.extraction.evidenceItemId ?? ''
+    check(
+      'og forslaget går hele veien til et gyldig maskinbevis',
+      routineKjede.registered === 1 &&
+        routineKjede.unverified === 0 &&
+        psql(config, `select workflow.grounding_machine_proved(${q(routineItem)})::text`) ===
+          'true',
+      routineKjede.results[0]?.unverifiedReason ?? '',
+    )
+    check(
+      'og kontrollgrunnlaget bærer identiteten aktøren erklærte i svarfilen',
+      psql(
+        config,
+        `select (workflow.evidence_extraction_dossier(${q(routineItem)}) -> 'drafted_by' ->> 'provider')
+                || '|' || (workflow.evidence_extraction_dossier(${q(routineItem)})
+                           -> 'drafted_by' ->> 'model')`,
+      ) === 'kjedeprove|routine-modell',
+    )
+  } finally {
+    rmSync(kjoremappe, { recursive: true, force: true })
+  }
 
   console.log(
     process.exitCode === 1 ? '\nMinst én påstand slo feil.' : '\nHele kjeden gikk gjennom.',

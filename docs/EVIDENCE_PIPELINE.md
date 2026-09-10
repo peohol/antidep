@@ -489,6 +489,21 @@ Når et leverandøradapter en dag kjører med sin egen legitimasjon, kan utkaste
 
 **Kjeden blir ikke kortere av at modell-leddet finnes.** Forslaget skal fortsatt registreres under de deterministiske kontrollene, kontrolleres maskinelt av en annen agentidentitet, og bekreftes felt for felt av et menneske før noe kan publiseres (`ANTIDEP_CONSTITUTION.md` §10, §11, §12). Kontrollflaten viser hvem som laget verdiene, fordi det å etterprøve et maskinutkast er noe annet enn å etterprøve en kollegas arbeid (§46).
 
+### 18.2 Claude Code Routines som orkestreringslag
+
+Modellarbeidet i §18.1 utføres i praksis av en **Claude Code Routine**. Antidep har ingen innebygd kobling mot en betalt modelleverandør, og skal ikke få det uten et konkret behov: Routinen kjører innenfor et oppsett som allerede finnes, uten en egen leverandørkonto og uten en egen kostnadslinje.
+
+**Antidep definerer oppdraget, kontrakten og kontrollene. Routinen er aktøren.** Skillet er det samme som §66 krever av et leverandørbytte: aktøren kan byttes ut med et menneske, med ChatGPT, eller med et innebygd leverandøradapter, uten at kunnskapsmodellen, forslagsformen eller en eneste kontroll endres. Antidep bygger derfor **ikke** et eget agentrammeverk for dette; orkestreringen — hva som kjøres når, og hva som skjer etterpå — er Routinens.
+
+**Leddet er to kommandoer med en fil imellom.** Modellarbeidet gjøres av en aktør Antidep ikke kaller, så en kommando som ventet på svaret, ville vært en kommando som aldri returnerte. `--open` henter kildeversjonen, krever at fingeravtrykket er den registrerte, bygger den versjonerte forespørselen og legger igjen prompten. Aktøren skriver svaret sitt som en fil. `--close` leser svaret og kjører det gjennom nøyaktig de samme tre kontrollene som før — formen, katalogen, de ordrette utdragene — og skriver et forslag, eller ingenting.
+
+**Forespørselens fingeravtrykk binder de to.** Avtrykket dekker representasjonen, katalogen i oppdraget og promptmalversjonen, og står både i kjøringen og i svaret. Et svar som svarer på en annen forespørsel, lukkes ikke inn i denne kjøringen; endres kilden, oppdraget eller malen mellom stegene, gjelder ikke det gamle svaret. Det gjør også en avbrutt kjøring trygg å gjenoppta: tilstanden ligger på disk, og begge stegene er idempotente.
+
+**Rettighetsgrensen er to Routines, ikke én.** Modell-leddet kjøres i et miljø **uten** agentlegitimasjon; registrering og verifikasjon kjøres etterpå, av kommandoer med hver sin identitet. Grensen er håndhevet og ikke bare anbefalt: modell-leddet nekter å kjøre dersom en agenthemmelighet står i miljøet. En Claude Code-sesjon har et skall, og en sesjon som både leser en artikkel Antidep ikke kontrollerer *og* holder skrivelegitimasjonen, ville hatt begge deler samtidig — som er nøyaktig det §63 sier at et ledd ikke skal ha.
+
+**Kjeden er uendret for øvrig.** Forslaget registreres under de deterministiske kontrollene, kontrolleres maskinelt av en annen agentidentitet, og bekreftes felt for felt av et menneske før noe kan publiseres. Den operative veiledningen står i `ROUTINE_EXTRACTION.md`.
+
+
 ## 19. Ekstraksjonen skal ligge tett på kilden
 
 Et `EvidenceItem` skal gjengi hva kilden faktisk rapporterer med minst mulig syntetisk fortolkning.

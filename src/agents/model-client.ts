@@ -47,13 +47,12 @@
 // ============================================================================
 
 import { sourceVersionContentHash } from './content-hash.ts'
+import type { ModelIdentity } from './model-identity.ts'
 
-/** Hvem som svarte, i de tre feltene proveniensen krever. */
-export interface ModelIdentity {
-  readonly provider: string
-  readonly model: string
-  readonly modelVersion: string
-}
+// Hvem som svarte, bor i `model-identity.ts`: den erklæringen leses fra to
+// filformer og kontrolleres av den samme koden begge steder. Den står
+// tilgjengelig herfra fordi det er her grensesnittet er.
+export type { ModelIdentity }
 
 /** Én forespørsel: den versjonerte malen, systemdelen og brukerdelen. */
 export interface ModelRequest {

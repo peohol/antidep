@@ -21,7 +21,7 @@ import {
 } from './extraction-proposal'
 import { EXTRACTION_DRAFTING_PROMPT_VERSION } from './extraction-prompt'
 import type { ModelClient } from './model-client'
-import type { RetrieveLike } from './extraction-run'
+import type { RetrieveLike } from './source-retrieval'
 import { FIXTURE_SOURCE_TEXT } from './test-support'
 
 const DRUG = '40000000-0000-4000-8000-000000000001'

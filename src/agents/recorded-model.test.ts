@@ -108,7 +108,7 @@ describe('parseModelRecording', () => {
       parseModelRecording(
         emptyRecording(`sha256:${'b'.repeat(64)}`, REQUEST.promptTemplateVersion),
       ),
-    ).toThrow(/plassholderen fra --prepare/)
+    ).toThrow(/plassholderen fra malen/)
   })
 
   it('avviser en plassholder som bare er delvis rettet', () => {

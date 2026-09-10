@@ -56,10 +56,10 @@ import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
 import { extractionMethodFor } from './extraction-proposal.ts'
 import { EVIDENCE_EXTRACTION_PREMISES } from './pipeline-version.ts'
-import type { RetrievalResult, RetrieveOptions } from './source-retrieval.ts'
+import type { RetrieveLike, RetrieveOptions } from './source-retrieval.ts'
 import { retrieveRepresentation } from './source-retrieval.ts'
 
-export type RetrieveLike = (url: string) => Promise<RetrievalResult>
+export type { RetrieveLike }
 
 export interface ExtractionRunOptions {
   readonly api: EvidenceExtractionApi

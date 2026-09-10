@@ -65,8 +65,11 @@ import {
 } from './extraction-proposal.ts'
 import { buildExtractionDraftingRequest } from './extraction-prompt.ts'
 import { modelRequestDigest, type ModelClient, type ModelRequest } from './model-client.ts'
-import type { RetrieveLike } from './extraction-run.ts'
-import { retrieveRepresentation, type RetrieveOptions } from './source-retrieval.ts'
+import {
+  retrieveRepresentation,
+  type RetrieveLike,
+  type RetrieveOptions,
+} from './source-retrieval.ts'
 
 const DRAFT_SUBJECT = 'Modellsvaret'
 

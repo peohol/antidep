@@ -12,6 +12,7 @@ All utvikling styres av dokumentene i [`docs/`](./docs):
 
 - [`ANTIDEP_CONSTITUTION.md`](./docs/ANTIDEP_CONSTITUTION.md) — ikke-forhandlingsbare prinsipper
 - [`MVP_IMPLEMENTATION_PLAN.md`](./docs/MVP_IMPLEMENTATION_PLAN.md) — implementeringsrekkefølge og status
+- [`ROUTINE_EXTRACTION.md`](./docs/ROUTINE_EXTRACTION.md) — hvordan modell-leddet kjøres av en Claude Code Routine
 - [`KNOWLEDGE_MODEL.md`](./docs/KNOWLEDGE_MODEL.md), [`EVIDENCE_PIPELINE.md`](./docs/EVIDENCE_PIPELINE.md),
   [`DATABASE_ARCHITECTURE.md`](./docs/DATABASE_ARCHITECTURE.md),
   [`CONTENT_GOVERNANCE.md`](./docs/CONTENT_GOVERNANCE.md),
@@ -54,6 +55,19 @@ npm run db:stop      # stopp lokal Supabase-stack
 ```
 
 Modell-leddet (ingen legitimasjon, ingen databasetilgang):
+
+```bash
+npm run agent:draft-extraction -- --assignment <fil> --open      # hent kilden, skriv ut prompten
+npm run agent:draft-extraction -- --assignment <fil> --close     # les svaret, lag ett forslag
+npm run agent:draft-extraction -- --assignment <fil> --status    # hvor kjøringen står
+```
+
+Dette er veien en Claude Code Routine kjører leddet: to kommandoer med en fil
+imellom, og modellsvaret skrevet direkte i kjøremappa. Se
+[`docs/ROUTINE_EXTRACTION.md`](./docs/ROUTINE_EXTRACTION.md).
+
+Den eldre veien er beholdt for feilsøking og for å spille av en kjøring om igjen
+uten en modell:
 
 ```bash
 npm run agent:propose-extraction -- --assignment <fil> --prepare <katalog>   # skriv ut prompten og et tomt opptak

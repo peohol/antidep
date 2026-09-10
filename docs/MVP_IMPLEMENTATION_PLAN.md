@@ -1392,7 +1392,7 @@ PR G  db: add publication events and gate                                   (#15
       feat: rebuild the human control flow as a guided session              (#62)  merget   migrasjon 008h, 005u, 007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å
       feat: make the current review decision race-safe                      (#65)  merget   migrasjon 006i, 007h
       db: make the source grounding part of an evidence item's identity    (#67)  merget   migrasjon 003d
-      feat: add the model link that reads a source and drafts a proposal    (#68)  åpen     migrasjon 005ab, 005ac
+      feat: add the model link that reads a source and drafts a proposal    (#68)  merget   migrasjon 005ab, 005ac
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -6930,6 +6930,93 @@ Kjeden ble ikke kortere; den fikk et ledd til i forkant.
 
 ---
 
+
+### 74.42 Modell-leddet er kjørbart av en Claude Code Routine
+
+§74.41 bygget leddet som leser en artikkel og foreslår verdier. Det manglet én ting for å
+kunne kjøres av noe annet enn et menneske med klippebord: en arbeidsform der aktøren som
+utfører modellarbeidet, ikke må lime en prompt ut og et svar inn.
+
+**Ingen ny leverandørkobling.** Antidep har fortsatt ingen kobling mot Anthropic, OpenAI
+eller noen annen betalt modelleverandør. Modellarbeidet gjøres av en **Claude Code Routine**,
+innenfor et oppsett som allerede finnes, uten en egen konto og uten en egen kostnadslinje.
+Antidep definerer oppdraget, kontrakten og kontrollene; Routinen er aktøren
+(EVIDENCE_PIPELINE.md §18.2, §66). Det er også grunnen til at det *ikke* er bygget et eget
+agentrammeverk her: Claude Code Routines er allerede orkestreringslaget.
+
+**Leddet er to kommandoer med en fil imellom.** Modellarbeidet gjøres av en aktør Antidep
+ikke kaller, så en kommando som ventet på svaret, ville aldri returnert.
+`npm run agent:draft-extraction -- --open` henter kildeversjonen, krever at fingeravtrykket
+er den registrerte, bygger den versjonerte forespørselen og legger igjen en **kjøremappe**
+med `prompt.txt`, en tom `svar.json` og tilstanden i `kjoring.json`. Aktøren leser prompten
+og skriver svaret sitt. `--close` leser svaret og kjører det gjennom nøyaktig de samme tre
+kontrollene som før — formen, katalogen, de ordrette utdragene — og skriver `forslag.json`,
+eller ingenting. Kjøremappa utledes av oppdragsfilen, og filnavnene er faste: en Routine skal
+ikke velge en katalog, et filnavn, et modelladapter eller en promptmalversjon.
+
+**Svaret er én fil med en kontrakt.** `svar.json` bærer avtrykket av forespørselen den svarer
+på, identiteten som faktisk svarte, tidspunktet, og utkastet — som JSON-objekt, eller som
+ordrett tekst når svaret kom fra et vindu et sted. Nøyaktig én av de to. Formen på filen
+bestemmer ingenting om hva som godtas: svaret går gjennom `parseExtractionDraft` og den
+ordrette kontrollen uansett (§62).
+
+**Avtrykket binder de to stegene.** Det dekker representasjonen, katalogen i oppdraget og
+promptmalversjonen, og står både i kjøringen og i svaret. Et svar som svarer på en annen
+forespørsel, lukkes ikke inn i denne kjøringen. Endres kilden, oppdraget eller malen mellom
+stegene, gjelder ikke det gamle svaret — og kjøringen sier fra framfor å lukke et svar som
+ble lest ut av en annen tekst.
+
+**Avbrutte kjøringer er en normal tilstand, ikke et uhell.** Tilstanden ligger på disk, og
+begge stegene er idempotente: `--open` på en mappe som venter, lar et svar som allerede er
+lagt inn, stå; `--open` på en mappe som har et forslag, gjør ingenting; `--close` på en
+lukket kjøring gjør ingenting; `--close` på en kjøring som ble avbrutt før filen ble skrevet,
+lager den. En avvist kjøring kan åpnes på nytt, og sier da hva forrige svar strandet på.
+
+**Proveniensen er aktørens egen, og kontrolleres.** Identiteten i svaret registreres som
+premissene utkastet ble laget under, og en plassholder som blir stående, avvises framfor å
+bli en usann proveniens. `answered_at` er da aktøren svarte — ikke da kjøringen ble lukket —
+og et tidspunkt som ligger utenfor vinduet mellom åpningen og lukkingen, avvises. Vinduet har
+fem minutters slakk, fordi to maskiner har to klokker og et avrundet minutt ikke er en usann
+påstand.
+
+**Rettighetsgrensen er håndhevet, ikke bare beskrevet.** Modell-leddet nekter å kjøre dersom
+en agenthemmelighet står i miljøet. En Claude Code-sesjon har et skall, og en sesjon som både
+leser en artikkel Antidep ikke kontrollerer *og* holder skrivelegitimasjonen, ville hatt
+begge deler samtidig — nøyaktig det §63 sier at et ledd ikke skal ha. Det anbefalte oppsettet
+er derfor **to** Routines: én for modell-leddet, uten legitimasjon, og én for registrering og
+kontroll (`ROUTINE_EXTRACTION.md`).
+
+**Ingen regel er myket opp.** Ingen migrasjon, ingen CHECK, ingen constraint, ingen policy og
+ingen grant er rørt. Denne leveransen har ingen databaseendring i det hele tatt: kontrakten
+mot basen er den fra §74.41, og forslaget `--close` skriver, leses av nøyaktig den samme
+leseren registreringen alltid har brukt.
+
+**`--prepare`/opptaksflyten er beholdt.** Den er den korteste veien til å se prompten uten å
+kjøre en modell, og til å spille av en kjøring om igjen. Den er bare ikke nødvendig lenger:
+`--close` skriver selv et opptak ved siden av forslaget, med det samme avtrykket.
+
+**Testene.** Uten database prøves svarkonvolutten, kjøremappa, argumentlisten og vakten mot
+legitimasjon i miljøet — til sammen de tilstandene en autonom kjøring kan komme i: to steg
+som hver er idempotente, en kjøring avbrutt mellom dem og midt i det andre, et svar på feil
+forespørsel, et oppdiktet utdrag, et omskrevet sitat, en katalogverdi utenfor oppdraget, en
+form som ikke er kontrakten, en tekst som ikke er JSON, en kilde som har endret seg, et
+oppdrag som er redigert, og en proveniens som ville vært usann. En egen prøve leser
+**importgrafen** til hver inngang i modell-leddet og krever at ingen modul som kan skrive en
+rad, og ingen tredjepartsavhengighet, er nåbar — og at den samme prøven *ser* skriveveien fra
+registreringskjøreren, slik at en grønn graf ikke kan være en tom påstand.
+`scripts/agent-chain-test.ts` har fått et niende ledd: Routine-grensesnittet kjørt som filer
+mot den ekte databasen, der forslaget `--close` skrev, går uendret gjennom de ekte portene
+til et gyldig maskinbevis, og kontrollgrunnlaget bærer identiteten aktøren erklærte i
+svarfilen.
+
+**Hva som gjenstår, og som ikke skal automatiseres bort.** Den første *reelle* ekstraksjonen
+fra en faktisk vitenskapelig artikkel er ikke gjort. Den skal gjøres av ChatGPT sammen med
+Peder, som validering av prompten, kontrakten og hele arbeidsflyten, før tilsvarende arbeid
+overlates til en Routine. Maskineriet er prøvd mot en ekte adresse over nett — henting,
+fingeravtrykk, gjerdet rundt kildeteksten, den ordrette kontrollen og filskrivingen — men det
+er en prøve av mekanikken, ikke av det faglige.
+
+---
 
 ## 75. Neste steg
 

@@ -165,13 +165,22 @@ ingen kliniker bekrefte funnet felt for felt i kontrolløkten.
 ## Å lage forslaget med modell-leddet
 
 ```bash
-npm run agent:propose-extraction -- --assignment <oppdrag> --prepare <katalog>
-npm run agent:propose-extraction -- --assignment <oppdrag> --recording <opptak> --out <fil>
+npm run agent:draft-extraction -- --assignment <oppdrag> --open
+npm run agent:draft-extraction -- --assignment <oppdrag> --close
 ```
 
-Leddet leser kildeversjonen og skriver et forslag her. Det har ingen
-databasetilgang, og skriver aldri en rad. Hele oppskriften står i
-`assignments/README.md`.
+Leddet leser kildeversjonen og skriver et forslag i kjøremappa si — ikke her.
+Det har ingen databasetilgang, og skriver aldri en rad. Hele oppskriften står i
+`assignments/README.md`, og hvordan en Claude Code Routine kjører den, i
+`docs/ROUTINE_EXTRACTION.md`.
+
+Katalogen her er derfor for forslag som er skrevet **utenfor** modell-leddet: av
+ChatGPT ut av en lovlig innhentet fulltekst, eller av et menneske. Et forslag fra
+kjøremappa registreres rett derfra:
+
+```bash
+npm run agent:extract-evidence -- --proposal assignments/<navn>/forslag.json
+```
 
 ## Flere artikler på én gang
 

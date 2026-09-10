@@ -50,7 +50,7 @@ import type {
 } from './agent-api.ts'
 import { checkClaim, type ClaimCheckReport, type CheckedLink } from './claim-checks.ts'
 import { parseClaimVerificationInput, type ClaimRevisionInput } from './claim-verification-input.ts'
-import type { RetrievalResult, RetrieveOptions } from './source-retrieval.ts'
+import type { RetrieveLike, RetrieveOptions } from './source-retrieval.ts'
 import { retrieveRepresentation } from './source-retrieval.ts'
 
 /**
@@ -84,7 +84,7 @@ export interface RunReport {
   readonly revisions: readonly RevisionResult[]
 }
 
-export type RetrieveLike = (url: string) => Promise<RetrievalResult>
+export type { RetrieveLike }
 
 export interface RunOptions {
   readonly api: ClaimVerificationApi
