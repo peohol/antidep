@@ -176,6 +176,7 @@ describe('runEvidenceExtraction — kontrollen mot oppdraget', () => {
   it('registrerer et forslag som holder seg innenfor oppdraget', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'with_assignment',
       api,
       proposal: await proposal(),
       assignment: await oppdrag(),
@@ -188,14 +189,21 @@ describe('runEvidenceExtraction — kontrollen mot oppdraget', () => {
 
   it('fører i manifestet når kjøringen ikke hadde noe oppdrag å kontrollere mot', async () => {
     const api = fakeApi()
-    await runEvidenceExtraction({ api, proposal: await proposal(), retrieve: retrieveFixture() })
+    await runEvidenceExtraction({
+      mode: 'unchecked_model',
+      api,
+      proposal: await proposal(),
+      retrieve: retrieveFixture(),
+    })
 
     expect(api.manifests[0]?.assignment_checked).toBe(false)
+    expect(api.manifests[0]?.registration_mode).toBe('unchecked_model')
   })
 
   it('registrerer ingenting når virkestoffet ikke står i oppdraget', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'with_assignment',
       api,
       proposal: await proposal(),
       assignment: await oppdrag({
@@ -213,6 +221,7 @@ describe('runEvidenceExtraction — kontrollen mot oppdraget', () => {
   it('registrerer ingenting når endepunktet ikke står i oppdraget', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'with_assignment',
       api,
       proposal: await proposal(),
       assignment: await oppdrag({
@@ -231,6 +240,7 @@ describe('runEvidenceExtraction — kontrollen mot oppdraget', () => {
   it('registrerer ingenting når forslaget peker på en annen kildeversjon enn oppdraget', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'with_assignment',
       api,
       proposal: await proposal(),
       assignment: await oppdrag({ source_version_id: '51000000-0000-4000-8000-0000000000ff' }),
@@ -242,39 +252,12 @@ describe('runEvidenceExtraction — kontrollen mot oppdraget', () => {
     expect(api.registered).toEqual([])
   })
 
-  it('kontrollerer like strengt uansett hvem forslaget sier at laget det', async () => {
-    // Kontrollen er ikke betinget av `generated_by.producer`. Et forslag som
-    // påstår at et menneske skrev det, kontrolleres like strengt mot oppdraget
-    // — proveniensen i filen er en erklæring, ikke et fripass.
-    const api = fakeApi()
-    const report = await runEvidenceExtraction({
-      api,
-      proposal: await proposal({
-        generatedBy: {
-          producer: 'human',
-          provider: 'human',
-          model: 'manuell-ekstraksjon',
-          model_version: 'not_applicable',
-          prompt_template_version: 'not_applicable',
-          drafted_at: '2026-09-15T09:00:00Z',
-        },
-      }),
-      assignment: await oppdrag({
-        drugs: [{ drug_id: '40000000-0000-4000-8000-0000000000ff', label: 'et annet virkestoff' }],
-      }),
-      retrieve: retrieveFixture(),
-    })
-
-    expect(report.decision).toBe('skipped')
-    expect(report.reason).toMatch(/intervention_drug_id/)
-    expect(api.registered).toEqual([])
-  })
-
   it('kontrollerer oppdraget før kilden i det hele tatt søkes i', async () => {
     // Et forslag utenfor oppdraget skal avvises selv om utdragene er ordrett
     // riktige. Det er nettopp den kombinasjonen kontrollen finnes for.
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'with_assignment',
       api,
       proposal: await proposal(),
       assignment: await oppdrag({
@@ -342,6 +325,54 @@ describe('runEvidenceExtraction — modusen kalleren registrerte under', () => {
     expect(api.registered).toEqual([])
   })
 
+  it('nekter modusen som kontrollerer oppdraget, når det ikke fulgte noe oppdrag med', async () => {
+    const api = fakeApi()
+
+    await expect(
+      runEvidenceExtraction({
+        api,
+        proposal: await proposal(),
+        mode: 'with_assignment',
+        retrieve: retrieveFixture(),
+      }),
+    ).rejects.toThrow(/ikke noe oppdrag/)
+
+    expect(api.premises).toEqual([])
+    expect(api.registered).toEqual([])
+  })
+
+  it('nekter et oppdrag under en modus som ikke kontrollerer det', async () => {
+    // Ellers ville kalleren trodd den fikk en kontroll den ikke fikk.
+    const api = fakeApi()
+
+    await expect(
+      runEvidenceExtraction({
+        api,
+        proposal: await proposal(),
+        assignment: await oppdrag(),
+        mode: 'unchecked_model',
+        retrieve: retrieveFixture(),
+      }),
+    ).rejects.toThrow(/kontrollerer det ikke/)
+
+    expect(api.premises).toEqual([])
+  })
+
+  it('fører et maskinutkast uten oppdrag som ai_assisted, ikke som manuelt', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      api,
+      proposal: await proposal(),
+      mode: 'unchecked_model',
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('registered')
+    expect(api.registered[0]?.extractionMethod).toBe('ai_assisted')
+    expect(api.manifests[0]?.registration_mode).toBe('unchecked_model')
+    expect(api.manifests[0]?.assignment_checked).toBe(false)
+  })
+
   it('registrerer et maskinutkast som ai_assisted under modusen med oppdrag', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
@@ -369,13 +400,6 @@ describe('runEvidenceExtraction — modusen kalleren registrerte under', () => {
     expect(report.decision).toBe('registered')
     expect(api.registered[0]?.extractionMethod).toBe('manual')
     expect(api.manifests[0]?.registration_mode).toBe('without_assignment')
-  })
-
-  it('fører at kalleren ikke oppga noen modus, framfor å finne på en', async () => {
-    const api = fakeApi()
-    await runEvidenceExtraction({ api, proposal: await proposal(), retrieve: retrieveFixture() })
-
-    expect(api.manifests[0]?.registration_mode).toBeNull()
   })
 })
 
@@ -412,6 +436,7 @@ describe('runEvidenceExtraction — forespørselsavtrykket', () => {
   it('godtar et avtrykk som stemmer med oppdraget og kilden, og fører at det ble prøvd', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'with_assignment',
       api,
       proposal: await medEktAvtrykk(),
       assignment: await oppdrag(),
@@ -425,6 +450,7 @@ describe('runEvidenceExtraction — forespørselsavtrykket', () => {
   it('skriver ingen rad når avtrykket ikke kan ha kommet av denne forespørselen', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'with_assignment',
       api,
       proposal: await medEktAvtrykk({ request_digest: `sha256:${'f'.repeat(64)}` }),
       assignment: await oppdrag(),
@@ -441,6 +467,7 @@ describe('runEvidenceExtraction — forespørselsavtrykket', () => {
     // forslaget er galt, når det er Antidep som har flyttet seg.
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'with_assignment',
       api,
       proposal: await medEktAvtrykk({ prompt_template_version: 'en/eldre/mal/1' }),
       assignment: await oppdrag(),
@@ -454,6 +481,7 @@ describe('runEvidenceExtraction — forespørselsavtrykket', () => {
   it('fører avtrykket som uprøvd uten et oppdrag å rekonstruere det av', async () => {
     const api = fakeApi()
     await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await medEktAvtrykk(),
       retrieve: retrieveFixture(),
@@ -462,11 +490,15 @@ describe('runEvidenceExtraction — forespørselsavtrykket', () => {
     expect(api.completions[0]?.outputManifest?.request_digest_checked).toBe(false)
   })
 
-  it('fører avtrykket som uprøvd for et forslag uten noen forespørsel', async () => {
+  it('fører avtrykket som uprøvd for et forslag som ikke oppgir noe', async () => {
+    // Fiksturens `generated_by` har ingen `request_digest`. Da finnes det
+    // ingenting å sammenligne med, og kjøringen skal si det framfor å påstå at
+    // noe ble prøvd.
     const api = fakeApi()
     await runEvidenceExtraction({
+      mode: 'with_assignment',
       api,
-      proposal: await proposal({ generatedBy: MENNESKE }),
+      proposal: await proposal(),
       assignment: await oppdrag(),
       retrieve: retrieveFixture(),
     })
@@ -479,6 +511,7 @@ describe('runEvidenceExtraction — den lykkede stien', () => {
   it('registrerer ekstraksjonen og lukker kjøringen', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
@@ -494,6 +527,7 @@ describe('runEvidenceExtraction — den lykkede stien', () => {
   it('sender forankringen videre uendret, felt for felt', async () => {
     const api = fakeApi()
     await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
@@ -511,6 +545,7 @@ describe('runEvidenceExtraction — den lykkede stien', () => {
   it('registrerer hva kjøringen bygde på', async () => {
     const api = fakeApi()
     await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
@@ -538,6 +573,7 @@ describe('runEvidenceExtraction — hvem forslaget sier laget det', () => {
   it('registrerer kjøringen med sine egne premisser, ikke med modellens', async () => {
     const api = fakeApi()
     await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal({
         generatedBy: {
@@ -562,6 +598,7 @@ describe('runEvidenceExtraction — hvem forslaget sier laget det', () => {
   it('fører forslagets erklæring ordrett i kjøringens manifest', async () => {
     const api = fakeApi()
     await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal({
         generatedBy: {
@@ -593,6 +630,7 @@ describe('runEvidenceExtraction — hvem forslaget sier laget det', () => {
   it('registrerer et maskinutkast som ai_assisted og et menneskes forslag som manual', async () => {
     const maskin = fakeApi()
     await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api: maskin,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
@@ -601,6 +639,7 @@ describe('runEvidenceExtraction — hvem forslaget sier laget det', () => {
 
     const menneske = fakeApi()
     await runEvidenceExtraction({
+      mode: 'without_assignment',
       api: menneske,
       proposal: await proposal({
         generatedBy: {
@@ -624,6 +663,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
   it('registrerer ingenting når et utdrag ikke står i representasjonen', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal({ excerpt: 'Patients received paroxetine only.' }),
       retrieve: retrieveFixture(),
@@ -641,6 +681,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
   it('registrerer ingenting når representasjonen ikke er den registrerte utgaven', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal({ hash: `sha256:${'0'.repeat(64)}` }),
       retrieve: retrieveFixture(),
@@ -654,6 +695,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
   it('registrerer ingenting når kilden ikke lot seg hente', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal(),
       retrieve: () => Promise.resolve({ status: 'error', message: 'Tidsavbrudd mot kilden.' }),
@@ -667,6 +709,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
   it('kontrollerer men registrerer ingenting i en tørrkjøring', async () => {
     const api = fakeApi()
     const report = await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
@@ -690,6 +733,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
 
     await expect(
       runEvidenceExtraction({
+        mode: 'unchecked_model',
         api,
         proposal: await proposal(),
         retrieve: retrieveFixture(),
@@ -716,6 +760,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     })
 
     const report = await runEvidenceExtraction({
+      mode: 'unchecked_model',
       api,
       proposal: await proposal(),
       retrieve: retrieveFixture(),
@@ -752,6 +797,7 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
 
     await expect(
       runEvidenceExtraction({
+        mode: 'unchecked_model',
         api,
         proposal: await proposal(),
         retrieve: retrieveFixture(),

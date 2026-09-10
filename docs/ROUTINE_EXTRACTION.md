@@ -377,14 +377,9 @@ hele poenget: to inndata fra to kilder, der bare den ene har vært innom
 modellen.
 
 **Valget er kallerens, og det er påkrevd.** Hver registrering krever nøyaktig ett
-av `--assignment <fil>` og `--no-assignment-check`. Sperren leser *ikke*
-`generated_by.producer` i forslaget for å avgjøre om oppdraget trengs: da ville
-filen bestemt om den skulle kontrolleres, og en endret `producer` ville slått
-kontrollen av. Fravær av kontroll er en handling noen gjorde, og den føres i
-kjøringens manifest.
-
-`--no-assignment-check` er for et forslag som ikke *har* noe oppdrag — et en
-redaktør har skrevet selv ut av en fulltekst.
+av tre valg. Sperren leser *ikke* `generated_by.producer` i forslaget for å
+avgjøre hvilket: da ville filen bestemt om den skulle kontrolleres, og en endret
+`producer` ville slått kontrollen av. Valget føres i kjøringens manifest.
 
 ### 6.3 Valget avgjør også hva slags ekstraksjon som registreres
 
@@ -397,18 +392,31 @@ Feltet står i den utrygge filen. Lot registreringen filen alene avgjøre det,
 kunne et maskinutkast blitt ført som et menneskes arbeid ved at ett ord ble
 endret etter `--close` — og alt annet ville passert.
 
-De to modusene bærer derfor hver sin produsent, og forslagets erklæring må
-stemme med den:
+Hver arbeidsform bærer derfor sin produsent, og forslagets erklæring må stemme
+med den:
 
-| Modus | Betyr | `producer` | `extraction_method` |
-| --- | --- | --- | --- |
-| `--assignment <fil>` | Den oppdragsbaserte modellflyten | `model` | `ai_assisted` |
-| `--no-assignment-check` | En redaktørs egen ekstraksjon, uten oppdrag | `human` | `manual` |
+| Valg | Betyr | `producer` | `extraction_method` | Katalogen kontrolleres |
+| --- | --- | --- | --- | --- |
+| `--assignment <fil>` | Den oppdragsbaserte modellflyten | `model` | `ai_assisted` | ja |
+| `--model-proposal` | Et maskinutkast uten oppdrag | `model` | `ai_assisted` | nei, og kjøringen fører det |
+| `--human-proposal` | En redaktørs egen ekstraksjon | `human` | `manual` | nei |
+
+**To av tre er en modells, og det er med vilje.** Den ene tilstanden som ikke
+skal kunne oppstå av en endret fil, er at et maskinutkast føres som et menneskes
+arbeid — og `--human-proposal` er den eneste veien dit, som en kaller må velge
+uttrykkelig.
 
 Et avvik avvises **før** kjøringen åpnes: ingen rad, og ingen proveniensrad om
-en kjøring som aldri skulle vært startet. Erklæringen i filen blir stående og
-kontrollert, framfor stille overstyrt — en modus som bare skrev over feltet,
-ville skjult at noen hadde endret det.
+en kjøring som aldri skulle vært startet. Det gjelder også når arbeidsformen og
+oppdraget ikke henger sammen — en modus som sier «kontrollert mot oppdraget»
+uten et oppdrag, ville vært en usann påstand i manifestet. Erklæringen i filen
+blir stående og kontrollert, framfor stille overstyrt: en modus som bare skrev
+over feltet, ville skjult at noen hadde endret det.
+
+**Det samme gjelder `npm run agent:reextract-evidence`.** Den registrerer også,
+og krever `--model-proposal` eller `--human-proposal` for hele køen. Så lenge
+arbeidsformen var valgfri i kjøringen, var den veien en åpen dør rundt sperren:
+en kø uten oppgitt arbeidsform lot filene bestemme selv.
 
 ### 6.4 Hva av proveniensen som faktisk etterprøves
 

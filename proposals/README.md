@@ -130,11 +130,12 @@ igjen.
 ## 5. Registrering
 
 ```bash
-npm run agent:extract-evidence -- --proposal proposals/fava-2000.json --no-assignment-check
+npm run agent:extract-evidence -- --proposal proposals/fava-2000.json --model-proposal
 ```
 
-**Nøyaktig ett av `--assignment <fil>` og `--no-assignment-check` er påkrevd**,
-for hver registrering. Oppdraget er en egen, tiltrodd inndata: kjøringen
+**Nøyaktig ett av `--assignment <fil>`, `--model-proposal` og `--human-proposal`
+er påkrevd**, for hver registrering. Valget sier både om forslaget kontrolleres
+mot et oppdrag, og om raden føres som KI-assistert eller manuell. Oppdraget er en egen, tiltrodd inndata: kjøringen
 kontrollerer kildebindingen og hver katalogverdi mot det før noe skrives.
 Grunnen er overleveringen — et forslag kan ha vært innom en økt som leste utrygt
 eksternt innhold — og avgrensningen mot katalogen er den ene kontrollen den
@@ -144,16 +145,19 @@ Valget er **kallerens**, ikke forslagets. Sperren leser ikke `generated_by` for 
 avgjøre om oppdraget trengs; da ville et endret felt i filen kunnet slå
 kontrollen av.
 
-**Valget avgjør også hva slags ekstraksjon raden blir.** `--assignment` betyr den
-oppdragsbaserte modellflyten og krever `producer: "model"` (`ai_assisted`);
-`--no-assignment-check` betyr en redaktørs eget arbeid og krever
-`producer: "human"` (`manual`). Et avvik avvises før kjøringen åpnes. Uten den
-bindingen kunne et maskinutkast blitt ført som en menneskelig ekstraksjon ved at
-ett ord ble endret i filen — og `extraction_method` er nettopp det som forteller
-kontrolløren hva hen etterprøver.
+| Valg                 | For                                                                               | `extraction_method` |
+| -------------------- | --------------------------------------------------------------------------------- | ------------------- |
+| `--assignment <fil>` | Et maskinutkast, med oppdraget det ble laget under                                | `ai_assisted`       |
+| `--model-proposal`   | Et maskinutkast uten oppdrag — for eksempel skrevet av ChatGPT ut av en fulltekst | `ai_assisted`       |
+| `--human-proposal`   | En redaktørs eget arbeid                                                          | `manual`            |
 
-Et forslag i denne katalogen er som regel skrevet av en redaktør ut av en
-fulltekst og har ikke noe oppdrag. Da er `--no-assignment-check` det riktige
+Forslagets `generated_by.producer` må stemme med valget, og et avvik avvises før
+kjøringen åpnes. Uten den bindingen kunne et maskinutkast blitt ført som en
+menneskelig ekstraksjon ved at ett ord ble endret i filen — og
+`extraction_method` er nettopp det som forteller kontrolløren hva hen
+etterprøver.
+
+Et forslag i denne katalogen har ikke noe oppdrag. Da er `--no-assignment-check` det riktige
 svaret, og valget føres i kjøringens manifest slik at den som senere bedømmer
 raden, kan lese det. Har du et oppdrag, oppgi det framfor å slå kontrollen av.
 
@@ -212,9 +216,13 @@ npm run agent:extract-evidence -- \
 ## Flere artikler på én gang
 
 ```bash
-npm run agent:reextract-evidence -- --directory proposals --dry-run
-npm run agent:reextract-evidence -- --directory proposals
+npm run agent:reextract-evidence -- --directory proposals --model-proposal --dry-run
+npm run agent:reextract-evidence -- --directory proposals --model-proposal
 ```
+
+Arbeidsformen er påkrevd her også, og den gjelder hele køen: re-ekstraksjonen
+har ingen oppdrag å kontrollere mot, men hva slags arbeid forslagene er, skal
+sies av kalleren — ikke av filene.
 
 Kjører alle `.json`-forslagene i katalogen i navnerekkefølge, og kjører den
 deterministiske kontrollen på hvert nytt funn med det samme. Dette er veien for

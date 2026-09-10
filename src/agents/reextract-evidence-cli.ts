@@ -59,76 +59,33 @@ import {
   readAgentConfig,
 } from './agent-environment.ts'
 import { redact } from './agent-credential.ts'
+import { parseReextractionArguments, type ReextractionCliOptions } from './cli-arguments.ts'
 import { EXTRACTION_VERIFICATION_PREMISES } from './pipeline-version.ts'
 import { readProposalDirectory, readProposalFile } from './proposal-files.ts'
 import type { LabelledProposal } from './reextraction-run.ts'
 import { runReextraction } from './reextraction-run.ts'
 
 const USAGE = `Bruk:
-  npm run agent:reextract-evidence -- (--directory <katalog> | --proposal <fil>...) [valg]
+  npm run agent:reextract-evidence -- (--directory <katalog> | --proposal <fil>...) \
+    (--model-proposal | --human-proposal) [valg]
 
 Valg:
   --directory <katalog>  Alle .json-forslagene i katalogen, i navnerekkefølge.
   --proposal <fil>       Ett forslag. Kan gjentas.
+  --model-proposal       Køen består av maskinutkast uten oppdrag.
+  --human-proposal       Køen består av en redaktørs eget arbeid.
   --dry-run              Hent og kontroller, men skriv ingenting.
   --help                 Vis denne teksten.
+
+Nøyaktig ett av --model-proposal og --human-proposal er påkrevd, og det gjelder
+hele køen. Re-ekstraksjonen har ingen oppdrag å kontrollere mot, men hva slags
+arbeid forslagene er, skal sies av kalleren — ikke av filene.
 
 Kjøringen er idempotent: et forslag som allerede er registrert med nøyaktig det
 samme innholdet, skriver ingenting.`
 
-interface Options {
-  readonly directory: string | null
-  readonly proposalPaths: readonly string[]
-  readonly dryRun: boolean
-}
-
-export function parseReextractionArguments(argv: readonly string[]): Options | 'help' {
-  let directory: string | null = null
-  const proposalPaths: string[] = []
-  let dryRun = false
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const flag = argv[index]
-    if (flag === '--help' || flag === '-h') {
-      return 'help'
-    }
-    if (flag === '--dry-run') {
-      dryRun = true
-      continue
-    }
-    if (flag === '--directory' || flag === '--proposal') {
-      const value = argv[index + 1]
-      if (value === undefined || value.startsWith('--')) {
-        throw new Error(`${flag} krever en sti.`)
-      }
-      if (flag === '--directory') {
-        if (directory !== null) {
-          throw new Error('--directory kan bare oppgis én gang.')
-        }
-        directory = value
-      } else {
-        proposalPaths.push(value)
-      }
-      index += 1
-      continue
-    }
-    throw new Error(`Ukjent valg: ${String(flag)}`)
-  }
-
-  if (directory === null && proposalPaths.length === 0) {
-    throw new Error('Oppgi enten --directory eller minst én --proposal.')
-  }
-  // De to sammen ville gjort rekkefølgen uklar, og rekkefølgen er en del av
-  // sporet: hver kjøring i provenance.agent_runs skal kunne leses tilbake mot
-  // filen den kom fra.
-  if (directory !== null && proposalPaths.length > 0) {
-    throw new Error('Oppgi enten --directory eller --proposal, ikke begge.')
-  }
-  return { directory, proposalPaths, dryRun }
-}
-
 async function main(): Promise<number> {
-  let options: Options
+  let options: ReextractionCliOptions
   try {
     const parsed = parseReextractionArguments(process.argv.slice(2))
     if (parsed === 'help') {
@@ -160,6 +117,10 @@ async function main(): Promise<number> {
       verificationApi: createExtractionVerificationApi(client, verificationConfig.credential),
       verificationPremises: EXTRACTION_VERIFICATION_PREMISES,
       proposals,
+      // Kallerens tiltrodde påstand om hva slags arbeid køen er. Uten den
+      // ville forslagsfilene selv avgjort om de ble ført som KI-assistert
+      // eller manuell (`extraction-proposal.ts`).
+      mode: options.mode,
       dryRun: options.dryRun,
       log: (line) => {
         console.log(line)

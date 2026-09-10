@@ -7034,8 +7034,14 @@ kjøringens manifest, slik at fravær av kontroll er en handling noen gjorde.
 maskinutkast eller en kollegas arbeid, og verdien inngår i evidensfunnets identitet
 (migrasjon 005ab, ANTIDEP_CONSTITUTION.md §8, §12, §14). Feltet står i den utrygge filen, så
 et maskinutkast kunne blitt ført som en menneskelig ekstraksjon ved at ett ord ble endret
-etter `--close` — alt annet ville passert. De to modusene bærer derfor hver sin produsent, og
-forslagets erklæring må stemme med den; et avvik avvises før kjøringen åpnes. Av resten av
+etter `--close` — alt annet ville passert. Hver arbeidsform bærer derfor sin produsent, og
+forslagets erklæring må stemme med den; et avvik avvises før kjøringen åpnes. Arbeidsformen er
+**påkrevd**, og det er poenget: så lenge den var valgfri, var invarianten valgfri, og
+re-ekstraksjonen av eldre forslag utelot den — altså en åpen vei rundt kontrollen gjennom den
+andre registreringskommandoen. De tre arbeidsformene er den oppdragsbaserte modellflyten, et
+maskinutkast uten oppdrag, og en redaktørs eget arbeid; to av tre er en modells, fordi den ene
+tilstanden som ikke skal kunne oppstå av en endret fil, er at et maskinutkast føres som et
+menneskes arbeid. Av resten av
 `generated_by` er `request_digest` den ene verdien som er etterprøvbar: forespørselen er en ren
 funksjon av oppdraget, representasjonen og promptmalen, og registreringen har alle tre. Den
 rekonstrueres derfor framfor å kopieres, og et avvik gir ingen rad. Lar den seg ikke

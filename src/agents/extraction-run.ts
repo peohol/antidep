@@ -57,6 +57,7 @@ import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
 import {
   extractionMethodFor,
+  modeRequiresAssignment,
   producerForMode,
   registrationModeProblem,
   type RegistrationMode,
@@ -99,14 +100,19 @@ export interface ExtractionRunOptions {
    */
   readonly assignment?: ExtractionAssignment
   /**
-   * Arbeidsformen kalleren registrerer under, når kalleren har en.
+   * Arbeidsformen kalleren registrerer under. **Påkrevd.**
    *
-   * Oppgitt, må forslagets egen `generated_by.producer` stemme med den. Feltet
-   * avgjør `extraction_method`, og forslaget er utrygg inndata: uten dette
-   * kunne et maskinutkast blitt ført som et menneskes arbeid ved å endre ett
-   * ord i filen (`extraction-proposal.ts`).
+   * Forslagets egen `generated_by.producer` må stemme med den, og
+   * `extraction_method` utledes av modusen — ikke av filen. Forslaget er utrygg
+   * inndata: uten dette kunne et maskinutkast blitt ført som et menneskes
+   * arbeid ved å endre ett ord (`extraction-proposal.ts`).
+   *
+   * Feltet er påkrevd og ikke valgfritt med en fornuftig standardverdi, og det
+   * er hele poenget. Så lenge det kunne utelates, var invarianten valgfri: en
+   * kaller som glemte den, falt tilbake på at filen bestemte selv — og det
+   * gjorde en av dem.
    */
-  readonly mode?: RegistrationMode
+  readonly mode: RegistrationMode
   /** Kontroller og rapporter, men registrer ingenting. */
   readonly dryRun?: boolean
   readonly retrieve?: RetrieveLike
@@ -300,21 +306,33 @@ export async function runEvidenceExtraction(
   // bli avvist på noe kalleren kunne fått vite uten å røre databasen. Kastet er
   // med vilje — dette er en feil i kallet, ikke et normalt utfall som «kilden
   // har endret seg».
-  if (options.mode !== undefined) {
-    const problem = registrationModeProblem(options.mode, proposal.generatedBy.producer)
-    if (problem !== null) {
-      throw new Error(`Registreringen ble ikke åpnet: ${problem}.`)
-    }
+  //
+  // Først at modusen og oppdraget henger sammen. En modus som sa «kontrollert
+  // mot oppdraget» uten et oppdrag, ville vært en usann påstand i manifestet;
+  // et oppdrag under en modus som ikke kontrollerer det, ville vært en
+  // kontroll kalleren trodde den fikk.
+  if (modeRequiresAssignment(options.mode) && options.assignment === undefined) {
+    throw new Error(
+      'Registreringen ble ikke åpnet: arbeidsformen sier at forslaget kontrolleres mot ' +
+        'oppdraget, men det fulgte ikke noe oppdrag med.',
+    )
+  }
+  if (!modeRequiresAssignment(options.mode) && options.assignment !== undefined) {
+    throw new Error(
+      'Registreringen ble ikke åpnet: det fulgte et oppdrag med, men arbeidsformen kontrollerer ' +
+        'det ikke. Registrer forslaget under den arbeidsformen som gjør det.',
+    )
+  }
+  const problem = registrationModeProblem(options.mode, proposal.generatedBy.producer)
+  if (problem !== null) {
+    throw new Error(`Registreringen ble ikke åpnet: ${problem}.`)
   }
 
   const groundedFields = proposal.fieldGroundings.map((grounding) => grounding.checkField)
-  // Utledet av modusen når kalleren oppga en, ellers av forslagets egen
-  // erklæring. De to er kontrollert like over, så verdien er den samme — men
-  // den kommer fra den tiltrodde halvdelen når det finnes en.
-  const extractionMethod =
-    options.mode === undefined
-      ? extractionMethodFor(proposal.generatedBy.producer)
-      : extractionMethodFor(producerForMode(options.mode))
+  // Utledet av modusen, aldri av forslaget. Verdien sier om en kontrollør
+  // etterprøver et maskinutkast eller en kollegas arbeid, og den skal komme fra
+  // den tiltrodde halvdelen.
+  const extractionMethod = extractionMethodFor(producerForMode(options.mode))
   // Kildeversjonen oppgis strukturert, ikke bare i manifestet: den binder
   // evidensfunnet til nøyaktig den utgaven kjøringen leste, deklarativt
   // (evidence_items_agent_run_source_version_fkey, migrasjon 005z). Manifestet
@@ -351,9 +369,10 @@ export async function runEvidenceExtraction(
       // av en redaktør ut av en fulltekst har ikke noe oppdrag. Men valget skal
       // kunne leses i ettertid, av den som bedømmer raden.
       assignment_checked: options.assignment !== undefined,
-      // Hva kalleren registrerte under, eller `null` når kalleren ikke oppga
-      // en arbeidsform. Den tiltrodde halvdelen av «hvem laget dette».
-      registration_mode: options.mode ?? null,
+      // Hva kalleren registrerte under: den tiltrodde halvdelen av «hvem laget
+      // dette», og for `unchecked_model` også en opplysning om at
+      // avgrensningen mot katalogen ikke ble kontrollert.
+      registration_mode: options.mode,
       dry_run: dryRun,
     },
     proposal.sourceVersionId,

@@ -436,6 +436,7 @@ async function main(): Promise<void> {
   }
 
   const extraction = await runEvidenceExtraction({
+    mode: 'unchecked_model',
     api: createEvidenceExtractionApi(client, {
       identityKey: 'agent-identity:evidence-extraction-01',
       secret: agentSecret(secret),
@@ -736,7 +737,11 @@ async function main(): Promise<void> {
   // Tørrkjøringen først. Den er den kommandoen som faktisk brukes før en ekte
   // registrering, og den skriver ingen evidensrad — men kjøringen registreres
   // og lukkes, slik at også en tørrkjøring er sporbar (§74.31).
-  const dryRun = await runReextraction({ ...reextractionPorts, dryRun: true })
+  const dryRun = await runReextraction({
+    ...reextractionPorts,
+    mode: 'unchecked_model',
+    dryRun: true,
+  })
   check(
     'tørrkjøringen kontrollerte forslaget uten å registrere noe',
     dryRun.registered === 0 && dryRun.results[0]?.extraction.decision === 'previewed',
@@ -752,7 +757,10 @@ async function main(): Promise<void> {
     ) === 'aborted|true',
   )
 
-  const reextraction = await runReextraction(reextractionPorts)
+  const reextraction = await runReextraction({
+    ...reextractionPorts,
+    mode: 'unchecked_model',
+  })
   check(
     're-ekstraksjonen registrerte et nytt forankret funn',
     reextraction.registered === 1,
@@ -769,7 +777,10 @@ async function main(): Promise<void> {
       'true',
   )
 
-  const igjen = await runReextraction(reextractionPorts)
+  const igjen = await runReextraction({
+    ...reextractionPorts,
+    mode: 'unchecked_model',
+  })
   check(
     'kjørt om igjen skriver den ingenting',
     igjen.registered === 0 && igjen.alreadyRegistered === 1,
@@ -813,11 +824,13 @@ async function main(): Promise<void> {
   })
 
   const avbrutt = await runEvidenceExtraction({
+    mode: 'unchecked_model',
     api: reextractionPorts.extractionApi,
     proposal: avbruttForslag,
     retrieve: retrieve(contentHash),
   })
   const nabo = await runEvidenceExtraction({
+    mode: 'unchecked_model',
     api: reextractionPorts.extractionApi,
     proposal: naboForslag,
     retrieve: retrieve(contentHash),
@@ -839,6 +852,7 @@ async function main(): Promise<void> {
 
   const gjenopptatt = await runReextraction({
     ...reextractionPorts,
+    mode: 'unchecked_model',
     proposals: [{ label: 'avbrutt.json', proposal: avbruttForslag }],
   })
   check(
@@ -868,6 +882,7 @@ async function main(): Promise<void> {
   // kjeden er komplett, og ikke dra naboen med seg.
   const enGangTil = await runReextraction({
     ...reextractionPorts,
+    mode: 'unchecked_model',
     proposals: [{ label: 'avbrutt.json', proposal: avbruttForslag }],
   })
   check(
@@ -924,6 +939,7 @@ async function main(): Promise<void> {
 
   const rettet = await runReextraction({
     ...reextractionPorts,
+    mode: 'unchecked_model',
     proposals: [{ label: 'rettet-forankring.json', proposal: rettetForslag }],
   })
   check(
@@ -1149,6 +1165,7 @@ async function main(): Promise<void> {
   )
   const modellKjede = await runReextraction({
     ...reextractionPorts,
+    mode: 'unchecked_model',
     proposals: [{ label: 'modell-leddet.json', proposal: modellForslag }],
   })
   const modellItem = modellKjede.results[0]?.extraction.evidenceItemId ?? ''
@@ -1234,6 +1251,7 @@ async function main(): Promise<void> {
   })
   const menneskeKjede = await runReextraction({
     ...reextractionPorts,
+    mode: 'without_assignment',
     proposals: [{ label: 'samme-verdier-menneske.json', proposal: menneskeForslag }],
   })
   const menneskeItem = menneskeKjede.results[0]?.extraction.evidenceItemId ?? ''
@@ -1331,6 +1349,7 @@ async function main(): Promise<void> {
     const routineForslag = await readProposalFile(lukket.proposalPath)
     const routineKjede = await runReextraction({
       ...reextractionPorts,
+      mode: 'unchecked_model',
       proposals: [routineForslag],
     })
     const routineItem = routineKjede.results[0]?.extraction.evidenceItemId ?? ''
@@ -1352,6 +1371,7 @@ async function main(): Promise<void> {
     )
     const routineOppdrag = parseAssignmentJson(oppdragsfil, readFileSync(oppdragsfil, 'utf8'))
     const utenfor = await runEvidenceExtraction({
+      mode: 'with_assignment',
       api: reextractionPorts.extractionApi,
       proposal: routineForslag.proposal,
       assignment: parseExtractionAssignment({

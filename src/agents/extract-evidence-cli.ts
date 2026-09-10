@@ -30,28 +30,32 @@ import { EVIDENCE_EXTRACTION_CREDENTIAL, readAgentConfig } from './agent-environ
 import { redact } from './agent-credential.ts'
 import { parseRegistrationArguments, type RegistrationCliOptions } from './cli-arguments.ts'
 import { parseAssignmentJson } from './extraction-assignment.ts'
-import { registrationModeProblem, type RegistrationMode } from './extraction-proposal.ts'
+import { registrationModeProblem } from './extraction-proposal.ts'
 import { buildExtractionProposalSchema } from './extraction-proposal-schema.ts'
 import { runEvidenceExtraction } from './extraction-run.ts'
 import { readProposalFile } from './proposal-files.ts'
 
 const USAGE = `Bruk:
   npm run agent:extract-evidence -- --proposal <fil> --assignment <fil> [valg]
-  npm run agent:extract-evidence -- --proposal <fil> --no-assignment-check [valg]
+  npm run agent:extract-evidence -- --proposal <fil> --model-proposal [valg]
+  npm run agent:extract-evidence -- --proposal <fil> --human-proposal [valg]
 
 Valg:
-  --proposal <fil>       JSON-filen med ekstraksjonsforslaget. Påkrevd.
-  --assignment <fil>     Oppdraget forslaget kontrolleres mot: kildebindingen og
-                         hver katalogverdi.
-  --no-assignment-check  Registrer uten den kontrollen. For et forslag som ikke
-                         har noe oppdrag — et en redaktør har skrevet selv.
-  --dry-run              Hent og kontroller, men registrer ingenting.
-  --schema               Skriv ut JSON Schema-formen av forslaget, og avslutt.
-  --help                 Vis denne teksten.
+  --proposal <fil>    JSON-filen med ekstraksjonsforslaget. Påkrevd.
+  --assignment <fil>  Et maskinutkast, med oppdraget det ble laget under.
+                      Kildebindingen og hver katalogverdi kontrolleres mot det.
+  --model-proposal    Et maskinutkast uten oppdrag. Raden føres som
+                      KI-assistert, og kjøringen fører at avgrensningen mot
+                      katalogen ikke ble kontrollert.
+  --human-proposal    En redaktørs eget arbeid, uten oppdrag. Raden føres som
+                      manuell.
+  --dry-run           Hent og kontroller, men registrer ingenting.
+  --schema            Skriv ut JSON Schema-formen av forslaget, og avslutt.
+  --help              Vis denne teksten.
 
-Nøyaktig ett av --assignment og --no-assignment-check er påkrevd. Valget er
-kallerens, og føres i kjøringens manifest: forslaget er utrygg inndata og får
-ikke avgjøre om det blir kontrollert.`
+Nøyaktig ett av de tre er påkrevd. Valget er kallerens og føres i kjøringens
+manifest: forslaget er utrygg inndata og får verken avgjøre om det blir
+kontrollert, eller om raden føres som KI-assistert eller manuell.`
 
 async function main(): Promise<number> {
   let options: RegistrationCliOptions
@@ -78,7 +82,6 @@ async function main(): Promise<number> {
   // sagt i det hele tatt.
   let proposal
   let assignment
-  let mode: RegistrationMode
   try {
     proposal = (await readProposalFile(options.proposalPath)).proposal
     // Hvorvidt oppdraget kontrolleres, er avgjort av argumentlisten — ikke av
@@ -96,8 +99,7 @@ async function main(): Promise<number> {
     // ikke stemmer, uten først å måtte ha legitimasjon på plass. Kjøringen
     // håndhever den samme regelen om igjen — der er den invarianten, her er den
     // en beskjed.
-    mode = assignment === undefined ? 'without_assignment' : 'with_assignment'
-    const problem = registrationModeProblem(mode, proposal.generatedBy.producer)
+    const problem = registrationModeProblem(options.mode, proposal.generatedBy.producer)
     if (problem !== null) {
       console.error(`Ingenting ble registrert: ${problem}.`)
       return 1
@@ -120,7 +122,7 @@ async function main(): Promise<number> {
       // Modusen er kallerens valg, og den er den tiltrodde halvdelen av «hvem
       // laget dette»: den avgjør hvilken `extraction_method` raden får, og
       // forslagets egen erklæring må stemme med den.
-      mode,
+      mode: options.mode,
       ...(assignment === undefined ? {} : { assignment }),
       dryRun: options.dryRun,
       log: (line) => {

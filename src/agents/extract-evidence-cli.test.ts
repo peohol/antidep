@@ -7,10 +7,11 @@
 // forslag endret etter `--close` kunne bytte `producer` fra `model` til
 // `human`, og katalogkontrollen ble hoppet helt over.
 //
-// Sperren er derfor flyttet til argumentlisten: nøyaktig ett av `--assignment`
-// og `--no-assignment-check` er påkrevd for hver registrering, uansett hva
-// forslaget måtte si om seg selv. Fravær av kontroll er da en handling noen
-// gjorde, ikke en tilstand som oppsto.
+// Sperren er derfor flyttet til argumentlisten: nøyaktig ett av tre valg er
+// påkrevd for hver registrering, uansett hva forslaget måtte si om seg selv.
+// Valget avgjør både om avgrensningen kontrolleres og om raden føres som
+// KI-assistert eller manuell — begge deler er da en handling noen gjorde, ikke
+// en tilstand som oppsto.
 //
 // `main()` kjøres på toppnivå i CLI-filen og kan ikke importeres av en test.
 // Argumentlesingen ligger derfor i `cli-arguments.ts`, og prøves her.
@@ -18,12 +19,12 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { parseRegistrationArguments } from './cli-arguments'
+import { parseReextractionArguments, parseRegistrationArguments } from './cli-arguments'
 
 const PROPOSAL = ['--proposal', 'proposals/fava-2000.json']
 
 describe('parseRegistrationArguments — sperren er lukket', () => {
-  it('avviser en registrering uten noen av de to valgene', () => {
+  it('avviser en registrering uten noen av de tre valgene', () => {
     expect(() => parseRegistrationArguments(PROPOSAL)).toThrow(/--assignment <fil>/)
   })
 
@@ -35,26 +36,41 @@ describe('parseRegistrationArguments — sperren er lukket', () => {
       message = cause instanceof Error ? cause.message : String(cause)
     }
     expect(message).toMatch(/utrygg inndata/)
+    expect(message).toMatch(/KI-assistert eller\s+manuell/)
   })
 
-  it('avviser begge valgene samtidig', () => {
+  it('avviser to av valgene samtidig', () => {
     expect(() =>
-      parseRegistrationArguments([...PROPOSAL, '--assignment', 'a.json', '--no-assignment-check']),
-    ).toThrow(/to forskjellige valg/)
+      parseRegistrationArguments([...PROPOSAL, '--assignment', 'a.json', '--human-proposal']),
+    ).toThrow(/nøyaktig ett av/)
+    expect(() =>
+      parseRegistrationArguments([...PROPOSAL, '--model-proposal', '--human-proposal']),
+    ).toThrow(/nøyaktig ett av/)
   })
 
   it('tar imot oppdraget', () => {
     expect(parseRegistrationArguments([...PROPOSAL, '--assignment', 'a.json'])).toEqual({
       proposalPath: 'proposals/fava-2000.json',
       assignmentPath: 'a.json',
+      mode: 'with_assignment',
       dryRun: false,
     })
   })
 
-  it('tar imot det uttrykkelige fravalget, som `null`', () => {
-    expect(parseRegistrationArguments([...PROPOSAL, '--no-assignment-check'])).toEqual({
+  it('tar imot et maskinutkast uten oppdrag, uten å gjøre det til et menneskes arbeid', () => {
+    expect(parseRegistrationArguments([...PROPOSAL, '--model-proposal'])).toEqual({
       proposalPath: 'proposals/fava-2000.json',
       assignmentPath: null,
+      mode: 'unchecked_model',
+      dryRun: false,
+    })
+  })
+
+  it('tar imot en redaktørs eget arbeid', () => {
+    expect(parseRegistrationArguments([...PROPOSAL, '--human-proposal'])).toEqual({
+      proposalPath: 'proposals/fava-2000.json',
+      assignmentPath: null,
+      mode: 'without_assignment',
       dryRun: false,
     })
   })
@@ -68,7 +84,7 @@ describe('parseRegistrationArguments — sperren er lukket', () => {
 
   it('leser --dry-run sammen med valget', () => {
     expect(
-      parseRegistrationArguments([...PROPOSAL, '--no-assignment-check', '--dry-run']),
+      parseRegistrationArguments([...PROPOSAL, '--human-proposal', '--dry-run']),
     ).toMatchObject({ dryRun: true })
   })
 })
@@ -80,9 +96,12 @@ describe('parseRegistrationArguments — argumentlisten ser ikke på forslaget',
   it('krever det samme valget uansett hva forslaget heter eller inneholder', () => {
     for (const path of ['fra-en-modell.json', 'skrevet-av-et-menneske.json']) {
       expect(() => parseRegistrationArguments(['--proposal', path])).toThrow(/--assignment/)
-      expect(
-        parseRegistrationArguments(['--proposal', path, '--no-assignment-check']),
-      ).toMatchObject({ assignmentPath: null })
+      expect(parseRegistrationArguments(['--proposal', path, '--model-proposal'])).toMatchObject({
+        mode: 'unchecked_model',
+      })
+      expect(parseRegistrationArguments(['--proposal', path, '--human-proposal'])).toMatchObject({
+        mode: 'without_assignment',
+      })
     }
   })
 })
@@ -97,9 +116,7 @@ describe('parseRegistrationArguments — det som kan besvares uten et forslag', 
   })
 
   it('krever forslaget', () => {
-    expect(() => parseRegistrationArguments(['--no-assignment-check'])).toThrow(
-      /--proposal er påkrevd/,
-    )
+    expect(() => parseRegistrationArguments(['--human-proposal'])).toThrow(/--proposal er påkrevd/)
   })
 
   it('avviser et ukjent valg framfor å ignorere det', () => {
@@ -112,5 +129,59 @@ describe('parseRegistrationArguments — det som kan besvares uten et forslag', 
     expect(() => parseRegistrationArguments([...PROPOSAL, '--assignment', '--dry-run'])).toThrow(
       /krever en filsti/,
     )
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Re-ekstraksjonen: den samme sperren, uten oppdraget
+//
+// Denne veien var bypass-en. Modusen var valgfri, og køen oppga den ikke, så
+// forslagsfilene avgjorde selv om de ble ført som KI-assistert eller manuell.
+// ----------------------------------------------------------------------------
+
+const KØ = ['--directory', 'proposals']
+
+describe('parseReextractionArguments', () => {
+  it('avviser en kø uten et uttrykkelig valg', () => {
+    expect(() => parseReextractionArguments(KØ)).toThrow(/--model-proposal/)
+  })
+
+  it('kjenner ikke --assignment: en kø har ingen oppdrag å kontrolleres mot', () => {
+    expect(() => parseReextractionArguments([...KØ, '--assignment', 'a.json'])).toThrow(
+      /Ukjent valg/,
+    )
+  })
+
+  it('tar imot en kø av maskinutkast', () => {
+    expect(parseReextractionArguments([...KØ, '--model-proposal'])).toEqual({
+      directory: 'proposals',
+      proposalPaths: [],
+      mode: 'unchecked_model',
+      dryRun: false,
+    })
+  })
+
+  it('tar imot en kø av en redaktørs eget arbeid', () => {
+    expect(parseReextractionArguments([...KØ, '--human-proposal'])).toMatchObject({
+      mode: 'without_assignment',
+    })
+  })
+
+  it('avviser to valg samtidig', () => {
+    expect(() =>
+      parseReextractionArguments([...KØ, '--model-proposal', '--human-proposal']),
+    ).toThrow(/nøyaktig ett av/)
+  })
+
+  it('krever fortsatt enten en katalog eller minst ett forslag', () => {
+    expect(() => parseReextractionArguments(['--model-proposal'])).toThrow(
+      /--directory eller minst én/,
+    )
+  })
+
+  it('nekter katalog og enkeltforslag samtidig', () => {
+    expect(() =>
+      parseReextractionArguments([...KØ, '--proposal', 'a.json', '--model-proposal']),
+    ).toThrow(/ikke begge/)
   })
 })

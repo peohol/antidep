@@ -295,12 +295,38 @@ export function extractionMethodFor(producer: ProposalProducer): ExtractionMetho
 // fra.
 // ----------------------------------------------------------------------------
 
-/** Hvilken arbeidsform registreringen ble kjørt under. Kallerens valg. */
-export type RegistrationMode = 'with_assignment' | 'without_assignment'
+/**
+ * Hvilken arbeidsform registreringen ble kjørt under. Kallerens valg, og
+ * påkrevd: uten den ville forslaget selv avgjort hva det ble registrert som.
+ *
+ *   `with_assignment`    modell-leddets flyt. Oppdraget følger med, og
+ *                        avgrensningen mot katalogen kontrolleres.
+ *   `without_assignment` en redaktørs egen ekstraksjon ut av en fulltekst.
+ *                        Det finnes ikke noe oppdrag, fordi avgrensningen *er*
+ *                        det faglige arbeidet.
+ *   `unchecked_model`    et modellforslag uten oppdrag. Det er en reell
+ *                        tilstand for forslag laget før oppdragene fantes, og
+ *                        for et utkast ChatGPT skrev utenfor Antidep. Raden
+ *                        føres som KI-assistert — den er det — og kjøringen
+ *                        fører at avgrensningen ikke ble kontrollert.
+ */
+export type RegistrationMode = 'with_assignment' | 'without_assignment' | 'unchecked_model'
 
-/** Produsenten en modus beskriver. */
+/**
+ * Produsenten en modus beskriver.
+ *
+ * To av tre modi er en modells. Det er med vilje: den ene tilstanden som *ikke*
+ * skal kunne oppstå av en endret fil, er at et maskinutkast føres som et
+ * menneskes arbeid — og `without_assignment` er den eneste veien til `human`,
+ * som en kaller må velge uttrykkelig.
+ */
 export function producerForMode(mode: RegistrationMode): ProposalProducer {
-  return mode === 'with_assignment' ? 'model' : 'human'
+  return mode === 'without_assignment' ? 'human' : 'model'
+}
+
+/** Om modusen krever at oppdraget følger med. Bare den ene gjør det. */
+export function modeRequiresAssignment(mode: RegistrationMode): boolean {
+  return mode === 'with_assignment'
 }
 
 /**
@@ -317,19 +343,18 @@ export function registrationModeProblem(
   if (producer === expected) {
     return null
   }
-  if (mode === 'with_assignment') {
+  if (mode === 'without_assignment') {
     return (
-      `forslaget er erklært laget av «${producer}», men registreres med et oppdrag. Et oppdrag ` +
-      'finnes fordi en modell ikke skal velge fritt i katalogen, og verdien ville blitt ført som ' +
-      'en menneskelig ekstraksjon (extraction_method «manual»). Er det virkelig en redaktørs ' +
-      'eget arbeid, registrer det med --no-assignment-check; er det et maskinutkast, skal ' +
-      'producer være «model»'
+      `forslaget er erklært laget av «${producer}», men registreres som en redaktørs eget ` +
+      'arbeid. Et maskinutkast skal registreres som et maskinutkast, med oppdraget det ble laget ' +
+      'under der det finnes ett'
     )
   }
   return (
-    `forslaget er erklært laget av «${producer}», men registreres uten et oppdrag. Et ` +
-    'maskinutkast skal registreres med oppdraget det ble laget under, slik at avgrensningen mot ' +
-    'katalogen kontrolleres — oppgi --assignment <fil>'
+    `forslaget er erklært laget av «${producer}», men registreres som et maskinutkast. Verdien ` +
+    'ville blitt ført som en menneskelig ekstraksjon (extraction_method «manual»). Er det ' +
+    'virkelig en redaktørs eget arbeid, registrer det under den arbeidsformen; er det et ' +
+    'maskinutkast, skal producer være «model»'
   )
 }
 

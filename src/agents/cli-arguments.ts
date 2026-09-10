@@ -7,10 +7,10 @@
 // av en test — logikken som fortjener en test, må ligge et sted som kan
 // importeres uten å starte en kjøring.
 //
-// Filen har ingen importer, og skal ikke få noen: den leses av kjørere på begge
-// sider av grensen mellom modell-leddet og de leddene som har legitimasjon, og
-// en import her ville vært en kant i begge grafene på én gang
-// (`drafting-no-write-path.test.ts`).
+// Filen har bare typeimporter, og skal ikke få flere: den leses av kjørere på
+// begge sider av grensen mellom modell-leddet og de leddene som har
+// legitimasjon, og en verdiimport her ville vært en kant i begge grafene på én
+// gang (`drafting-no-write-path.test.ts`).
 //
 // ----------------------------------------------------------------------------
 // Verifikatorene
@@ -21,6 +21,8 @@
 //   --limit <n>      ta høyst n objekter i denne kjøringen
 //   --dry-run        kontroller og rapporter, men registrer ingenting
 // ============================================================================
+
+import type { RegistrationMode } from './extraction-proposal.ts'
 
 export interface VerifierCliOptions {
   /** Objektet kjøringen avgrenses til, eller `null` for hele arbeidskøen. */
@@ -173,9 +175,25 @@ export function parseDraftArguments(argv: readonly string[]): DraftCliOptions | 
 
 export interface RegistrationCliOptions {
   readonly proposalPath: string
-  /** Oppdraget forslaget kontrolleres mot, eller `null` når kalleren valgte bort kontrollen. */
+  /** Oppdraget forslaget kontrolleres mot, eller `null` når modusen ikke har et. */
   readonly assignmentPath: string | null
+  /** Arbeidsformen kalleren registrerer under. */
+  readonly mode: RegistrationMode
   readonly dryRun: boolean
+}
+
+/** De tre valgene, og modusen hvert av dem betyr. */
+const REGISTRATION_FLAGS: Readonly<Record<string, RegistrationMode>> = {
+  '--assignment': 'with_assignment',
+  '--model-proposal': 'unchecked_model',
+  '--human-proposal': 'without_assignment',
+}
+
+function tooManyModes(chosen: readonly string[]): never {
+  throw new Error(
+    `Oppgi nøyaktig ett av ${Object.keys(REGISTRATION_FLAGS).join(', ')}. Du oppga ` +
+      `${chosen.join(' og ')}.`,
+  )
 }
 
 /**
@@ -190,7 +208,7 @@ export function parseRegistrationArguments(
 ): RegistrationCliOptions | 'help' | 'schema' {
   let proposalPath: string | null = null
   let assignmentPath: string | null = null
-  let skipAssignmentCheck = false
+  const chosen: string[] = []
   let dryRun = false
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -206,8 +224,8 @@ export function parseRegistrationArguments(
       dryRun = true
       continue
     }
-    if (flag === '--no-assignment-check') {
-      skipAssignmentCheck = true
+    if (flag === '--model-proposal' || flag === '--human-proposal') {
+      chosen.push(flag)
       continue
     }
     if (flag === '--proposal' || flag === '--assignment') {
@@ -219,6 +237,7 @@ export function parseRegistrationArguments(
         proposalPath = value
       } else {
         assignmentPath = value
+        chosen.push(flag)
       }
       index += 1
       continue
@@ -229,20 +248,101 @@ export function parseRegistrationArguments(
   if (proposalPath === null) {
     throw new Error('--proposal er påkrevd.')
   }
-  if (assignmentPath !== null && skipAssignmentCheck) {
+  if (chosen.length > 1) {
+    tooManyModes(chosen)
+  }
+  const mode = chosen.length === 0 ? undefined : REGISTRATION_FLAGS[chosen[0] as string]
+  if (mode === undefined) {
     throw new Error(
-      '--assignment og --no-assignment-check er to forskjellige valg. Oppgi ett av dem.',
+      'Oppgi hva slags forslag dette er:\n\n' +
+        '  --assignment <fil>   et maskinutkast, med oppdraget det ble laget under\n' +
+        '  --model-proposal     et maskinutkast uten oppdrag\n' +
+        '  --human-proposal     en redaktørs eget arbeid\n\n' +
+        'Valget er påkrevd for hver registrering, og det er kallerens. Det avgjør om ' +
+        'avgrensningen mot katalogen kontrolleres, og om raden føres som KI-assistert eller ' +
+        'manuell — og forslaget er utrygg inndata som ikke får avgjøre noen av delene.',
     )
   }
-  if (assignmentPath === null && !skipAssignmentCheck) {
+  return { proposalPath, assignmentPath, mode, dryRun }
+}
+
+// ----------------------------------------------------------------------------
+// Re-ekstraksjonen
+//
+// Samme spørsmål, uten oppdraget: en kø av forslagsfiler har ingenting å
+// kontrolleres mot, men hva slags arbeid de er, må fortsatt sies av kalleren.
+// ----------------------------------------------------------------------------
+
+export interface ReextractionCliOptions {
+  readonly directory: string | null
+  readonly proposalPaths: readonly string[]
+  readonly mode: RegistrationMode
+  readonly dryRun: boolean
+}
+
+export function parseReextractionArguments(
+  argv: readonly string[],
+): ReextractionCliOptions | 'help' {
+  let directory: string | null = null
+  const proposalPaths: string[] = []
+  const chosen: string[] = []
+  let dryRun = false
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index]
+    if (flag === '--help' || flag === '-h') {
+      return 'help'
+    }
+    if (flag === '--dry-run') {
+      dryRun = true
+      continue
+    }
+    if (flag === '--model-proposal' || flag === '--human-proposal') {
+      chosen.push(flag)
+      continue
+    }
+    if (flag === '--directory' || flag === '--proposal') {
+      const value = argv[index + 1]
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error(`${flag} krever en sti.`)
+      }
+      if (flag === '--directory') {
+        if (directory !== null) {
+          throw new Error('--directory kan bare oppgis én gang.')
+        }
+        directory = value
+      } else {
+        proposalPaths.push(value)
+      }
+      index += 1
+      continue
+    }
+    throw new Error(`Ukjent valg: ${String(flag)}`)
+  }
+
+  if (directory === null && proposalPaths.length === 0) {
+    throw new Error('Oppgi enten --directory eller minst én --proposal.')
+  }
+  // De to sammen ville gjort rekkefølgen uklar, og rekkefølgen er en del av
+  // sporet: hver kjøring i provenance.agent_runs skal kunne leses tilbake mot
+  // filen den kom fra.
+  if (directory !== null && proposalPaths.length > 0) {
+    throw new Error('Oppgi enten --directory eller --proposal, ikke begge.')
+  }
+  if (chosen.length > 1) {
+    tooManyModes(chosen)
+  }
+  const mode = chosen.length === 0 ? undefined : REGISTRATION_FLAGS[chosen[0] as string]
+  // `with_assignment` kan ikke nås her: `--assignment` er ikke et valg denne
+  // kjøreren tar imot, og en kø har ingen oppdrag å kontrolleres mot.
+  if (mode === undefined) {
     throw new Error(
-      'Oppgi --assignment <fil> med oppdraget forslaget ble laget under, eller ' +
-        '--no-assignment-check dersom forslaget ikke har noe oppdrag.\n\n' +
-        'Valget er påkrevd for hver registrering, og det er kallerens. Avgrensningen mot ' +
-        'katalogen — hvilket virkestoff og hvilket endepunkt funnet gjelder — er den ene ' +
-        'kontrollen den ordrette ikke kan gjøre, og forslaget er utrygg inndata som ikke får ' +
-        'avgjøre om den kjøres.',
+      'Oppgi hva slags forslag køen består av:\n\n' +
+        '  --model-proposal   maskinutkast uten oppdrag\n' +
+        '  --human-proposal   en redaktørs eget arbeid\n\n' +
+        'Valget er påkrevd, og det gjelder hele køen. Re-ekstraksjonen har ingen oppdrag å ' +
+        'kontrollere mot, men hva slags arbeid dette er, skal sies av kalleren — ikke av filen.',
     )
   }
-  return { proposalPath, assignmentPath, dryRun }
+  return { directory, proposalPaths, mode, dryRun }
 }

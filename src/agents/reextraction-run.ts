@@ -88,6 +88,7 @@ import type {
 import type { ExtractionProposal } from './extraction-proposal.ts'
 import type { ExtractionRunReport, RetrieveLike } from './extraction-run.ts'
 import { runEvidenceExtraction } from './extraction-run.ts'
+import type { RegistrationMode } from './extraction-proposal.ts'
 import type { RunReport } from './extraction-verification-run.ts'
 import { runExtractionVerification } from './extraction-verification-run.ts'
 import type { RetrieveOptions } from './source-retrieval.ts'
@@ -107,6 +108,20 @@ export interface ReextractionOptions {
    */
   readonly verificationPremises: AgentRunPremises
   readonly proposals: readonly LabelledProposal[]
+  /**
+   * Arbeidsformen hele køen registreres under. **Påkrevd.**
+   *
+   * Én modus for hele køen, og ikke én per forslag: modusen er kallerens
+   * tiltrodde påstand om hva slags arbeid dette er, og en kø der hvert forslag
+   * bestemte sin egen, ville vært den samme feilen om igjen — filen ville
+   * avgjort hva den ble registrert som (`extraction-proposal.ts`).
+   *
+   * Re-ekstraksjonen har ingen oppdrag å kontrollere mot, så modusen her er
+   * enten `unchecked_model` eller `without_assignment`. Den første fører raden
+   * som KI-assistert og lar kjøringen si at avgrensningen ikke ble
+   * kontrollert; den andre er en redaktørs eget arbeid.
+   */
+  readonly mode: RegistrationMode
   /** Hent og kontroller, men registrer ingenting og kontroller ingenting. */
   readonly dryRun?: boolean
   readonly retrieve?: RetrieveLike
@@ -185,6 +200,7 @@ export async function runReextraction(options: ReextractionOptions): Promise<Ree
     const extraction = await runEvidenceExtraction({
       api: extractionApi,
       proposal,
+      mode: options.mode,
       dryRun,
       ...(retrieve === undefined ? {} : { retrieve }),
       ...(retrieveOptions === undefined ? {} : { retrieveOptions }),

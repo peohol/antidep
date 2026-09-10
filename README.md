@@ -78,10 +78,10 @@ Agentkjørerne (krever legitimasjon, se `supabase/README.md`):
 
 ```bash
 npm run agent:extract-evidence -- --schema                        # kontrakten for et forslag
-npm run agent:extract-evidence -- --proposal <fil> --assignment <fil> --dry-run  # kontroller, skriv ingenting
-npm run agent:extract-evidence -- --proposal <fil> --assignment <fil>            # registrer ett forankret funn
-npm run agent:extract-evidence -- --proposal <fil> --no-assignment-check         # for et forslag uten oppdrag
-npm run agent:reextract-evidence -- --directory proposals        # flere forslag, med kontroll etter hvert
+npm run agent:extract-evidence -- --proposal <fil> --assignment <fil>     # maskinutkast, med oppdraget
+npm run agent:extract-evidence -- --proposal <fil> --model-proposal       # maskinutkast uten oppdrag
+npm run agent:extract-evidence -- --proposal <fil> --human-proposal       # en redaktørs eget arbeid
+npm run agent:reextract-evidence -- --directory proposals --model-proposal   # flere forslag, med kontroll etter hvert
 npm run agent:verify-extraction                                  # den deterministiske kontrollen
 npm run agent:verify-claims                                      # claim-verifikatoren
 ```
