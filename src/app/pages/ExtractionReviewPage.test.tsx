@@ -441,19 +441,32 @@ describe('Kontrolløkten — feltkontrollen', () => {
   // aldri en klinisk påstand utledet av fraværet. Det kontrolløren skal
   // bedømme, er den registrerte begrunnelsen.
   it('presenterer en manglende verdi som en begrunnet mangel, og spør om begrunnelsen', async () => {
-    await gaaTilKonfidensintervallet('not_reported')
+    await gaaTilKonfidensintervallet('not_applicable')
     const step = within(openStep())
     expect(step.getByText('Hvorfor verdien mangler')).toBeInTheDocument()
     expect(
       step.getByText(
-        'Antidep har ikke ført et konfidensintervall for dette estimatet. Ikke rapportert i kilden.',
+        'Antidep har ikke ført et konfidensintervall for dette estimatet. Ikke aktuelt for dette funnet.',
       ),
     ).toBeInTheDocument()
     expect(step.getByText('Stemmer denne begrunnelsen?')).toBeInTheDocument()
     expect(step.queryByText('Antideps tolkning')).not.toBeInTheDocument()
-    // «Ikke rapportert i kilden» gjelder hele kilden, og utdraget til venstre
-    // viser bare ett sted. Forbeholdet står der kontrolløren svarer.
-    expect(step.getByText(/påstand om kilden som helhet/)).toBeInTheDocument()
+  })
+
+  // «Ikke rapportert i kilden» er en påstand om kilden som helhet, og den kan
+  // ingen avgjøre av ett lokalt utdrag. Spørsmålet er derfor snevret inn til
+  // stedet utdraget viser, og flaten sier hva utdraget er.
+  it('snevrer et fravær i kilden inn til stedet verdien ville stått', async () => {
+    await gaaTilKonfidensintervallet('not_reported')
+    const step = within(openStep())
+    expect(
+      step.getByText('Mangler opplysningen der utdraget viser at den ville stått?'),
+    ).toBeInTheDocument()
+    expect(step.getByText(/stedet der opplysningen ville stått/)).toBeInTheDocument()
+    expect(step.getByText(/ikke lete gjennom resten av kilden/)).toBeInTheDocument()
+    // Og ikke det globale ja/nei-spørsmålet, som ingen kunne svart «Ja» på ut
+    // fra det flaten viser.
+    expect(step.queryByText('Stemmer denne begrunnelsen?')).not.toBeInTheDocument()
   })
 
   // Funnet fra den tekniske reviewen: «står i kilden, men lar seg ikke lese
@@ -632,6 +645,40 @@ describe('Kontrolløkten — maskinbeviset kommer først', () => {
     expect(
       await screen.findByText(/Du skal bare vurdere om Antideps tolkning følger av utdraget/),
     ).toBeInTheDocument()
+  })
+})
+
+describe('Kontrolløkten — en global fraværspåstand kan fullføres', () => {
+  // Kravet fra den tekniske reviewen: en not_reported-kontroll skal kunne
+  // fullføres til et BEKREFTET utfall på korrekt grunnlag, uten at
+  // kontrolløren må åpne fullteksten ved siden av. Det holder ikke å vise et
+  // forbehold — spørsmålet må være avgjørbart fra det flaten viser, og
+  // kontrollen må ende i «Bekreftet» med feltet ført som kontrollert.
+  it('går fra spørsmål til bekreftet utfall, med feltet ført som kontrollert', async () => {
+    const { rpcCalls } = renderExtractionControl({
+      extraction: reviewExtraction({
+        ci_lower: null,
+        ci_upper: null,
+        ci_level_percent: null,
+        confidence_interval_availability: 'not_reported',
+      }),
+    })
+    await answerEverythingYes()
+
+    // Spørsmålet kontrolløren faktisk svarte «Ja» på, var snevret inn til
+    // stedet utdraget viser — ikke til hele kilden.
+    await screen.findByText('Dette blir registrert som: Bekreftet.')
+    fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
+
+    await waitFor(() => {
+      expect(rpcCalls.some((call) => call.name === 'register_human_extraction_verification')).toBe(
+        true,
+      )
+    })
+    const call = rpcCalls.find((c) => c.name === 'register_human_extraction_verification')
+    const args = call?.args as Record<string, unknown>
+    expect(args['p_outcome']).toBe('verified')
+    expect(args['p_checked_fields']).toContain('confidence_interval')
   })
 })
 

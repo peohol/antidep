@@ -125,7 +125,7 @@ describe('interpretField', () => {
       'sample_size',
       extraction({ sampleSize: null, sampleSizeAvailability: 'not_reported' }),
     )
-    expect(interpretation.kind).toBe('absence')
+    expect(interpretation.kind).toBe('absence_in_source')
     expect(interpretation.statement).toBe(
       'Antidep har ikke ført hvor mange observasjoner dette estimatet bygger på. Ikke rapportert i kilden.',
     )
@@ -144,7 +144,7 @@ describe('interpretField', () => {
         confidenceIntervalAvailability: 'not_reported',
       }),
     )
-    expect(interpretation.kind).toBe('absence')
+    expect(interpretation.kind).toBe('absence_in_source')
     expect(interpretation.statement).toBe(
       'Antidep har ikke ført et konfidensintervall for dette estimatet. Ikke rapportert i kilden.',
     )
@@ -164,7 +164,7 @@ describe('interpretField', () => {
         confidenceIntervalAvailability: 'not_reported',
       }),
     )
-    expect(interpretation.kind).toBe('absence')
+    expect(interpretation.kind).toBe('absence_in_source')
     expect(interpretation.statement).toBe(
       'Antidep har ikke ført et konfidensintervall for estimatet. Ikke rapportert i kilden.',
     )
@@ -181,7 +181,7 @@ describe('interpretField', () => {
         estimateAvailability: 'not_measured',
       }),
     )
-    expect(interpretation.kind).toBe('absence')
+    expect(interpretation.kind).toBe('absence_in_source')
     expect(interpretation.detail).toContain('Antall deltakere: Ikke rapportert i kilden.')
     expect(interpretation.detail).toContain('Estimatet: Ikke målt i studien.')
   })
@@ -263,28 +263,28 @@ function utenIntervall(availability: string): VerificationExtraction {
 
 describe('interpretField — de fire fraværsgrunnene', () => {
   it.each([
-    ['not_reported', 'Ikke rapportert i kilden.', true],
-    ['not_measured', 'Ikke målt i studien.', true],
-    ['not_applicable', 'Ikke aktuelt for dette funnet.', false],
-    ['not_extractable', 'Står i kilden, men lar seg ikke lese entydig ut.', false],
-  ])('gjengir «%s» som den grunnen den er', (availability, reason, global) => {
+    ['not_reported', 'Ikke rapportert i kilden.', 'absence_in_source'],
+    ['not_measured', 'Ikke målt i studien.', 'absence_in_source'],
+    ['not_applicable', 'Ikke aktuelt for dette funnet.', 'absence'],
+    ['not_extractable', 'Står i kilden, men lar seg ikke lese entydig ut.', 'absence'],
+  ])('gjengir «%s» som den grunnen den er', (availability, reason, kind) => {
     const interpretation = interpretField('confidence_interval', utenIntervall(availability))
-    expect(interpretation.kind).toBe('absence')
     expect(interpretation.statement).toBe(
       `Antidep har ikke ført et konfidensintervall for dette estimatet. ${reason}`,
     )
-    // Forbeholdet følger grunnen: bare et fravær i kilden som helhet kan ikke
-    // avgjøres av ett lokalt utdrag.
-    expect(interpretation.caveat === null).toBe(!global)
+    // Arten følger grunnen: en påstand om kilden som helhet har et annet
+    // grunnlagskrav, og dermed et annet spørsmål, enn en om funnet eller
+    // lesningen.
+    expect(interpretation.kind).toBe(kind)
   })
 
-  // Kjernen i funnet fra reviewen: kilden oppgir det faktisk, og flaten skal
-  // aldri påstå det motsatte.
+  // Kjernen i det første funnet fra reviewen: kilden oppgir det faktisk, og
+  // flaten skal aldri påstå det motsatte.
   it('sier aldri at kilden ikke oppgir noe når grunnen er at det ikke lot seg lese ut', () => {
     const interpretation = interpretField('confidence_interval', utenIntervall('not_extractable'))
     expect(interpretation.statement).toContain('Står i kilden')
     expect(interpretation.statement).not.toContain('Ikke rapportert')
-    expect(interpretation.caveat).toBeNull()
+    expect(interpretation.kind).toBe('absence')
   })
 
   // Databasen håndhever at en verdi finnes hvis og bare hvis statusen sier det
@@ -294,15 +294,14 @@ describe('interpretField — de fire fraværsgrunnene', () => {
     const interpretation = interpretField('confidence_interval', utenIntervall('reported_value'))
     expect(interpretation.kind).toBe('absence')
     expect(interpretation.statement).toContain('motstrid i registreringen')
-    expect(interpretation.caveat).toBeNull()
   })
 
-  it('tar forbeholdet med i begrunnelseskontrollen når én av grunnene gjelder hele kilden', () => {
-    expect(
-      interpretField('availability_semantics', utenIntervall('not_reported')).caveat,
-    ).not.toBeNull()
-    expect(interpretField('availability_semantics', utenIntervall('not_extractable')).caveat).toBe(
-      null,
+  it('binder begrunnelseskontrollen til det strengeste grunnlagskravet blant grunnene', () => {
+    expect(interpretField('availability_semantics', utenIntervall('not_reported')).kind).toBe(
+      'absence_in_source',
+    )
+    expect(interpretField('availability_semantics', utenIntervall('not_extractable')).kind).toBe(
+      'absence',
     )
   })
 })
@@ -319,7 +318,6 @@ describe('interpretField — feltene uten en fraværskolonne', () => {
     const interpretation = interpretField(field, e)
     expect(interpretation.kind).toBe('unrecorded')
     expect(interpretation.statement).not.toContain('kilden')
-    expect(interpretation.caveat).toBeNull()
   })
 })
 

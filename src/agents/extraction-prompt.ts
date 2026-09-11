@@ -131,6 +131,20 @@ Reglene, i prioritert rekkefølge:
    Det første begynner inne i «fluoxetine» og sier ikke hvilken studie, hvilken
    populasjon eller hvilket virkestoff de 92 gjelder. Kjøringen avviser et slikt
    utdrag.
+2b. Et FRAVÆR forankres i stedet der verdien VILLE STÅTT. Fører du et felt som
+   not_reported eller not_measured, skal feltets source_excerpt være passasjen
+   der verdien skulle ha vært oppgitt — der funnets øvrige verdier for samme
+   behandlingsarm, samme endepunkt og samme tidspunkt rapporteres.
+
+   Grunnen er at et menneske skal kunne avgjøre fraværet av det du leverer. Ett
+   vilkårlig utdrag viser hva som står ett sted, ikke hva som ikke står noe
+   sted, og kontrolløren måtte da lese hele artikkelen på nytt. Forankrer du
+   fraværet der verdien skulle stått, er spørsmålet avgjørbart: står den der,
+   eller ikke?
+
+   Mangler det et konfidensintervall til et estimat, er passasjen den som
+   oppgir estimatet. justification skal si hvor du lette og at verdien ikke
+   står der.
 3. Bruk bare identifikatorene som står i oppdraget under. En uuid som ikke står
    der, avvises. Passer ingen av dem, er det et svar i seg selv: si det i
    populasjonens availability-verdi, eller la være å levere et utkast.

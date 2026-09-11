@@ -7260,15 +7260,23 @@ lete i fullteksten selv. Konkret:
   effektmål, forbehold og den rå gjengivelsen — heter «Ingenting er ført» og spør
   om det er riktig at ingenting er ført.
 
-  Skillet mellom de to siste kom av den tekniske reviewen, og det er et
-  integritetskrav og ikke en nyanse: `not_extractable` betyr «står i kilden, men
-  lar seg ikke lese entydig ut», og et felles spørsmål av typen «stemmer det at
-  kilden ikke oppgir dette?» ville bedt kontrolløren bekrefte det motsatte av det
-  som er ført — og svaret ville blitt registrert som om det gjaldt riktig
-  spørsmål. Sier en grunn noe om kilden som helhet (`not_reported`,
-  `not_measured`), står det dessuten et forbehold der kontrolløren svarer:
-  utdraget er den lokale konteksten, ikke et bevis for at opplysningen ikke står
-  et annet sted.
+  Skillet kom av den tekniske reviewen, og det er et integritetskrav og ikke en
+  nyanse: `not_extractable` betyr «står i kilden, men lar seg ikke lese entydig
+  ut», og et felles spørsmål av typen «stemmer det at kilden ikke oppgir dette?»
+  ville bedt kontrolløren bekrefte det motsatte av det som er ført — og svaret
+  ville blitt registrert som om det gjaldt riktig spørsmål.
+
+  En fjerde art, `absence_in_source`, kom av neste runde i den samme reviewen.
+  `not_reported` og `not_measured` er påstander om kilden eller studien **som
+  helhet**, og et forbehold ved siden av et globalt ja/nei-spørsmål endrer ikke
+  sannhetsbetingelsen: kontrolløren måtte fortsatt svart «kan ikke avgjøres»
+  eller gått til fullteksten. Kravet er derfor flyttet til **grunnlaget**.
+  Ekstraksjonen skal forankre et slikt fravær i passasjen der verdien *ville
+  stått* — der funnets øvrige verdier for samme arm, endepunkt og tidspunkt
+  rapporteres (EVIDENCE_PIPELINE.md §19.1) — og flaten snevrer spørsmålet inn
+  til den: «mangler opplysningen der utdraget viser at den ville stått?». Da er
+  kontrollen gjennomførbar til et bekreftet utfall uten at kontrolløren må lete
+  i artikkelen.
 
   Bokføringssetningen «Antidep har ført 1 felt uten verdi, med en begrunnelse for
   hvert» er borte. En mangel blir aldri en klinisk påstand utledet av fraværet:

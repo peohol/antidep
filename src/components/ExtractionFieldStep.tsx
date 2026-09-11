@@ -50,16 +50,37 @@ import type { EvidenceFieldGrounding } from '../agents/verification-input'
  * bekrefte det motsatte av det som faktisk er ført
  * (`extraction-statements.ts`, ANTIDEP_CONSTITUTION.md §6, §11).
  */
-const PANE: Record<FieldStatementKind, { readonly heading: string; readonly question: string }> = {
+interface Pane {
+  readonly heading: string
+  readonly question: string
+  /** Hva utdraget til venstre er, når det ikke er åpenbart. */
+  readonly basis?: string
+}
+
+const PANE: Record<FieldStatementKind, Pane> = {
   interpretation: {
     heading: 'Antideps tolkning',
     question: 'Stemmer Antideps tolkning med teksten?',
   },
-  // Grunnen er registrert, og det er grunnen som skal bedømmes — ikke et
-  // fravær flaten har formulert på egen hånd.
+  // Grunnen er registrert og gjelder funnet eller lesningen, og det er grunnen
+  // som skal bedømmes — ikke et fravær flaten har formulert på egen hånd.
   absence: {
     heading: 'Hvorfor verdien mangler',
     question: 'Stemmer denne begrunnelsen?',
+  },
+  // Grunnen er en påstand om kilden som helhet, og den kan ingen avgjøre av ett
+  // lokalt utdrag. Spørsmålet er derfor snevret inn til det utdraget faktisk
+  // bærer, og kontrollgrunnlaget er valgt deretter: ekstraksjonen skal forankre
+  // et slikt fravær i passasjen der verdien ville stått
+  // (EVIDENCE_PIPELINE.md §19.1). Et forbehold ved siden av et globalt
+  // ja/nei-spørsmål ville ikke endret sannhetsbetingelsen, og ville latt
+  // kontrolløren stå igjen med «Kan ikke avgjøres» hver gang.
+  absence_in_source: {
+    heading: 'Hvorfor verdien mangler',
+    question: 'Mangler opplysningen der utdraget viser at den ville stått?',
+    basis:
+      'Utdraget til venstre er stedet der opplysningen ville stått. Du skal bare avgjøre om ' +
+      'den mangler der — ikke lete gjennom resten av kilden.',
   },
   // Ingen fraværskolonne finnes for feltet. Da er «ingenting er ført» hele
   // påstanden, og den handler om registreringen — ikke om hva kilden oppgir.
@@ -100,12 +121,9 @@ export function ExtractionFieldStep({
           {interpretation.detail === null ? null : (
             <p className="field-check__detail">{interpretation.detail}</p>
           )}
-          {/* Et fravær i kilden som helhet kan ikke avgjøres av ett lokalt
-              utdrag. Forbeholdet står der kontrolløren svarer, ikke i en
-              fotnote lenger nede. */}
-          {interpretation.caveat === null ? null : (
-            <p className="field-check__caveat">{interpretation.caveat}</p>
-          )}
+          {/* Hva utdraget er, når spørsmålet er snevret inn til det. Står der
+              kontrolløren svarer, ikke i en fotnote lenger nede. */}
+          {pane.basis === undefined ? null : <p className="field-check__caveat">{pane.basis}</p>}
           <details className="field-check__why">
             <summary>Hvorfor mener Antidep dette?</summary>
             <p>{grounding.justification}</p>

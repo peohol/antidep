@@ -897,11 +897,20 @@ presenterer det:
   det grunnen som skal bedømmes. Der ingen fraværskolonne finnes — effektmål,
   forbehold, den rå gjengivelsen — er «ingenting er ført» hele påstanden, og den
   handler om registreringen og ikke om hva kilden oppgir.
-- **Et fravær i kilden som helhet kan ikke avgjøres av ett lokalt utdrag.** Sier
-  Antidep at noe ikke er rapportert eller ikke er målt, skal flaten si at
-  utdraget er den lokale konteksten og ikke et bevis for at opplysningen ikke
-  står et annet sted. Kontrollflaten skal ikke stille et sterkere spørsmål enn
-  grunnlaget den viser, kan bære.
+- **Kontrollflaten skal ikke stille et sterkere spørsmål enn grunnlaget den
+  viser, kan bære.** Sier Antidep at noe ikke er rapportert i kilden eller ikke
+  er målt i studien, er det en påstand om kilden som helhet, og den kan ingen
+  avgjøre av ett lokalt utdrag. Et forbehold ved siden av et globalt
+  ja/nei-spørsmål løser ikke dette: sannhetsbetingelsen er den samme, og
+  kontrolløren ville måttet svare «kan ikke avgjøres» hver gang, eller gå til
+  fullteksten — nøyaktig det kravet over skal fjerne.
+
+  Kravet ligger derfor på grunnlaget. Et slikt fravær skal forankres i passasjen
+  der verdien **ville stått** (EVIDENCE_PIPELINE.md §19.1), og flaten snevrer
+  spørsmålet inn til den: «mangler opplysningen der utdraget viser at den ville
+  stått?». Da er kontrollen gjennomførbar til et bekreftet utfall på korrekt
+  grunnlag. Flaten skal si hva utdraget er, slik at kontrolløren vet at hen bare
+  skal avgjøre stedet — ikke lete gjennom resten av kilden.
 - To utsagn som ser like ut, skal gjøres eksplisitt forskjellige. Endepunktet er
   hva som ble målt; effektmålet er hvordan resultatet er uttrykt.
 - Tall skal presenteres i den formen kilden bruker, med databasens egen form som

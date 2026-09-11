@@ -87,12 +87,15 @@ import type { VerificationExtraction } from '../agents/verification-input'
 /**
  * Hva slags utsagn steget viser, og dermed hva kontrolløren faktisk blir spurt om.
  *
- *   `interpretation`  hva Antidep mener kilden SIER. Spørsmålet er «stemmer
- *                     dette med teksten?».
- *   `absence`         ingen verdi er ført, og en grunn ER registrert.
- *                     Spørsmålet er om nettopp den grunnen stemmer.
- *   `unrecorded`      ingen verdi er ført, og ingen grunn finnes å vise til.
- *                     Spørsmålet er om det er riktig at ingenting er ført.
+ *   `interpretation`     hva Antidep mener kilden SIER. Spørsmålet er «stemmer
+ *                        dette med teksten?».
+ *   `absence`            ingen verdi er ført, og grunnen gjelder funnet eller
+ *                        lesningen. Spørsmålet er om nettopp den grunnen stemmer.
+ *   `absence_in_source`  ingen verdi er ført, og grunnen er en påstand om kilden
+ *                        eller studien SOM HELHET. Spørsmålet er da snevret inn
+ *                        til stedet utdraget viser — se under.
+ *   `unrecorded`         ingen verdi er ført, og ingen grunn finnes å vise til.
+ *                        Spørsmålet er om det er riktig at ingenting er ført.
  *
  * Skillet mellom de to siste er ikke pedantisk. `workflow.value_availability`
  * har fire fraværsgrunner, og de er påstander om forskjellige ting:
@@ -112,8 +115,26 @@ import type { VerificationExtraction } from '../agents/verification-input'
  * `*_availability` i det hele tatt. Der er «Antidep har ikke ført noe» alt som
  * kan sies, og en flate som oversatte det til «kilden oppgir det ikke», ville
  * lagt til en påstand ingen har ført. De er `unrecorded`.
+ *
+ * ----------------------------------------------------------------------------
+ * Hvorfor `absence_in_source` er en egen tilstand og ikke et forbehold
+ *
+ * «Ikke rapportert i kilden» og «ikke målt i studien» er påstander om kilden
+ * som helhet. Ett lokalt utdrag viser hva som står ett sted, ikke hva som ikke
+ * står noe sted, og et ja/nei-spørsmål med den sannhetsbetingelsen kunne ingen
+ * kontrollør svare «Ja» på ut fra det flaten viser. Hen måtte lete i
+ * fullteksten — nøyaktig det PRODUCT_INFORMATION_ARCHITECTURE.md §63.1 finnes
+ * for å fjerne. Et forbehold ved siden av spørsmålet endrer ikke
+ * sannhetsbetingelsen, og løser derfor ingenting.
+ *
+ * Løsningen ligger i **kontrollgrunnlaget**, ikke i ordlyden: ekstraksjonen må
+ * for et slikt fravær forankre feltet i passasjen der verdien VILLE STÅTT —
+ * der funnets øvrige verdier for samme arm, endepunkt og tidspunkt rapporteres
+ * (EVIDENCE_PIPELINE.md §19.1). Da er spørsmålet snevret inn til det utdraget
+ * faktisk bærer: står opplysningen der den skulle, eller ikke? Det kan
+ * avgjøres av det flaten viser.
  */
-export type FieldStatementKind = 'interpretation' | 'absence' | 'unrecorded'
+export type FieldStatementKind = 'interpretation' | 'absence' | 'absence_in_source' | 'unrecorded'
 
 /** Ett kontrollfelt, formulert som noe en kliniker kan svare ja eller nei på. */
 export interface FieldInterpretation {
@@ -131,11 +152,6 @@ export interface FieldInterpretation {
    * `null` betyr at ingen utdypning er registrert — ikke at den er tom.
    */
   readonly detail: string | null
-  /**
-   * Forbeholdet som hører til utsagnet, når det ikke kan avgjøres av utdraget
-   * alene. `null` når utdraget er tilstrekkelig grunnlag.
-   */
-  readonly caveat: string | null
 }
 
 function availabilityText(value: string): string {
@@ -253,25 +269,22 @@ function availabilityStatement(extraction: VerificationExtraction): Claim & {
       kind: 'interpretation',
       statement: 'Alle de fem verdifeltene er ført som oppgitt av kilden.',
       detail: null,
-      caveat: null,
     }
   }
-  // Forbeholdet følger grunnene, ikke antallet: står én av dem for et fravær i
-  // kilden som helhet, kan ikke utdraget alene avgjøre den.
-  const caveat = missing.some(([, , availability]) => GLOBAL_ABSENCE.has(availability))
-    ? GLOBAL_ABSENCE_CAVEAT
-    : null
   const first = missing[0]
   if (missing.length === 1 && first !== undefined) {
-    return { ...absent(first[1], first[2]), detail: null, caveat }
+    return { ...absent(first[1], first[2]), detail: null }
   }
+  // Arten følger grunnene, ikke antallet: står én av dem for et fravær i kilden
+  // som helhet, er hele steget bundet til det strengeste grunnlagskravet.
   return {
-    kind: 'absence',
+    kind: missing.some(([, , availability]) => GLOBAL_ABSENCE.has(availability))
+      ? 'absence_in_source'
+      : 'absence',
     statement: `Antidep har ikke ført ${missing.map(([, subject]) => subject).join(', ')}.`,
     detail: missing
       .map(([label, , availability]) => `${label}: ${availabilityText(availability)}.`)
       .join(' '),
-    caveat,
   }
 }
 
@@ -300,7 +313,6 @@ function rawExtractionText(raw: unknown): string | null {
 interface Claim {
   readonly kind: FieldStatementKind
   readonly statement: string
-  readonly caveat: string | null
 }
 
 /**
@@ -316,20 +328,17 @@ const AVAILABILITY_MEANS_PRESENT = new Set(['reported_value', 'uncertain_extract
 /**
  * Fraværsgrunnene som er påstander om kilden eller studien SOM HELHET.
  *
- * «Ikke rapportert i kilden» kan ikke avgjøres av ett lokalt utdrag: utdraget
- * viser hva som står ett sted, ikke hva som ikke står noe sted. De to andre
- * grunnene er smalere — `not_applicable` gjelder funnet, `not_extractable`
- * gjelder lesningen — og trenger ikke forbeholdet.
+ * Disse kan ikke avgjøres av ett lokalt utdrag alene, og de får derfor sin egen
+ * art: kontrollgrunnlaget må være passasjen der verdien ville stått, og
+ * spørsmålet snevres inn til den. De to andre grunnene er smalere —
+ * `not_applicable` gjelder funnet, `not_extractable` gjelder lesningen — og
+ * bedømmes av begrunnelsen som den står.
  */
 const GLOBAL_ABSENCE = new Set(['not_reported', 'not_measured'])
 
-const GLOBAL_ABSENCE_CAVEAT =
-  'Dette er en påstand om kilden som helhet. Utdraget til venstre er den lokale ' +
-  'konteksten, og kan ikke alene vise at opplysningen ikke står et annet sted i kilden.'
-
 /** Et utsagn om hva kilden sier. */
 function says(statement: string): Claim {
-  return { kind: 'interpretation', statement, caveat: null }
+  return { kind: 'interpretation', statement }
 }
 
 /**
@@ -351,13 +360,11 @@ function absent(subject: string, availability: string): Claim {
       statement:
         `Antidep viser ingen verdi for ${subject}, men har samtidig ført at ` +
         `${availabilityText(availability).toLowerCase()}. Det er en motstrid i registreringen.`,
-      caveat: null,
     }
   }
   return {
-    kind: 'absence',
+    kind: GLOBAL_ABSENCE.has(availability) ? 'absence_in_source' : 'absence',
     statement: `Antidep har ikke ført ${subject}. ${availabilityText(availability)}.`,
-    caveat: GLOBAL_ABSENCE.has(availability) ? GLOBAL_ABSENCE_CAVEAT : null,
   }
 }
 
@@ -371,7 +378,7 @@ function absent(subject: string, availability: string): Claim {
  * ført.
  */
 function unrecorded(subject: string): Claim {
-  return { kind: 'unrecorded', statement: `Antidep har ikke ført ${subject}.`, caveat: null }
+  return { kind: 'unrecorded', statement: `Antidep har ikke ført ${subject}.` }
 }
 
 /**
@@ -503,13 +510,7 @@ export function interpretField(
     }
     case 'availability_semantics': {
       const summary = availabilityStatement(extraction)
-      return {
-        ...base,
-        kind: summary.kind,
-        statement: summary.statement,
-        detail: summary.detail,
-        caveat: summary.caveat,
-      }
+      return { ...base, kind: summary.kind, statement: summary.statement, detail: summary.detail }
     }
     case 'limitations': {
       const limitations = present(extraction.limitationsText)

@@ -135,6 +135,18 @@ describe('buildExtractionDraftingRequest', () => {
     expect(system).toContain('tine (N = 92), sertraline, (N = 96), or paroxetine')
   })
 
+  // Et fravær i kilden kan ikke avgjøres av et vilkårlig utdrag. Kravet ligger
+  // på grunnlaget: forankre fraværet der verdien ville stått.
+  it('krever at et fravær forankres i stedet verdien ville stått', () => {
+    const { system } = buildExtractionDraftingRequest({
+      assignment: oppdrag(),
+      representation: TEKST,
+    })
+    expect(system).toMatch(/Et FRAVÆR forankres i stedet der verdien VILLE STÅTT/)
+    expect(system).toMatch(/not_reported eller not_measured/)
+    expect(system).toMatch(/justification skal si hvor du lette/)
+  })
+
   // `sample_size` er antallet estimatet bygger på. Versiani 2005 førte 117 fordi
   // 117 pasienter hadde en vektmåling på dag 56 — uten at artikkelen sier at
   // estimatet er regnet over dem.

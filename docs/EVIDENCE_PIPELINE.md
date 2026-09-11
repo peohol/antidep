@@ -558,6 +558,27 @@ PDF-utdrag ville avvist legitime utdrag på linjeskift, orddeling og
 forkortelser, og et ledd som avviser riktige ekstraksjoner, er verre enn intet
 ledd.
 
+#### Et fravær forankres i stedet der verdien ville stått
+
+`not_reported` og `not_measured` er påstander om kilden eller studien **som
+helhet**, og de kan ikke avgjøres av et vilkårlig lokalt utdrag: et utdrag viser
+hva som står ett sted, ikke hva som ikke står noe sted. Et menneske som fikk et
+slikt fravær som et ja/nei-spørsmål med et vilkårlig utdrag ved siden av, kunne
+ikke svart annet enn «kan ikke avgjøres» uten å lese hele artikkelen på nytt.
+
+Kravet ligger derfor på **kontrollgrunnlaget**, ikke på ordlyden i spørsmålet:
+et felt ført som `not_reported` eller `not_measured` skal forankres i passasjen
+der verdien **ville stått** — der funnets øvrige verdier for samme
+behandlingsarm, samme endepunkt og samme tidspunkt rapporteres. Mangler et
+konfidensintervall til et estimat, er det passasjen som oppgir estimatet.
+`justification` skal si hvor det ble lett og at verdien ikke står der.
+
+Da er spørsmålet avgjørbart fra det flaten viser: står opplysningen der den
+skulle, eller ikke? Kontrollflaten snevrer spørsmålet inn til nettopp det
+(PRODUCT_INFORMATION_ARCHITECTURE.md §63.1). `not_applicable` og
+`not_extractable` er smalere påstander — om funnet og om lesningen — og
+bedømmes av begrunnelsen som den står.
+
 Bakgrunnen er konkret. Den første reelle menneskelige kildekontrollen møtte
 dette som forankring for behandlingsarmene:
 
