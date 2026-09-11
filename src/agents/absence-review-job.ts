@@ -206,6 +206,21 @@ export async function writeAbsenceReviewJob(
   const directory = join(input.directory, input.item.evidenceItemId)
   await mkdir(directory, { recursive: true })
 
+  // Det samme spørsmålet ble stilt den gangen det først ble stilt.
+  //
+  // `opened_at` er starten på vinduet et svartidspunkt må ligge i, og en ny
+  // kjøring skal ikke kunne flytte det. Gjør den det, blir en gjennomlesning
+  // som var gyldig i går, lagt bort i dag som om den var avgitt før spørsmålet
+  // fantes — og ferdig kontrollarbeid stilles tilbake uten at verken kilden
+  // eller svaret har endret seg. Kommandoene er ment å kunne kjøres om igjen.
+  //
+  // Avtrykket avgjør om det ER det samme spørsmålet. Er det uendret, er
+  // representasjonen, feltene, statusene og malen alle de samme, og da er det
+  // ingen ny forespørsel å tidfeste. Har avtrykket endret seg, er det et nytt
+  // spørsmål: nytt tidspunkt, og det gamle svaret faller uansett bort på
+  // avtrykket i `readAbsenceReviewOutcome`.
+  const openedAt = (await previousOpenedAt(directory, requestDigest)) ?? now()
+
   await writeFile(
     join(directory, ABSENCE_REVIEW_FILES.prompt),
     `${request.system}\n\n---\n\n${request.user}\n`,
@@ -225,7 +240,7 @@ export async function writeAbsenceReviewJob(
         })),
         request_digest: requestDigest,
         prompt_template_version: request.promptTemplateVersion,
-        opened_at: now(),
+        opened_at: openedAt,
       },
       null,
       2,
@@ -253,6 +268,28 @@ export async function writeAbsenceReviewJob(
  * halvdel med en grunn — ikke en kjøring som stopper: resten av kontrollen av
  * dette funnet, og alle funnene bak det i køen, er like gyldig uten den.
  */
+/**
+ * Tidspunktet en tidligere kjøring stilte NØYAKTIG det samme spørsmålet på.
+ *
+ * `null` når mappa er ny, filen ikke kan leses, eller avtrykket er et annet —
+ * altså i alle tilfellene der det faktisk er en ny forespørsel.
+ */
+async function previousOpenedAt(directory: string, requestDigest: string): Promise<string | null> {
+  let file: { present: boolean; value?: unknown }
+  try {
+    file = await readJsonFile(join(directory, ABSENCE_REVIEW_FILES.request))
+  } catch {
+    return null
+  }
+  if (!file.present) {
+    return null
+  }
+  const previous = file.value as Record<string, unknown>
+  return previous.request_digest === requestDigest && typeof previous.opened_at === 'string'
+    ? previous.opened_at
+    : null
+}
+
 /** Da spørsmålet ble lagt igjen, eller `null` når filen ikke kan leses. */
 async function readOpenedAt(directory: string): Promise<string | null> {
   try {

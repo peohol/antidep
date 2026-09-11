@@ -761,6 +761,14 @@ Tidspunktet kontrolleres dessuten mot da spørsmålet ble lagt igjen, med samme
 slakk som modell-leddet ellers: et svar avgitt før spørsmålet fantes, legges
 bort.
 
+**En omkjøring stiller ikke ferdig arbeid tilbake.** Kommandoene er ment å kunne
+kjøres om igjen, og `--absence-prompts` er derfor idempotent for et uendret
+spørsmål: er forespørselsavtrykket det samme, beholdes det opprinnelige
+tidspunktet spørsmålet først ble stilt på. Uten det ville en gjennomlesning som
+var gyldig i går, blitt lagt bort i dag fordi noen kjørte kommandoen på nytt —
+uten at verken kilden eller svaret hadde endret seg. Har avtrykket endret seg, er
+det et nytt spørsmål: nytt tidspunkt, og det gamle svaret faller bort som før.
+
 ##### Hva dekningen betyr når den gis
 
 Rekkevidden er **kildeversjonen**, ikke publikasjonen. Det er ikke en

@@ -137,6 +137,64 @@ describe('writeAbsenceReviewJob', () => {
   })
 })
 
+// ----------------------------------------------------------------------------
+// Gjenopptakelse: en omkjøring skal ikke stille ferdig arbeid tilbake
+//
+// Reviewfunn. `opened_at` er starten på vinduet et svartidspunkt må ligge i, og
+// en ny `--absence-prompts`-kjøring skrev den alltid på nytt — også når kilden,
+// feltene og malen var helt uendret. En gjennomlesning besvart kl. 10 ble da
+// lagt bort etter en omkjøring kl. 11, som om den var avgitt før spørsmålet
+// fantes. Prøvene under injiserer klokka, slik at femminutters-slakken ikke
+// skjuler feilen slik den gjorde før.
+// ----------------------------------------------------------------------------
+describe('writeAbsenceReviewJob — omkjøring på et uendret spørsmål', () => {
+  const T0 = '2026-09-11T10:00:00.000Z'
+  const ETT_MINUTT_SENERE = '2026-09-11T10:01:00.000Z'
+  const EN_TIME_SENERE = '2026-09-11T11:00:00.000Z'
+
+  const åpnetTidspunkt = (rot: string): string =>
+    (
+      JSON.parse(
+        readFileSync(join(rot, ITEM.evidenceItemId, ABSENCE_REVIEW_FILES.request), 'utf8'),
+      ) as { opened_at: string }
+    ).opened_at
+
+  it('flytter ikke tidspunktet, og lar det ferdige svaret stå', async () => {
+    const rot = katalog()
+    const åpnet = await writeAbsenceReviewJob({ ...job(rot), now: () => T0 })
+    expect(åpnetTidspunkt(rot)).toBe(T0)
+    svarFil(rot, åpnet.requestDigest, GYLDIG_SVAR, ETT_MINUTT_SENERE)
+
+    const omkjørt = await writeAbsenceReviewJob({ ...job(rot), now: () => EN_TIME_SENERE })
+    expect(omkjørt.wroteTemplate).toBe(false)
+    expect(åpnetTidspunkt(rot)).toBe(T0)
+
+    // …og gjennomlesningen er fortsatt gyldig, som er hele poenget.
+    const outcome = await readAbsenceReviewOutcome(job(rot))
+    expect(outcome.kind).toBe('reviewed')
+    if (outcome.kind !== 'reviewed') return
+    expect(outcome.answeredAt).toBe(ETT_MINUTT_SENERE)
+  })
+
+  // Motstykket: er spørsmålet et annet, er det en ny forespørsel — nytt
+  // tidspunkt, og det gamle svaret faller bort på avtrykket som før.
+  it('setter nytt tidspunkt når avtrykket har endret seg', async () => {
+    const rot = katalog()
+    const åpnet = await writeAbsenceReviewJob({ ...job(rot), now: () => T0 })
+    svarFil(rot, åpnet.requestDigest, GYLDIG_SVAR, ETT_MINUTT_SENERE)
+
+    const endret = { ...job(rot), representation: `${TEKST} The 95% CI was 0.4 to 2.6.` }
+    const omkjørt = await writeAbsenceReviewJob({ ...endret, now: () => EN_TIME_SENERE })
+    expect(omkjørt.requestDigest).not.toBe(åpnet.requestDigest)
+    expect(åpnetTidspunkt(rot)).toBe(EN_TIME_SENERE)
+
+    const outcome = await readAbsenceReviewOutcome(endret)
+    expect(outcome.kind).toBe('missing')
+    if (outcome.kind !== 'missing') return
+    expect(outcome.reason).toMatch(/svarer på forespørselen/)
+  })
+})
+
 describe('answerHoldsAnAnswer', () => {
   it('ser malens plassholdere som «ikke besvart»', () => {
     expect(
