@@ -10,6 +10,7 @@
 
 import {
   ABSENCE_REVIEW_PROMPT_VERSION,
+  globalAbsenceStatus,
   type AbsenceReviewOutcome,
   type AbsenceVerdict,
 } from './absence-review.ts'
@@ -494,14 +495,31 @@ export function absenceReviewFixture(
     identity: { provider: 'test', model: 'gjennomlesning', modelVersion: '1' },
     promptTemplateVersion: ABSENCE_REVIEW_PROMPT_VERSION,
     requestDigest: `sha256:${'a'.repeat(64)}`,
-    fields: item.sourceWideAbsenceFields.map((field) => {
-      const verdict = verdicts[field] ?? 'absent'
-      return {
-        checkField: field,
-        verdict,
-        quote: verdict === 'present' ? 'n = 284 patients completed the trial' : null,
-        rationale: `Leste gjennom hele representasjonen etter ${field}.`,
+    fields: item.sourceWideAbsenceFields.flatMap((field) => {
+      const status = globalAbsenceStatus(item.extraction, field)
+      if (status === null) {
+        return []
       }
+      const verdict = verdicts[field] ?? 'absent'
+      // Et `absent` på `not_measured` MÅ vise stedet kilden sier at størrelsen
+      // ikke ble målt: statusen påstår at kilden opplyser det, og den påstanden
+      // kan ikke hvile på taushet (`absence-review.ts`). Fiksturen bærer derfor
+      // et slikt utdrag, og prøvene som vil se det mangle, setter det selv.
+      const quote =
+        verdict === 'present'
+          ? 'n = 284 patients completed the trial'
+          : verdict === 'absent' && status === 'not_measured'
+            ? 'Weight was not assessed in this trial.'
+            : null
+      return [
+        {
+          checkField: field,
+          status,
+          verdict,
+          quote,
+          rationale: `Leste gjennom hele representasjonen etter ${field}.`,
+        },
+      ]
     }),
   }
 }

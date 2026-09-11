@@ -692,8 +692,29 @@ ikke avgjøres av at et tall mangler:
 
 Statusen følger derfor feltet helt fram til spørsmålet
 (`globalAbsenceStatus`), og den inngår i `request_digest`: et svar avgitt på det
-ene spørsmålet kan ikke dekke det andre. Et felt der kontrollen ikke kjenner
-statusen, dekkes aldri — den kan da ikke vite hva svaret gjaldt.
+ene spørsmålet kan ikke dekke det andre. Svaret gjentar statusen, og kontrollen
+prøver den mot raden. Et felt der kontrollen ikke kjenner statusen, dekkes
+aldri — den kan da ikke vite hva svaret gjaldt.
+
+**Taushet kan ikke bære et `not_measured`.** Statusen betyr «kilden opplyser at
+størrelsen ikke ble målt» (kolonnekommentaren på `*_availability`), og det er en
+påstand om at noe **står** i kilden. Et `absent` på et slikt felt må derfor vise
+til stedet som sier det, ordrett, og kontrollen prøver utdraget mot
+representasjonen. Nevner teksten ikke målingen i det hele tatt, er svaret
+`uncertain`: «ingen evidens for at det ble målt» er ikke «evidens for at det ikke
+ble målt», og et ledd som blandet dem, ville gjort fravær av omtale til en
+påstand om studien.
+
+| Status | Svar | Utdrag |
+|---|---|---|
+| begge | `present` | **påkrevd** — viser hva som står der |
+| `not_measured` | `absent` | **påkrevd** — viser stedet kilden sier at det ikke ble målt |
+| `not_reported` | `absent` | forbudt — et fravær har ingenting å sitere |
+| begge | `uncertain` | forbudt |
+
+Konsekvensen er reell og tilsiktet: et `not_measured` på en kilde som tier om
+målingen, kan ikke publiseres. Da er statusen som regel feil, og `not_reported`
+er den påstanden kilden faktisk bærer.
 
 Bindingen mellom et svar og teksten det gjelder, er `request_digest`, som dekker
 promptmalversjonen, feltene det spørres om og hele representasjonsteksten.

@@ -120,8 +120,12 @@ function answerTemplate(requestDigest: string, subject: AbsenceReviewSubject): u
     draft: {
       review_version: ABSENCE_REVIEW_VERSION,
       evidence_item_id: subject.evidenceItemId,
+      // Statusen er forhåndsutfylt: den er radens, ikke aktørens, og et felt
+      // aktøren måtte fylle ut selv, ville vært ett sted til å ta feil av
+      // hvilket spørsmål som ble besvart.
       fields: subject.fields.map((field) => ({
         check_field: field.checkField,
+        status: field.status,
         verdict: `${PLACEHOLDER_PREFIX}absent-present-eller-uncertain`,
         rationale: `${PLACEHOLDER_PREFIX}HVOR-DU-LETTE`,
       })),

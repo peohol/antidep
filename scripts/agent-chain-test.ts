@@ -561,6 +561,7 @@ async function main(): Promise<void> {
             // besvart, slik den ville gjort fra en ekte gjennomlesning.
             fields: forespørsel.fields.map((field) => ({
               check_field: field.check_field,
+              status: field.status,
               verdict: 'absent',
               rationale:
                 field.status === 'not_measured'

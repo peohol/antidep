@@ -81,6 +81,7 @@ const GYLDIG_SVAR = {
   fields: [
     {
       check_field: 'confidence_interval',
+      status: 'not_reported',
       verdict: 'absent',
       rationale: 'Gikk gjennom hele teksten og fant ingen presisjonsangivelse noe sted.',
     },

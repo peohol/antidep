@@ -1976,7 +1976,8 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
     // ikke, vet den heller ikke hva svaret gjelder, og dekker ingenting. Kan
     // bare inntreffe om `workflow.source_wide_absence_fields(uuid)` utvides med
     // et felt uten en fraværskolonne her — og da skal det feile lukket.
-    if (globalAbsenceStatus(item.extraction, field) === null) {
+    const status = globalAbsenceStatus(item.extraction, field)
+    if (status === null) {
       covered = false
       notes.push(
         `Fraværet av «${field}» er ikke kontrollert: kontrollen kjenner ikke hvilken av de to ` +
@@ -2048,6 +2049,46 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
       covered = false
       notes.push(`Gjennomlesningen kunne ikke avgjøre fraværet av «${field}»: ${answer.rationale}`)
       continue
+    }
+
+    // Svaret må gjelde den påstanden raden faktisk gjør. Forespørselens avtrykk
+    // stenger allerede for at et svar på det ene spørsmålet gjenbrukes på det
+    // andre; dette er den samme regelen lest av raden, slik at en fil som
+    // oppgir feil status ikke kan dekke noe.
+    if (answer.status !== status) {
+      covered = false
+      notes.push(
+        `Gjennomlesningen svarte på «${field}» som ${answer.status}, mens raden fører feltet som ` +
+          `${status}. De to er forskjellige påstander, og svaret dekker derfor ikke denne.`,
+      )
+      continue
+    }
+
+    // `not_measured` betyr «kilden opplyser at størrelsen ikke ble målt»
+    // (kolonnekommentaren på `*_availability`, migrasjon 003). Det er en påstand
+    // om at noe STÅR i kilden, og den kan bare bæres av stedet som sier det.
+    // Uten et slikt sted er svaret bygget på taushet, og taushet er ikke evidens
+    // for at en måling ikke ble gjort — det er fravær av evidens.
+    if (status === 'not_measured') {
+      const quote = answer.quote ?? ''
+      if (quote.trim().length === 0) {
+        covered = false
+        notes.push(
+          `Fraværet av «${field}» er ført som «ikke målt i studien», men gjennomlesningen viser ` +
+            'ikke til noe sted der kilden sier at størrelsen ikke ble målt. Statusen påstår at ' +
+            'kilden OPPLYSER det, og den påstanden kan ikke hvile på at teksten tier om målingen.',
+        )
+        continue
+      }
+      if (!verbatimOccursWholeWordsIn(projections, quote)) {
+        covered = false
+        notes.push(
+          `Gjennomlesningen viser til «${quote}» som stedet der kilden sier at «${field}» ikke ` +
+            'ble målt, men utdraget står ikke ordrett i representasjonen. Da er det ikke et ' +
+            'kontrollgrunnlag, og fraværet regnes ikke som kontrollert.',
+        )
+        continue
+      }
     }
 
     concluded.push(field)

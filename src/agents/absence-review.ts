@@ -183,13 +183,22 @@ const VERDICTS: readonly string[] = ['absent', 'present', 'uncertain']
 /** Svaret for ett felt. */
 export interface AbsenceFieldReview {
   readonly checkField: string
+  /**
+   * Hvilken av de to påstandene svaret gjelder.
+   *
+   * Oppgis av leddet og ikke utledet her, selv om forespørselen sier den:
+   * svaret skal si hvilket spørsmål det faktisk besvarte. Kontrollen prøver den
+   * mot raden, så et svar på det ene spørsmålet ikke kan dekke det andre.
+   */
+  readonly status: GlobalAbsenceStatus
   readonly verdict: AbsenceVerdict
   /**
-   * Det ordrette utdraget som viser at opplysningen står der.
+   * Det ordrette utdraget svaret hviler på.
    *
-   * Påkrevd for `present` og forbudt ellers. Et `absent` har per definisjon
-   * ingenting å sitere, og et utdrag ved siden av et `absent` ville vært et
-   * bevis som pekte motsatt vei av påstanden.
+   * Hvilke svar som skal ha et, følger av hva de påstår — se kommentaren over
+   * `quoteProblem`. Kort: et `present` viser hva som står der, et `absent` på
+   * `not_measured` viser stedet kilden sier at størrelsen ikke ble målt, og de
+   * to øvrige har ingenting å sitere.
    */
   readonly quote: string | null
   /** Hvor leddet lette, og hvordan det kom til svaret. */
@@ -254,6 +263,7 @@ function parseFieldReview(value: unknown, index: number): AbsenceFieldReview {
   const fields: Fields = fieldsOf(value, REVIEW_SUBJECT, where)
 
   const checkField = asText(fields, 'check_field')
+  const status = asVocabulary(fields, 'status', GLOBAL_ABSENCE_STATUSES) as GlobalAbsenceStatus
   const verdict = asVocabulary(fields, 'verdict', VERDICTS) as AbsenceVerdict
 
   const rationale = asText(fields, 'rationale')
@@ -269,23 +279,60 @@ function parseFieldReview(value: unknown, index: number): AbsenceFieldReview {
   const quote = asOptionalText(fields, 'quote')
   rejectUnknown(fields)
 
-  if (verdict === 'present' && (quote === null || quote.trim().length === 0)) {
-    problem(
-      REVIEW_SUBJECT,
-      `${where}.quote`,
-      'mangler. Et «present» skal vise ORDRETT hva som står der, ellers kan ingen etterprøve det',
-    )
-  }
-  if (verdict !== 'present' && quote !== null) {
-    problem(
-      REVIEW_SUBJECT,
-      `${where}.quote`,
-      `står ved siden av verdict ${JSON.stringify(verdict)}. Bare et «present» har noe å sitere; ` +
-        'et utdrag ved siden av et fravær peker motsatt vei av påstanden',
-    )
+  const trouble = quoteProblem(status, verdict, quote)
+  if (trouble !== null) {
+    problem(REVIEW_SUBJECT, `${where}.quote`, trouble)
   }
 
-  return { checkField, verdict, quote, rationale }
+  return { checkField, status, verdict, quote, rationale }
+}
+
+/**
+ * Hvilke svar som må bære et ordrett utdrag, og hvilke som ikke får ha et.
+ *
+ * Regelen følger av hva hvert svar PÅSTÅR, ikke av verdiet alene:
+ *
+ *   present                   Kilden sier noe annet enn raden. Utdraget er det
+ *                             som gjør påstanden etterprøvbar. Påkrevd.
+ *   absent på not_measured    «Kilden opplyser at størrelsen ikke ble målt»
+ *                             (kolonnekommentaren på `*_availability`,
+ *                             migrasjon 003). Det er en påstand om at noe STÅR
+ *                             i kilden, og den kan bare bæres av stedet som sier
+ *                             det. Påkrevd.
+ *   absent på not_reported    «Størrelsen kunne vært oppgitt, men kilden oppgir
+ *                             den ikke.» Et fravær har ingenting å sitere, og et
+ *                             utdrag her ville pekt motsatt vei. Forbudt.
+ *   uncertain                 Leddet konkluderte ikke. Forbudt.
+ *
+ * Skillet er reviewfunn nummer tre på dette leddet, og det er det skarpeste:
+ * uten det kunne REN TAUSHET i kilden bli til «studien målte ikke dette». Fant
+ * gjennomlesningen ingen omtale av målingen i det hele tatt, er det ikke evidens
+ * for at den ikke ble gjort — det er fravær av evidens, og svaret er `uncertain`.
+ */
+function quoteProblem(
+  status: GlobalAbsenceStatus,
+  verdict: AbsenceVerdict,
+  quote: string | null,
+): string | null {
+  const required = verdict === 'present' || (verdict === 'absent' && status === 'not_measured')
+  const empty = quote === null || quote.trim().length === 0
+
+  if (required && empty) {
+    return verdict === 'present'
+      ? 'mangler. Et «present» skal vise ORDRETT hva som står der, ellers kan ingen etterprøve det'
+      : 'mangler. Et «absent» på et felt ført som «ikke målt i studien» påstår at KILDEN OPPLYSER ' +
+          'at størrelsen ikke ble målt, og den påstanden må vise stedet som sier det. Nevner ' +
+          'teksten ikke målingen i det hele tatt, er svaret «uncertain» — taushet er ikke evidens ' +
+          'for at noe ikke ble gjort'
+  }
+  if (!required && !empty) {
+    return (
+      `står ved siden av verdict ${JSON.stringify(verdict)} på et felt ført som ` +
+      `${JSON.stringify(status)}. Det svaret har ingenting å sitere, og et utdrag her ville pekt ` +
+      'motsatt vei av påstanden'
+    )
+  }
+  return null
 }
 
 /** Formen svaret skal ha, gjengitt i forespørselen slik aktøren ser den. */
@@ -306,9 +353,10 @@ export function buildAbsenceReviewSchema(
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['check_field', 'verdict', 'rationale'],
+          required: ['check_field', 'status', 'verdict', 'rationale'],
           properties: {
             check_field: { enum: fields.map((field) => field.checkField) },
+            status: { enum: [...GLOBAL_ABSENCE_STATUSES] },
             verdict: { enum: [...VERDICTS] },
             quote: { type: ['string', 'null'] },
             rationale: { type: 'string' },
@@ -335,12 +383,13 @@ kommentar etter, ingen kodegjerder.
 
 Reglene:
 
-1. Du svarer ett av tre per felt:
+1. Du svarer ett av tre per felt, og gjentar feltets status i svaret:
 
-   absent     Opplysningen står INGEN STEDER i teksten under.
-   present    Opplysningen står der. Da skal quote være det ORDRETTE utdraget,
+   absent     Radens påstand holder. Hva det krever, avhenger av statusen — se
+              regel 4. Et «absent» på «ikke målt i studien» MÅ ha quote.
+   present    Kilden sier noe annet. Da skal quote være det ORDRETTE utdraget,
               tegn for tegn, slik det står i teksten. Omskriv aldri.
-   uncertain  Du kan ikke avgjøre det.
+   uncertain  Du kan ikke avgjøre det. Ingen quote.
 
 2. «absent» er den sterkeste påstanden du kan komme med, og den eneste som
    åpner en publiseringssperre. Svar «absent» bare når du har lest gjennom hele
@@ -359,11 +408,26 @@ Reglene:
    De spør om forskjellige ting, og de skal ikke blandes:
 
    ikke rapportert  Står opplysningen noe sted i teksten? Svarer du «present»,
-                    siterer du den.
-   ikke målt        Sier teksten noe sted at dette ble MÅLT, vurdert, registrert
-                    eller undersøkt — eller oppgir den et resultat for det? Svar
-                    «present» og SITER setningen hvis den gjør det, selv om det
-                    ikke står et eneste tall noe sted.
+                    siterer du den. Finner du den ingen steder, er svaret
+                    «absent», og du har ingenting å sitere.
+   ikke målt        Dette er en påstand om at KILDEN OPPLYSER at størrelsen ikke
+                    ble målt. Den er strengere, og den har tre utfall:
+
+                    «present»    hvis teksten sier at dette BLE målt, vurdert,
+                                 registrert eller undersøkt, eller oppgir et
+                                 resultat for det. Siter setningen — også når det
+                                 ikke står et eneste tall noe sted.
+                    «absent»     BARE hvis teksten et sted sier at det IKKE ble
+                                 målt, vurdert eller registrert. Siter det stedet
+                                 ORDRETT. Uten et slikt sted kan du ikke svare
+                                 «absent».
+                    «uncertain»  hvis teksten rett og slett ikke nevner målingen.
+
+                    TAUSHET ER IKKE EVIDENS. At en artikkel ikke omtaler en
+                    måling, betyr ikke at studien lot være å gjøre den. «Ingen
+                    evidens for at det ble målt» og «evidens for at det ikke ble
+                    målt» er to forskjellige ting, og bare den andre er et
+                    «absent» her.
 
    Eksempel: «Body weight was measured at baseline and endpoint, but numerical
    results are not reported.»
@@ -459,8 +523,11 @@ function fieldQuestion(field: AbsenceReviewField): string {
   return (
     `  - ${field.checkField} — ført som «ikke målt i studien».\n` +
     `    Sier teksten noe sted at ${variable} ble MÅLT, vurdert, registrert eller\n` +
-    `    undersøkt — eller oppgir den ${what}? Et utsagn om at det ble målt er et\n` +
-    '    funn her, selv om ingen tallverdi står noe sted.'
+    `    undersøkt — eller oppgir den ${what}? Da er svaret «present», og du siterer\n` +
+    '    setningen, selv om ingen tallverdi står noe sted.\n' +
+    '    «absent» krever at teksten et sted sier at det IKKE ble målt, og at du\n' +
+    '    siterer det stedet. Nevner teksten ikke målingen i det hele tatt, er svaret\n' +
+    '    «uncertain» — taushet er ikke evidens for at noe ikke ble gjort.'
   )
 }
 

@@ -2699,6 +2699,72 @@ describe('checkExtraction — den kildeomfattende fraværskontrollen', () => {
     expect(report.findings).toMatch(/ingen gjennomlesning av hele representasjonen/)
   })
 
+  // Reviewfunn nummer tre, og det skarpeste: `not_measured` betyr «kilden
+  // OPPLYSER at størrelsen ikke ble målt» (kolonnekommentaren på
+  // `*_availability`, migrasjon 003). En kilde som ikke nevner målingen i det
+  // hele tatt, opplyser ingenting — og «ingen evidens for at det ble målt» er
+  // ikke det samme som «evidens for at det ikke ble målt».
+  const TIER_OM_MÅLING = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="METHODS">Sertraline patients with major depressive disorder',
+    '  were randomised and followed to endpoint.</AbstractText>',
+    '</PubmedArticle>',
+  ].join('\n')
+
+  const IKKE_MÅLT_UTEN_OMTALE = {
+    ...IKKE_MÅLT,
+    rawExtraction: {
+      resultat: 'Sertraline patients with major depressive disorder were randomised',
+    },
+  } as const
+
+  it('dekker ikke et «ikke målt» når kilden tier om målingen', () => {
+    const overrides = { extraction: IKKE_MÅLT_UTEN_OMTALE } as const
+    // En gjennomlesning som konkluderte «absent» — men uten et sted å vise til,
+    // fordi det ikke finnes et. Det er nøyaktig tilfellet review beskrev.
+    const tausGjennomlesning = lest(overrides)
+    const report = check(overrides, TIER_OM_MÅLING, true, {
+      ...tausGjennomlesning,
+      fields: tausGjennomlesning.fields.map((felt) => ({ ...felt, quote: null })),
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/ikke til noe sted der kilden sier at størrelsen ikke ble målt/)
+    expect(report.findings).toMatch(/kan ikke hvile på at teksten tier/)
+  })
+
+  // …og motsatt: står utsagnet der, og gjennomlesningen viser til det ordrett,
+  // er påstanden båret. Det er den ene veien et `not_measured` kan dekkes.
+  it('dekker et «ikke målt» når kilden sier det, og utdraget står ordrett', () => {
+    const sier = 'Weight was not assessed in this trial.'
+    const tekst = TIER_OM_MÅLING.replace('</AbstractText>', ` ${sier}</AbstractText>`)
+    const overrides = { extraction: IKKE_MÅLT_UTEN_OMTALE } as const
+    const report = check(overrides, tekst, true, lest(overrides))
+    expect(report.checkedFields).toContain('source_wide_absence')
+  })
+
+  // Et utdrag gjennomlesningen skrev om — eller fant på — er ikke et
+  // kontrollgrunnlag, og skal ikke kunne bære påstanden.
+  it('dekker ikke et «ikke målt» når utdraget ikke står i teksten', () => {
+    const overrides = { extraction: IKKE_MÅLT_UTEN_OMTALE } as const
+    const report = check(overrides, TIER_OM_MÅLING, true, lest(overrides))
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/står ikke ordrett i representasjonen/)
+  })
+
+  // Et svar som oppgir feil status, dekker ingenting: avtrykket stenger for
+  // gjenbruk, og dette er den samme regelen lest av raden.
+  it('dekker ikke et svar som oppgir en annen status enn raden', () => {
+    const overrides = { extraction: UTEN_KI } as const
+    const review = lest(overrides)
+    const report = check(overrides, UTEN_INTERVALL, true, {
+      ...review,
+      fields: review.fields.map((felt) => ({ ...felt, status: 'not_measured' as const })),
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/De to er forskjellige påstander/)
+  })
+
   // Et felt hvis globale fraværsgrunn kontrollen ikke kjenner, dekkes aldri —
   // uansett hva en gjennomlesning måtte ha svart. Feiler lukket.
   it('dekker ikke et felt kontrollen ikke vet hva påstår', () => {
@@ -2712,6 +2778,7 @@ describe('checkExtraction — den kildeomfattende fraværskontrollen', () => {
         fields: [
           {
             checkField: 'effect_measure',
+            status: 'not_reported',
             verdict: 'absent',
             quote: null,
             rationale: 'Leste gjennom hele representasjonen og fant ingenting.',

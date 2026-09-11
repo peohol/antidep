@@ -41,6 +41,7 @@ function review(fields: readonly unknown[]): unknown {
 
 const ABSENT = {
   check_field: 'confidence_interval',
+  status: 'not_reported',
   verdict: 'absent',
   rationale: 'Leste gjennom hele teksten, inkludert tabellene, og fant ingen presisjonsangivelse.',
 }
@@ -77,9 +78,44 @@ describe('parseAbsenceReview', () => {
     ).toThrow(/quote/)
   })
 
-  it('avviser et utdrag ved siden av et fravær', () => {
+  it('avviser et utdrag ved siden av et «ikke rapportert»-fravær', () => {
     expect(() => parseAbsenceReview(review([{ ...ABSENT, quote: '95% CI 0.4 to 2.6' }]))).toThrow(
-      /peker motsatt vei/,
+      /pekt\s+motsatt vei/,
+    )
+  })
+
+  // Reviewfunn: `not_measured` betyr «kilden opplyser at størrelsen ikke ble
+  // målt». Det er en påstand om at noe STÅR i kilden, og den kan ikke hvile på
+  // at teksten tier — da er svaret «uncertain».
+  it('krever et utdrag av et «absent» på «ikke målt i studien»', () => {
+    expect(() =>
+      parseAbsenceReview(review([{ ...ABSENT, check_field: 'estimate', status: 'not_measured' }])),
+    ).toThrow(/taushet er ikke evidens/)
+  })
+
+  it('godtar et «absent» på «ikke målt» når det viser stedet kilden sier det', () => {
+    const parsed = parseAbsenceReview(
+      review([
+        {
+          ...ABSENT,
+          check_field: 'estimate',
+          status: 'not_measured',
+          quote: 'Weight was not assessed in this trial.',
+        },
+      ]),
+    )
+    expect(parsed.fields[0]?.quote).toBe('Weight was not assessed in this trial.')
+  })
+
+  it('avviser et utdrag ved siden av et «uncertain»', () => {
+    expect(() =>
+      parseAbsenceReview(review([{ ...ABSENT, verdict: 'uncertain', quote: 'noe som helst' }])),
+    ).toThrow(/pekt\s+motsatt vei/)
+  })
+
+  it('avviser en ukjent status', () => {
+    expect(() => parseAbsenceReview(review([{ ...ABSENT, status: 'not_applicable' }]))).toThrow(
+      /status/,
     )
   })
 

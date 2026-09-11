@@ -7381,6 +7381,15 @@ Feltet føres opp bare når representasjonen lot seg reprodusere, søket fant
 ingenting, **og** gjennomlesningen svarte `absent` på hvert felt. Et søketreff
 kan ikke overstyres av en gjennomlesning som mener noe annet.
 
+**De to fraværsgrunnene er heller ikke det samme spørsmålet.** `not_reported` er
+en påstand om kildeversjonen; `not_measured` betyr «kilden opplyser at størrelsen
+ikke ble målt», og er dermed en påstand om at noe **står** i kilden. Statusen
+følger feltet helt fram til spørsmålet og inngår i forespørselens avtrykk, og et
+`absent` på `not_measured` må vise til stedet som sier det — ordrett, prøvd mot
+representasjonen. Tier teksten om målingen, er svaret `uncertain`. «Ingen evidens
+for at det ble målt» er ikke «evidens for at det ikke ble målt», og et ledd som
+blandet dem, ville gjort taushet til en påstand om studien.
+
 **Gjennomlesningen har ingen legitimasjon, og det er hele formen på den.**
 Verifikatoren legger igjen spørsmålet som filer
 (`--absence-prompts <katalog>`), en aktør Antidep ikke kaller svarer i
