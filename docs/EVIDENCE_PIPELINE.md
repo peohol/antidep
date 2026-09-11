@@ -746,11 +746,20 @@ videre to steder:
 
 `request_digest` binder spørsmålet og `answer_digest` binder svaret, så en
 tredjepart kan sammenligne det som står i proveniensen med filen aktøren
-leverte. Tidspunktet kontrolleres mot da spørsmålet ble lagt igjen, med samme
+leverte.
+
+**Tidspunktet er obligatorisk for nettopp denne gjennomlesningen**, selv om den
+delte svarkontrakten lar det stå tomt for andre arbeidsflyter: §3.7 sier SKAL,
+og leddet kan være den avgjørende grunnen til at gaten åpner. Et svar uten
+`answered_at` er derfor ikke en gjennomlesning i det hele tatt — det legges bort,
+og halvdelen står åpen med grunnen i begrunnelsen. De to utveiene er begge
+avvist: å fylle inn registreringstidspunktet ville hevdet at gjennomlesningen
+skjedde da raden ble skrevet, og å dekke uten tidspunkt ville ført et
+pipelineledd uten et påkrevd proveniensfelt.
+
+Tidspunktet kontrolleres dessuten mot da spørsmålet ble lagt igjen, med samme
 slakk som modell-leddet ellers: et svar avgitt før spørsmålet fantes, legges
-bort. Oppgir aktøren ikke noe tidspunkt, står det som ikke oppgitt — det fylles
-**ikke** inn med registreringstidspunktet, som ville vært å hevde at
-gjennomlesningen skjedde da raden ble skrevet.
+bort.
 
 ##### Hva dekningen betyr når den gis
 

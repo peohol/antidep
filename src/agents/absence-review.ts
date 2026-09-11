@@ -588,13 +588,19 @@ export type AbsenceReviewOutcome =
       /**
        * Da gjennomlesningen faktisk ble gjort, slik aktøren oppga det.
        *
-       * `null` når den ikke oppga noe. Da står det som ikke oppgitt, og fylles
-       * ikke inn med registreringstidspunktet: det ville vært å hevde at
-       * gjennomlesningen skjedde da raden ble skrevet, og en proveniens som
-       * gjetter, er verre enn en som sier at den ikke vet
-       * (ANTIDEP_CONSTITUTION.md §14).
+       * Påkrevd, og det er en innstramming fra den delte svarkontrakten, der
+       * tidspunktet er valgfritt. EVIDENCE_PIPELINE.md §3.7 sier at hvert
+       * prosessledd SKAL kunne spores til blant annet tidspunkt, og dette
+       * leddet kan være den avgjørende grunnen til at publiseringsgaten åpner.
+       *
+       * De to utveiene er begge avvist. Å fylle inn registreringstidspunktet
+       * ville hevdet at gjennomlesningen skjedde da raden ble skrevet
+       * (ANTIDEP_CONSTITUTION.md §14). Å bevare mangelen og dekke likevel ville
+       * ført et pipelineledd uten et obligatorisk proveniensfelt. Et svar uten
+       * tidspunkt er derfor ikke en gjennomlesning i det hele tatt: det blir
+       * `missing`, og halvdelen står åpen med grunnen i begrunnelsen.
        */
-      readonly answeredAt: string | null
+      readonly answeredAt: string
       /**
        * Fingeravtrykket av svaret, ordrett slik det ble lest.
        *

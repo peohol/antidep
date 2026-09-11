@@ -1877,8 +1877,8 @@ export interface SourceWideAbsenceProvenance {
   readonly promptTemplateVersion: string
   readonly requestDigest: string
   readonly answerDigest: string
-  /** Da gjennomlesningen ble gjort, eller `null` når aktøren ikke oppga det. */
-  readonly answeredAt: string | null
+  /** Da gjennomlesningen ble gjort. Alltid satt: uten det gis ingen dekning. */
+  readonly answeredAt: string
   /** Ett innslag per felt dekningen hviler på, med beviset den hviler på. */
   readonly fields: readonly {
     readonly checkField: string
@@ -1989,6 +1989,21 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
   // Gjennomlesningen må gjelde nettopp denne raden. Bindingen til teksten gjør
   // kjøreren (avtrykket av forespørselen); bindingen til raden kontrolleres her
   // også, slik at en fil lagt i feil mappe ikke kan dekke feil funn.
+  // Tidspunktet er påkrevd, og typen sier det. Kontrollen her er laget under:
+  // den ene konstruktøren (`readAbsenceReviewOutcome`) håndhever det allerede,
+  // men et ledd som kan åpne publiseringsgaten skal ikke kunne gjøre det uten
+  // proveniens fordi en senere kaller bygget objektet for hånd
+  // (EVIDENCE_PIPELINE.md §3.7).
+  if (review !== null && review.kind === 'reviewed' && review.answeredAt.trim().length === 0) {
+    return {
+      covered: false,
+      notes: [
+        'Gjennomlesningen oppgir ikke når den ble gjort. Uten tidspunktet kan leddet ikke spores, ' +
+          'og den kildeomfattende halvdelen står derfor åpen.',
+      ],
+    }
+  }
+
   if (
     review !== null &&
     review.kind === 'reviewed' &&
@@ -2167,9 +2182,8 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
   }
 
   sentences.push(
-    `Gjennomlesningen ble gjort av ${reviewerName(reviewed)} ` +
-      `${reviewed.answeredAt === null ? '(tidspunkt ikke oppgitt)' : `den ${reviewed.answeredAt}`}, ` +
-      `med promptmal ${reviewed.promptTemplateVersion}, forespørsel ${reviewed.requestDigest} og ` +
+    `Gjennomlesningen ble gjort av ${reviewerName(reviewed)} den ${reviewed.answeredAt}, med ` +
+      `promptmal ${reviewed.promptTemplateVersion}, forespørsel ${reviewed.requestDigest} og ` +
       `svar ${reviewed.answerDigest}.`,
   )
   sentences.push(

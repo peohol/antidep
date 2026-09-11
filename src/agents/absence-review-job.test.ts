@@ -222,6 +222,30 @@ describe('readAbsenceReviewOutcome', () => {
     expect(outcome.reason).toMatch(/gjelder evidensfunnet 00000000/)
   })
 
+  // Reviewfunn: tidspunktet er obligatorisk proveniens for et ledd som kan åpne
+  // publiseringsgaten (EVIDENCE_PIPELINE.md §3.7). Uten det er svaret ikke en
+  // gjennomlesning i det hele tatt — innstrammingen ligger her, ikke i den
+  // delte svarkontrakten som andre arbeidsflyter bruker.
+  it('legger bort et svar uten tidspunkt', async () => {
+    const rot = katalog()
+    const åpnet = await writeAbsenceReviewJob(job(rot))
+    writeFileSync(
+      join(rot, ITEM.evidenceItemId, ABSENCE_REVIEW_FILES.answer),
+      JSON.stringify({
+        answer_version: MODEL_ANSWER_VERSION,
+        request_digest: åpnet.requestDigest,
+        identity: { provider: 'test', model: 'lesing', model_version: '1' },
+        draft: GYLDIG_SVAR,
+      }),
+      'utf8',
+    )
+
+    const outcome = await readAbsenceReviewOutcome(job(rot))
+    expect(outcome.kind).toBe('missing')
+    if (outcome.kind !== 'missing') return
+    expect(outcome.reason).toMatch(/oppgir ikke answered_at/)
+  })
+
   // Et svar avgitt før spørsmålet fantes, er ikke en unøyaktighet — det ville
   // stått i proveniensen som når den uavhengige gjennomlesningen ble gjort.
   it('legger bort et svar avgitt før spørsmålet ble stilt', async () => {

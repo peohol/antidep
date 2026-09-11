@@ -2843,13 +2843,32 @@ describe('checkExtraction — den kildeomfattende fraværskontrollen', () => {
     ])
   })
 
-  it('sier at tidspunktet ikke er oppgitt framfor å gjette det', () => {
+  // Reviewfunn: å bevare mangelen korrekt er ikke det samme som å oppfylle
+  // §3.7. Et ledd som kan åpne publiseringsgaten, må kunne spores til et
+  // tidspunkt — ellers gis ingen dekning. Typen sier det, og kontrollen sier det
+  // en gang til, slik at en kaller som bygger objektet for hånd ikke kommer
+  // utenom.
+  it('dekker ikke noe når gjennomlesningen mangler tidspunkt', () => {
     const overrides = { extraction: UTEN_KI } as const
     const review = lest(overrides)
-    const report = check(overrides, UTEN_INTERVALL, true, { ...review, answeredAt: null })
+    const report = check(overrides, UTEN_INTERVALL, true, {
+      ...review,
+      answeredAt: '' as unknown as string,
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/oppgir ikke når den ble gjort/)
+    expect(report.sourceWideAbsence).toBe(undefined)
+  })
+
+  // …og motsatt: enhver bevart proveniens som faktisk åpnet gaten, bærer et
+  // tidspunkt.
+  it('bærer alltid et tidspunkt når dekning ble gitt', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL)
     expect(report.checkedFields).toContain('source_wide_absence')
-    expect(report.rationale).toMatch(/tidspunkt ikke oppgitt/)
-    expect(report.sourceWideAbsence?.answeredAt).toBeNull()
+    expect(report.sourceWideAbsence?.answeredAt).toBeTruthy()
+    expect(report.rationale).toMatch(
+      /ble gjort av test\/gjennomlesning \(1\) den 2026-09-11T09:00:00Z/,
+    )
   })
 
   it('bærer ingen proveniens når ingenting ble dekket', () => {

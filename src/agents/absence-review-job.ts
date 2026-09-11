@@ -325,12 +325,27 @@ export async function readAbsenceReviewOutcome(
           'ikke dette',
       }
     }
-    // Tidspunktet må kunne stemme. Et svar avgitt før spørsmålet fantes, er
-    // ikke en unøyaktighet — det er usant, og det ville stått i proveniensen
-    // som når den uavhengige gjennomlesningen ble gjort. Samme kontroll og
-    // samme slakk som modell-leddet ellers (`drafting-job.ts`).
+    // Tidspunktet er påkrevd for NETTOPP denne gjennomlesningen, selv om den
+    // delte svarkontrakten lar det stå tomt for andre arbeidsflyter. Leddet kan
+    // åpne publiseringsgaten, og §3.7 krever at et prosessledd kan spores til
+    // tidspunkt. Innstrammingen ligger her og ikke i `parseModelAnswer`, slik at
+    // den ikke gjelder ledd som ikke trenger den.
+    if (answer.answeredAt === null) {
+      return {
+        kind: 'missing',
+        reason:
+          `gjennomlesningen i ${answerPath} oppgir ikke answered_at. Uten tidspunktet kan ikke ` +
+          'leddet spores, og en dekning som hvilte på den, ville vært et pipelineledd uten ' +
+          'proveniens',
+      }
+    }
+
+    // Tidspunktet må dessuten kunne stemme. Et svar avgitt før spørsmålet
+    // fantes, er ikke en unøyaktighet — det er usant, og det ville stått i
+    // proveniensen som når den uavhengige gjennomlesningen ble gjort. Samme
+    // kontroll og samme slakk som modell-leddet ellers (`drafting-job.ts`).
     const openedAt = await readOpenedAt(directory)
-    if (answer.answeredAt !== null && openedAt !== null) {
+    if (openedAt !== null) {
       const answered = Date.parse(answer.answeredAt)
       if (
         answered < Date.parse(openedAt) - ANSWER_CLOCK_SLACK_MS ||

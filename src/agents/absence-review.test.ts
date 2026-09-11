@@ -205,7 +205,7 @@ describe('reviewerName', () => {
         identity: { provider: 'anthropic', model: 'claude', modelVersion: '1' },
         promptTemplateVersion: ABSENCE_REVIEW_PROMPT_VERSION,
         requestDigest: `sha256:${'0'.repeat(64)}`,
-        answeredAt: null,
+        answeredAt: '2026-09-11T09:00:00Z',
         answerDigest: `sha256:${'0'.repeat(64)}`,
         fields: [],
       }),
