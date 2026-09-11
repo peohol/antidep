@@ -284,7 +284,7 @@ function joinFindings(sentences: readonly string[]): string | null {
  * beviset mangler.
  *
  * ----------------------------------------------------------------------------
- * Et bekreftet LOKALT fravær dekker ikke en GLOBAL fraværsstatus
+ * Kontrolløren bedømmer den LOKALE halvdelen av et globalt fravær, og bare den
  *
  * `not_reported` og `not_measured` er påstander om kilden eller studien som
  * helhet. Kontrolløren får et innsnevret spørsmål for slike felter — om
@@ -292,19 +292,24 @@ function joinFindings(sentences: readonly string[]): string | null {
  * eneste spørsmålet grunnlaget flaten viser, kan bære
  * (`extraction-statements.ts`).
  *
- * Svaret på det spørsmålet er ikke den globale påstanden. Et konfidensintervall
- * kan stå i en tabell, en figurtekst, et supplement eller et annet
- * resultatavsnitt enn punktestimatet, og «ikke målt i studien» følger ikke av at
- * målingen mangler i én passasje. Førte registreringen feltet opp som
- * kontrollert, ville auditraden og publiseringsgaten sagt at et menneske hadde
- * gått god for den globale semantikken — på grunnlag av en lokal bekreftelse.
- * Det er nøyaktig den overdrivelsen §29 forbyr.
+ * Fra migrasjon 005ae er det ikke lenger et hull, men et skille. Påstanden har
+ * to halvdeler med hvert sitt kontrollgrunnlag, og hver halvdel har sitt eget
+ * felt i publiseringsgatens krav:
  *
- * Svaret bevares derfor, men feltet føres **ikke** opp i `checkedFields`, og
- * begrunnelsen sier hvorfor. Feltet står da udekket i gatens union til det
- * finnes et kontrollledd som kan bære en global fraværspåstand. Prisen er at et
- * funn med et slikt fravær ikke passerer gaten — og det er den riktige prisen:
- * alternativet er en bekreftelse som dekker mindre enn den gir inntrykk av.
+ *   `availability_semantics`  den LOKALE: er grunnen av riktig art, og mangler
+ *                             verdien der forankringsutdraget viser at den ville
+ *                             stått? Det er spørsmålet økten stiller, og svaret
+ *                             dekker nøyaktig det.
+ *   `source_wide_absence`     den KILDEOMFATTENDE: fant et søk gjennom hele den
+ *                             registrerte kildeversjonen ingen slik verdi? Den
+ *                             stiller økten aldri, og databasen avviser en
+ *                             menneskelig kontroll som fører den opp
+ *                             (`evidence_verifications_source_wide_absence_check`).
+ *
+ * Begrunnelsen sier derfor hva kontrolløren faktisk bedømte, og navngir det
+ * andre leddet. Uten den setningen ville en leser av auditraden trodd at
+ * mennesket hadde gått god for den globale semantikken på grunnlag av én valgt
+ * passasje — nøyaktig den overdrivelsen §29 forbyr.
  */
 export function deriveExtractionVerification(input: {
   /** Publiseringsgatens krav: `workflow.required_check_fields(uuid)`. */
@@ -315,8 +320,8 @@ export function deriveExtractionVerification(input: {
   readonly answers: Readonly<Record<string, AnsweredCheck>>
   /**
    * Feltene der den registrerte statusen er en påstand om kilden som helhet
-   * (`sourceWideAbsenceFields`). Et bekreftet lokalt fravær dekker dem ikke, og
-   * de utelates fra `checkedFields` selv når kontrolløren svarte «ja».
+   * (`sourceWideAbsenceFields`). Svaret dekker den lokale halvdelen av dem, og
+   * begrunnelsen sier at den kildeomfattende halvdelen er et eget kontrollobjekt.
    */
   readonly sourceWideAbsenceFields: readonly string[]
 }): DerivedVerification {
@@ -340,25 +345,28 @@ export function deriveExtractionVerification(input: {
   )
 
   // Bare det som faktisk ble bekreftet. Et felt kontrolløren ikke kunne
-  // avgjøre, er ikke kontrollert; et provenansfelt hen aldri ble spurt om, er
-  // det heller ikke; og et felt der svaret gjaldt et lokalt fravær mens raden
-  // bærer en global påstand, er det heller ikke.
-  const beyondLocalProof = new Set(input.sourceWideAbsenceFields)
+  // avgjøre, er ikke kontrollert, og et provenansfelt hen aldri ble spurt om,
+  // er det heller ikke.
   const confirmedFields = input.semanticFields.filter(
-    (field) => input.answers[field]?.answer === 'yes' && !beyondLocalProof.has(field),
+    (field) => input.answers[field]?.answer === 'yes',
   )
-  const notDischarged = input.semanticFields.filter(
-    (field) => input.answers[field]?.answer === 'yes' && beyondLocalProof.has(field),
+  // Feltene der svaret gjaldt den lokale halvdelen av en påstand om kilden som
+  // helhet. Bekreftelsen dekker den halvdelen, og auditraden skal si det: den
+  // kildeomfattende halvdelen er et eget kontrollobjekt med sin egen dekning.
+  const localOnly = input.semanticFields.filter(
+    (field) =>
+      input.answers[field]?.answer === 'yes' && input.sourceWideAbsenceFields.includes(field),
   )
 
   const fullRationale =
-    notDischarged.length === 0
+    localOnly.length === 0
       ? rationale
       : withinDatabaseLimit(
-          `${rationale} Kontrolløren bekreftet at opplysningen mangler der den ville stått for ` +
-            `${notDischarged.map(fieldLabel).join(', ')}, men den registrerte statusen er en ` +
-            'påstand om kilden som helhet. Et lokalt fravær kan ikke bære den, og feltet er ' +
-            'derfor ikke ført opp som kontrollert.',
+          `${rationale} For ${localOnly.map(fieldLabel).join(', ')} bekreftet kontrolløren at ` +
+            'opplysningen mangler der forankringsutdraget viser at den ville stått. Det er den ' +
+            'lokale halvdelen av påstanden. At opplysningen heller ikke står noe annet sted i ' +
+            'kilden, er et eget kontrollobjekt med sin egen dekning: et maskinelt søk gjennom ' +
+            'hele den registrerte kildeversjonen.',
         )
 
   if (outcome === 'verified') {

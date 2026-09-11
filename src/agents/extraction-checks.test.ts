@@ -5,9 +5,10 @@ import {
   checkExtraction,
   numberOccursIn,
   searchProjections,
+  sourceWideAbsenceSearch,
   trimNumericText,
 } from './extraction-checks'
-import { FIXTURE_SOURCE_TEXT, verificationItemFixture } from './test-support'
+import { FIXTURE_SOURCE_TEXT, sourceVersionFixture, verificationItemFixture } from './test-support'
 import type { VerificationExtraction } from './verification-input'
 
 function check(
@@ -2179,6 +2180,252 @@ describe('checkExtraction — når kontrollen ikke kan konkludere', () => {
       false,
     )
     expect(report.outcome).toBe('needs_correction')
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Det kildeomfattende fraværssøket
+//
+// `not_reported` og `not_measured` er påstander om kilden SOM HELHET. Denne
+// kontrollen er den halvdelen av dem en maskin kan bære: et søk gjennom hele
+// representasjonen etter en verdi av den arten, bundet til funnets arm
+// (migrasjon 005ae, issue #74).
+//
+// Prøvene under holder fire ting fast: at feltet bare føres opp når søket
+// faktisk kunne gjøres, at et treff stopper dekningen uten å bli et avvik, at
+// grunnlaget må være en reprodusert fulltekst, og at teksten aldri påstår mer
+// enn «ikke funnet i det Antidep har kontrollert».
+// ----------------------------------------------------------------------------
+describe('checkExtraction — det kildeomfattende fraværssøket', () => {
+  // En tekst som ikke oppgir noe konfidensintervall noe sted.
+  const UTEN_INTERVALL = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="RESULTS">Sertraline-treated patients with major depressive',
+    '  disorder had a mean weight change of 1.5 kg and the difference was significant.',
+    '  </AbstractText>',
+    '</PubmedArticle>',
+  ].join('\n')
+
+  const UTEN_KI = {
+    ciLower: null,
+    ciUpper: null,
+    ciLevelPercent: null,
+    confidenceIntervalAvailability: 'not_reported',
+    rawExtraction: {
+      resultat:
+        'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+        'change of 1.5 kg',
+    },
+  } as const
+
+  it('fører opp feltet når søket gjennom hele kildeversjonen ikke fant noen slik verdi', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL)
+    expect(report.checkedFields).toContain('source_wide_absence')
+    expect(report.rationale).toMatch(/søk gjennom hele den reproduserte kildeversjonen/)
+    expect(report.rationale).toMatch(/«confidence_interval»/)
+  })
+
+  // Ordlyden er den sannheten søket faktisk bærer, og det er ikke pynt:
+  // `not_reported` gjelder kildeversjonen, ikke publikasjonen. Sier raden noe
+  // annet, påstår auditsporet mer enn søket bærer (DATABASE_ARCHITECTURE.md §29).
+  it('påstår ikke at opplysningen mangler i publikasjonen, bare i kildeversjonen', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL)
+    expect(report.rationale).toMatch(/ikke står i den kildeversjonen raden viser til/)
+    expect(report.rationale).toMatch(/ikke at den ikke står i publikasjonen/)
+  })
+
+  // …og den navngir hva som faktisk ble gjennomsøkt. Et søk gjennom et
+  // abstrakt sier mindre om publikasjonen enn et søk gjennom en fulltekst, og
+  // dekningen skal aldri leses som mer enn den er (EVIDENCE_PIPELINE.md §13).
+  it('navngir representasjonen søket gikk gjennom', () => {
+    expect(check({ extraction: UTEN_KI }, UTEN_INTERVALL).rationale).toMatch(/«full_text»/)
+    const abstrakt = check(
+      {
+        extraction: UTEN_KI,
+        sourceVersion: sourceVersionFixture({ representation: 'abstract' }),
+      },
+      UTEN_INTERVALL,
+    )
+    expect(abstrakt.checkedFields).toContain('source_wide_absence')
+    expect(abstrakt.rationale).toMatch(/«abstract»/)
+  })
+
+  it('sier fra når kildeversjonen ikke har en registrert representasjonstype', () => {
+    const report = check(
+      {
+        extraction: UTEN_KI,
+        sourceVersion: sourceVersionFixture({ representation: null }),
+      },
+      UTEN_INTERVALL,
+    )
+    expect(report.rationale).toMatch(/ikke har en registrert representasjonstype/)
+  })
+
+  // Fiksturteksten oppgir «95% CI 0.4 to 2.6» for sertralinarmen. Et funn som
+  // fører intervallet som ikke rapportert, kan da ikke få fraværet kontrollert.
+  it('fører ikke opp feltet når kildeversjonen oppgir en slik verdi for armen', () => {
+    const report = check({ extraction: UTEN_KI })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/Søket gjennom hele representasjonen fant noe som ligner/)
+  })
+
+  // Et treff er ikke en anklage: det kan gjelde et annet endepunkt eller et
+  // annet tidspunkt. Samme asymmetri som ellers i modulen.
+  it('gjør ikke et treff til et avvik', () => {
+    const report = check({ extraction: UTEN_KI })
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/ikke i seg selv et avvik/)
+  })
+
+  // Stemmer ikke fingeravtrykket, gjelder søket en annen tekst enn den
+  // ekstraksjonen ble laget av.
+  it('søker ikke i en representasjon som ikke lot seg reprodusere', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, false)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/ikke samme fingeravtrykk/)
+  })
+
+  // Raden gjør ingen kildeomfattende påstand: da er det ingenting å
+  // kontrollere, og et felt ført opp likevel ville vært en kontroll av
+  // ingenting.
+  it('fører aldri opp feltet for en rad uten en global fraværsstatus', () => {
+    // Standardfiksturen fører tidspunktet som ikke rapportert, så «ingen global
+    // fraværsstatus» må settes eksplisitt.
+    const ingenFravaer = {
+      timepointAvailability: 'not_applicable',
+      ...UTEN_KI,
+      confidenceIntervalAvailability: 'not_applicable',
+    } as const
+    expect(check({ extraction: ingenFravaer }).checkedFields).not.toContain('source_wide_absence')
+    expect(
+      check({
+        extraction: { ...ingenFravaer, confidenceIntervalAvailability: 'not_extractable' },
+      }).checkedFields,
+    ).not.toContain('source_wide_absence')
+  })
+
+  // En utvalgsstørrelse ført som ikke rapportert, mens teksten oppgir «N = 284»
+  // for armen. Fraværet kan ikke regnes som kontrollert.
+  it('finner en utvalgsstørrelse som står i kildeversjonen', () => {
+    const report = check({
+      extraction: {
+        sampleSize: null,
+        sampleSizeAvailability: 'not_reported',
+        rawExtraction: {
+          resultat:
+            'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+            'change of 1.5 kg',
+        },
+      },
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/«sample_size»/)
+  })
+
+  // …og motsatt, når teksten ikke oppgir noe antall for armen.
+  it('fører opp feltet når kildeversjonen ikke oppgir noe antall for armen', () => {
+    const report = check(
+      {
+        extraction: {
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          confidenceIntervalAvailability: 'not_applicable',
+          rawExtraction: {
+            resultat:
+              'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+              'change of 1.5 kg',
+          },
+        },
+      },
+      UTEN_INTERVALL,
+    )
+    expect(report.checkedFields).toContain('source_wide_absence')
+  })
+
+  // Populasjonen er en etikett og ikke et tall, og radens egen er norsk mens
+  // kilden er engelsk. Søket kan da verken bekrefte eller avkrefte fraværet, og
+  // sier det framfor å godkjenne det i stillhet.
+  it('sier fra når feltet ikke har en maskinelt søkbar form', () => {
+    const report = check(
+      {
+        extraction: {
+          populationLabel: null,
+          populationAvailability: 'not_reported',
+          timepointAvailability: 'not_applicable',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          confidenceIntervalAvailability: 'not_applicable',
+          rawExtraction: {
+            resultat:
+              'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+              'change of 1.5 kg',
+          },
+        },
+      },
+      UTEN_INTERVALL,
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/lar seg ikke søke etter maskinelt/)
+  })
+
+  // Alle de globalt fraværende feltene må være avklart. Ett udekket felt er en
+  // udekket påstand, og hele feltet holdes tilbake.
+  it('holder feltet tilbake når bare ett av flere fravær er avklart', () => {
+    const report = check(
+      {
+        extraction: {
+          ...UTEN_KI,
+          populationLabel: null,
+          populationAvailability: 'not_reported',
+        },
+      },
+      UTEN_INTERVALL,
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+  })
+})
+
+describe('sourceWideAbsenceSearch', () => {
+  // Passasjene som navngir armen, slik `sourceWideAbsenceCheck` bygger dem.
+  const ARMPASSASJER = [
+    'Sertraline-treated patients (N = 48) had a mean weight change of 1.5 kg ' +
+      '(95% CI 0.4 to 2.6) at 8 weeks.',
+  ]
+
+  it('finner et intervall som står i passasjen', () => {
+    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'confidence_interval').kind).toBe('found')
+  })
+
+  it('finner ingenting når passasjen ikke oppgir en slik verdi', () => {
+    expect(
+      sourceWideAbsenceSearch(
+        ['Sertraline-treated patients had a mean weight change of 1.5 kg.'],
+        'confidence_interval',
+      ).kind,
+    ).toBe('not_found')
+  })
+
+  it('skiller feltene fra hverandre', () => {
+    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'sample_size').kind).toBe('found')
+    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'timepoint').kind).toBe('found')
+    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'estimate').kind).toBe('found')
+  })
+
+  it('sier fra om feltene som ikke har en søkbar form', () => {
+    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'population').kind).toBe('not_searchable')
+    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'outcome').kind).toBe('not_searchable')
+  })
+
+  // Et nakent tall er ikke en verdi av noe felt: uten et anker som navngir
+  // hva tallet er, teller det ikke som et treff.
+  it('teller ikke et nakent tall som en verdi', () => {
+    expect(
+      sourceWideAbsenceSearch(['Sertraline was given to the 48 in group two.'], 'estimate').kind,
+    ).toBe('not_found')
   })
 })
 

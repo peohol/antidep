@@ -244,6 +244,17 @@ export interface VerificationItem {
   /** Feltene forankringen faktisk dekker. Differansen mot settet over er det som mangler. */
   readonly groundedCheckFields: readonly string[]
   /**
+   * Feltene raden fører uten verdi med en begrunnelse som gjelder kilden SOM
+   * HELHET: `not_reported` og `not_measured`.
+   *
+   * `workflow.source_wide_absence_fields(uuid)`. Tom liste betyr at raden ikke
+   * gjør noen slik påstand — aldri at den er ukjent. Listen kommer fra
+   * databasen framfor å regnes ut av de fem `*_availability`-verdiene her, slik
+   * at gaten, kontrollleddet og kontrollflaten leser nøyaktig det samme settet
+   * (migrasjon 005ae).
+   */
+  readonly sourceWideAbsenceFields: readonly string[]
+  /**
    * Om maskinen har bevist venstresiden for nøyaktig dette grunnlaget.
    *
    * `workflow.grounding_machine_proved(uuid)`: det finnes en maskinell
@@ -571,6 +582,10 @@ export function parseVerificationItem(value: unknown): VerificationItem {
     groundedCheckFields: parseCheckFieldList(
       record['grounded_check_fields'],
       'grounded_check_fields',
+    ),
+    sourceWideAbsenceFields: parseCheckFieldList(
+      record['source_wide_absence_fields'],
+      'source_wide_absence_fields',
     ),
     extraction: parseExtraction(record['extraction']),
     verificationsByThisActor: typeof byThisActor === 'number' ? byThisActor : 0,

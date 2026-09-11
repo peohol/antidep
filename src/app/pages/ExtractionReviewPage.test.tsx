@@ -496,7 +496,8 @@ describe('Kontrolløkten — feltkontrollen', () => {
 
   // «Ikke rapportert i kilden» er en påstand om kilden som helhet, og den kan
   // ingen avgjøre av ett lokalt utdrag. Spørsmålet er derfor snevret inn til
-  // stedet utdraget viser, og flaten sier hva utdraget er.
+  // stedet utdraget viser, og flaten sier hva utdraget er — og hvem som tar den
+  // andre halvdelen, slik at kontrolløren vet at hen ikke skal lete.
   it('snevrer et fravær i kilden inn til stedet verdien ville stått', async () => {
     await gaaTilKonfidensintervallet('not_reported')
     const step = within(openStep())
@@ -504,7 +505,8 @@ describe('Kontrolløkten — feltkontrollen', () => {
       step.getByText('Mangler opplysningen der utdraget viser at den ville stått?'),
     ).toBeInTheDocument()
     expect(step.getByText(/stedet der opplysningen ville stått/)).toBeInTheDocument()
-    expect(step.getByText(/ikke lete gjennom resten av kilden/)).toBeInTheDocument()
+    expect(step.getByText(/søkes det etter maskinelt/)).toBeInTheDocument()
+    expect(step.getByText(/ikke din oppgave/)).toBeInTheDocument()
     // Og ikke det globale ja/nei-spørsmålet, som ingen kunne svart «Ja» på ut
     // fra det flaten viser.
     expect(step.queryByText('Stemmer denne begrunnelsen?')).not.toBeInTheDocument()
@@ -689,16 +691,16 @@ describe('Kontrolløkten — maskinbeviset kommer først', () => {
   })
 })
 
-describe('Kontrolløkten — en global fraværspåstand dekker ikke seg selv', () => {
+describe('Kontrolløkten — en global fraværspåstand har to halvdeler', () => {
   // Kravet fra den tekniske reviewen, i to deler. Kontrollen skal kunne
   // FULLFØRES på korrekt grunnlag — kontrolløren får et spørsmål hen kan svare
-  // på fra det flaten viser — men det som ender i `checked_fields`, må være
-  // nøyaktig den semantiske påstanden hen har bekreftet
-  // (DATABASE_ARCHITECTURE.md §29).
+  // på fra det flaten viser — og det som ender i `checked_fields`, må være
+  // nøyaktig den påstanden hen har bekreftet (DATABASE_ARCHITECTURE.md §29).
   //
-  // «Ikke rapportert i kilden» gjelder hele kilden. Kontrolløren har bekreftet
-  // et lokalt fravær, og feltet skal derfor IKKE føres opp som kontrollert.
-  it('fører ikke feltet opp som kontrollert, og sier hvorfor', async () => {
+  // Fra migrasjon 005ae er de to halvdelene to felter. Kontrolløren bedømmer
+  // den lokale, og svaret dekker den. Den kildeomfattende er maskinens, og
+  // flaten sier at den står igjen — men ber aldri kontrolløren gjøre den.
+  it('dekker den lokale halvdelen, og sier hvem som tar den kildeomfattende', async () => {
     const { rpcCalls } = renderExtractionControl({
       extraction: reviewExtraction({
         ci_lower: null,
@@ -711,8 +713,9 @@ describe('Kontrolløkten — en global fraværspåstand dekker ikke seg selv', (
 
     // Økten er gjennomførbar: alle spørsmålene er besvart fra det flaten viser.
     await screen.findByText('Dette blir registrert som: Bekreftet.')
-    // Og den sier at feltet likevel blir stående udekket.
-    expect(screen.getByText(/Feltet blir derfor stående som ikke kontrollert/)).toBeInTheDocument()
+    // Og den sier hvor den andre halvdelen står, og at den ikke er hans.
+    expect(screen.getByText(/maskinelt søk gjennom hele den/)).toBeInTheDocument()
+    expect(screen.getByText(/ikke noe du skal gjøre/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
     await waitFor(() => {
@@ -724,18 +727,22 @@ describe('Kontrolløkten — en global fraværspåstand dekker ikke seg selv', (
     const args = call?.args as Record<string, unknown>
     const checked = args['p_checked_fields'] as readonly string[]
 
-    // Kjernen: den globale påstanden er ikke bekreftet, og raden påstår ikke at
-    // den er det.
-    expect(checked).not.toContain('confidence_interval')
-    // De feltene kontrolløren faktisk bekreftet semantisk, står der.
+    // Den lokale halvdelen er bedømt, og dekkes.
+    expect(checked).toContain('confidence_interval')
     expect(checked).toContain('estimate')
     expect(checked).toContain('intervention_arm')
-    // Og begrunnelsen sier hvorfor det ene feltet mangler.
-    expect(String(args['p_rationale'])).toMatch(/påstand om kilden som helhet/)
+    // Kjernen: den kildeomfattende halvdelen er IKKE med. Ingen kontrolløkt
+    // søker gjennom hele representasjonen, og databasen avviser en rad som
+    // påstår at den gjorde det.
+    expect(checked).not.toContain('source_wide_absence')
+    // Og begrunnelsen sier hva som faktisk ble bedømt, og hva som ikke ble det.
+    expect(String(args['p_rationale'])).toMatch(/den lokale halvdelen/)
+    expect(String(args['p_rationale'])).toMatch(/hele den registrerte kildeversjonen/)
   })
 
-  // Motstykket: en lokal fraværsgrunn bæres av utdraget, og feltet dekkes.
-  it('dekker feltet når fraværsgrunnen gjelder funnet og ikke kilden', async () => {
+  // Motstykket: en lokal fraværsgrunn har ingen andre halvdel, og flaten skal
+  // ikke finne på en.
+  it('sier ingenting om et kildeomfattende søk når grunnen gjelder funnet', async () => {
     const { rpcCalls } = renderExtractionControl({
       extraction: reviewExtraction({
         ci_lower: null,
@@ -746,9 +753,7 @@ describe('Kontrolløkten — en global fraværspåstand dekker ikke seg selv', (
     })
     await answerEverythingYes()
     await screen.findByText('Dette blir registrert som: Bekreftet.')
-    expect(
-      screen.queryByText(/Feltet blir derfor stående som ikke kontrollert/),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/maskinelt søk gjennom hele den/)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
     await waitFor(() => {
@@ -759,6 +764,7 @@ describe('Kontrolløkten — en global fraværspåstand dekker ikke seg selv', (
     const call = rpcCalls.find((c) => c.name === 'register_human_extraction_verification')
     const checked = (call?.args as Record<string, unknown>)['p_checked_fields'] as readonly string[]
     expect(checked).toContain('confidence_interval')
+    expect(checked).not.toContain('source_wide_absence')
   })
 })
 

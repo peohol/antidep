@@ -51,11 +51,12 @@ describe('svaralternativene', () => {
   })
 })
 
-describe('deriveExtractionVerification — et lokalt fravær dekker ikke en global status', () => {
-  // DATABASE_ARCHITECTURE.md §29: en rad skal aldri påstå større dekning enn
-  // operasjonen faktisk hadde. Kontrolløren har bekreftet at opplysningen
-  // mangler der den ville stått; raden bærer en påstand om kilden som helhet.
-  it('utelater feltet fra checkedFields selv når svaret var «ja»', () => {
+describe('deriveExtractionVerification — den lokale halvdelen av et globalt fravær', () => {
+  // Fra migrasjon 005ae er påstanden delt i to felter med hvert sitt
+  // kontrollgrunnlag. `availability_semantics` er den LOKALE halvdelen — mangler
+  // verdien der forankringsutdraget viser at den ville stått? — og den bedømte
+  // kontrolløren faktisk. Den dekkes derfor av svaret.
+  it('fører feltet opp: svaret dekker nøyaktig den halvdelen økten spurte om', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
       semanticFields: SEMANTIC,
@@ -64,12 +65,14 @@ describe('deriveExtractionVerification — et lokalt fravær dekker ikke en glob
       sourceWideAbsenceFields: ['population'],
     })
     expect(derived.outcome).toBe('verified')
-    expect(derived.checkedFields).not.toContain('population')
-    // Alt det andre kontrolløren bekreftet, står der.
-    expect(derived.checkedFields.length).toBe(SEMANTIC.length - 1)
+    expect(derived.checkedFields).toContain('population')
+    expect(derived.checkedFields.length).toBe(SEMANTIC.length)
   })
 
-  it('sier i begrunnelsen hvorfor feltet ikke er ført opp', () => {
+  // …og auditraden sier hva som faktisk ble bedømt. Uten den setningen ville en
+  // leser trodd at mennesket hadde gått god for den globale semantikken på
+  // grunnlag av én valgt passasje (DATABASE_ARCHITECTURE.md §29).
+  it('sier i begrunnelsen at den kildeomfattende halvdelen er et eget kontrollobjekt', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
       semanticFields: SEMANTIC,
@@ -77,14 +80,15 @@ describe('deriveExtractionVerification — et lokalt fravær dekker ikke en glob
       answers: allYes(),
       sourceWideAbsenceFields: ['population'],
     })
-    expect(derived.rationale).toMatch(/mangler der den ville stått/)
-    expect(derived.rationale).toMatch(/påstand om kilden som helhet/)
-    expect(derived.rationale).toMatch(/ikke ført opp som kontrollert/)
+    expect(derived.rationale).toMatch(/mangler der forankringsutdraget viser at den ville stått/)
+    expect(derived.rationale).toMatch(/den lokale halvdelen/)
+    expect(derived.rationale).toMatch(/eget kontrollobjekt/)
+    expect(derived.rationale).toMatch(/hele den registrerte kildeversjonen/)
   })
 
-  // Uten en global fraværsstatus er ingenting holdt tilbake, og begrunnelsen
-  // skal ikke si at noe er det.
-  it('holder ingenting tilbake når ingen status gjelder kilden som helhet', () => {
+  // Begrunnelsen skal ikke påstå et skille som ikke finnes: uten en global
+  // fraværsstatus er det ingen andre halvdel å vise til.
+  it('sier ingenting om en annen halvdel når ingen status gjelder kilden som helhet', () => {
     const derived = deriveExtractionVerification({
       requiredFields: REQUIRED,
       semanticFields: SEMANTIC,
@@ -93,7 +97,23 @@ describe('deriveExtractionVerification — et lokalt fravær dekker ikke en glob
       sourceWideAbsenceFields: [],
     })
     expect(derived.checkedFields.length).toBe(SEMANTIC.length)
-    expect(derived.rationale).not.toMatch(/påstand om kilden som helhet/)
+    expect(derived.rationale).not.toMatch(/den lokale halvdelen/)
+  })
+
+  // Det som IKKE endret seg: et felt kontrolløren ikke kunne avgjøre, er
+  // fortsatt ikke kontrollert, uansett hvilken halvdel det gjelder.
+  it('fører ikke opp et felt kontrolløren ikke kunne avgjøre', () => {
+    const answers = { ...allYes(), population: { answer: 'cannot_determine' as const, note: '' } }
+    const derived = deriveExtractionVerification({
+      requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
+      sourceAccess: 'original_source',
+      answers,
+      sourceWideAbsenceFields: ['population'],
+    })
+    expect(derived.outcome).toBe('uncertain')
+    expect(derived.checkedFields).not.toContain('population')
+    expect(derived.rationale).not.toMatch(/den lokale halvdelen/)
   })
 })
 

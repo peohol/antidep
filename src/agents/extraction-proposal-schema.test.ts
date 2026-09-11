@@ -57,10 +57,31 @@ describe('extraction-proposal.schema.json', () => {
       objectAt(schema, 'properties', 'field_groundings', 'items', 'properties', 'check_field')[
         'enum'
       ],
-    ).toEqual([...EVIDENCE_CHECK_FIELDS])
+      // Ett unntak, og det er en regel og ikke et etterslep: `source_wide_absence`
+      // er påstanden om at en verdi IKKE står noe sted i representasjonen, og
+      // den har ingen passasje å peke på. Et forslag som forankret den, ville
+      // levert et utdrag som bevis for et fravær utdraget ikke kan bevise
+      // (migrasjon 005ae).
+    ).toEqual(EVIDENCE_CHECK_FIELDS.filter((field) => field !== 'source_wide_absence'))
     expect(
       objectAt(schema, 'properties', 'extraction', 'properties', 'population_availability')['enum'],
     ).toEqual([...VALUE_AVAILABILITIES])
+  })
+
+  // Og den utelatelsen er ikke en tilfeldighet i én liste: databasen krever
+  // heller ikke forankring for feltet, fordi `workflow.semantic_check_fields`
+  // utelater det. De to sidene av kontrakten er prøvd mot hverandre i pgTAP
+  // (660_source_wide_absence_test.sql).
+  it('lar ingen forankre det kildeomfattende fraværssøket', () => {
+    const enumerated = objectAt(
+      buildExtractionProposalSchema(),
+      'properties',
+      'field_groundings',
+      'items',
+      'properties',
+      'check_field',
+    )['enum']
+    expect(enumerated).not.toContain('source_wide_absence')
   })
 
   it('binder forslaget til kontraktsversjonen', () => {

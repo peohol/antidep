@@ -7,7 +7,11 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 export default defineConfig([
-  globalIgnores(['dist', 'coverage']),
+  // `supabase/.temp/` er CLI-ens egne arbeidsfiler fra en kjørende lokal
+  // stack — gitignorert, men eslint leser katalogen likevel, og en
+  // utvikler som har kjørt `npm run db:start` fikk da over to hundre feil
+  // i kode Antidep verken har skrevet eller kan rette.
+  globalIgnores(['dist', 'coverage', 'supabase/.temp']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

@@ -14,6 +14,7 @@ import {
   DRUG_STATUSES,
   EFFECT_MEASURES,
   ESTIMATE_UNITS,
+  EVIDENCE_CHECK_FIELDS,
   EVIDENCE_DIRECTNESS_VALUES,
   EVIDENCE_RELATIONSHIP_TYPES,
   EXTRACTION_METHODS,
@@ -140,6 +141,7 @@ describe('de lukkede vokabularene er nøyaktig enum-ene i migrasjonene', () => {
     ['knowledge.source_status', SOURCE_STATUSES],
     ['knowledge.date_precision', DATE_PRECISIONS],
     ['knowledge.extraction_method', EXTRACTION_METHODS],
+    ['workflow.evidence_check_field', EVIDENCE_CHECK_FIELDS],
     ['catalog.drug_status', DRUG_STATUSES],
     ['catalog.vocabulary_status', VOCABULARY_STATUSES],
   ] as [string, readonly string[]][])('%s', (name, declared) => {
@@ -172,10 +174,10 @@ describe('de lukkede vokabularene er nøyaktig enum-ene i migrasjonene', () => {
 })
 
 describe('uthentingen tar med senere endringer av enumet', () => {
-  // Ingen migrasjon bruker `alter type` i dag, så den virkelige SQL-en
-  // eksersiserer bare `create type`. Uten disse testene ville koden som
-  // håndterer endringene stått uprøvd fram til den dagen den trengs — og det er
-  // nettopp den dagen vaktposten må virke.
+  // Migrasjon 005ad utvider `workflow.evidence_check_field` med `alter type`,
+  // så den virkelige SQL-en eksersiserer nå begge formene. Prøvene under holder
+  // likevel hver form for seg: de dekker `if not exists`, plassering, omdøping
+  // og rekkefølge, som den virkelige SQL-en ikke bruker alle av.
   const CREATE = "create type knowledge.demo as enum ('a', 'b');"
 
   it('leser den opprinnelige definisjonen', () => {

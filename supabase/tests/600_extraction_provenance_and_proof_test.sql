@@ -321,7 +321,11 @@ select lives_ok(
       (select id from run where label = 'verify'),
       (select id from registered where name = 'item'),
       'uncertain', 'verifiable_representation',
-      array['raw_extraction', 'source_locator'],
+      -- source_wide_absence er den kildeomfattende halvdelen av et globalt
+      -- fravær: søket gikk gjennom hele representasjonen uten å finne en verdi
+      -- for feltene raden fører som fraværende (migrasjon 005ae). Den kan bare
+      -- en maskin bære, og den kommer derfor med provenansfeltene.
+      array['raw_extraction', 'source_locator', 'source_wide_absence'],
       'Prøve i 600: hvert forankret utdrag ble gjenfunnet ordrett i den reproduserte representasjonen.',
       'Tallene lot seg ikke bedømme maskinelt.')
   $$,
@@ -422,7 +426,7 @@ select set_eq(
     $$select unnest(workflow.covered_check_fields(%L::uuid))::text$$,
     (select id from registered where name = 'item')
   ),
-  $$values ('raw_extraction'), ('source_locator')$$,
+  $$values ('raw_extraction'), ('source_locator'), ('source_wide_absence')$$,
   'en uavklart maskinkontroll gir dekning for nøyaktig de feltene den bekreftet'
 );
 

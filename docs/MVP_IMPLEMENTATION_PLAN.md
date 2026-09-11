@@ -1760,7 +1760,6 @@ gyldighetslogikk bør lese dette før `now()` brukes i et predikat.
 
 | Gjeld | Risiko | Trigger for opprydding |
 |---|---|---|
-| Et globalt fravær (`not_reported`, `not_measured`) har ikke et kontrollledd som kan bære påstanden | Kontrolløren kan bare bekrefte at opplysningen mangler der den ville stått. Et konfidensintervall kan stå i en tabell, en figurtekst eller et supplement, så den lokale bekreftelsen dekker ikke feltet. Feltet føres derfor ikke opp i `checked_fields`, og publiseringsgaten blir stående åpen på det — også for Fava 2000, der konfidensintervallet er ført som ikke rapportert | [#74](https://github.com/peohol/antidep/issues/74). Krever en klinisk og redaksjonell beslutning om hva Antidep skal kreve før et fravær kan regnes som kontrollert, før det kan bygges |
 | Tidsbasert utløp av review er ikke håndhevet i publiseringsgaten | En godkjenning eldes uten at noe fanger det | Migrasjonen som innfører `workflow.review_requirements` / `review_due_at`. Krever først en klinisk policy for hvor lenge en godkjenning er gyldig per kunnskapstype og risiko |
 | Godkjenningens evidensavtrykk beregnes ved innsetting, ikke fra det reviewer faktisk så | En lenke som commiter mellom reviewers lesing og lagring av beslutningen havner i avtrykket | Admin-flyten oppgir avtrykket den viste reviewer. Kolonnen er utformet for det |
 | `knowledge.publication_object_type` har én verdi, og hendelsen har én ekte fremmednøkkel | En andre publiserbar objekttype kan friste til å gjenbruke `claim_id` som generisk `object_id` | Migrasjonen som innfører objekttype nummer to må legge til egen fremmednøkkelkolonne og eget speil |
@@ -7328,6 +7327,95 @@ etter det vi har sett ikke uttrykkelig at `+0,8 ± 2,7 kg` er beregnet over dem.
 Uten en eksplisitt kildepassasje som knytter nevneren til estimatet, skal
 `sample_size` være `null` med riktig availability-status og ordrett grounding som
 viser hvorfor.
+
+---
+
+### 74.45 Et globalt fravær har fått et kontrollledd som kan bære det
+
+§74.44 lot én ting stå åpen, og den var den dyreste: `not_reported` («ikke
+rapportert i kilden») og `not_measured` («ikke målt i studien») er påstander om
+kildeversjonen **som helhet**, og ingen av Antideps to kontrollgrunnlag kunne
+bære dem. Kontrolløren ser ett lokalt utdrag, og et utdrag viser hva som står
+ett sted — ikke hva som ikke står noe sted. Feltet ble derfor bevisst ikke ført
+opp som kontrollert, og publiseringsgatens G5b ble stående åpen uten at noe
+navnga hva som manglet (issue [#74](https://github.com/peohol/antidep/issues/74)).
+
+**Påstanden er delt i de to halvdelene som faktisk har hvert sitt
+kontrollgrunnlag**, og hver halvdel har fått sitt eget felt i
+`workflow.evidence_check_field`:
+
+| Halvdel | Spørsmål | Grunnlag | Hvem | Felt |
+|---|---|---|---|---|
+| Lokal | Mangler opplysningen der forankringsutdraget viser at den ville stått, og er grunnen av riktig art? | Utdraget flaten viser | Et menneske | `availability_semantics` |
+| Kildeomfattende | Står opplysningen noe annet sted i kildeversjonen? | Hele den registrerte representasjonen | En maskin | `source_wide_absence` |
+
+`workflow.required_check_fields(uuid)` krever den andre når og bare når raden
+fører minst ett slikt fravær (`workflow.source_wide_absence_fields(uuid)`, som
+er den ene definisjonen gaten, kontrollleddet og kontrollflaten alle leser).
+**Gaten er dermed strengere enn før, ikke løsere:** hullet var der hele tiden,
+men det var navnløst og så ut som et udekket `availability_semantics`.
+
+**Det kildeomfattende leddet er den deterministiske ekstraksjonskontrollen, ikke
+et nytt ledd med ny legitimasjon.** Den henter allerede representasjonen og
+pinner fingeravtrykket, så `npm run agent:verify-extraction` gjør søket uten at
+noe nytt må settes opp. Det var det avgjørende valget mot alternativ 2 i issue
+#74: en menneskelig global bekreftelse ville gjort Peder til manuell
+fulltekstleser for hvert eneste felt uten verdi.
+
+**Søket er bevisst bredere enn kontrollens øvrige søk.** Resten av modulen
+binder en verdi til raden med en limkjede, fordi den skal *tilskrive* verdien
+denne raden. Her er påstanden motsatt, og en like streng binding ville gjort
+«ikke funnet» til et nesten sikkert utfall uansett hva som står i artikkelen —
+altså et stempel. Bindingen er derfor setningen: verdien må stå i en passasje
+som selv navngir behandlingsarmen, hvor som helst i representasjonen.
+
+**Rekkevidden er kildeversjonen, ikke publikasjonen, og det er ikke en
+innskrenkning.** Det er nøyaktig det statusen selv gjelder — kolonnekommentaren
+på `*_availability` har hele tiden sagt «den kildeversjonen og den
+kildepekeren raden viser til, ikke nødvendigvis hele publikasjonen». Styrken
+følger likevel av hva versjonen er, så kontrollraden navngir representasjonen
+den gjennomsøkte: et søk gjennom et abstrakt skal ikke leses som et søk gjennom
+en fulltekst.
+
+**To grenser er harde, og de finnes for at feltet aldri skal bli et stempel.**
+Representasjonen må ha latt seg reprodusere, og behandlingsarmen må stå i den.
+Uten armen har søket ingen binding, og «ingen treff» ville bare betydd at
+kilden er på engelsk mens katalogen er på norsk. Et **treff** er ikke et avvik:
+søket vet ikke om verdien gjelder dette endepunktet, så utfallet er `uncertain`,
+feltet føres ikke opp, og begrunnelsen siterer hva som ble funnet. Et felt uten
+maskinelt søkbar form — populasjonen er en etikett og ikke et tall — står
+ukontrollert, og gaten åpen.
+
+**Mennesket kan ikke ta halvdelen på seg, og det er håndhevet framfor frarådet.**
+`workflow.semantic_check_fields(uuid)` utelater feltet, så kontrolløkten stiller
+aldri spørsmålet, og `evidence_verifications_source_wide_absence_check` avviser
+enhver rad uten agentkjøring som fører det opp. Et framtidig menneskelig
+kontrollobjekt for globalt fravær er mulig, men er da et eget objekt med sin
+egen dekning — ikke en oppmyking av denne regelen.
+
+**Kontrollflaten sier hvem som tar hva.** Feltsteget for et slikt fravær sier at
+det bare er stedet som skal avgjøres, og at resten søkes etter maskinelt — «det
+er ikke din oppgave». Lagringssteget sier om søket allerede har gått god for
+funnet, eller om gaten fortsatt står åpen på det. Kontrolløren skal aldri
+oppdage et udekket felt som en blokkert publisering senere
+(PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
+
+**Prøvene.** `660_source_wide_absence_test.sql` prøver at settet er utledet av
+raden og bare av de to globale grunnene, at gaten krever feltet når og bare når
+raden gjør påstanden, at kontrolløkten aldri får et steg for det, at
+forankringskravet ikke gjelder det, og at det avvises både uten agentkjøring og
+med bare et avledet sammendrag som grunnlag. `570` viser det i hele kjeden, med
+et menneske som forsøker å bære påstanden og blir avvist. Kjedeprøven
+(`npm run db:test:chain`) prøver det samme mot den ekte databasen gjennom de
+ekte skriveveiene. På JavaScript-siden er søket prøvd felt for felt, med et
+treff som ikke blir et avvik, en representasjon uten reprodusert fingeravtrykk,
+en arm kilden ikke navngir, og en ordgrense som hindrer at «citalopram» binder
+et tall i «escitalopram».
+
+**To fiksturer sa noe annet enn raden, og kontrollen fant det.** Kjedeprøvens
+sammendrag sa «randomised for 8 weeks» mens funnet førte tidspunktet som ikke
+rapportert, og funnet førte populasjonen som ikke rapportert uten at noe kunne
+kontrollere det. Begge er rettet i fiksturen framfor å bli dempet i kontrollen.
 
 ---
 

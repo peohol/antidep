@@ -16,7 +16,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(37);
+select plan(39);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -531,9 +531,9 @@ select set_eq(
   $$select unnest(workflow.required_check_fields(
       '46000000-0000-4000-8000-000000000011'))::text$$,
   $$values ('raw_extraction'), ('source_locator'), ('intervention_arm'), ('outcome'),
-           ('reported_direction'), ('availability_semantics'), ('effect_measure'),
-           ('comparator_arm'), ('population'), ('sample_size'), ('estimate'),
-           ('confidence_interval')$$,
+           ('reported_direction'), ('availability_semantics'), ('source_wide_absence'),
+           ('effect_measure'), ('comparator_arm'), ('population'), ('sample_size'),
+           ('estimate'), ('confidence_interval')$$,
   'kravet dekker nøyaktig det raden påstår noe om'
 );
 
@@ -544,6 +544,21 @@ select ok(
   not ('timepoint' = any (workflow.required_check_fields(
     '46000000-0000-4000-8000-000000000011'))),
   'et tidspunkt som ikke er rapportert, kreves ikke kontrollert'
+);
+
+-- …og fordi *grunnen* er «ikke rapportert», som er en påstand om kilden som
+-- helhet, kreves den kildeomfattende halvdelen i tillegg. availability_semantics
+-- dekker bare den lokale (migrasjon 005ae).
+select ok(
+  'source_wide_absence' = any (workflow.required_check_fields(
+    '46000000-0000-4000-8000-000000000011')),
+  'et fravær som gjelder kilden som helhet, kreves kontrollert kildeomfattende'
+);
+select set_eq(
+  $$select unnest(workflow.source_wide_absence_fields(
+      '46000000-0000-4000-8000-000000000011'))::text$$,
+  $$values ('timepoint')$$,
+  'og listen navngir nøyaktig de feltene som bærer en slik fraværsstatus'
 );
 select ok(
   not ('limitations' = any (workflow.required_check_fields(

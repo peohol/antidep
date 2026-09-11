@@ -586,11 +586,75 @@ figurtekst, et supplement eller et annet resultatavsnitt enn punktestimatet, og
 ekstraksjonen *valgte* passasjen, gjør den ikke uttømmende: valget er modellens,
 og `justification` er modellens forklaring — ikke et uavhengig bevis.
 
-Den menneskelige bekreftelsen av et slikt fravær bevares derfor, men feltet
-føres **ikke** opp i `checked_fields`, og begrunnelsen sier hvorfor
-(DATABASE_ARCHITECTURE.md §29). Feltet står udekket i publiseringsgatens union
-til det finnes et kontrollledd som kan bære en global fraværspåstand. Det er
-registrert gjeld, ikke en løst oppgave (MVP_IMPLEMENTATION_PLAN.md §74.7).
+#### Påstanden har to halvdeler, og hver halvdel har sitt eget kontrollledd
+
+Løsningen er ikke å la den lokale bekreftelsen dekke den globale statusen, og
+ikke å gjøre kontrolløren til fulltekstleser. Den er å skille de to påstandene,
+fordi de har hvert sitt kontrollgrunnlag — og gi hver av dem et eget felt i
+`workflow.evidence_check_field`:
+
+| Halvdel | Spørsmål | Grunnlag | Hvem | Felt |
+|---|---|---|---|---|
+| Lokal | Mangler opplysningen der forankringsutdraget viser at den ville stått, og er grunnen av riktig art? | Utdraget flaten viser | Et menneske | `availability_semantics` |
+| Kildeomfattende | Står opplysningen noe annet sted i kildeversjonen? | Hele den registrerte representasjonen | En maskin | `source_wide_absence` |
+
+`workflow.required_check_fields(uuid)` krever `source_wide_absence` når og bare
+når raden fører minst ett felt som `not_reported` eller `not_measured`
+(`workflow.source_wide_absence_fields(uuid)`). Gaten er dermed **strengere** enn
+før, ikke løsere: hullet var der hele tiden, men det var navnløst og så ut som
+et udekket `availability_semantics`.
+
+#### Hva det kildeomfattende søket er, og hva det med vilje ikke sier
+
+Den deterministiske ekstraksjonskontrollen (§25.1) gjør søket. For hvert felt
+raden fører som fraværende søker den gjennom **hele** representasjonen etter en
+verdi av den arten, i en passasje som selv navngir funnets behandlingsarm.
+
+Søket er med vilje bredere enn kontrollens øvrige søk, og bindingen er
+setningen framfor limkjeden. Grunnen er at retningen på påstanden er motsatt:
+skal en verdi *tilskrives* raden, gjør en streng binding bekreftelsen
+troverdig; skal et fravær *bekreftes*, gjør en streng binding «ikke funnet» til
+et nesten sikkert utfall uansett hva som står i artikkelen — altså en kontroll
+som alltid sier ja.
+
+Rekkevidden er **kildeversjonen**, ikke publikasjonen. Det er ikke en
+innskrenkning, men nøyaktig det statusen selv gjelder: «Statusen gjelder alltid
+den kildeversjonen og den kildepekeren raden viser til, ikke nødvendigvis hele
+publikasjonen» (kolonnekommentaren på `*_availability`). Styrken følger likevel
+av hva versjonen er — et søk gjennom et abstrakt sier mindre om publikasjonen
+enn et søk gjennom en fulltekst — og kontrollraden navngir derfor
+representasjonen den gjennomsøkte.
+
+To grenser er harde, og begge finnes for at feltet aldri skal bli et stempel:
+
+- **Representasjonen må ha latt seg reprodusere.** Ellers gjelder søket en annen
+  tekst enn den raden ble laget av.
+- **Behandlingsarmen må stå i representasjonen.** Gjør den ikke det, har søket
+  ingen binding, og «ingen treff» betyr bare at kilden aldri nevner armen.
+  Katalogen er norsk og kildene engelske, så det er en helt vanlig tilstand —
+  og nettopp derfor kan den aldri telle som en bekreftelse.
+
+Et **treff** er ikke et avvik. Søket vet ikke om verdien gjelder dette
+endepunktet og dette tidspunktet, så utfallet er `uncertain`, feltet føres ikke
+opp, og begrunnelsen siterer hva som ble funnet slik at et menneske kan se på
+det.
+
+Et felt uten en maskinelt søkbar form — populasjonen er en etikett og ikke et
+tall — får `not_searchable`. Da står fraværet ukontrollert og gaten åpen, og
+begrunnelsen sier det. Det er den riktige enden å ta feil i.
+
+#### Hva mennesket aldri blir spurt om
+
+`source_wide_absence` er ikke et semantisk kontrollfelt
+(`workflow.semantic_check_fields(uuid)` utelater det), og databasen avviser en
+menneskelig kontroll som fører det opp
+(`evidence_verifications_source_wide_absence_check`). Kontrolløkten stiller
+ikke spørsmålet, og et «ja» på det lokale spørsmålet skal derfor aldri kunne
+bokføres som et svar på det globale (DATABASE_ARCHITECTURE.md §29).
+
+Et framtidig menneskelig kontrollobjekt for globalt fravær — en kontrollør som
+faktisk har lest hele kilden — er mulig, men er da et **eget** objekt med sin
+egen dekning og sin egen flate. Det er ikke en oppmyking av regelen over.
 
 Bakgrunnen er konkret. Den første reelle menneskelige kildekontrollen møtte
 dette som forankring for behandlingsarmene:
@@ -693,7 +757,7 @@ Kontrollen BØR minst dekke:
 
 ### 25.1 Den kjørende verifikatoren i dag
 
-Den implementerte verifikatoren er **deterministisk**, ikke et språkmodellkall, og dekker to av punktene over: **riktige numeriske verdier** og **riktig gjengivelse fra kilden**. Den henter kildeversjonens adresse på nytt, sammenligner fingeravtrykket, og søker deretter hver ordrett gjengivelse i `raw_extraction` og hvert oppgitt tall i den hentede representasjonen. `ANTIDEP_CONSTITUTION.md` §17 ber om determinisme «der det er mulig», og for sitat- og tallkontroll er det både mulig og strengere enn en modellvurdering.
+Den implementerte verifikatoren er **deterministisk**, ikke et språkmodellkall, og dekker tre av punktene over: **riktige numeriske verdier**, **riktig gjengivelse fra kilden** og **at agenten ikke har fylt inn ikke-rapporterte data** — det siste i den ene retningen en maskin kan avgjøre det, som et kildeomfattende søk etter en verdi raden fører som fraværende (§19.1). Den henter kildeversjonens adresse på nytt, sammenligner fingeravtrykket, og søker deretter hver ordrett gjengivelse i `raw_extraction` og hvert oppgitt tall i den hentede representasjonen. `ANTIDEP_CONSTITUTION.md` §17 ber om determinisme «der det er mulig», og for sitat- og tallkontroll er det både mulig og strengere enn en modellvurdering.
 
 Kontrollen skiller skarpt mellom å bekrefte og å avkrefte, og skillet er en klinisk sikkerhetsregel og ikke en implementasjonsdetalj:
 
@@ -707,9 +771,12 @@ Kontrollen skiller skarpt mellom å bekrefte og å avkrefte, og skillet er en kl
 | Komparator eller populasjon finnes, men ikke i den relevante påstanden | `uncertain` | Samme regel, for de øvrige delene av raden. «Paroxetine was not used as a comparator» og «Patients with major depressive disorder were excluded» er begge ordtreff, og ingen av dem er støtte for at raden stemmer. Komparatoren må stå navngitt *som* komparator («compared with», «versus», «kontrollgruppen»), og populasjonen må stå knyttet til armen. `placebo` kontrolleres på samme måte som et virkestoffnavn. `comparator_kind = none` kontrolleres ikke: det betyr at **funnet** er armspesifikt, ikke at studien manglet en komparator, så det finnes ingenting i kildens tekst å kontrollere det mot |
 | Delene finnes hver for seg, men ikke i **samme** påstand | `uncertain` | Bindingen er én, ikke flere som holder hver for seg. Ellers kan én rad sys sammen av påstander om forskjellige funn: «Sertraline-treated patients had a mean weight change» + «Fluoxetine was compared with paroxetine for remission» binder arm og endepunkt i den første og komparatoren i den andre, uten at noen påstand sier at paroksetin er komparator for *dette* funnet. Alle radens aktive deler — arm, endepunkt, eventuell komparator, rapportert populasjon — og verdien må stå i ett sammenhengende treff. Prisen er reell: et sammendrag som fordeler populasjon, komparator og resultat på hver sin setning, gir `uncertain` |
 | Verdien gjelder en annen populasjon enn den registrerte | `uncertain`, feltet føres ikke som kontrollert | En verdi hører til én arm, ett endepunkt, én kontrast og **én populasjon**. Rapportert populasjon er derfor en påkrevd del av tallets egen binding, ikke bare av radens: «Sertraline-treated patients had weight change of 5,0 kg … in adolescents» bekrefter ikke en rad registrert for voksne med depressiv lidelse, selv om et annet utdrag knytter armen til den populasjonen. Samme krav gjelder utvalgsstørrelsen — et «N = 48» fra en undergruppe er ikke radens utvalg |
+| Et felt ført som `not_reported` eller `not_measured`, og et søk gjennom hele representasjonen finner ingen verdi av den arten i noen passasje som navngir armen | `source_wide_absence` føres som kontrollert | Dette er den ene halvdelen av en global fraværspåstand en maskin kan bære, og den er nøyaktig det statusen gjelder: kildeversjonen, ikke publikasjonen (§19.1). Søket er bredere enn kontrollens øvrige søk — bindingen er setningen, ikke limkjeden — fordi et strengt søk ville gjort «ikke funnet» til et nesten sikkert utfall og feltet til et stempel. To grenser er harde: representasjonen må ha latt seg reprodusere, og armen må stå i den. Uten armen har søket ingen binding, og «ingen treff» betyr bare at kilden er på engelsk mens katalogen er på norsk |
+| Samme søk finner noe som ligner en slik verdi | `uncertain`, `source_wide_absence` føres ikke opp | Treffet kan gjelde et annet endepunkt eller et annet tidspunkt, så det er ikke et avvik mot ekstraksjonen. Men fraværet kan da ikke regnes som kontrollert, og begrunnelsen siterer hva som ble funnet, slik at et menneske kan se på det |
+| Feltet har ingen maskinelt søkbar form — populasjonen er en etikett og ikke et tall | `source_wide_absence` føres ikke opp | Søket kan verken bekrefte eller avkrefte fraværet. Feltet står ukontrollert og gaten åpen, framfor at et fravær blir stilltiende godkjent |
 | Konfidensintervallet ikke gjenfunnet som ett uttrykk | `uncertain`, `confidence_interval` føres ikke som kontrollert | Intervallet er én påstand med tre deler, og kontrolleres som én sammenhengende skrivemåte: nivået som eksplisitt prosentangivelse, stedet der kilden navngir intervallet, og de to grensene som ett intervalluttrykk — med bare skilletegn og en kort tillatelsesliste av nøytrale koblingsord imellom, slik at en benektelse («… CI **was not** 0,4 til 2,6») bryter uttrykket framfor å bli lest som en bekreftelse. Tre tall som tilfeldigvis står i nærheten av hverandre er ikke et intervall, og «0,4 til 2,6» er ikke samme påstand med 90 % som med 95 % |
 
-De øvrige punktene i §25 — riktig tidspunkt, riktig effektmål, riktig retning, riktig bruk av «ikke rapportert», overtolkning, manglende forbehold — krever språkforståelse og dekkes ikke av dagens kontroll. **Publiseringsgaten leser dette, den forutsetter det ikke:** G5b krever at unionen av `checked_fields` over funnets bekreftede kontroller dekker feltene raden påstår noe om (`workflow.required_check_fields`). En `verified` fra den deterministiske kontrollen betyr «alt jeg kontrollerte, stemte», ikke «ekstraksjonen er kontrollert», og kan derfor aldri alene lukke gaten. Dekningen har samme gjeldende-semantikk som utfallet: en ikke-bekreftende kontroll nullstiller den, slik at et senere avvik ikke kan omgås av en enda senere delkontroll som aldri så på det omstridte feltet. `checked_fields` sier derfor alltid nøyaktig hvilke felter kontrollen faktisk gikk gjennom, slik at en bekreftelse aldri dekker mer enn den gir inntrykk av (DATABASE_ARCHITECTURE.md §29). Et senere ledd med språkmodell er et nytt adapter i samme modell: kjøringen registrerer leverandør, modell og modellversjon som ethvert annet agentledd (§65), så de to kan stå ved siden av hverandre.
+De øvrige punktene i §25 — riktig tidspunkt, riktig effektmål, riktig retning, overtolkning, manglende forbehold — krever språkforståelse og dekkes ikke av dagens kontroll. Det samme gjelder den *lokale* halvdelen av «riktig bruk av ikke rapportert»: om grunnen er av riktig art, og om verdien mangler der forankringsutdraget viser at den ville stått, er et menneskes vurdering (`availability_semantics`). Den kildeomfattende halvdelen er maskinens, og står i tabellen over som `source_wide_absence`. **Publiseringsgaten leser dette, den forutsetter det ikke:** G5b krever at unionen av `checked_fields` over funnets bekreftede kontroller dekker feltene raden påstår noe om (`workflow.required_check_fields`). En `verified` fra den deterministiske kontrollen betyr «alt jeg kontrollerte, stemte», ikke «ekstraksjonen er kontrollert», og kan derfor aldri alene lukke gaten. Dekningen har samme gjeldende-semantikk som utfallet: en ikke-bekreftende kontroll nullstiller den, slik at et senere avvik ikke kan omgås av en enda senere delkontroll som aldri så på det omstridte feltet. `checked_fields` sier derfor alltid nøyaktig hvilke felter kontrollen faktisk gikk gjennom, slik at en bekreftelse aldri dekker mer enn den gir inntrykk av (DATABASE_ARCHITECTURE.md §29). Et senere ledd med språkmodell er et nytt adapter i samme modell: kjøringen registrerer leverandør, modell og modellversjon som ethvert annet agentledd (§65), så de to kan stå ved siden av hverandre.
 
 **Tallene sammenlignes siffer for siffer, ikke som flyttall.** `estimate`, `ci_lower`, `ci_upper` og `ci_level_percent` er `numeric` i basen — vilkårlig presise — og leses hele veien som tekst. Gikk de gjennom et JSON-tall, ville de blitt avrundet av klientens flyttallsrepresentasjon før kontrollen så dem, og et estimat kunne blitt bekreftet av den avrundede verdien framfor den registrerte. En bekreftelse skal gjelde tallet som faktisk står i basen.
 

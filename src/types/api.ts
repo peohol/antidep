@@ -372,10 +372,24 @@ export type VerificationSourceAccess = (typeof VERIFICATION_SOURCE_ACCESSES)[num
  * og den er ikke kosmetisk: den følger kolonnene på et evidensfunn, slik at en
  * flate som lister dem, lister dem i samme rekkefølge som raden er bygget.
  *
- * `availability_semantics` er ikke et felt på raden, men kontrollen av at
- * `not_measured`, `not_reported`, `not_extractable` og `uncertain_extraction` er
- * brukt riktig — en av de enkleste måtene en ekstraksjon kan være feil på uten
- * at noe tall ser galt ut (ANTIDEP_CONSTITUTION.md §6).
+ * To av verdiene er ikke felter på raden, men kontrollpunkter på tvers av dem,
+ * og de deler den samme påstanden i de to halvdelene som har hvert sitt
+ * kontrollgrunnlag (migrasjon 005ae):
+ *
+ *   `availability_semantics`  den LOKALE halvdelen: at `not_measured`,
+ *                             `not_reported`, `not_extractable` og
+ *                             `uncertain_extraction` er brukt riktig, og at
+ *                             verdien mangler der forankringsutdraget viser at
+ *                             den ville stått. Et menneske avgjør den.
+ *   `source_wide_absence`     den KILDEOMFATTENDE halvdelen: at et søk gjennom
+ *                             hele den kontrollerte representasjonen ikke fant
+ *                             noen verdi for de feltene raden fører som
+ *                             fraværende i kilden. Bare en maskin kan bære den,
+ *                             og bare om representasjonen er en fulltekst.
+ *
+ * Skillet er ikke pedantisk: `not_reported` og `not_measured` er påstander om
+ * kilden som helhet, og ett lokalt utdrag kan ikke bære dem
+ * (ANTIDEP_CONSTITUTION.md §6, §11).
  */
 export const EVIDENCE_CHECK_FIELDS = [
   'population',
@@ -389,6 +403,7 @@ export const EVIDENCE_CHECK_FIELDS = [
   'estimate',
   'confidence_interval',
   'availability_semantics',
+  'source_wide_absence',
   'limitations',
   'source_locator',
   'raw_extraction',

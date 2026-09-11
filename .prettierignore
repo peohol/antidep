@@ -8,6 +8,9 @@ dist/
 coverage/
 package-lock.json
 
+# Supabase CLI-ens arbeidsfiler fra en kjørende lokal stack.
+supabase/.temp/
+
 # Generert av `npm run agent:extract-evidence -- --schema`. Prettier ville
 # skrevet den om, og den dokumenterte kommandoen ville da produsert en fil som
 # feiler formatkontrollen.

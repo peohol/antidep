@@ -129,6 +129,25 @@ export function semanticFieldsFor(e: VerificationExtraction): readonly string[] 
 }
 
 /**
+ * Feltene raden fører uten verdi med en begrunnelse som gjelder kilden SOM
+ * HELHET, utledet slik `workflow.source_wide_absence_fields(uuid)` gjør det.
+ *
+ * Speilet av samme grunn som settet over, og prøvd mot originalen i pgTAP
+ * (660_source_wide_absence_test.sql).
+ */
+export function sourceWideAbsenceFieldsFor(e: VerificationExtraction): readonly string[] {
+  const global = (availability: string) =>
+    availability === 'not_reported' || availability === 'not_measured'
+  return [
+    ...(global(e.populationAvailability) ? ['population'] : []),
+    ...(global(e.sampleSizeAvailability) ? ['sample_size'] : []),
+    ...(global(e.timepointAvailability) ? ['timepoint'] : []),
+    ...(global(e.estimateAvailability) ? ['estimate'] : []),
+    ...(global(e.confidenceIntervalAvailability) ? ['confidence_interval'] : []),
+  ]
+}
+
+/**
  * Forankringen en agentekstraksjon ville levert for denne raden: ett ordrett
  * utdrag, én peker og én begrunnelse per semantisk felt.
  *
@@ -174,6 +193,7 @@ export function verificationItemFixture(
     fieldGroundings: groundings,
     semanticCheckFields: semanticFieldsFor(built),
     groundedCheckFields: groundings.map((grounding) => grounding.checkField),
+    sourceWideAbsenceFields: sourceWideAbsenceFieldsFor(built),
     groundingMachineProved: false,
     evidenceItemId: '3422c284-31eb-428e-b1a0-bebf3f616ffc',
     createdByActorId: '99999999-9999-4999-8999-999999999999',

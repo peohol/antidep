@@ -371,11 +371,14 @@ export function buildExtractionSteps({
 
   const counts = extractionTally(dossier.semanticCheckFields, state.fields)
   const derived = derivedExtractionFor(item, state)
-  // Feltene kontrolløren svarte «ja» på, men som ikke dermed er dekket.
-  const notDischarged = sourceWideAbsenceFields(
-    dossier.semanticCheckFields,
-    dossier.extraction,
-  ).filter((field) => state.fields[field]?.answer === 'yes')
+  // Feltene der svaret gjelder den lokale halvdelen av en påstand om kilden som
+  // helhet. Den kildeomfattende halvdelen er et eget kontrollobjekt, og
+  // kontrolløren skal vite hvor den står — ikke oppdage det som en blokkert
+  // publisering senere (PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
+  const localOnly = sourceWideAbsenceFields(dossier.semanticCheckFields, dossier.extraction).filter(
+    (field) => state.fields[field]?.answer === 'yes',
+  )
+  const sourceWideOutstanding = uncovered.includes('source_wide_absence')
   const ready =
     state.sourceAccess !== null &&
     dossier.semanticCheckFields.every((field) => isFieldComplete(state.fields[field]))
@@ -400,16 +403,19 @@ export function buildExtractionSteps({
         <p className="control-summary__outcome">
           {`Dette blir registrert som: ${outcomeLabel(derived.outcome)}.`}
         </p>
-        {/* Et bekreftet lokalt fravær dekker ikke en status som gjelder kilden
-            som helhet, og kontrolløren skal vite at feltet blir stående udekket
-            — ikke oppdage det som en blokkert publisering senere
-            (DATABASE_ARCHITECTURE.md §29). */}
-        {notDischarged.length > 0 ? (
+        {/* Svaret dekker den lokale halvdelen. Den kildeomfattende halvdelen
+            er maskinens, og kontrolløren skal se hvor den står — men aldri bli
+            bedt om å gjøre den (DATABASE_ARCHITECTURE.md §29). */}
+        {localOnly.length > 0 ? (
           <p className="control-summary__note">
-            {`Svaret ditt på ${notDischarged.map(checkFieldLabel).join(', ')} gjelder stedet
-              opplysningen ville stått. Antidep har ført at den mangler i kilden som helhet, og et
-              lokalt fravær kan ikke bære den påstanden. Feltet blir derfor stående som ikke
-              kontrollert, og publiseringsgaten er fortsatt åpen på det.`.replace(/\s+/g, ' ')}
+            {`Svaret ditt på ${localOnly.map(checkFieldLabel).join(', ')} gjelder stedet
+              opplysningen ville stått, og det er nøyaktig det som blir registrert. Om
+              opplysningen står noe annet sted i den registrerte kildeversjonen, avgjøres av et
+              maskinelt søk gjennom hele den. ${
+                sourceWideOutstanding
+                  ? 'Det søket har ennå ikke gått god for dette funnet, så publiseringsgaten er fortsatt åpen på det. Det er ikke noe du skal gjøre.'
+                  : 'Det søket er allerede gjort for dette funnet.'
+              }`.replace(/\s+/g, ' ')}
           </p>
         ) : null}
         {uncovered.length > 0 && derived.outcome !== 'verified' ? (

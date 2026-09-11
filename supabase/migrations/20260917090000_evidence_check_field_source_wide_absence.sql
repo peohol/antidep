@@ -1,0 +1,79 @@
+-- ============================================================================
+-- Migrasjon 005ad — workflow.evidence_check_field får verdien source_wide_absence
+--
+-- Migrasjonen gjør ingenting annet, og det er ikke en stilistisk preferanse:
+-- `ALTER TYPE ... ADD VALUE` kan ikke brukes i den samme transaksjonen som tar
+-- verdien i bruk, og enhver funksjon som nevner den, ville feilet ved
+-- opprettelsen. Samme form som migrasjon 008a, 008b og 008c.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor et globalt fravær trenger sitt eget kontrollfelt
+--
+-- `not_reported` («ikke rapportert i kilden») og `not_measured` («ikke målt i
+-- studien») er påstander om kilden eller studien **som helhet**. Fram til nå
+-- hadde Antidep to kontrollgrunnlag, og ingen av dem kunne bære dem:
+--
+--   * Den menneskelige kildekontrollen ser ett lokalt utdrag. Et utdrag viser
+--     hva som står ett sted, ikke hva som ikke står noe sted.
+--   * Den deterministiske ekstraksjonskontrollen søkte bare i funnets egne
+--     utdrag, og bekreftet bare positive påstander.
+--
+-- Resultatet var at `availability_semantics` ble stående udekket for ethvert
+-- funn som førte et slikt fravær, og at publiseringsgatens G5b ble stående åpen
+-- på det uten at noe navnga hvorfor (issue #74, MVP_IMPLEMENTATION_PLAN.md
+-- §74.7).
+--
+-- Feltet her deler påstanden i de to halvdelene som faktisk har hvert sitt
+-- kontrollgrunnlag:
+--
+--   `availability_semantics`   den LOKALE halvdelen: at hvert felt uten verdi
+--                              bærer en fraværsgrunn av riktig art, og at
+--                              verdien faktisk mangler der forankringsutdraget
+--                              viser at den ville stått. Et menneske avgjør den
+--                              fra det flaten viser.
+--   `source_wide_absence`      den KILDEOMFATTENDE halvdelen: at et
+--                              søk gjennom **hele** den registrerte
+--                              kildeversjonen ikke fant noen verdi av den arten
+--                              i noen passasje som navngir funnets
+--                              behandlingsarm. En maskin avgjør den, og bare en
+--                              maskin: søket er reproduserbart, og
+--                              fingeravtrykket av representasjonen står i
+--                              kontrollraden.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor et søk kan bære påstanden, og hva det med vilje ikke sier
+--
+-- `not_reported` er i datamodellen definert relativt til **kildeversjonen**, og
+-- ikke til publikasjonen: «Statusen gjelder alltid den kildeversjonen og den
+-- kildepekeren raden viser til, ikke nødvendigvis hele publikasjonen»
+-- (kolonnekommentaren på `*_availability`, migrasjon 003). Et søk gjennom hele
+-- den kildeversjonen kontrollerer derfor nøyaktig den påstanden raden gjør —
+-- verken mer eller mindre. Det er grunnen til at et søk kan bære den der ett
+-- lokalt utdrag ikke kan.
+--
+-- Styrken følger likevel av hva versjonen er: et søk gjennom et abstrakt sier
+-- mindre om publikasjonen enn et søk gjennom en fulltekst, og en representasjon
+-- kan dessuten mangle figurer, som er bilder, og supplementer, som er egne
+-- filer. Kontrollraden navngir derfor representasjonen den gjennomsøkte, slik
+-- at dekningen aldri leses som mer enn den er. Det alternativet som ville vært
+-- å senke evidenskravet, er å la den lokale bekreftelsen dekke den globale
+-- statusen; det er nettopp den overdrivelsen DATABASE_ARCHITECTURE.md §29
+-- forbyr.
+--
+-- Styrende dokumenter:
+--   docs/ANTIDEP_CONSTITUTION.md §4, §6, §11, §17
+--   docs/DATABASE_ARCHITECTURE.md §29
+--   docs/EVIDENCE_PIPELINE.md §19.1, §24, §25.1
+--   docs/PRODUCT_INFORMATION_ARCHITECTURE.md §63.1
+--   docs/MVP_IMPLEMENTATION_PLAN.md §74.7
+-- ============================================================================
+
+-- Plasseringen er ikke pynt: `src/types/api.ts` sier at rekkefølgen i unionen
+-- er databasens, og de to halvdelene av den samme påstanden skal stå ved
+-- siden av hverandre. Uten `after` havner verdien sist, og kommentaren i
+-- TypeScript ville blitt usann.
+alter type workflow.evidence_check_field
+  add value 'source_wide_absence' after 'availability_semantics';
+
+comment on type workflow.evidence_check_field is
+  'Kontrollerbare felter på et evidensfunn, brukt til å registrere hvilke felter en ekstraksjonsverifikasjon faktisk gikk gjennom (DATABASE_ARCHITECTURE.md §29). Vokabularet følger kolonnene i knowledge.evidence_items, med to unntak som ikke er kolonner men kontrollpunkter på tvers av dem. availability_semantics dekker den LOKALE kontrollen av at not_measured, not_reported, not_extractable og uncertain_extraction er brukt riktig: at hvert felt uten verdi bærer en fraværsgrunn av riktig art, og at verdien mangler der forankringsutdraget viser at den ville stått. Det er en av de enkleste måtene en ekstraksjon kan være feil på uten at noe tall ser galt ut, og et menneske kan avgjøre det av utdraget. source_wide_absence dekker den KILDEOMFATTENDE halvdelen av det samme, og bare den: at et søk gjennom hele den registrerte kildeversjonen ikke fant noen verdi av den arten i noen passasje som navngir funnets behandlingsarm. De to er skilt fordi not_reported og not_measured er påstander om kildeversjonen som helhet, og ett lokalt utdrag kan ikke bære dem — det var gjelden i issue #74. Rekkevidden er kildeversjonen og ikke publikasjonen, som er nøyaktig det *_availability-kolonnene selv sier at statusen gjelder; kontrollraden navngir representasjonen den gjennomsøkte, slik at et søk gjennom et abstrakt ikke leses som et søk gjennom en fulltekst. source_wide_absence kan derfor bare registreres av en agentkjøring som faktisk har gjennomsøkt representasjonen (evidence_verifications_source_wide_absence_check), aldri av en menneskelig kontrolløkt.';
