@@ -51,6 +51,52 @@ describe('svaralternativene', () => {
   })
 })
 
+describe('deriveExtractionVerification — et lokalt fravær dekker ikke en global status', () => {
+  // DATABASE_ARCHITECTURE.md §29: en rad skal aldri påstå større dekning enn
+  // operasjonen faktisk hadde. Kontrolløren har bekreftet at opplysningen
+  // mangler der den ville stått; raden bærer en påstand om kilden som helhet.
+  it('utelater feltet fra checkedFields selv når svaret var «ja»', () => {
+    const derived = deriveExtractionVerification({
+      requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
+      sourceAccess: 'original_source',
+      answers: allYes(),
+      sourceWideAbsenceFields: ['population'],
+    })
+    expect(derived.outcome).toBe('verified')
+    expect(derived.checkedFields).not.toContain('population')
+    // Alt det andre kontrolløren bekreftet, står der.
+    expect(derived.checkedFields.length).toBe(SEMANTIC.length - 1)
+  })
+
+  it('sier i begrunnelsen hvorfor feltet ikke er ført opp', () => {
+    const derived = deriveExtractionVerification({
+      requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
+      sourceAccess: 'original_source',
+      answers: allYes(),
+      sourceWideAbsenceFields: ['population'],
+    })
+    expect(derived.rationale).toMatch(/mangler der den ville stått/)
+    expect(derived.rationale).toMatch(/påstand om kilden som helhet/)
+    expect(derived.rationale).toMatch(/ikke ført opp som kontrollert/)
+  })
+
+  // Uten en global fraværsstatus er ingenting holdt tilbake, og begrunnelsen
+  // skal ikke si at noe er det.
+  it('holder ingenting tilbake når ingen status gjelder kilden som helhet', () => {
+    const derived = deriveExtractionVerification({
+      requiredFields: REQUIRED,
+      semanticFields: SEMANTIC,
+      sourceAccess: 'original_source',
+      answers: allYes(),
+      sourceWideAbsenceFields: [],
+    })
+    expect(derived.checkedFields.length).toBe(SEMANTIC.length)
+    expect(derived.rationale).not.toMatch(/påstand om kilden som helhet/)
+  })
+})
+
 describe('deriveExtractionVerification', () => {
   it('bekrefter når alle påkrevde felter stemmer og kilden var tilgjengelig', () => {
     const derived = deriveExtractionVerification({
@@ -58,6 +104,7 @@ describe('deriveExtractionVerification', () => {
       semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
       answers: allYes(),
+      sourceWideAbsenceFields: [],
     })
     expect(derived.outcome).toBe('verified')
     // Nøyaktig de feltene mennesket faktisk bekreftet, og ingen flere. De to
@@ -77,6 +124,7 @@ describe('deriveExtractionVerification', () => {
       semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
       answers: allYes(),
+      sourceWideAbsenceFields: [],
     })
     expect(derived.rationale).toContain('bedømte de semantiske feltene')
     expect(derived.rationale).toContain('deterministiske ekstraksjonskontrollen')
@@ -91,6 +139,7 @@ describe('deriveExtractionVerification', () => {
       semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
       answers: { ...allYes(), outcome: { answer: 'cannot_determine', note: '' } },
+      sourceWideAbsenceFields: [],
     })
     expect(derived.outcome).not.toBe('verified')
     expect(derived.checkedFields).not.toContain('outcome')
@@ -103,6 +152,7 @@ describe('deriveExtractionVerification', () => {
       semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
       answers: { ...allYes(), outcome: { answer: 'no', note: 'Feil endepunkt.' } },
+      sourceWideAbsenceFields: [],
     })
     expect(derived.checkedFields).not.toContain('outcome')
   })
@@ -115,6 +165,7 @@ describe('deriveExtractionVerification', () => {
       semanticFields: SEMANTIC,
       sourceAccess: 'derived_summary',
       answers: allYes(),
+      sourceWideAbsenceFields: [],
     })
     expect(derived.outcome).toBe('uncertain')
     expect(derived.findings).toContain('bare et sammendrag fra et annet ledd')
@@ -129,6 +180,7 @@ describe('deriveExtractionVerification', () => {
         ...allYes(),
         outcome: { answer: 'no', note: 'Kilden måler livskvalitet, ikke vektendring.' },
       },
+      sourceWideAbsenceFields: [],
     })
     expect(derived.outcome).toBe('needs_correction')
     expect(derived.findings).toContain('Kilden måler livskvalitet, ikke vektendring.')
@@ -141,6 +193,7 @@ describe('deriveExtractionVerification', () => {
       semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
       answers: { ...allYes(), population: { answer: 'cannot_determine', note: '' } },
+      sourceWideAbsenceFields: [],
     })
     expect(derived.outcome).toBe('uncertain')
     expect(derived.findings).toContain('lot seg ikke avgjøre mot kilden')
@@ -152,6 +205,7 @@ describe('deriveExtractionVerification', () => {
       semanticFields: SEMANTIC,
       sourceAccess: 'original_source',
       answers: answers({ intervention_arm: 'yes' }),
+      sourceWideAbsenceFields: [],
     })
     expect(derived.outcome).toBe('uncertain')
     expect(derived.findings).toContain('ikke besvart')
@@ -167,6 +221,7 @@ describe('deriveExtractionVerification', () => {
           semanticFields: SEMANTIC,
           sourceAccess,
           answers: { ...allYes(), outcome: { answer, note: '' } },
+          sourceWideAbsenceFields: [],
         })
         expect(derived.outcome).not.toBe('verified')
         expect(derived.findings).not.toBeNull()
@@ -187,6 +242,7 @@ describe('deriveExtractionVerification', () => {
         outcome: { answer: 'no', note: 'Feil endepunkt.' },
         population: { answer: 'cannot_determine', note: '' },
       },
+      sourceWideAbsenceFields: [],
     })
     expect(derived.outcome).toBe('needs_correction')
   })

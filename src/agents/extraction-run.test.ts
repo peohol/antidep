@@ -131,13 +131,15 @@ async function proposal(
       {
         check_field: 'intervention_arm',
         source_excerpt:
-          overrides.excerpt ?? 'Sertraline patients (N = 284) with major depressive disorder',
+          overrides.excerpt ??
+          'Sertraline patients (N = 284) with major depressive disorder were randomised.',
         source_locator: 'Sammendrag, METHODS',
         justification: 'Armen er navngitt i metodeavsnittet.',
       },
       {
         check_field: 'sample_size',
-        source_excerpt: 'Sertraline patients (N = 284)',
+        source_excerpt:
+          'Sertraline patients (N = 284) with major depressive disorder were randomised.',
         source_locator: 'Sammendrag, METHODS',
         justification: 'Utvalgsstørrelsen står ved siden av armen.',
       },
@@ -705,6 +707,26 @@ describe('runEvidenceExtraction — det den nekter å registrere', () => {
     // agent_runs_status_shape_check godtar ikke en avsluttet kjøring uten et
     // svar på hvorfor den ble stoppet.
     expect(api.completions[0]?.failureReason).toContain('intervention_arm')
+  })
+
+  // Regresjon fra Fava 2000. Utdraget står ordrett i representasjonen og
+  // passerer hvert eneste ledd i kjeden — og begynner likevel inne i et ord.
+  // Dette er den siste grensen før en slik forankring blir en rad et menneske
+  // må kontrollere.
+  it('registrerer ingenting når et utdrag begynner midt i et ord', async () => {
+    const api = fakeApi()
+    const report = await runEvidenceExtraction({
+      mode: 'unchecked_model',
+      api,
+      proposal: await proposal({
+        excerpt: 'traline patients (N = 284) with major depressive disorder were randomised.',
+      }),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('skipped')
+    expect(report.reason).toMatch(/midt i et ord/)
+    expect(api.registered).toHaveLength(0)
   })
 
   it('registrerer ingenting når representasjonen ikke er den registrerte utgaven', async () => {

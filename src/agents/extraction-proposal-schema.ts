@@ -28,11 +28,8 @@ import {
   STUDY_DESIGNS,
   VALUE_AVAILABILITIES,
 } from '../types/api.ts'
-import {
-  EXTRACTION_PROPOSAL_VERSION,
-  MIN_SOURCE_EXCERPT_LENGTH,
-  PROPOSAL_PRODUCERS,
-} from './extraction-proposal.ts'
+import { EXTRACTION_PROPOSAL_VERSION, PROPOSAL_PRODUCERS } from './extraction-proposal.ts'
+import { MIN_SOURCE_EXCERPT_LENGTH } from './source-excerpt.ts'
 
 const UUID_PATTERN = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 const CONTENT_HASH_PATTERN = '^sha256:[0-9a-f]{64}$'
@@ -80,7 +77,8 @@ const EXTRACTION_PROPERTIES: Record<string, Schema> = {
   population_detail: text('Populasjonen slik kilden beskriver den, kort og på norsk.'),
   sample_size: {
     type: ['integer', 'null'],
-    description: 'Antall deltakere, når kilden oppgir det.',
+    description:
+      'Antall observasjoner estimatet faktisk bygger på, når kilden uttrykkelig knytter tallet til nettopp dette estimatet. Ikke antallet randomisert i studien, og aldri utledet av en nærliggende tabell eller av et annet antall. Uten en slik passasje utelates verdien, og sample_size_availability sier hvorfor.',
   },
   sample_size_availability: vocabulary(
     VALUE_AVAILABILITIES,
@@ -184,7 +182,7 @@ const DRAFT_PROPERTIES: Record<string, Schema> = {
           type: 'string',
           minLength: MIN_SOURCE_EXCERPT_LENGTH,
           description:
-            'Det ordrette kildeutdraget, med nok kontekst til å være kontrollgrunnlag. Må stå ordrett i kildeversjonen; kjøringen prøver det.',
+            'Det ordrette, sammenhengende kildeutdraget verdien er lest ut av. Normalt minst én hel setning, og aldri et utsnitt som begynner eller slutter midt i et ord. Det skal være langt nok til at en kontrollør kan se hva opplysningen gjelder — hvilken behandlingsarm, hvilken populasjon, hvilket tidspunkt og hva et tall er en verdi av — uten å åpne artikkelen. Gir én setning ikke det, tas den nærmeste tilstøtende setningen med. Målet er den minste SAMMENHENGENDE teksten som er tilstrekkelig for menneskelig kontroll, ikke den minste strengen maskinen kan gjenfinne. Må stå ordrett i kildeversjonen; kjøringen prøver det.',
         },
         source_locator: text(
           'Den presise pekeren for nettopp dette utdraget, for eksempel «Results, tabell 2».',

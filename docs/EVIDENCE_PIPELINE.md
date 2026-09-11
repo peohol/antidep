@@ -522,6 +522,103 @@ Hvis kilden rapporterer:
 
 skal dette lagres som strukturerte data dersom feltene er relevante og tilgjengelige, i stedet for at agenten bare skriver «risikoen var noe økt».
 
+### 19.1 Kildeforankringen skal bære sin egen kontekst
+
+Hvert kontrollerbart felt skal ha ett ordrett kildeutdrag, og utdraget er
+kontrollgrunnlaget et menneske faktisk ser. Kravet til det er derfor ikke bare
+at det står i kilden:
+
+> **Kildekontrolløren skal få nok lokal kildekontekst til å kunne vurdere hvert
+> utsagn uten å måtte lete i fullteksten selv.**
+
+Dette er et produktkrav, ikke en preferanse i en promptmal
+(PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
+
+Et `source_excerpt` skal derfor være:
+
+- ordrett og sammenhengende tekst fra kilden
+- normalt minst én hel setning
+- aldri begynnende eller sluttende midt i et ord
+- aldri et løsrevet setningsfragment bare fordi fragmentet alene inneholder
+  tallet
+- langt nok til at kontrolløren kan identifisere hva opplysningen gjelder:
+  behandlingsarm, populasjon, tidspunkt, og hva et tall er en verdi av
+- utvidet med den nærmeste tilstøtende setningen når én setning ikke gjør
+  betydningen entydig
+- ikke unødvendig langt: målet er den minste **sammenhengende** teksten som er
+  tilstrekkelig for menneskelig kontroll, ikke den minste strengen en maskin kan
+  gjenfinne
+
+Kravet er delvis maskinelt håndhevet. Det som kan avgjøres deterministisk og
+robust — at utdraget står ordrett, at det står der som hele ord, at det har en
+minstelengde og minst én setningsgrense — avvises av kjeden før noe registreres.
+Resten kan bare uttrykkes, og står derfor eksplisitt i den versjonerte
+modellprompten. Grensen går der den går fordi en setningsparser over
+PDF-utdrag ville avvist legitime utdrag på linjeskift, orddeling og
+forkortelser, og et ledd som avviser riktige ekstraksjoner, er verre enn intet
+ledd.
+
+#### Et fravær forankres i stedet der verdien ville stått
+
+`not_reported` og `not_measured` er påstander om kilden eller studien **som
+helhet**, og de kan ikke avgjøres av et vilkårlig lokalt utdrag: et utdrag viser
+hva som står ett sted, ikke hva som ikke står noe sted. Et menneske som fikk et
+slikt fravær som et ja/nei-spørsmål med et vilkårlig utdrag ved siden av, kunne
+ikke svart annet enn «kan ikke avgjøres» uten å lese hele artikkelen på nytt.
+
+Kravet ligger derfor på **kontrollgrunnlaget**, ikke på ordlyden i spørsmålet:
+et felt ført som `not_reported` eller `not_measured` skal forankres i passasjen
+der verdien **ville stått** — der funnets øvrige verdier for samme
+behandlingsarm, samme endepunkt og samme tidspunkt rapporteres. Mangler et
+konfidensintervall til et estimat, er det passasjen som oppgir estimatet.
+`justification` skal si hvor det ble lett og at verdien ikke står der.
+
+Da er spørsmålet avgjørbart fra det flaten viser: står opplysningen der den
+skulle, eller ikke? Kontrollflaten snevrer spørsmålet inn til nettopp det
+(PRODUCT_INFORMATION_ARCHITECTURE.md §63.1). `not_applicable` og
+`not_extractable` er smalere påstander — om funnet og om lesningen — og
+bedømmes av begrunnelsen som den står.
+
+**Et bekreftet lokalt fravær er ikke den globale påstanden, og skal ikke
+registreres som om det var det.** Et konfidensintervall kan stå i en tabell, en
+figurtekst, et supplement eller et annet resultatavsnitt enn punktestimatet, og
+«ikke målt i studien» følger ikke av at målingen mangler i én passasje. At
+ekstraksjonen *valgte* passasjen, gjør den ikke uttømmende: valget er modellens,
+og `justification` er modellens forklaring — ikke et uavhengig bevis.
+
+Den menneskelige bekreftelsen av et slikt fravær bevares derfor, men feltet
+føres **ikke** opp i `checked_fields`, og begrunnelsen sier hvorfor
+(DATABASE_ARCHITECTURE.md §29). Feltet står udekket i publiseringsgatens union
+til det finnes et kontrollledd som kan bære en global fraværspåstand. Det er
+registrert gjeld, ikke en løst oppgave (MVP_IMPLEMENTATION_PLAN.md §74.7).
+
+Bakgrunnen er konkret. Den første reelle menneskelige kildekontrollen møtte
+dette som forankring for behandlingsarmene:
+
+```text
+tine (N = 92), sertraline, (N = 96), or paroxetine
+```
+
+Utdraget sto ordrett i artikkelen og passerte hvert deterministiske ledd i
+kjeden. Det begynner likevel inne i «fluoxetine», og kontrolløren kunne ikke se
+hvilken studie, hvilken populasjon eller hvilket virkestoff de 92 gjaldt.
+
+### 19.2 `sample_size` er antallet estimatet bygger på
+
+`sample_size` på et evidensfunn skal forstås og presenteres som antallet
+observasjoner eller deltakere **det aktuelle estimatet faktisk bygger på** — ikke
+automatisk som studiens totale inklusjon, og ikke som antallet randomisert til
+armen.
+
+Verdien skal ikke inferes fra en nærliggende tabell eller fra et annet antall.
+Knytter ikke kilden uttrykkelig en nevner til estimatet, er `sample_size` fravær
+med en eksplisitt availability-begrunnelse — ikke et tall som ser riktig ut.
+
+Fava 2000 randomiserte 284 pasienter totalt og 96 til sertralin, mens
+langtidsresultatet hviler på de 48 som fullførte sertralinbehandlingen. «Studien
+inkluderte 48 deltakere» er da feil om studien, og «Dette estimatet bygger på 48
+deltakere» er riktig om funnet.
+
 ## 20. Råverdi og normalisert verdi
 
 Når Antidep normaliserer:

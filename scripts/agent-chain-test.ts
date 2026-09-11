@@ -234,7 +234,8 @@ const EDITOR_ACTOR = 'c0000000-0000-4000-8000-0000000000e1'
 const KILDETEKST = [
   '<PubmedArticle>',
   '  <AbstractText Label="METHODS">Sertraline patients were randomised for 8 weeks.</AbstractText>',
-  '  <AbstractText Label="RESULTS">Sertraline weight change increased from baseline.</AbstractText>',
+  '  <AbstractText Label="RESULTS">Sertraline weight change increased from baseline.',
+  '  The increase was consistent across visits.</AbstractText>',
   '</PubmedArticle>',
 ].join('\n')
 
@@ -942,14 +943,20 @@ async function main(): Promise<void> {
      where evidence_item_id = ${q(itemId)}`,
   )
 
-  // Bare ett ordrett utdrag er rettet. Det står fortsatt i kilden, så
-  // ekstraksjonens egen kontroll slipper det gjennom — det er databasens
-  // identitetsregel som avgjør om raden er ny.
+  // Bare ett ordrett utdrag er rettet, og rettelsen er den formen protokollen
+  // faktisk ber om: den nærmeste tilstøtende setningen er tatt med, slik at
+  // utdraget bærer sin egen kontekst (`source-excerpt.ts`). Det står fortsatt
+  // ordrett i kilden, så ekstraksjonens egen kontroll slipper det gjennom —
+  // det er databasens identitetsregel som avgjør om raden er ny.
   const rettetForslag = parseExtractionProposal({
     ...JSON.parse(JSON.stringify(kjedeForslag)),
     field_groundings: kjedeForslag.field_groundings.map((grounding) =>
       grounding.check_field === 'outcome'
-        ? { ...grounding, source_excerpt: 'Sertraline weight change increased' }
+        ? {
+            ...grounding,
+            source_excerpt:
+              'Sertraline weight change increased from baseline. The increase was consistent across visits.',
+          }
         : grounding,
     ),
   })
@@ -1212,7 +1219,7 @@ async function main(): Promise<void> {
        join knowledge.evidence_items e on e.agent_run_id = r.id
        where e.id = ${q(modellItem)}`,
     ) ===
-      'antidep|proposal-grounded-extraction|1.0.0|evidence-extraction/proposal/1|antidep-evidence/1',
+      'antidep|proposal-grounded-extraction|1.1.0|evidence-extraction/proposal/1|antidep-evidence/1',
   )
   check(
     'kontrollgrunnlaget viser hvem som laget verdiene, som en erklæring',

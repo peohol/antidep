@@ -84,11 +84,26 @@ export const CLAIM_VERIFICATION_PREMISES: AgentRunPremises = {
  * Når et leverandøradapter en dag kjører med sin egen legitimasjon, kan
  * utkastet få sin egen kjøring med sine egne premisser, ved siden av denne.
  * Datamodellen tar allerede imot det; det som mangler, er legitimasjonen.
+ *
+ * ----------------------------------------------------------------------------
+ * `1.1.0`: registreringen avviser et utdrag som ikke står som hele ord
+ *
+ * `modelVersion` er versjonen av selve kontrollrutinen, og regelen over gjelder:
+ * en endring i hva som godtas eller avvises, er en ny versjon. Registreringen
+ * krever nå at hvert `source_excerpt` står i representasjonen mellom ordgrenser
+ * og ikke bare som en delstreng (`source-excerpt.ts`), og to kjøringer med
+ * identiske premisser ville ellers kunnet gi forskjellig utfall på den samme
+ * inndataen — som er nøyaktig det proveniensen finnes for å utelukke
+ * (ANTIDEP_CONSTITUTION.md §14, §20).
+ *
+ * `promptTemplateVersion` står urørt med vilje: den navngir *formen* kjøringen
+ * leser, og den er uendret — `EXTRACTION_PROPOSAL_VERSION` er fortsatt `@3`. Det
+ * som er skjerpet, er dommen, og dommen er modellen.
  */
 export const EVIDENCE_EXTRACTION_PREMISES: AgentRunPremises = {
   provider: 'antidep',
   model: 'proposal-grounded-extraction',
-  modelVersion: '1.0.0',
+  modelVersion: '1.1.0',
   promptTemplateVersion: 'evidence-extraction/proposal/1',
   pipelineVersion: ANTIDEP_EVIDENCE_PIPELINE_VERSION,
 }

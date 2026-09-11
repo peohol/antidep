@@ -786,6 +786,51 @@ export function reviewSource(overrides: Record<string, unknown> = {}): Record<st
   }
 }
 
+/**
+ * Ekstraksjonen i dossieret, felt for felt.
+ *
+ * Egen byggefunksjon fordi flere tester varierer ett enkelt felt — et
+ * konfidensintervall som mangler, et tidsrom oppgitt i uker — og et objekt som
+ * måtte gjentas i sin helhet for hver variasjon, ville drevet fra originalen.
+ */
+export function reviewExtraction(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    design_code: 'randomized_controlled_trial',
+    population_id: null,
+    population_label: 'voksne med depresjon',
+    population_availability: 'reported_value',
+    population_detail: 'Voksne 18–65 år i poliklinisk behandling.',
+    sample_size: 240,
+    sample_size_availability: 'reported_value',
+    intervention_drug_id: DRUG_A,
+    intervention_drug_name: 'virkestoff a',
+    intervention_detail: null,
+    comparator_kind: 'placebo',
+    comparator_drug_id: null,
+    comparator_drug_name: null,
+    comparator_detail: null,
+    outcome_concept_id: TOPIC_WEIGHT,
+    outcome_label: 'vektendring',
+    outcome_detail: 'Endring i kroppsvekt fra baseline.',
+    timepoint_min: '56 days',
+    timepoint_max: '56 days',
+    timepoint_availability: 'reported_value',
+    reported_direction: 'increase',
+    effect_measure: 'mean_difference',
+    estimate: '1.7',
+    estimate_unit: 'kg',
+    estimate_availability: 'reported_value',
+    ci_lower: '0.9',
+    ci_upper: '2.5',
+    ci_level_percent: '95',
+    confidence_interval_availability: 'reported_value',
+    limitations_text: null,
+    source_locator: 'Tabell 2, side 114',
+    raw_extraction: null,
+    ...overrides,
+  }
+}
+
 /** Én evidenslenke i grunnlaget, slik dossieret gir den. */
 export function reviewLink(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -818,40 +863,7 @@ export function reviewLink(overrides: Record<string, unknown> = {}): Record<stri
       // Maskinen har prøvd utdragene mot kilden. Uten dette stopper økten før
       // feltskuffene (migrasjon 005x, 005æ).
       grounding_machine_proved: true,
-      extraction: {
-        design_code: 'randomized_controlled_trial',
-        population_id: null,
-        population_label: 'voksne med depresjon',
-        population_availability: 'reported_value',
-        population_detail: 'Voksne 18–65 år i poliklinisk behandling.',
-        sample_size: 240,
-        sample_size_availability: 'reported_value',
-        intervention_drug_id: DRUG_A,
-        intervention_drug_name: 'virkestoff a',
-        intervention_detail: null,
-        comparator_kind: 'placebo',
-        comparator_drug_id: null,
-        comparator_drug_name: null,
-        comparator_detail: null,
-        outcome_concept_id: TOPIC_WEIGHT,
-        outcome_label: 'vektendring',
-        outcome_detail: 'Endring i kroppsvekt fra baseline.',
-        timepoint_min: '56 days',
-        timepoint_max: '56 days',
-        timepoint_availability: 'reported_value',
-        reported_direction: 'increase',
-        effect_measure: 'mean_difference',
-        estimate: '1.7',
-        estimate_unit: 'kg',
-        estimate_availability: 'reported_value',
-        ci_lower: '0.9',
-        ci_upper: '2.5',
-        ci_level_percent: '95',
-        confidence_interval_availability: 'reported_value',
-        limitations_text: null,
-        source_locator: 'Tabell 2, side 114',
-        raw_extraction: null,
-      },
+      extraction: reviewExtraction(),
     },
     current_extraction_verification: {
       evidence_verification_id: '77777777-7777-4777-8777-333333333333',

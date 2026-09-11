@@ -866,6 +866,68 @@ Admin-UI bør tilby handlinger som:
 
 ikke en stor «rediger monografi»-textarea.
 
+## 63.1 Kildekontroll skal være mulig uten fullteksten ved siden av
+
+Kildekontrollen er flaten der et menneske avgjør om Antideps strukturerte verdier
+følger av kilden. Den bærende regelen er:
+
+> **Kildekontrolløren skal få nok lokal kildekontekst til å kunne vurdere hvert
+> utsagn uten å måtte lete i fullteksten selv.**
+
+Dette er et produktkrav, ikke en promptpreferanse. Det binder både hva
+ekstraksjonen må levere (EVIDENCE_PIPELINE.md §19.1) og hvordan kontrollflaten
+presenterer det:
+
+- Økten skal innlede med **hva som skal kontrolleres** — virkestoff, endepunkt og
+  eventuell populasjon — og med **hvilken kilde** det gjelder, som en lenke til
+  artikkelen. Innledningen bygges av den kanoniske raden, aldri av generert tekst.
+- Hvert kildeutdrag skal vises i sin helhet, uten avkorting.
+- Flaten skal skille mellom **Antideps tolkning** — hva Antidep mener kilden sier
+  — og en **mangel**, altså en opplysning som ikke er ført. Bokføring om hvor
+  mange felter som står uten verdi, er ingen av delene og skal ikke presenteres
+  som en tolkning. En mangel skal aldri bli til en klinisk påstand utledet av
+  fraværet.
+- **Spørsmålet skal følge det registrerte premisset, ikke bare det at verdien er
+  tom.** Fraværsgrunnene er påstander om forskjellige ting: kilden rapporterer
+  det ikke, studien målte det ikke, det er ikke aktuelt for funnet, eller det
+  *står i kilden men lar seg ikke lese entydig ut*. Et felles spørsmål av typen
+  «stemmer det at kilden ikke oppgir dette?» ville for den siste bedt
+  kontrolløren bekrefte det motsatte av det som er ført, og svaret ville blitt
+  registrert som om det gjaldt riktig spørsmål. Der en grunn er registrert, er
+  det grunnen som skal bedømmes. Der ingen fraværskolonne finnes — effektmål,
+  forbehold, den rå gjengivelsen — er «ingenting er ført» hele påstanden, og den
+  handler om registreringen og ikke om hva kilden oppgir.
+- **Kontrollflaten skal ikke stille et sterkere spørsmål enn grunnlaget den
+  viser, kan bære.** Sier Antidep at noe ikke er rapportert i kilden eller ikke
+  er målt i studien, er det en påstand om kilden som helhet, og den kan ingen
+  avgjøre av ett lokalt utdrag. Et forbehold ved siden av et globalt
+  ja/nei-spørsmål løser ikke dette: sannhetsbetingelsen er den samme, og
+  kontrolløren ville måttet svare «kan ikke avgjøres» hver gang, eller gå til
+  fullteksten — nøyaktig det kravet over skal fjerne.
+
+  Kravet ligger derfor på grunnlaget. Et slikt fravær skal forankres i passasjen
+  der verdien **ville stått** (EVIDENCE_PIPELINE.md §19.1), og flaten snevrer
+  spørsmålet inn til den: «mangler opplysningen der utdraget viser at den ville
+  stått?». Flaten skal si hva utdraget er, slik at kontrolløren vet at hen bare
+  skal avgjøre stedet — ikke lete gjennom resten av kilden.
+
+- **Et innsnevret spørsmål gir en innsnevret bekreftelse, og flaten skal si
+  det.** Svaret på det lokale spørsmålet er ikke den globale påstanden raden
+  bærer, og det skal ikke bokføres som om det var det. Feltet blir stående som
+  ikke kontrollert, publiseringsgaten er fortsatt åpen på det, og kontrolløren
+  får vite det i det hen lagrer — ikke som en blokkert publisering senere. Å la
+  den lokale bekreftelsen dekke den globale statusen ville vært å endre den
+  epistemiske policyen for å få implementasjonen til å gå opp.
+- To utsagn som ser like ut, skal gjøres eksplisitt forskjellige. Endepunktet er
+  hva som ble målt; effektmålet er hvordan resultatet er uttrykt.
+- Tall skal presenteres i den formen kilden bruker, med databasens egen form som
+  eksplisitt omregning ved siden av. En varighet lagret som 182 til 224 dager
+  vises som «26 til 32 uker (registrert som 182 til 224 dager)», slik at kontrolløren slipper
+  å kontrollregne. Den kanoniske verdien skal ikke gå tapt.
+- Steget skal inneholde det som trengs for å svare, og ikke mer. Identifikatorer,
+  henteadresser og representasjonstype er proveniens og hører til under tekniske
+  detaljer.
+
 ## 64. Preview skal være tilgjengelig
 
 Før publisering skal editor/reviewer kunne forhåndsvise hvordan den aktuelle revisjonen vil se ut i:

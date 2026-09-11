@@ -42,7 +42,10 @@
 //      annet virkestoff eller et naboendepunkt. Utdragene ville fortsatt stått
 //      ordrett i kilden, og den deterministiske kontrollen kontrollerer utdrag,
 //      ikke avgrensning.
-//   2. **Utdragene.** Hvert `source_excerpt` må stå ordrett i representasjonen.
+//   2. **Utdragene.** Hvert `source_excerpt` må stå ordrett i representasjonen,
+//      og det må stå der som hele ord: et utsnitt som begynner inne i
+//      «fluoxetine», er ordrett til stede og likevel ubrukelig som
+//      kontrollgrunnlag (`source-excerpt.ts`).
 //   3. **Sitatet.** `source_quote` blir `raw_extraction` på raden, og
 //      ekstraksjonskontrollen prøver det ordrett senere. Et sitat modellen
 //      skrev om, ville blitt en rad som var dømt til å avvises.
@@ -58,6 +61,7 @@
 // ============================================================================
 
 import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
+import { excerptSourceProblem } from './source-excerpt.ts'
 import {
   assignmentBinding,
   catalogProblem,
@@ -183,11 +187,11 @@ function verbatimProblem(
   representation: string,
 ): string | null {
   const projections = searchProjections(representation)
-  const missing = draft.fieldGroundings
-    .filter((grounding) => !verbatimOccursIn(projections, grounding.sourceExcerpt))
-    .map((grounding) => grounding.checkField)
-  if (missing.length > 0) {
-    return `kildeforankringen for ${missing.join(', ')} oppgir utdrag som ikke står ordrett i representasjonen`
+  for (const grounding of draft.fieldGroundings) {
+    const issue = excerptSourceProblem(projections, grounding.sourceExcerpt)
+    if (issue !== null) {
+      return `kildeforankringen for ${grounding.checkField} oppgir et utdrag som ${issue}`
+    }
   }
   const quote = draft.extraction.sourceQuote
   if (quote !== null && !verbatimOccursIn(projections, quote)) {

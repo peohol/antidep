@@ -16,6 +16,7 @@ import {
   extractionReviewPayload,
   fieldGrounding,
   renderRoute,
+  reviewExtraction,
   reviewSource,
   type FakeApi,
 } from '../test-support'
@@ -35,7 +36,7 @@ const SEMANTIC_FIELDS = [
   'Endepunktet',
   'Retningen kilden rapporterer',
   'Begrunnelsen for felter uten verdi',
-  'Effektmålet',
+  'Hvordan resultatet er uttrykt',
   'Sammenligningsarmen',
   'Populasjonen funnet gjelder',
   'Antall deltakere',
@@ -114,6 +115,50 @@ describe('Kontrolløkten — grunnlaget', () => {
   })
 })
 
+describe('Kontrolløkten — innledningen', () => {
+  // Den første reelle kildekontrollen begynte på spørsmål én uten at noe hadde
+  // sagt hvilket virkestoff, hvilket endepunkt eller hvilken artikkel saken
+  // gjaldt (PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
+  it('sier hva som skal kontrolleres, før første delkontroll', async () => {
+    renderExtractionControl()
+    expect(await screen.findByText('Hva skal kontrolleres?')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Du skal nå kontrollere Antideps vurdering av hva kilden sier om vektendring ved bruk av virkestoff a hos voksne med depresjon.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('gjør hele kildetittelen til lenken kontrolløren skal åpne', async () => {
+    renderExtractionControl()
+    expect(await screen.findByText('Kilden som er brukt')).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: 'Testkilde A: vektendring ved åtte uker' })
+    expect(link).toHaveAttribute('href', 'https://doi.org/10.1000/testkilde-a.1')
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+  })
+
+  // Ingen lenke å bygge er en opplysning, men kilden skal fortsatt navngis — og
+  // forklaringen skal stå én gang, i steget der den trengs.
+  it('viser tittelen uten lenke når kilden ikke kan lenkes, og forklarer det én gang', async () => {
+    renderExtractionControl({ source: reviewSource({ identifiers: [] }) })
+    await screen.findByText('Kilden som er brukt')
+    const intro = within(document.querySelector('.control-intro') as HTMLElement)
+    expect(intro.getByText('Testkilde A: vektendring ved åtte uker')).toBeInTheDocument()
+    expect(intro.queryByRole('link')).not.toBeInTheDocument()
+    expect(
+      screen.getAllByText(
+        'Kilden har ingen registrert DOI eller PubMed-ID, så Antidep kan ikke lage en lenke til artikkelen.',
+      ),
+    ).toHaveLength(1)
+  })
+
+  // Innledningen er ikke en delkontroll: ingenting i den kan besvares.
+  it('teller ikke innledningen som en delkontroll', async () => {
+    renderExtractionControl()
+    expect(await screen.findByText('Delkontroll: 1 av 11')).toBeInTheDocument()
+  })
+})
+
 describe('Kontrolløkten — kildetilgangen', () => {
   it('lenker til artikkelen via DOI, ikke til maskinens henteadresse', async () => {
     renderExtractionControl()
@@ -159,11 +204,26 @@ describe('Kontrolløkten — kildetilgangen', () => {
     ).toBeInTheDocument()
   })
 
-  it('sier hva slags representasjon ekstraksjonen bygger på', async () => {
+  // Kildetilgangssteget skal inneholde lenken og spørsmålet, og ikke mer.
+  // Identifikatoren og representasjonstypen er proveniens; begge sto tidligere
+  // midt i flyten, og begge er nå der de hører hjemme.
+  it('har verken identifikator, representasjonstype eller gjentatt tittel i steget', async () => {
     renderExtractionControl()
-    expect(
-      await screen.findByText('Ekstraksjonen bygger på fullteksten av kilden.'),
-    ).toBeInTheDocument()
+    await screen.findByText('Har du tilgang til fullteksten?')
+    const step = document.querySelector('.control-step[data-state="active"]') as HTMLElement
+    expect(step.textContent).not.toContain('DOI 10.1000/testkilde-a.1')
+    expect(step.textContent).not.toContain('Ekstraksjonen bygger på')
+    // Tittelen står i innledningen, og gjentas ikke her.
+    expect(step.textContent).not.toContain('Testkilde A: vektendring ved åtte uker')
+  })
+
+  it('beholder representasjonstypen og identifikatoren under «Tekniske detaljer»', async () => {
+    renderExtractionControl()
+    await screen.findByText('Har du tilgang til fullteksten?')
+    const representation = screen.getByText('Ekstraksjonen bygger på fullteksten av kilden.')
+    expect(representation.closest('details')).not.toBeNull()
+    const identifier = screen.getByText('DOI 10.1000/testkilde-a.1')
+    expect(identifier.closest('details')).not.toBeNull()
   })
 
   it('spør først om fullteksten, og om hva man ellers har bare når svaret er nei', async () => {
@@ -288,8 +348,192 @@ describe('Kontrolløkten — feltkontrollen', () => {
       clickAnswer('Ja')
     }
     const step = within(openStep())
-    expect(await step.findByText('Studien inkluderte 240 deltakere.')).toBeInTheDocument()
+    // `sample_size` er antallet estimatet bygger på, ikke studiens totale
+    // inklusjon.
+    expect(await step.findByText('Dette estimatet bygger på 240 deltakere.')).toBeInTheDocument()
+    expect(screen.queryByText(/Studien inkluderte/)).not.toBeInTheDocument()
     expect(screen.queryByText('sample_size_availability')).not.toBeInTheDocument()
+  })
+
+  // Kontrollgrunnlaget skal stå i sin helhet. Et avkortet utdrag ville sendt
+  // kontrolløren til artikkelen for å finne resten — som er nøyaktig det
+  // forankringen finnes for å slippe.
+  it('viser et langt kildeutdrag i sin helhet, uten avkorting', async () => {
+    const langt =
+      'Patients (N = 284) with major depressive disorder (DSM-IV) were randomly assigned to ' +
+      'double-blind treatment with fluoxetine (N = 92), sertraline, (N = 96), or paroxetine ' +
+      '(N = 96) for a total of 26 to 32 weeks.'
+    renderExtractionControl({
+      field_groundings: TEST_FIELD_GROUNDINGS.map((grounding) =>
+        grounding['check_field'] === 'intervention_arm'
+          ? { ...grounding, source_excerpt: langt }
+          : grounding,
+      ),
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    const excerpt = await within(openStep()).findByText(langt)
+    expect(excerpt.textContent).toBe(langt)
+  })
+
+  // «Endepunktet» og «Effektmålet» leste som duplikater. De to stegene skal si
+  // hver sin ting: hva som ble målt, og hvordan resultatet er uttrykt.
+  it('skiller endepunktet fra hvordan resultatet er uttrykt', async () => {
+    renderExtractionControl()
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    await within(openStep()).findByText('Behandlingsarmen')
+    clickAnswer('Ja')
+    expect(
+      await within(openStep()).findByText('Det målte endepunktet er vektendring.'),
+    ).toBeInTheDocument()
+    // Fram til steget om hvordan resultatet er uttrykt.
+    for (const field of SEMANTIC_FIELDS.slice(1, 4)) {
+      await within(openStep()).findByText(field)
+      clickAnswer('Ja')
+    }
+    const step = within(openStep())
+    expect(await step.findByText('Hvordan resultatet er uttrykt')).toBeInTheDocument()
+    expect(
+      step.getByText('Resultatet er uttrykt som gjennomsnittsforskjell, oppgitt i kg.'),
+    ).toBeInTheDocument()
+  })
+
+  // Kilden oppgir uker. Kontrolløren skal slippe å kontrollregne, og den
+  // kanoniske varigheten i databasen skal fortsatt stå.
+  it('viser tidsrommet i uker med dagene som eksplisitt omregning', async () => {
+    renderExtractionControl({
+      extraction: reviewExtraction({ timepoint_min: '182 days', timepoint_max: '224 days' }),
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    for (const field of SEMANTIC_FIELDS.slice(0, 8)) {
+      await within(openStep()).findByText(field)
+      clickAnswer('Ja')
+    }
+    expect(
+      await within(openStep()).findByText(
+        'Målingen gjelder 26 til 32 uker (registrert som 182 til 224 dager) etter oppstart.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  /** Går fram til konfidensintervallsteget, som er det siste. */
+  async function gaaTilKonfidensintervallet(availability: string): Promise<void> {
+    renderExtractionControl({
+      extraction: reviewExtraction({
+        ci_lower: null,
+        ci_upper: null,
+        ci_level_percent: null,
+        confidence_interval_availability: availability,
+      }),
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    for (const field of SEMANTIC_FIELDS.slice(0, 10)) {
+      await within(openStep()).findByText(field)
+      clickAnswer('Ja')
+    }
+    await within(openStep()).findByText('Konfidensintervallet')
+  }
+
+  // En manglende verdi er ikke en tolkning man kan holde opp mot kilden, og
+  // aldri en klinisk påstand utledet av fraværet. Det kontrolløren skal
+  // bedømme, er den registrerte begrunnelsen.
+  it('presenterer en manglende verdi som en begrunnet mangel, og spør om begrunnelsen', async () => {
+    await gaaTilKonfidensintervallet('not_applicable')
+    const step = within(openStep())
+    expect(step.getByText('Hvorfor verdien mangler')).toBeInTheDocument()
+    expect(
+      step.getByText(
+        'Antidep har ikke ført et konfidensintervall for dette estimatet. Ikke aktuelt for dette funnet.',
+      ),
+    ).toBeInTheDocument()
+    expect(step.getByText('Stemmer denne begrunnelsen?')).toBeInTheDocument()
+    expect(step.queryByText('Antideps tolkning')).not.toBeInTheDocument()
+  })
+
+  // «Ikke rapportert i kilden» er en påstand om kilden som helhet, og den kan
+  // ingen avgjøre av ett lokalt utdrag. Spørsmålet er derfor snevret inn til
+  // stedet utdraget viser, og flaten sier hva utdraget er.
+  it('snevrer et fravær i kilden inn til stedet verdien ville stått', async () => {
+    await gaaTilKonfidensintervallet('not_reported')
+    const step = within(openStep())
+    expect(
+      step.getByText('Mangler opplysningen der utdraget viser at den ville stått?'),
+    ).toBeInTheDocument()
+    expect(step.getByText(/stedet der opplysningen ville stått/)).toBeInTheDocument()
+    expect(step.getByText(/ikke lete gjennom resten av kilden/)).toBeInTheDocument()
+    // Og ikke det globale ja/nei-spørsmålet, som ingen kunne svart «Ja» på ut
+    // fra det flaten viser.
+    expect(step.queryByText('Stemmer denne begrunnelsen?')).not.toBeInTheDocument()
+  })
+
+  // Funnet fra den tekniske reviewen: «står i kilden, men lar seg ikke lese
+  // entydig ut» er det stikk motsatte av at kilden ikke oppgir noe. Et felles
+  // fraværsspørsmål ville bedt kontrolløren bekrefte det motsatte av det som
+  // er ført.
+  it('spør aldri om kilden mangler noe når grunnen er at det ikke lot seg lese ut', async () => {
+    await gaaTilKonfidensintervallet('not_extractable')
+    const step = within(openStep())
+    expect(
+      step.getByText(
+        'Antidep har ikke ført et konfidensintervall for dette estimatet. Står i kilden, men lar seg ikke lese entydig ut.',
+      ),
+    ).toBeInTheDocument()
+    expect(step.getByText('Stemmer denne begrunnelsen?')).toBeInTheDocument()
+    expect(step.queryByText(/kilden ikke oppgir/)).not.toBeInTheDocument()
+    // Påstanden gjelder lesningen, ikke kilden som helhet.
+    expect(step.queryByText(/påstand om kilden som helhet/)).not.toBeInTheDocument()
+  })
+
+  // Effektmålet har ingen fraværskolonne. «Ingenting er ført» er hele
+  // påstanden, og den handler om registreringen — ikke om hva kilden oppgir.
+  it('behandler et felt uten fraværskolonne som uregistrert, ikke som et fravær i kilden', async () => {
+    renderExtractionControl({
+      extraction: reviewExtraction({ effect_measure: null }),
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    for (const field of SEMANTIC_FIELDS.slice(0, 4)) {
+      await within(openStep()).findByText(field)
+      clickAnswer('Ja')
+    }
+    const step = within(openStep())
+    expect(await step.findByText('Hvordan resultatet er uttrykt')).toBeInTheDocument()
+    expect(step.getByText('Ingenting er ført')).toBeInTheDocument()
+    expect(
+      step.getByText('Antidep har ikke ført et effektmål for dette funnet.'),
+    ).toBeInTheDocument()
+    expect(step.getByText('Stemmer det at det ikke er noe å føre her?')).toBeInTheDocument()
+    expect(step.queryByText(/kilden ikke oppgir/)).not.toBeInTheDocument()
+  })
+
+  // Bokføring er ikke en tolkning: «Antidep har ført 1 felt uten verdi» er ikke
+  // noe en kontrollør kan sammenligne med en artikkel.
+  it('formulerer begrunnelseskontrollen som en mangel, ikke som et antall felter', async () => {
+    renderExtractionControl({
+      extraction: reviewExtraction({
+        ci_lower: null,
+        ci_upper: null,
+        ci_level_percent: null,
+        confidence_interval_availability: 'not_reported',
+      }),
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    for (const field of SEMANTIC_FIELDS.slice(0, 3)) {
+      await within(openStep()).findByText(field)
+      clickAnswer('Ja')
+    }
+    const step = within(openStep())
+    expect(await step.findByText('Begrunnelsen for felter uten verdi')).toBeInTheDocument()
+    expect(
+      step.getByText(
+        'Antidep har ikke ført et konfidensintervall for estimatet. Ikke rapportert i kilden.',
+      ),
+    ).toBeInTheDocument()
+    expect(step.queryByText(/felt uten verdi, med en begrunnelse/)).not.toBeInTheDocument()
   })
 
   it('lukker det besvarte steget, markerer det, og åpner det neste', async () => {
@@ -401,6 +645,79 @@ describe('Kontrolløkten — maskinbeviset kommer først', () => {
     expect(
       await screen.findByText(/Du skal bare vurdere om Antideps tolkning følger av utdraget/),
     ).toBeInTheDocument()
+  })
+})
+
+describe('Kontrolløkten — en global fraværspåstand dekker ikke seg selv', () => {
+  // Kravet fra den tekniske reviewen, i to deler. Kontrollen skal kunne
+  // FULLFØRES på korrekt grunnlag — kontrolløren får et spørsmål hen kan svare
+  // på fra det flaten viser — men det som ender i `checked_fields`, må være
+  // nøyaktig den semantiske påstanden hen har bekreftet
+  // (DATABASE_ARCHITECTURE.md §29).
+  //
+  // «Ikke rapportert i kilden» gjelder hele kilden. Kontrolløren har bekreftet
+  // et lokalt fravær, og feltet skal derfor IKKE føres opp som kontrollert.
+  it('fører ikke feltet opp som kontrollert, og sier hvorfor', async () => {
+    const { rpcCalls } = renderExtractionControl({
+      extraction: reviewExtraction({
+        ci_lower: null,
+        ci_upper: null,
+        ci_level_percent: null,
+        confidence_interval_availability: 'not_reported',
+      }),
+    })
+    await answerEverythingYes()
+
+    // Økten er gjennomførbar: alle spørsmålene er besvart fra det flaten viser.
+    await screen.findByText('Dette blir registrert som: Bekreftet.')
+    // Og den sier at feltet likevel blir stående udekket.
+    expect(screen.getByText(/Feltet blir derfor stående som ikke kontrollert/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
+    await waitFor(() => {
+      expect(rpcCalls.some((call) => call.name === 'register_human_extraction_verification')).toBe(
+        true,
+      )
+    })
+    const call = rpcCalls.find((c) => c.name === 'register_human_extraction_verification')
+    const args = call?.args as Record<string, unknown>
+    const checked = args['p_checked_fields'] as readonly string[]
+
+    // Kjernen: den globale påstanden er ikke bekreftet, og raden påstår ikke at
+    // den er det.
+    expect(checked).not.toContain('confidence_interval')
+    // De feltene kontrolløren faktisk bekreftet semantisk, står der.
+    expect(checked).toContain('estimate')
+    expect(checked).toContain('intervention_arm')
+    // Og begrunnelsen sier hvorfor det ene feltet mangler.
+    expect(String(args['p_rationale'])).toMatch(/påstand om kilden som helhet/)
+  })
+
+  // Motstykket: en lokal fraværsgrunn bæres av utdraget, og feltet dekkes.
+  it('dekker feltet når fraværsgrunnen gjelder funnet og ikke kilden', async () => {
+    const { rpcCalls } = renderExtractionControl({
+      extraction: reviewExtraction({
+        ci_lower: null,
+        ci_upper: null,
+        ci_level_percent: null,
+        confidence_interval_availability: 'not_applicable',
+      }),
+    })
+    await answerEverythingYes()
+    await screen.findByText('Dette blir registrert som: Bekreftet.')
+    expect(
+      screen.queryByText(/Feltet blir derfor stående som ikke kontrollert/),
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
+    await waitFor(() => {
+      expect(rpcCalls.some((call) => call.name === 'register_human_extraction_verification')).toBe(
+        true,
+      )
+    })
+    const call = rpcCalls.find((c) => c.name === 'register_human_extraction_verification')
+    const checked = (call?.args as Record<string, unknown>)['p_checked_fields'] as readonly string[]
+    expect(checked).toContain('confidence_interval')
   })
 })
 

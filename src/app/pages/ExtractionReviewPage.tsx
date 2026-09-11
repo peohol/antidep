@@ -33,6 +33,7 @@ import {
   buildExtractionSteps,
   derivedExtractionFor,
 } from '../../components/extraction-control-steps'
+import { ExtractionControlIntro } from '../../components/ExtractionControlIntro'
 import { ExtractionTechnicalDetails } from '../../components/ExtractionDossier'
 import { SourceAccessCaveat } from '../../components/SourceAccessCaveat'
 import {
@@ -211,6 +212,7 @@ function ExtractionControlSession({ evidenceItemId }: { readonly evidenceItemId:
         state: session,
         handlers,
         includeFieldSteps: true,
+        sourceIntroduced: true,
         titlePrefix: null,
       })
       return (
@@ -227,6 +229,7 @@ function ExtractionControlSession({ evidenceItemId }: { readonly evidenceItemId:
               </p>
             </div>
           ) : null}
+          <ExtractionControlIntro dossier={item.dossier} />
           <SourceAccessCaveat
             sources={session.sourceAccess === 'derived_summary' ? [item.dossier.sourceTitle] : []}
           />

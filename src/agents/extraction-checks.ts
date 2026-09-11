@@ -278,6 +278,56 @@ export function verbatimOccursIn(projections: readonly string[], needle: string)
   return projections.some((haystack) => haystack.includes(wanted))
 }
 
+/** Et tegn som hører til et ord. Grensen mellom to ord er fraværet av ett slikt. */
+const WORD_CHARACTER = /[\p{L}\p{N}]/u
+
+/**
+ * Ordrett forekomst som *begynner og slutter mellom ord*.
+ *
+ * Forskjellen fra `verbatimOccursIn` er ikke akademisk. Dette slapp gjennom i
+ * produksjon som kildeforankringen for behandlingsarmene i Fava 2000:
+ *
+ *   «tine (N = 92), sertraline, (N = 96), or paroxetine»
+ *
+ * Utdraget står ordrett i artikkelen — men det begynner inne i «fluoxetine», og
+ * en kontrollør som leser det, ser ikke engang hvilket virkestoff de 92 gjelder.
+ * Et utdrag som starter midt i et ord, er ikke et utdrag av en setning; det er
+ * et utsnitt av en tegnstrøm.
+ *
+ * Kontrollen er deterministisk og robust fordi den ikke tolker språk i det hele
+ * tatt: den ser på tegnet rett foran og rett bak treffet i den teksten utdraget
+ * faktisk er hentet fra. Den kan derfor ikke ta feil av en forkortelse, et
+ * linjeskift fra en PDF eller en tabell — den vet ikke hva en setning er.
+ *
+ * Står utdraget flere steder, holder det at **én** forekomst står mellom
+ * ordgrenser: da finnes det en lesning der utdraget er hele ord.
+ */
+export function verbatimOccursWholeWordsIn(
+  projections: readonly string[],
+  needle: string,
+): boolean {
+  const wanted = normalize(needle)
+  if (wanted.length === 0) {
+    return false
+  }
+  // Begynner utdraget med et skilletegn, kan det ikke kappe et ord i to, og da
+  // er det ingen grense å kreve. Samme bak.
+  const opensWord = WORD_CHARACTER.test(wanted.slice(0, 1))
+  const closesWord = WORD_CHARACTER.test(wanted.slice(-1))
+  for (const haystack of projections) {
+    for (let at = haystack.indexOf(wanted); at !== -1; at = haystack.indexOf(wanted, at + 1)) {
+      const before = at === 0 ? '' : haystack.slice(at - 1, at)
+      const after = haystack.slice(at + wanted.length, at + wanted.length + 1)
+      const openClean = !opensWord || before === '' || !WORD_CHARACTER.test(before)
+      const closeClean = !closesWord || after === '' || !WORD_CHARACTER.test(after)
+      if (openClean && closeClean) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 /**
  * Forekomst av et *begrep* — et legemiddelnavn, et endepunkt — med ordgrense.
  *

@@ -1394,7 +1394,8 @@ PR G  db: add publication events and gate                                   (#15
       db: make the source grounding part of an evidence item's identity    (#67)  merget   migrasjon 003d
       feat: add the model link that reads a source and drafts a proposal    (#68)  merget   migrasjon 005ab, 005ac
       feat: make the model link runnable by a Claude Code Routine          (#69)  merget   ingen migrasjon
-      feat: extract from a local full-text PDF, end to end                 (#70)  åpen     migrasjon 003e, 007i
+      feat: extract from a local full-text PDF, end to end                 (#70)  merget   migrasjon 003e, 007i
+      feat: gjør kildekontrollen mulig uten artikkelen ved siden av         (#73)  åpen     ingen migrasjon
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1759,6 +1760,7 @@ gyldighetslogikk bør lese dette før `now()` brukes i et predikat.
 
 | Gjeld | Risiko | Trigger for opprydding |
 |---|---|---|
+| Et globalt fravær (`not_reported`, `not_measured`) har ikke et kontrollledd som kan bære påstanden | Kontrolløren kan bare bekrefte at opplysningen mangler der den ville stått. Et konfidensintervall kan stå i en tabell, en figurtekst eller et supplement, så den lokale bekreftelsen dekker ikke feltet. Feltet føres derfor ikke opp i `checked_fields`, og publiseringsgaten blir stående åpen på det — også for Fava 2000, der konfidensintervallet er ført som ikke rapportert | [#74](https://github.com/peohol/antidep/issues/74). Krever en klinisk og redaksjonell beslutning om hva Antidep skal kreve før et fravær kan regnes som kontrollert, før det kan bygges |
 | Tidsbasert utløp av review er ikke håndhevet i publiseringsgaten | En godkjenning eldes uten at noe fanger det | Migrasjonen som innfører `workflow.review_requirements` / `review_due_at`. Krever først en klinisk policy for hvor lenge en godkjenning er gyldig per kunnskapstype og risiko |
 | Godkjenningens evidensavtrykk beregnes ved innsetting, ikke fra det reviewer faktisk så | En lenke som commiter mellom reviewers lesing og lagring av beslutningen havner i avtrykket | Admin-flyten oppgir avtrykket den viste reviewer. Kolonnen er utformet for det |
 | `knowledge.publication_object_type` har én verdi, og hendelsen har én ekte fremmednøkkel | En andre publiserbar objekttype kan friste til å gjenbruke `claim_id` som generisk `object_id` | Migrasjonen som innfører objekttype nummer to må legge til egen fremmednøkkelkolonne og eget speil |
@@ -7194,6 +7196,138 @@ fullteksten er en egen rad. Verdiene fulltekstresearchen har etablert — sertra
 gjennomsnittsendringer, og skal derfor registreres med `effect_measure = mean_change` og
 `comparator_kind = none`: studienes aktive komparatorer gjør dem ikke til
 mellom-gruppeestimater, og 2,7 kg er et standardavvik og ikke et konfidensintervall.
+
+### 74.44 Kildekontrollen skal kunne gjennomføres uten artikkelen ved siden av
+
+§74.43 gjorde det mulig å ekstrahere fra en fulltekst-PDF. Den første **reelle
+menneskelige kildekontrollen** — Fava 2000 × sertralin × vektendring — ble
+gjennomført på den flaten, og den avdekket at hovedmålet ikke var nådd:
+kontrolløren måtte lese artikkelen ved siden av for å avgjøre delpunktene.
+
+**Den avgjørende observasjonen var at dokumentasjonen allerede sa det riktige.**
+Både promptmalen og ekstraksjonsferdigheten krevde at hvert `source_excerpt`
+skulle inneholde hele setningen verdien står i. Likevel ble dette registrert i
+produksjon:
+
+```text
+tine (N = 92), sertraline, (N = 96), or paroxetine
+```
+
+Utdraget står ordrett i artikkelen, og hvert deterministisk ledd i kjeden sa ja.
+Det begynner inne i «fluoxetine». Lærdommen er at en regel som bare står i en
+modellprompt, er en regel uten håndhevelse — og at en omskrevet prompt derfor
+ikke ville vært et svar.
+
+**Det som kan håndheves robust, håndheves nå.** `src/agents/source-excerpt.ts`
+er den ene definisjonen av hva et kontrollerbart utdrag er, og den håndhever to
+regler som ikke kan ta feil på en PDF: utdraget må stå i representasjonen som
+**hele ord** — kontrollen leser tegnet rett foran og rett bak treffet, og tolker
+ikke språk i det hele tatt — og det må inneholde **minst én setningsgrense**, med
+desimaltegn unntatt. Begge kjøres av modell-leddets egen aktsomhet og av
+registreringen, som er den siste grensen inn i basen. Ingen setningsparser:
+linjeskift, orddeling, kolonner, fotnotemerker og forkortelser er hverdagen i
+`pdftotext`-utdata, og et ledd som avviser riktige ekstraksjoner, blir slått av.
+Den kjente kostnaden er dokumentert: en verdi som bare står i en tabellrad uten
+tegnsetting, må forankres av teksten som sier hva raden er.
+
+**Resten står svært eksplisitt i den versjonerte malen**, med nøyaktig det
+feilende utdraget som eksempel på hva som ikke godtas. Promptversjonen er
+`evidence-extraction/proposal-drafting/2`: den samme kilden forventes nå å gi et
+annet forslag, og da er malen en ny versjon (§20).
+
+**`sample_size` betyr noe annet enn flaten sa.** Kolonnekommentaren har hele
+tiden sagt «antallet analysen faktisk omfatter, ikke antallet randomisert», men
+kontrollflaten skrev «Studien inkluderte 48 deltakere» — som er feil om Fava
+2000, der 284 ble randomisert og 96 fikk sertralin. Flaten sier nå «Dette
+estimatet bygger på 48 deltakere», og malen sier at et tall som ikke uttrykkelig
+er knyttet til estimatet, ikke skal føres.
+
+**Kontrollflaten er bygget om rundt ett krav**, skrevet ned som produktkrav i
+PRODUCT_INFORMATION_ARCHITECTURE.md §63.1 og EVIDENCE_PIPELINE.md §19.1:
+kontrolløren skal få nok lokal kildekontekst til å vurdere hvert utsagn uten å
+lete i fullteksten selv. Konkret:
+
+- En **innledning** før veiviseren sier hva som skal kontrolleres — virkestoff,
+  endepunkt og populasjon — og hvilken kilde det gjelder, med hele tittelen som
+  lenke. Den bygges av den kanoniske raden, aldri av generert tekst.
+- **Kildetilgangssteget** er strippet for identifikatorverdi, representasjonstype
+  og gjentatt tittel. Begge de to første er flyttet til «Tekniske detaljer», der
+  de ikke var før.
+- **Tolkning og mangel er skilt, og spørsmålet følger premisset.**
+  `FieldInterpretation.kind` har tre verdier. `interpretation` heter «Antideps
+  tolkning» og spør «stemmer dette med teksten?». `absence` — ingen verdi, men en
+  registrert grunn — heter «Hvorfor verdien mangler» og spør «stemmer denne
+  begrunnelsen?». `unrecorded` — ingen verdi og ingen fraværskolonne, altså
+  effektmål, forbehold og den rå gjengivelsen — heter «Ingenting er ført» og spør
+  om det er riktig at ingenting er ført.
+
+  Skillet kom av den tekniske reviewen, og det er et integritetskrav og ikke en
+  nyanse: `not_extractable` betyr «står i kilden, men lar seg ikke lese entydig
+  ut», og et felles spørsmål av typen «stemmer det at kilden ikke oppgir dette?»
+  ville bedt kontrolløren bekrefte det motsatte av det som er ført — og svaret
+  ville blitt registrert som om det gjaldt riktig spørsmål.
+
+  En fjerde art, `absence_in_source`, kom av de neste rundene i den samme
+  reviewen, og den koster mer enn en etikett. `not_reported` og `not_measured`
+  er påstander om kilden eller studien **som helhet**, og et forbehold ved siden
+  av et globalt ja/nei-spørsmål endrer ikke sannhetsbetingelsen: kontrolløren
+  måtte fortsatt svart «kan ikke avgjøres» eller gått til fullteksten.
+
+  To ting er gjort. Ekstraksjonen skal forankre et slikt fravær i passasjen der
+  verdien *ville stått* — der funnets øvrige verdier for samme arm, endepunkt og
+  tidspunkt rapporteres (EVIDENCE_PIPELINE.md §19.1) — og flaten snevrer
+  spørsmålet inn til den: «mangler opplysningen der utdraget viser at den ville
+  stått?». Da er økten gjennomførbar uten at kontrolløren må lete i artikkelen.
+
+  Men et bekreftet lokalt fravær **er ikke** den globale påstanden raden bærer,
+  og registreringen fører det derfor ikke opp som det. Feltet utelates fra
+  `checked_fields`, begrunnelsen sier hvorfor, og kontrolløren får vite det i
+  det hen lagrer. Feltet står udekket i publiseringsgatens union til det finnes
+  et kontrollledd som kan bære en global fraværspåstand. Alternativet ville vært
+  at auditraden og gaten sa at et menneske hadde gått god for den globale
+  semantikken på grunnlag av én valgt passasje — nøyaktig den overdrivelsen
+  DATABASE_ARCHITECTURE.md §29 forbyr.
+
+  Prisen er reell og står som registrert gjeld i §74.7: Fava 2000 fører
+  konfidensintervallet som ikke rapportert, og det feltet blir dermed ikke
+  dekket. Hva Antidep skal kreve før et fravær kan regnes som kontrollert, er en
+  klinisk og redaksjonell beslutning, og den er ikke tatt her.
+
+  Bokføringssetningen «Antidep har ført 1 felt uten verdi, med en begrunnelse for
+  hvert» er borte. En mangel blir aldri en klinisk påstand utledet av fraværet:
+  et manglende konfidensintervall betyr ikke at effekten var uten statistisk
+  signifikans.
+- **Endepunkt og effektmål er gjort forskjellige.** «Det målte endepunktet er
+  vektendring» mot «Resultatet er uttrykt som gjennomsnittlig endring, oppgitt i
+  %», under overskriften «Hvordan resultatet er uttrykt».
+- **Varighet vises som kilden oppgir den.** Er databasens dager hele uker, står
+  uker som hovedform og den lagrede verdien navngitt ved siden av: «26 til 32
+  uker (registrert som 182 til 224 dager)». Den kanoniske varigheten er uendret, og begge tallene står.
+
+**Prøvene.** Regresjonsprøvene er skrevet av de utdragene som faktisk slapp
+gjennom, ikke av fantasi: fragmentet fra Fava 2000 avvises av formkontrollen,
+det samme fragmentet avvises av ordgrensekontrollen mot en representasjon med
+linjeskift og orddeling i, og både modell-leddet og registreringen avviser et
+utdrag som står ordrett men begynner midt i et ord. På flatesiden prøves
+innledningen, at støyen i kildetilgangssteget er borte mens proveniensen er
+bevart under tekniske detaljer, at et langt utdrag vises i sin helhet, at
+`sample_size` ikke beskrives som studiens inklusjon, at 26–32 uker vises sammen
+med 182–224 dager, at en manglende verdi presenteres som mangel med sitt eget
+spørsmål, og at endepunkt og effektmål sier hver sin ting. Den eksisterende
+stale-step-/resume-logikken og publiseringsgaten er uendret og prøves som før;
+påstandsøkten, som ikke har en innledning foran seg, navngir fortsatt kilden i
+kildetilgangssteget.
+
+**Hva som gjenstår.** De to reelle re-ekstraksjonene er **ikke** kjørt. Fava 2000
+og Versiani 2005 er begge registrert som fulltekst-kildeversjoner fra før, og
+skal re-ekstraheres med den nye promptversjonen etter at denne endringen er
+reviewet og merget — nye evidensfunn ved siden av de gamle, ikke i stedet for
+dem. For Versiani 2005 er n = 117 særskilt: forrige kjøring førte tallet fordi
+117 mirtazapinpasienter hadde en vektmåling på dag 56, men artikkelen oppgir
+etter det vi har sett ikke uttrykkelig at `+0,8 ± 2,7 kg` er beregnet over dem.
+Uten en eksplisitt kildepassasje som knytter nevneren til estimatet, skal
+`sample_size` være `null` med riktig availability-status og ordrett grounding som
+viser hvorfor.
 
 ---
 

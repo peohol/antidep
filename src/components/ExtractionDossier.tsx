@@ -29,6 +29,7 @@ import {
   EXTRACTION_METHOD_LABELS,
   MEASURE_LABELS,
   REPORTED_DIRECTION_LABELS,
+  SOURCE_REPRESENTATION_LABELS,
   SOURCE_STATUS_LABELS,
   SOURCE_TYPE_LABELS,
   STUDY_DESIGN_LABELS,
@@ -45,6 +46,7 @@ import {
   readEvidenceCheckField,
   readExtractionMethod,
   readReportedDirection,
+  readSourceRepresentation,
   readSourceStatus,
   readSourceType,
   readStudyDesign,
@@ -134,6 +136,21 @@ export function ExtractionSourcePanel({ item }: { readonly item: VerificationIte
           {termText(readSourceStatus(item.sourceStatus), SOURCE_STATUS_LABELS, 'kildestatus')}
           {item.sourceStatusNote === null ? null : <DetailNote>{item.sourceStatusNote}</DetailNote>}
         </Detail>
+        {/* Identifikatoren er maskinens navn på kilden. Den står her og ikke i
+            kontrolløkten: kontrolløren kjenner artikkelen igjen på tittelen, og
+            «DOI 10.4088/jcp.v61n1109» ved siden av spørsmålet om kildetilgang er
+            støy (ANTIDEP_CONSTITUTION.md §2). */}
+        <Detail label="Identifikatorer">
+          {item.sourceIdentifiers.length === 0 ? (
+            <Absent>Ingen DOI eller PubMed-ID er registrert</Absent>
+          ) : (
+            item.sourceIdentifiers.map((identifier) => (
+              <DetailNote key={`${identifier.system}:${identifier.value}`}>
+                {`${identifier.system.toUpperCase()} ${identifier.value}`}
+              </DetailNote>
+            ))
+          )}
+        </Detail>
         <Detail label="Hvor i kilden">{item.extraction.sourceLocator}</Detail>
         <Detail label="Kildeversjon">
           {item.sourceVersion === null ? (
@@ -149,6 +166,18 @@ export function ExtractionSourcePanel({ item }: { readonly item: VerificationIte
                 {item.sourceVersion.externalVersion === null
                   ? ''
                   : ` · ${item.sourceVersion.externalVersion}`}
+              </DetailNote>
+              {/* Hva ekstraksjonen faktisk bygger på — fulltekst eller
+                  sammendrag — avgjør hva verdiene i det hele tatt kan si
+                  (EVIDENCE_PIPELINE.md §13). Fravær står som fravær. */}
+              <DetailNote>
+                {item.sourceVersion.representation === null
+                  ? 'Antidep har ikke registrert hva slags representasjon av kilden ekstraksjonen bygger på.'
+                  : `Ekstraksjonen bygger på ${termText(
+                      readSourceRepresentation(item.sourceVersion.representation),
+                      SOURCE_REPRESENTATION_LABELS,
+                      'representasjon',
+                    ).toLowerCase()}.`}
               </DetailNote>
             </>
           )}

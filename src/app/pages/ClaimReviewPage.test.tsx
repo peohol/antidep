@@ -30,7 +30,7 @@ const SEMANTIC_FIELDS = [
   'Endepunktet',
   'Retningen kilden rapporterer',
   'Begrunnelsen for felter uten verdi',
-  'Effektmålet',
+  'Hvordan resultatet er uttrykt',
   'Sammenligningsarmen',
   'Populasjonen funnet gjelder',
   'Antall deltakere',
@@ -182,6 +182,19 @@ describe('Kontrolløkten — kildegrunnlaget', () => {
       'href',
       'https://doi.org/10.1000/testkilde-a.1',
     )
+  })
+
+  // Påstandsøkten kontrollerer flere kilder etter hverandre og har ingen
+  // innledning som navngir dem. Da må kildetilgangssteget selv si hvilken kilde
+  // spørsmålet gjelder — i motsetning til kontrollflaten for ett evidensfunn,
+  // der tittelen står i innledningen.
+  it('navngir kilden i kildetilgangssteget, som ikke har noen innledning foran seg', async () => {
+    renderClaimControl()
+    await startControl()
+    await within(openStep()).findByText('Har du tilgang til fullteksten?')
+    expect(
+      within(openStep()).getByText('Testkilde A: vektendring ved åtte uker'),
+    ).toBeInTheDocument()
   })
 
   it('hopper over feltkontrollen når ekstraksjonen allerede er fullt kontrollert', async () => {

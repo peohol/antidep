@@ -94,7 +94,8 @@ async function proposal(): Promise<ExtractionProposal> {
     field_groundings: [
       {
         check_field: 'sample_size',
-        source_excerpt: 'Sertraline patients (N = 284) with major depressive disorder',
+        source_excerpt:
+          'Sertraline patients (N = 284) with major depressive disorder were randomised. Fluoxetine was the comparator.',
         source_locator: 'Sammendrag, METHODS',
         justification: 'Utvalgsstørrelsen står ved siden av armen.',
       },
@@ -534,7 +535,8 @@ describe('runReextraction', () => {
       field_groundings: [
         {
           check_field: 'sample_size',
-          source_excerpt: 'Sertraline patients (N = 284)',
+          source_excerpt:
+            'Sertraline patients (N = 284) with major depressive disorder were randomised.',
           source_locator: 'Sammendrag, METHODS',
           justification: 'Utvalgsstørrelsen står ved siden av armen.',
         },

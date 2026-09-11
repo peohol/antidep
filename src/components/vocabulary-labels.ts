@@ -306,7 +306,11 @@ export const EVIDENCE_CHECK_FIELD_LABELS: Record<EvidenceCheckField, string> = {
   outcome: 'Endepunktet',
   timepoint: 'Tidspunktet målingen gjelder',
   reported_direction: 'Retningen kilden rapporterer',
-  effect_measure: 'Effektmålet',
+  // Ikke «Effektmålet». Ved siden av «Endepunktet» leste de to som duplikater i
+  // den første reelle kildekontrollen, og forskjellen er nettopp den en
+  // kontrollør må se: endepunktet er hva som ble målt, dette er hvordan
+  // resultatet er uttrykt.
+  effect_measure: 'Hvordan resultatet er uttrykt',
   estimate: 'Selve estimatet',
   confidence_interval: 'Konfidensintervallet',
   availability_semantics: 'Begrunnelsen for felter uten verdi',

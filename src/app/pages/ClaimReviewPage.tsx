@@ -531,6 +531,7 @@ function ClaimControlSession({ claimRevisionId }: { readonly claimRevisionId: Uu
               state: extractionSessions[evidenceItemId] ?? emptyExtractionSessionState(),
               handlers: extractionHandlers,
               includeFieldSteps: uncoveredCheckFields(item).length > 0,
+              sourceIntroduced: false,
               titlePrefix: `Kilde ${String(index + 1)}:`,
             }),
           )
