@@ -538,7 +538,7 @@ async function main(): Promise<void> {
   if (promptDirectory !== null) {
     const forespørsel = JSON.parse(
       readFileSync(join(promptDirectory, ABSENCE_REVIEW_FILES.request), 'utf8'),
-    ) as { request_digest: string; fields: string[] }
+    ) as { request_digest: string; fields: { check_field: string; status: string }[] }
     writeFileSync(
       join(promptDirectory, ABSENCE_REVIEW_FILES.answer),
       `${JSON.stringify(
@@ -554,10 +554,20 @@ async function main(): Promise<void> {
           draft: {
             review_version: ABSENCE_REVIEW_VERSION,
             evidence_item_id: itemId,
+            // Statusen står i forespørselen, og spørsmålet er et annet for hver
+            // av de to: «ikke rapportert i kilden» spør om opplysningen står
+            // der, «ikke målt i studien» om kilden sier at den ble målt
+            // (`absence-review.ts`). Begrunnelsen sier hvilket spørsmål som ble
+            // besvart, slik den ville gjort fra en ekte gjennomlesning.
             fields: forespørsel.fields.map((field) => ({
-              check_field: field,
+              check_field: field.check_field,
               verdict: 'absent',
-              rationale: `Leste gjennom hele representasjonen og fant ingen ${field} noe sted.`,
+              rationale:
+                field.status === 'not_measured'
+                  ? `Leste gjennom hele representasjonen. Ingenting sier at ${field.check_field} ` +
+                    'ble målt, vurdert eller registrert, og intet resultat er oppgitt.'
+                  : `Leste gjennom hele representasjonen og fant ingen ${field.check_field} ` +
+                    'noe sted.',
             })),
           },
         },

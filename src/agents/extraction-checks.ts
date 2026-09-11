@@ -95,6 +95,7 @@
 // ============================================================================
 
 import {
+  globalAbsenceStatus,
   reviewerName,
   type AbsenceFieldReview,
   type AbsenceReviewOutcome,
@@ -1970,6 +1971,21 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
   let covered = true
 
   for (const field of fields) {
+    // Hvilken av de to påstandene feltet gjør, avgjør hvilket spørsmål
+    // gjennomlesningen ble stilt (`absence-review.ts`). Kjenner kontrollen den
+    // ikke, vet den heller ikke hva svaret gjelder, og dekker ingenting. Kan
+    // bare inntreffe om `workflow.source_wide_absence_fields(uuid)` utvides med
+    // et felt uten en fraværskolonne her — og da skal det feile lukket.
+    if (globalAbsenceStatus(item.extraction, field) === null) {
+      covered = false
+      notes.push(
+        `Fraværet av «${field}» er ikke kontrollert: kontrollen kjenner ikke hvilken av de to ` +
+          'globale fraværsgrunnene feltet er ført med, og kan da ikke vite hva en gjennomlesning ' +
+          'av det ville svart på.',
+      )
+      continue
+    }
+
     // Ledd 1: falsifikasjonssøket. Et treff avgjør alene, og gjennomlesningen
     // kan ikke overstyre det: to ledd som er uenige om hvorvidt verdien står
     // der, er ikke et grunnlag for å påstå at den ikke gjør det.

@@ -14,7 +14,9 @@ import {
   sourceVersionFixture,
   verificationItemFixture,
 } from './test-support'
-import type { AbsenceReviewOutcome } from './absence-review'
+import { buildAbsenceReviewRequest, type AbsenceReviewOutcome } from './absence-review'
+import { absenceReviewSubject } from './absence-review-job'
+import { modelRequestDigest } from './model-client'
 import type { VerificationExtraction } from './verification-input'
 
 /**
@@ -2596,6 +2598,129 @@ describe('checkExtraction — den kildeomfattende fraværskontrollen', () => {
     const report = check({ extraction: UTEN_POPULASJONSVERDI }, UTEN_INTERVALL, true, null)
     expect(report.checkedFields).not.toContain('source_wide_absence')
     expect(report.findings).toMatch(/«population»/)
+  })
+
+  // ------------------------------------------------------------------------
+  // «ikke målt i studien» er en annen påstand enn «ikke rapportert i kilden»
+  //
+  // Reviewfunn: gjennomlesningen fikk ikke vite hvilken av de to statusene
+  // feltet var ført med, og ble bare spurt om en tallverdi fantes. En kilde som
+  // uttrykkelig sier at variabelen BLE MÅLT, men ikke oppgir tall, ville da gitt
+  // et korrekt «absent» — og et uriktig `not_measured` ville blitt bokført som
+  // kildeomfattende kontrollert.
+  // ------------------------------------------------------------------------
+
+  // Reviewerens egen setning, ordrett.
+  const MÅLT_SETNING =
+    'Body weight was measured at baseline and endpoint, but numerical results are not reported.'
+
+  // Teksten oppgir INGEN tallverdi for utfallet — det deterministiske søket
+  // finner derfor ingenting, og det er hele poenget: uten gjennomlesningen som
+  // leser hva setningen faktisk sier, ville fraværet sett ubestridt ut.
+  const MÅLT_UTEN_TALL = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="METHODS">Sertraline patients with major depressive disorder',
+    `  were randomised. ${MÅLT_SETNING}</AbstractText>`,
+    '</PubmedArticle>',
+  ].join('\n')
+
+  const IKKE_MÅLT = {
+    estimate: null,
+    estimateUnit: null,
+    estimateAvailability: 'not_measured',
+    ciLower: null,
+    ciUpper: null,
+    ciLevelPercent: null,
+    confidenceIntervalAvailability: 'not_applicable',
+    timepointAvailability: 'not_applicable',
+    rawExtraction: { resultat: MÅLT_SETNING },
+  } as const
+
+  it('spør om variabelen ble MÅLT når feltet er ført som ikke målt', () => {
+    const subject = absenceReviewSubject(verificationItemFixture({ extraction: IKKE_MÅLT }))
+    expect(subject.fields).toEqual([{ checkField: 'estimate', status: 'not_measured' }])
+    const request = buildAbsenceReviewRequest({
+      subject,
+      contentHash: `sha256:${'ab'.repeat(32)}`,
+      representation: MÅLT_UTEN_TALL,
+    })
+    expect(request.user).toMatch(/ført som «ikke målt i studien»/)
+    expect(request.user).toMatch(/ble MÅLT, vurdert, registrert eller/)
+    expect(request.user).toMatch(/selv om ingen tallverdi står noe sted/)
+    // …og malen navngir forskjellen med reviewerens eget eksempel.
+    expect(request.system).toMatch(/Body weight was measured at baseline and endpoint/)
+  })
+
+  // Det samme feltet, ført med den andre statusen, skal gi et annet spørsmål —
+  // og dermed et annet avtrykk. Ellers kunne et svar avgitt på «står det her?»
+  // dekket påstanden «ble det målt?».
+  it('gir et annet avtrykk for de to statusene', async () => {
+    const felles = {
+      contentHash: `sha256:${'ab'.repeat(32)}`,
+      representation: MÅLT_UTEN_TALL,
+    }
+    const målt = absenceReviewSubject(verificationItemFixture({ extraction: IKKE_MÅLT }))
+    const rapportert = absenceReviewSubject(
+      verificationItemFixture({
+        extraction: { ...IKKE_MÅLT, estimateAvailability: 'not_reported' },
+      }),
+    )
+    expect(rapportert.fields).toEqual([{ checkField: 'estimate', status: 'not_reported' }])
+    const [a, b] = await Promise.all([
+      modelRequestDigest(buildAbsenceReviewRequest({ ...felles, subject: målt })),
+      modelRequestDigest(buildAbsenceReviewRequest({ ...felles, subject: rapportert })),
+    ])
+    expect(a).not.toBe(b)
+  })
+
+  // Kjernen i funnet: et uriktig `not_measured` skal ikke kunne bli dekning.
+  // Gjennomlesningen ser at kilden sier at vekten BLE målt, og svarer `present`
+  // — og da dekkes ingenting, selv om ingen tallverdi står noe sted.
+  it('dekker ikke et «ikke målt» når kilden sier at variabelen ble målt', () => {
+    const overrides = { extraction: IKKE_MÅLT } as const
+    const report = check(overrides, MÅLT_UTEN_TALL, true, lest(overrides, { estimate: 'present' }))
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/Gjennomlesningen av hele representasjonen fant en verdi/)
+    expect(report.findings).toMatch(/«estimate»/)
+  })
+
+  // …og uten gjennomlesning i det hele tatt dekkes det ikke, uansett hva søket
+  // ikke fant. Samme regel som ellers, prøvd på nettopp denne statusen.
+  it('dekker ikke et «ikke målt» på et negativt søk alene', () => {
+    // Søket finner ingenting i denne teksten, og skal ikke: den oppgir ingen
+    // tallverdi. Det er nettopp derfor et verdisøk aldri kan avgjøre «ikke
+    // målt» — setningen sier at det BLE målt.
+    expect(sourceWideAbsenceSearch(searchProjections(MÅLT_UTEN_TALL), 'estimate')).toEqual({
+      kind: 'not_found',
+    })
+    const report = check({ extraction: IKKE_MÅLT }, MÅLT_UTEN_TALL, true, null)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/ingen gjennomlesning av hele representasjonen/)
+  })
+
+  // Et felt hvis globale fraværsgrunn kontrollen ikke kjenner, dekkes aldri —
+  // uansett hva en gjennomlesning måtte ha svart. Feiler lukket.
+  it('dekker ikke et felt kontrollen ikke vet hva påstår', () => {
+    const item = verificationItemFixture({ extraction: UTEN_KI })
+    const report = checkExtraction({
+      item: { ...item, sourceWideAbsenceFields: ['effect_measure'] },
+      sourceText: UTEN_INTERVALL,
+      representationReproduced: true,
+      absenceReview: {
+        ...absenceReviewFixture(item),
+        fields: [
+          {
+            checkField: 'effect_measure',
+            verdict: 'absent',
+            quote: null,
+            rationale: 'Leste gjennom hele representasjonen og fant ingenting.',
+          },
+        ],
+      },
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/kjenner ikke hvilken av de to globale fraværsgrunnene/)
   })
 
   // Alle de globalt fraværende feltene må være avklart. Ett udekket felt er en

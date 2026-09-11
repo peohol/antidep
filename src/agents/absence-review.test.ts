@@ -26,7 +26,7 @@ const SUBJECT: AbsenceReviewSubject = {
   comparatorArm: 'placebo',
   outcome: 'vektendring',
   timepoint: 'P8W',
-  fields: ['confidence_interval'],
+  fields: [{ checkField: 'confidence_interval', status: 'not_reported' }],
 }
 
 const CONTENT_HASH = `sha256:${'ab'.repeat(32)}`

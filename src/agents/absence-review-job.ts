@@ -41,6 +41,7 @@ import { join } from 'node:path'
 import {
   ABSENCE_REVIEW_VERSION,
   buildAbsenceReviewRequest,
+  globalAbsenceStatus,
   parseAbsenceReview,
   type AbsenceReviewOutcome,
   type AbsenceReviewSubject,
@@ -79,7 +80,15 @@ export function absenceReviewSubject(item: VerificationItem): AbsenceReviewSubje
     comparatorArm: e.comparatorDrugName ?? (e.comparatorKind === 'none' ? null : e.comparatorKind),
     outcome: e.outcomeLabel,
     timepoint,
-    fields: item.sourceWideAbsenceFields,
+    // Statusen følger feltet helt fram til spørsmålet: `not_reported` og
+    // `not_measured` påstår forskjellige ting, og et felt som spørres om det
+    // ene, kan ikke dekke det andre (`globalAbsenceStatus`). Et felt uten en
+    // status denne koden kjenner, utelates — da blir det aldri besvart, og
+    // aldri dekket. Det er den lukkede feilen, og den riktige.
+    fields: item.sourceWideAbsenceFields.flatMap((field) => {
+      const status = globalAbsenceStatus(e, field)
+      return status === null ? [] : [{ checkField: field, status }]
+    }),
   }
 }
 
@@ -112,7 +121,7 @@ function answerTemplate(requestDigest: string, subject: AbsenceReviewSubject): u
       review_version: ABSENCE_REVIEW_VERSION,
       evidence_item_id: subject.evidenceItemId,
       fields: subject.fields.map((field) => ({
-        check_field: field,
+        check_field: field.checkField,
         verdict: `${PLACEHOLDER_PREFIX}absent-present-eller-uncertain`,
         rationale: `${PLACEHOLDER_PREFIX}HVOR-DU-LETTE`,
       })),
@@ -196,7 +205,10 @@ export async function writeAbsenceReviewJob(
         evidence_item_id: input.item.evidenceItemId,
         source_version_id: input.item.sourceVersion?.sourceVersionId ?? null,
         content_hash: input.contentHash,
-        fields: [...subject.fields],
+        fields: subject.fields.map((field) => ({
+          check_field: field.checkField,
+          status: field.status,
+        })),
         request_digest: requestDigest,
         prompt_template_version: request.promptTemplateVersion,
         opened_at: now(),

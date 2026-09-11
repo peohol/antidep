@@ -93,7 +93,7 @@ describe('absenceReviewSubject', () => {
     expect(subject.evidenceItemId).toBe(ITEM.evidenceItemId)
     expect(subject.interventionArm).toBe(ITEM.extraction.interventionDrugName)
     expect(subject.outcome).toBe(ITEM.extraction.outcomeLabel)
-    expect(subject.fields).toEqual(['confidence_interval'])
+    expect(subject.fields).toEqual([{ checkField: 'confidence_interval', status: 'not_reported' }])
   })
 })
 
@@ -112,7 +112,9 @@ describe('writeAbsenceReviewJob', () => {
     ) as Record<string, unknown>
     expect(forespørsel.request_digest).toBe(report.requestDigest)
     expect(forespørsel.content_hash).toBe(HASH)
-    expect(forespørsel.fields).toEqual(['confidence_interval'])
+    expect(forespørsel.fields).toEqual([
+      { check_field: 'confidence_interval', status: 'not_reported' },
+    ])
   })
 
   // Et svar kan være eneste kopi av et arbeid som allerede er gjort. En ny

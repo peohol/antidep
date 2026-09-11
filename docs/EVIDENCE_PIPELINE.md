@@ -681,6 +681,20 @@ Svaret er ett av tre per felt, og den midterste er ikke en høflighetsform:
 | `present` | Opplysningen står der, med et ordrett utdrag som prøves mot teksten | Dekningen blokkeres; ikke et avvik |
 | `uncertain` | Leddet kunne ikke avgjøre det | Dekningen blokkeres |
 
+**Spørsmålet er ikke det samme for de to fraværsgrunnene.** `not_reported` er en
+påstand om kildeversjonen; `not_measured` er en påstand om studien, og den kan
+ikke avgjøres av at et tall mangler:
+
+| Status | Spørsmålet leddet får | «Body weight was measured at baseline and endpoint, but numerical results are not reported.» |
+|---|---|---|
+| `not_reported` | Står opplysningen noe sted i teksten? | `absent` — ingen verdi står der |
+| `not_measured` | Sier teksten noe sted at dette ble MÅLT, vurdert eller registrert — eller oppgir den et resultat? | `present` — kilden sier uttrykkelig at variabelen ble målt |
+
+Statusen følger derfor feltet helt fram til spørsmålet
+(`globalAbsenceStatus`), og den inngår i `request_digest`: et svar avgitt på det
+ene spørsmålet kan ikke dekke det andre. Et felt der kontrollen ikke kjenner
+statusen, dekkes aldri — den kan da ikke vite hva svaret gjaldt.
+
 Bindingen mellom et svar og teksten det gjelder, er `request_digest`, som dekker
 promptmalversjonen, feltene det spørres om og hele representasjonsteksten.
 Verifikatoren regner det ut på nytt av den teksten den selv hentet, og et svar
