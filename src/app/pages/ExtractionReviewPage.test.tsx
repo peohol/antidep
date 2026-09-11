@@ -6,6 +6,9 @@
 // utfall som utledes av delsvarene.
 // ============================================================================
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import {
@@ -374,6 +377,38 @@ describe('Kontrolløkten — feltkontrollen', () => {
     clickAnswer('Ja')
     const excerpt = await within(openStep()).findByText(langt)
     expect(excerpt.textContent).toBe(langt)
+  })
+
+  // Et utdrag fra en tospaltet artikkel er bare lesbart så lenge linjeskiftene
+  // og kolonneavstanden står. Slås blanktegnet sammen, veves nabospalten inn i
+  // setningen verdien står i, og kontrolløren kan ikke lenger avgjøre
+  // delpunktet av utdraget alene — som er det forankringen finnes for.
+  it('beholder linjeskiftene og kolonneavstanden i et tospaltet utdrag', async () => {
+    const tospaltet =
+      'To systematically assess the effects of extended SSRI        sional disorder, psychotic\n' +
+      'treatment on weight, we compared the mean percent            fied, bipolar disorder;\n' +
+      'change in weight for all patients who completed the trial.'
+    renderExtractionControl({
+      field_groundings: TEST_FIELD_GROUNDINGS.map((grounding) =>
+        grounding['check_field'] === 'intervention_arm'
+          ? { ...grounding, source_excerpt: tospaltet }
+          : grounding,
+      ),
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    const excerpt = openStep().querySelector('.field-check__excerpt')
+    expect(excerpt?.textContent).toBe(tospaltet)
+  })
+
+  // Markupen alene holder ikke: HTML slår blanktegn sammen med mindre stilarket
+  // sier noe annet, og jsdom gjengir ingen stil. Regelen prøves derfor der den
+  // faktisk bor.
+  it('holder utdraget preformatert i stilarket', () => {
+    const css = readFileSync(resolve(import.meta.dirname, '../../index.css'), 'utf8')
+    const regel = /\.field-check__excerpt\s*\{[^}]*\}/u.exec(css)?.[0] ?? ''
+    expect(regel).toMatch(/white-space:\s*pre;/u)
+    expect(regel).toMatch(/overflow-x:\s*auto;/u)
   })
 
   // «Endepunktet» og «Effektmålet» leste som duplikater. De to stegene skal si

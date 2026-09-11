@@ -1336,11 +1336,27 @@ header nav a {
   letter-spacing: 0.04em;
 }
 
+/* Utdraget er tekst hentet ut av en PDF med `pdftotext -layout`. Linjeskiftene
+   og kolonneavstanden er en del av den ordrette teksten: i en tospaltet artikkel
+   er det nettopp de som skiller spalten verdien står i, fra spalten ved siden av.
+
+   Uten dette slår nettleseren alt blanktegn sammen til én linje, og et utdrag
+   som dekker en hel setning i én spalte, blir vevd sammen med nabospalten til
+   noe ingen kan lese. Da er forankringen verdiløs der den trengs mest — en
+   kontrollør skal kunne avgjøre delpunktet av utdraget alene, uten å åpne
+   artikkelen (PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
+
+   `pre` framfor `pre-wrap`, og vannrett rulling framfor linjebryting: en brutt
+   linje flytter nabospalten inn i setningen igjen og gjeninnfører nøyaktig det
+   problemet. Fast bredde på skriften, fordi spaltene er rettet inn med
+   mellomrom og bare står rett når hvert tegn er like bredt. */
 .field-check__excerpt {
   margin: 0 0 0.5rem;
-  font-size: 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.875rem;
   line-height: 1.5;
-  overflow-wrap: anywhere;
+  white-space: pre;
+  overflow-x: auto;
 }
 
 .field-check__locator {
