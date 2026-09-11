@@ -7263,8 +7263,8 @@ lete i fullteksten selv. Konkret:
   vektendring» mot «Resultatet er uttrykt som gjennomsnittlig endring, oppgitt i
   %», under overskriften «Hvordan resultatet er uttrykt».
 - **Varighet vises som kilden oppgir den.** Er databasens dager hele uker, står
-  uker som hovedform med dagene som eksplisitt omregning: «26 til 32 uker (= 182
-  til 224 dager)». Den kanoniske varigheten er uendret, og begge tallene står.
+  uker som hovedform og den lagrede verdien navngitt ved siden av: «26 til 32
+  uker (registrert som 182 til 224 dager)». Den kanoniske varigheten er uendret, og begge tallene står.
 
 **Prøvene.** Regresjonsprøvene er skrevet av de utdragene som faktisk slapp
 gjennom, ikke av fantasi: fragmentet fra Fava 2000 avvises av formkontrollen,

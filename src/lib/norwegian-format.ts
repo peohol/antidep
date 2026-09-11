@@ -31,13 +31,15 @@
 // (PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
 //
 // `formatDurationSpan()` viser derfor uker som hovedform når dagene går opp i
-// hele uker, med dagene som en **eksplisitt omregning** ved siden av:
+// hele uker, med den lagrede verdien navngitt ved siden av:
 //
-//   «26 til 32 uker (= 182 til 224 dager)»
+//   «26 til 32 uker (registrert som 182 til 224 dager)»
 //
 // Begge tallene står, så ingenting er byttet ut: den kanoniske varigheten i
-// databasen er fortsatt dager, og den er fortsatt synlig. `formatIntervalText()`
-// er uendret og gjengir det databasen bærer.
+// databasen er fortsatt dager, og den er fortsatt synlig. Parentesen sier
+// dessuten hvem som eier hvilket tall — ukene er Antideps eksakte omregning, og
+// ikke en påstand om hvilken enhet kilden brukte. `formatIntervalText()` er
+// uendret og gjengir det databasen bærer.
 //
 // Alt som ikke passer denne formen — ISO 8601 (`P56D`) fra en annen
 // `IntervalStyle`, eller et negativt intervall, som migrasjon 004 uansett
@@ -285,6 +287,19 @@ function spanText(from: number, to: number, forms: readonly [string, string]): s
  * Grensene regnes bare om når *begge* er hele uker. Ellers ville «26 uker til
  * 200 dager» blandet to enheter i én setning, og leseren måtte selv finne ut om
  * de var sammenlignbare.
+ *
+ * ----------------------------------------------------------------------------
+ * Ukeformen er Antideps omregning, og sier det med ord
+ *
+ * Databasen bærer bare dager, og `interval '14 days'` og `interval '2 weeks'`
+ * lagres identisk. Hvilken enhet *kilden* brukte, vet Antidep derfor ikke, og en
+ * flate som ledet med «2 uker» uten mer, kunne blitt lest som en gjengivelse av
+ * en ordlyd som aldri sto der (ANTIDEP_CONSTITUTION.md §6).
+ *
+ * Parentesen navngir derfor hva Antidep faktisk holder: «26 til 32 uker
+ * (registrert som 182 til 224 dager)». Ukene er en eksakt omregning og ikke et
+ * sitat, dagene er den kanoniske verdien, og begge tallene står — så
+ * kontrolløren slipper å regne, uten at flaten påstår noe om kildens enhet.
  */
 export function formatDurationSpan(min: string | null, max: string | null): string | null {
   if (min === null && max === null) {
@@ -298,7 +313,7 @@ export function formatDurationSpan(min: string | null, max: string | null): stri
   if (weeksFrom !== null && weeksTo !== null) {
     const weeks = spanText(weeksFrom, weeksTo, ['uke', 'uker'])
     const days = spanText(weeksFrom * DAYS_IN_WEEK, weeksTo * DAYS_IN_WEEK, ['dag', 'dager'])
-    return `${weeks} (= ${days})`
+    return `${weeks} (registrert som ${days})`
   }
 
   const fromText = renderedText(formatIntervalText(from), 'varighet')

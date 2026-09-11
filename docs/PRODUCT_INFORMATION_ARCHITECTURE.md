@@ -891,7 +891,7 @@ presenterer det:
   hva som ble målt; effektmålet er hvordan resultatet er uttrykt.
 - Tall skal presenteres i den formen kilden bruker, med databasens egen form som
   eksplisitt omregning ved siden av. En varighet lagret som 182 til 224 dager
-  vises som «26 til 32 uker (= 182 til 224 dager)», slik at kontrolløren slipper
+  vises som «26 til 32 uker (registrert som 182 til 224 dager)», slik at kontrolløren slipper
   å kontrollregne. Den kanoniske verdien skal ikke gå tapt.
 - Steget skal inneholde det som trengs for å svare, og ikke mer. Identifikatorer,
   henteadresser og representasjonstype er proveniens og hører til under tekniske

@@ -413,7 +413,7 @@ describe('Kontrolløkten — feltkontrollen', () => {
     }
     expect(
       await within(openStep()).findByText(
-        'Målingen gjelder 26 til 32 uker (= 182 til 224 dager) etter oppstart.',
+        'Målingen gjelder 26 til 32 uker (registrert som 182 til 224 dager) etter oppstart.',
       ),
     ).toBeInTheDocument()
   })

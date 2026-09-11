@@ -87,7 +87,7 @@ describe('interpretField', () => {
   // kanoniske varigheten i databasen skal likevel stå.
   it('viser uker som hovedform, med dagene som eksplisitt omregning', () => {
     expect(interpretField('timepoint', extraction()).statement).toBe(
-      'Målingen gjelder 8 uker (= 56 dager) etter oppstart.',
+      'Målingen gjelder 8 uker (registrert som 56 dager) etter oppstart.',
     )
   })
 
@@ -97,7 +97,7 @@ describe('interpretField', () => {
         'timepoint',
         extraction({ timepointMin: '182 days', timepointMax: '224 days' }),
       ).statement,
-    ).toBe('Målingen gjelder 26 til 32 uker (= 182 til 224 dager) etter oppstart.')
+    ).toBe('Målingen gjelder 26 til 32 uker (registrert som 182 til 224 dager) etter oppstart.')
   })
 
   it('gjengir varigheten i dager når den ikke er hele uker', () => {

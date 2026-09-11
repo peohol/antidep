@@ -256,16 +256,18 @@ describe('wholeWeeksOf', () => {
 
 describe('formatDurationSpan', () => {
   it('viser uker som hovedform, med dagene som eksplisitt omregning', () => {
-    expect(formatDurationSpan('56 days', '56 days')).toBe('8 uker (= 56 dager)')
+    expect(formatDurationSpan('56 days', '56 days')).toBe('8 uker (registrert som 56 dager)')
   })
 
   // Spennet Fava 2000 faktisk oppgir: «26 to 32 weeks».
   it('viser et spenn i uker, med dagene ved siden av', () => {
-    expect(formatDurationSpan('182 days', '224 days')).toBe('26 til 32 uker (= 182 til 224 dager)')
+    expect(formatDurationSpan('182 days', '224 days')).toBe(
+      '26 til 32 uker (registrert som 182 til 224 dager)',
+    )
   })
 
   it('bøyer entallsformen', () => {
-    expect(formatDurationSpan('7 days', '7 days')).toBe('1 uke (= 7 dager)')
+    expect(formatDurationSpan('7 days', '7 days')).toBe('1 uke (registrert som 7 dager)')
   })
 
   // Blandede enheter ville krevd at leseren selv fant ut om grensene var
@@ -284,7 +286,7 @@ describe('formatDurationSpan', () => {
 
   it('er fravær bare når ingen av grensene er registrert', () => {
     expect(formatDurationSpan(null, null)).toBeNull()
-    expect(formatDurationSpan(null, '56 days')).toBe('8 uker (= 56 dager)')
-    expect(formatDurationSpan('56 days', null)).toBe('8 uker (= 56 dager)')
+    expect(formatDurationSpan(null, '56 days')).toBe('8 uker (registrert som 56 dager)')
+    expect(formatDurationSpan('56 days', null)).toBe('8 uker (registrert som 56 dager)')
   })
 })

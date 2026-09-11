@@ -1219,7 +1219,7 @@ async function main(): Promise<void> {
        join knowledge.evidence_items e on e.agent_run_id = r.id
        where e.id = ${q(modellItem)}`,
     ) ===
-      'antidep|proposal-grounded-extraction|1.0.0|evidence-extraction/proposal/1|antidep-evidence/1',
+      'antidep|proposal-grounded-extraction|1.1.0|evidence-extraction/proposal/1|antidep-evidence/1',
   )
   check(
     'kontrollgrunnlaget viser hvem som laget verdiene, som en erklæring',
