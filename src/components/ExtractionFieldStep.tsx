@@ -78,16 +78,17 @@ const PANE: Record<FieldStatementKind, Pane> = {
   //
   // Den andre halvdelen — om opplysningen står noe annet sted i kilden — er
   // ikke kontrollørens arbeid og blir aldri spurt om her. Den er et eget
-  // kontrollobjekt: et maskinelt søk gjennom hele den registrerte kildeversjonen
-  // (migrasjon 005ae). Setningen under sier det, slik at kontrolløren vet at
-  // hen ikke skal lete — og at ingen andre venter på at hen gjør det.
+  // kontrollobjekt: en maskinell gjennomgang av hele den registrerte
+  // kildeversjonen (migrasjon 005ae, `absence-review.ts`). Setningen under sier
+  // det, slik at kontrolløren vet at hen ikke skal lete — og at ingen andre
+  // venter på at hen gjør det.
   absence_in_source: {
     heading: 'Hvorfor verdien mangler',
     question: 'Mangler opplysningen der utdraget viser at den ville stått?',
     basis:
       'Utdraget til venstre er stedet der opplysningen ville stått. Du skal bare avgjøre om ' +
-      'den mangler der. Om den står noe annet sted, søkes det etter maskinelt gjennom hele den ' +
-      'registrerte kildeversjonen — det er ikke din oppgave.',
+      'den mangler der. Om den står noe annet sted i kilden, avgjøres maskinelt ved en egen ' +
+      'gjennomgang av hele den registrerte kildeversjonen — det er ikke din oppgave.',
   },
   // Ingen fraværskolonne finnes for feltet. Da er «ingenting er ført» hele
   // påstanden, og den handler om registreringen — ikke om hva kilden oppgir.

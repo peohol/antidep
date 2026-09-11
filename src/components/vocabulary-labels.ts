@@ -318,7 +318,7 @@ export const EVIDENCE_CHECK_FIELD_LABELS: Record<EvidenceCheckField, string> = {
   // den kunne si. Rekkevidden er kildeversjonen — den utgaven raden viser til —
   // og ikke publikasjonen, så «kontrollert mot kilden» ville vært en sterkere
   // påstand enn søket bærer (migrasjon 005ae).
-  source_wide_absence: 'Fraværet, søkt gjennom hele den registrerte kildeversjonen',
+  source_wide_absence: 'Fraværet, gjennomgått i hele den registrerte kildeversjonen',
   limitations: 'Forbeholdene',
   source_locator: 'Hvor i kilden funnet står',
   raw_extraction: 'Den rå ekstraksjonen, ordrett',

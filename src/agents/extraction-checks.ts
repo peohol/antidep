@@ -94,6 +94,11 @@
 // endre hva kontrollen gjør.
 // ============================================================================
 
+import {
+  reviewerName,
+  type AbsenceFieldReview,
+  type AbsenceReviewOutcome,
+} from './absence-review.ts'
 import type { VerificationExtraction, VerificationItem } from './verification-input.ts'
 
 /** Verdiene `workflow.evidence_check_field` tillater (migrasjon 005). */
@@ -162,6 +167,15 @@ export interface ExtractionCheckContext {
   readonly sourceText: string
   /** Om den hentede representasjonen har samme fingeravtrykk som den registrerte. */
   readonly representationReproduced: boolean
+  /**
+   * Den uavhengige gjennomlesningen av hele representasjonen, når en foreligger.
+   *
+   * Det ene leddet som kan KONKLUDERE at en opplysning ikke står noe sted
+   * (`absence-review.ts`). Uten den dekkes `source_wide_absence` aldri, uansett
+   * hva det deterministiske søket ikke fant. Utelatt for et funn som ikke fører
+   * noe globalt fravær — da spør ingen om den.
+   */
+  readonly absenceReview?: AbsenceReviewOutcome | null
 }
 
 // ----------------------------------------------------------------------------
@@ -1619,47 +1633,65 @@ function rowBindingDescription(item: VerificationItem): string {
 }
 
 // ----------------------------------------------------------------------------
-// Det kildeomfattende søket: den ene halvdelen av et globalt fravær en maskin
-// faktisk kan bære
+// Det kildeomfattende fraværet: et falsifikasjonssøk, og et ledd som kan
+// konkludere
 //
 // `not_reported` («ikke rapportert i kilden») og `not_measured` («ikke målt i
 // studien») er påstander om kilden eller studien SOM HELHET. Et menneske som
 // får ett lokalt utdrag, kan avgjøre at verdien mangler *der den ville stått* —
-// men ikke at den ikke står noe annet sted (issue #74). Den halvdelen er et
-// søk, og et søk er nettopp det en maskin gjør reproduserbart.
+// men ikke at den ikke står noe annet sted (issue #74).
+//
+// Den halvdelen har to ledd, og bare det ene kan konkludere:
+//
+//   Søket her               kan FALSIFISERE. Finner det en verdi av den arten,
+//                           står fraværet ikke, og feltet dekkes aldri.
+//   Gjennomlesningen        kan KONKLUDERE. Et ledd som leser HELE den
+//   (`absence-review.ts`)   reproduserte representasjonen, kan avgjøre om
+//                           opplysningen står der i en form ingen mønsterliste
+//                           kjenner på forhånd.
 //
 // ----------------------------------------------------------------------------
-// Feilretningen er valgt, og den er den eneste som er forsvarlig
+// Hvorfor «ingen treff» ikke er nok, og aldri kan bli det
+//
+// Den første utgaven av dette leddet lot et negativt søkeresultat dekke feltet
+// alene. Teknisk review felte den på et eksempel som tar tretti sekunder å
+// konstruere: mønstrene kjente `CI`, `C.I.` og `confidence interval(s)`, men
+// ikke `CIs` og ikke `confidence limits`. «The 95% CIs were 0.4 to 2.6.» ga da
+// null treff, og fraværet ville blitt bokført som kildeomfattende kontrollert.
+//
+// Å legge til de to formene løser ikke feilklassen. Naturlig språk har ingen
+// uttømmende mønsterliste, og et `not_measured` gjør problemet tydeligere: en
+// kilde kan si at vekt ble *målt* uten å oppgi et eneste tall, og et rent
+// verdisøk ville da godkjent «ikke målt» på en variabel studien målte.
+//
+// Regelen er derfor absolutt: **et negativt søkeresultat dekker ingenting
+// alene.** Det er en forutsetning for dekning, ikke dekningen selv. Feltet
+// føres opp bare når søket ikke falsifiserte OG en gjennomlesning av hele
+// representasjonen svarte «absent» på hvert felt.
+//
+// ----------------------------------------------------------------------------
+// Feilretningen i selve søket, som er den motsatte av resten av modulen
 //
 // Resten av modulen skal **tilskrive** en verdi til denne raden, og der er et
 // for bredt søk faren: en bekreftelse som bygger på et tall som tilhørte en
-// annen arm. Her er påstanden motsatt. Et for *smalt* søk gir «ikke funnet» på
-// en verdi som faktisk står der, og fører feltet opp som kontrollert — altså en
-// publiseringsgate som slipper gjennom en usann `not_reported`.
+// annen arm. Her er retningen motsatt. Søket skal FINNE noe, og et treff
+// blokkerer. Et for smalt søk finner ingenting og slipper saken videre til
+// gjennomlesningen uten å ha bidratt; et for bredt søk blokkerer et fravær som
+// er ekte. Ingen av delene kan gjøre en usann dekning, fordi søket ikke dekker
+// noe. Det er søkt bygget for **maksimal gjenfinning** likevel: jo mer det
+// fanger, jo mer trenger gjennomlesningen ikke å være alene om.
 //
-// De to feilene er ikke like alvorlige. Et for bredt søk lar være å dekke
-// feltet, og gaten blir stående åpen; et for smalt søk bekrefter noe som ikke
-// er sant. Søket er derfor bygget for **maksimal gjenfinning**, og alt som er
-// usikkert trekker mot å ikke dekke feltet (ANTIDEP_CONSTITUTION.md §6, §11).
-//
-// To tidligere, smalere utforminger er forkastet av nettopp den grunnen, begge
-// funnet i teknisk review av denne leveransen:
+// To smalere utforminger er forkastet av den grunnen, begge funnet i teknisk
+// review av denne leveransen, og begge er nå regresjonsprøver:
 //
 //   * **Binding til armen.** Søket krevde først at verdien sto i en passasje
 //     som selv navngir behandlingsarmen. Kilder skriver anaforisk — «Sertraline
 //     patients improved. The 95% CI was 0.4 to 2.6.» — og andre setning ble da
-//     kastet før søket. Resultatet var «ikke funnet» på et intervall som sto
-//     der, svart på hvitt.
+//     kastet før søket.
 //   * **Bare sifre.** Mønstrene kjente bare tall skrevet med siffer.
 //     «Forty-eight sertraline-treated patients completed the trial» er en helt
 //     vanlig formulering — den står i denne kodebasens egen PDF-fikstur — og
-//     ga «ingen utvalgsstørrelse i kilden».
-//
-// Søket går derfor gjennom **hele** representasjonen uten noen binding til
-// raden, og teller tall skrevet med bokstaver. Prisen er reell og med vilje:
-// oppgir artikkelen et konfidensintervall for et *annet* endepunkt, dekkes
-// feltet ikke. Det er riktig — en maskin kan ikke se hvilket av dem som er
-// radens, og da skal den ikke påstå at ingen av dem er det.
+//     ga ingen treff.
 //
 // ----------------------------------------------------------------------------
 // Et treff er ikke et avvik
@@ -1668,29 +1700,25 @@ function rowBindingDescription(item: VerificationItem): string {
 // DETTE endepunktet og dette tidspunktet. Treffet er derfor ikke en anklage mot
 // ekstraksjonen — det er grunnen til at fraværet ikke kan regnes som
 // kontrollert, og teksten navngir hva som ble funnet slik at et menneske kan se
-// på det.
+// på det. Det samme gjelder et `present` fra gjennomlesningen.
 //
 // ----------------------------------------------------------------------------
-// Hva «ikke funnet» faktisk betyr, og hvorfor det er nok
+// Hva dekningen betyr når den gis, og hvorfor den ikke betyr mer
 //
-// Nøyaktig dette: ingen verdi av den arten står noe sted i den kildeversjonen
-// raden viser til.
+// Nøyaktig dette: opplysningen står ikke noe sted i den kildeversjonen raden
+// viser til. Det er den påstanden raden faktisk gjør. `not_reported` er i
+// datamodellen definert relativt til **kildeversjonen**, ikke til
+// publikasjonen: «Statusen gjelder alltid den kildeversjonen og den
+// kildepekeren raden viser til, ikke nødvendigvis hele publikasjonen»
+// (kolonnekommentaren på `*_availability`, migrasjon 003).
 //
-// Det er den påstanden raden faktisk gjør. `not_reported` er i datamodellen
-// definert relativt til **kildeversjonen**, ikke til publikasjonen:
-// «Statusen gjelder alltid den kildeversjonen og den kildepekeren raden viser
-// til, ikke nødvendigvis hele publikasjonen» (kolonnekommentaren på
-// `*_availability`, migrasjon 003). Søket kontrollerer derfor nøyaktig den
-// påstanden, verken mer eller mindre — og det er grunnen til at et søk kan bære
-// den der ett lokalt utdrag ikke kan.
-//
-// Styrken følger likevel av hva versjonen er: et søk gjennom et abstrakt sier
-// mindre om publikasjonen enn et søk gjennom en fulltekst. Begrunnelsen navngir
-// derfor representasjonen, slik at dekningen aldri leses som mer enn den er.
+// Styrken følger likevel av hva versjonen er: et abstrakt sier mindre om
+// publikasjonen enn en fulltekst. Begrunnelsen navngir derfor representasjonen,
+// og hvem som leste den, slik at dekningen aldri leses som mer enn den er.
 //
 // Én grense er hard: representasjonen må ha latt seg reprodusere med det
-// registrerte fingeravtrykket. Ellers gjelder søket en annen tekst enn den
-// raden ble laget av.
+// registrerte fingeravtrykket. Ellers gjelder både søket og gjennomlesningen en
+// annen tekst enn den raden ble laget av.
 // ----------------------------------------------------------------------------
 
 /**
@@ -1763,6 +1791,24 @@ const ABSENCE_NUMBER =
 const TIMEPOINT_VALUE = `${ABSENCE_NUMBER}\\s*(?:${TIME_UNITS.join('|')})(?![\\p{L}\\p{N}])`
 
 /**
+ * Der kilden kan navngi et konfidensintervall, i falsifikasjonssøkets utgave.
+ *
+ * Egen liste og ikke `CI_ANCHOR_SOURCE`: den hører til bekreftelsessøket, der et
+ * bredere anker ville åpnet for å tilskrive raden et intervall som ikke er
+ * dens. Her er retningen motsatt, og et anker som treffer for mye koster bare at
+ * fraværet ikke blir falsifisert av søket — noe som uansett aldri er nok til å
+ * dekke feltet.
+ *
+ * Listen er utvidet med de formene teknisk review navnga: `CIs` og `confidence
+ * limits` slapp gjennom den første utgaven. Den er fortsatt **ikke uttømmende**,
+ * og skal ikke leses som om den var det: det er nettopp derfor et negativt
+ * søkeresultat ikke dekker noe alene (se hodekommentaren).
+ */
+const ABSENCE_CI_ANCHOR =
+  '\\bCIs?\\b|\\bC\\.I\\.s?|\\bCrIs?\\b|confidence (?:intervals?|limits?|bounds?)|' +
+  'credible intervals?|konfidensintervall\\w*|konfidensgrense\\w*'
+
+/**
  * Formene en verdi av hvert felt kan ha i kilden.
  *
  * `null` betyr at feltet ikke har en maskinelt søkbar form, og det er et svar i
@@ -1789,8 +1835,8 @@ function absenceValueForms(field: string): readonly string[] | null {
       // grensepar ved siden av. To tall i nærheten av hverandre er ikke et
       // intervall, og et anker uten grenser er ikke en verdi.
       return [
-        `(?:${CI_ANCHOR_SOURCE})${ABSENCE_GAP}${ABSENCE_NUMBER}${CI_RANGE_SEPARATOR}${ABSENCE_NUMBER}`,
-        `${ABSENCE_NUMBER}${CI_RANGE_SEPARATOR}${ABSENCE_NUMBER}${ABSENCE_GAP}(?:${CI_ANCHOR_SOURCE})`,
+        `(?:${ABSENCE_CI_ANCHOR})${ABSENCE_GAP}${ABSENCE_NUMBER}${CI_RANGE_SEPARATOR}${ABSENCE_NUMBER}`,
+        `${ABSENCE_NUMBER}${CI_RANGE_SEPARATOR}${ABSENCE_NUMBER}${ABSENCE_GAP}(?:${ABSENCE_CI_ANCHOR})`,
       ]
     default:
       return null
@@ -1799,17 +1845,17 @@ function absenceValueForms(field: string): readonly string[] | null {
 
 /** Hva søket gjennom hele representasjonen fant for ett felt. */
 export type SourceWideAbsenceFinding =
-  /** Ingen verdi av den arten står noe sted i representasjonen. */
+  /** Ingen verdi av den arten ble funnet. Fraværet er ikke falsifisert — og ikke bevist. */
   | { readonly kind: 'not_found' }
-  /** Noe av den arten står der. Ikke et avvik, men fraværet er ikke kontrollert. */
+  /** Noe av den arten står der. Ikke et avvik, men fraværet kan ikke dekkes. */
   | { readonly kind: 'found'; readonly quotes: readonly string[] }
-  /** Feltet har ingen maskinelt søkbar form. */
+  /** Feltet har ingen maskinelt søkbar form, så søket kunne ikke prøve. */
   | { readonly kind: 'not_searchable' }
 
 export interface SourceWideAbsenceReport {
   /** Om hele den kildeomfattende påstanden er kontrollert, for alle feltene. */
-  readonly discharged: boolean
-  /** Hva søket gjorde, og hvorfor det eventuelt ikke konkluderte. */
+  readonly covered: boolean
+  /** Hva de to leddene gjorde, og hvorfor de eventuelt ikke konkluderte. */
   readonly notes: readonly string[]
 }
 
@@ -1817,15 +1863,15 @@ export interface SourceWideAbsenceReport {
 const QUOTED_CANDIDATES = 3
 
 /**
- * Hva søket faktisk gjennomsøkte, navngitt i begrunnelsen.
+ * Hva leddene faktisk gjennomgikk, navngitt i begrunnelsen.
  *
  * `not_reported` gjelder per definisjon **den kildeversjonen raden viser til**,
  * ikke nødvendigvis hele publikasjonen (kolonnekommentaren på
- * `knowledge.evidence_items.*_availability`, migrasjon 003). Søket kontrollerer
+ * `knowledge.evidence_items.*_availability`, migrasjon 003). Kontrollen gjelder
  * derfor nøyaktig den påstanden — men styrken følger av hva versjonen er, og et
- * søk gjennom et abstrakt sier mindre enn et søk gjennom en fulltekst. Raden
- * navngir den derfor, slik at ingen leser dekningen som mer enn den er
- * (DATABASE_ARCHITECTURE.md §29, EVIDENCE_PIPELINE.md §13).
+ * abstrakt sier mindre enn en fulltekst. Raden navngir den derfor, slik at ingen
+ * leser dekningen som mer enn den er (DATABASE_ARCHITECTURE.md §29,
+ * EVIDENCE_PIPELINE.md §13).
  */
 function representationName(item: VerificationItem): string {
   const representation = item.sourceVersion?.representation ?? null
@@ -1838,9 +1884,9 @@ function representationName(item: VerificationItem): string {
  * Søker gjennom hele representasjonen etter en verdi av feltets art.
  *
  * Ingen binding til raden, med vilje: se hodekommentaren over. Eksportert for
- * seg fordi den er den ene definisjonen av hva Antidep mener med «ikke funnet i
- * den registrerte kildeversjonen», og fordi den skal kunne prøves uten resten
- * av kontrollen.
+ * seg fordi den skal kunne prøves uten resten av kontrollen — og fordi det skal
+ * være tydelig at den er et **falsifikasjonsledd**: `not_found` er ikke et bevis
+ * for noe, bare et manglende motbevis.
  */
 export function sourceWideAbsenceSearch(
   projections: readonly string[],
@@ -1864,70 +1910,155 @@ export function sourceWideAbsenceSearch(
     : { kind: 'found', quotes: [...quotes].sort().slice(0, QUOTED_CANDIDATES) }
 }
 
+/** Svaret gjennomlesningen ga for ett felt, eller `null` når den ikke svarte. */
+function reviewFor(review: AbsenceReviewOutcome | null, field: string): AbsenceFieldReview | null {
+  if (review === null || review.kind !== 'reviewed') {
+    return null
+  }
+  return review.fields.find((entry) => entry.checkField === field) ?? null
+}
+
 /**
  * Hele den kildeomfattende halvdelen for ett evidensfunn.
  *
- * Alle feltene raden fører som fraværende i kilden må være avklart før feltet
- * kan føres opp: ett udekket felt er en udekket påstand, og en rad som førte
- * det opp likevel, ville påstått større dekning enn operasjonen hadde.
+ * Alle feltene raden fører som fraværende i kilden må være avklart av **begge**
+ * leddene før feltet kan føres opp: ett udekket felt er en udekket påstand, og
+ * en rad som førte det opp likevel, ville påstått større dekning enn
+ * operasjonen hadde.
  */
 export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceWideAbsenceReport {
   const { item, sourceText, representationReproduced } = context
+  const review = context.absenceReview ?? null
   const fields = item.sourceWideAbsenceFields
   if (fields.length === 0) {
     // Raden gjør ingen kildeomfattende påstand. Da er det ingenting å
     // kontrollere, og gaten krever heller ikke feltet.
-    return { discharged: false, notes: [] }
+    return { covered: false, notes: [] }
   }
   if (!representationReproduced) {
     return {
-      discharged: false,
+      covered: false,
       notes: [
-        'Det kildeomfattende søket ble ikke gjort: representasjonen som ble hentet, har ikke ' +
-          'samme fingeravtrykk som den registrerte kildeversjonen, og et søk i den ville ' +
-          'gjeldt en annen tekst enn ekstraksjonen ble laget av.',
+        'Den kildeomfattende kontrollen ble ikke gjort: representasjonen som ble hentet, har ' +
+          'ikke samme fingeravtrykk som den registrerte kildeversjonen, og en gjennomgang av ' +
+          'den ville gjeldt en annen tekst enn ekstraksjonen ble laget av.',
+      ],
+    }
+  }
+
+  // Gjennomlesningen må gjelde nettopp denne raden. Bindingen til teksten gjør
+  // kjøreren (avtrykket av forespørselen); bindingen til raden kontrolleres her
+  // også, slik at en fil lagt i feil mappe ikke kan dekke feil funn.
+  if (
+    review !== null &&
+    review.kind === 'reviewed' &&
+    review.evidenceItemId !== item.evidenceItemId
+  ) {
+    return {
+      covered: false,
+      notes: [
+        `Gjennomlesningen som ble lest inn, gjelder evidensfunnet ${review.evidenceItemId} og ` +
+          'ikke dette. Den er derfor sett bort fra, og den kildeomfattende halvdelen står åpen.',
       ],
     }
   }
 
   const projections = searchProjections(sourceText)
-  const notFound: string[] = []
   const notes: string[] = []
-  let discharged = true
+  const concluded: string[] = []
+  const notSearchable: string[] = []
+  let covered = true
+
   for (const field of fields) {
+    // Ledd 1: falsifikasjonssøket. Et treff avgjør alene, og gjennomlesningen
+    // kan ikke overstyre det: to ledd som er uenige om hvorvidt verdien står
+    // der, er ikke et grunnlag for å påstå at den ikke gjør det.
     const finding = sourceWideAbsenceSearch(projections, field)
-    if (finding.kind === 'not_found') {
-      notFound.push(field)
-      continue
-    }
-    discharged = false
     if (finding.kind === 'not_searchable') {
+      // Feltet har ingen maskinelt søkbar form — en populasjon er en etikett og
+      // ikke et tall. Det stanser ingenting: søket er falsifikasjonsleddet, og
+      // et ledd som ikke kan prøve, har heller ikke funnet noe. Konklusjonen
+      // hviler da på gjennomlesningen alene, og begrunnelsen sier det (issue
+      // #79).
+      notSearchable.push(field)
+    }
+    if (finding.kind === 'found') {
+      covered = false
       notes.push(
-        `Fraværet av «${field}» lar seg ikke søke etter maskinelt: feltet har ingen tallform ` +
-          'kontrollen kan gjenkjenne. Feltet er derfor ikke ført opp som kildeomfattende ' +
-          'kontrollert.',
+        `Søket gjennom hele representasjonen fant noe som ligner en verdi for «${field}»: ` +
+          `${finding.quotes.map((quote) => `«${quote}»`).join(', ')}. Det er ikke i seg selv et ` +
+          'avvik — treffet kan gjelde en annen arm, et annet endepunkt eller et annet tidspunkt ' +
+          '— men fraværet kan da ikke regnes som kontrollert.',
       )
       continue
     }
-    notes.push(
-      `Søket gjennom hele representasjonen fant noe som ligner en verdi for «${field}»: ` +
-        `${finding.quotes.map((quote) => `«${quote}»`).join(', ')}. Det er ikke i seg selv et ` +
-        'avvik — treffet kan gjelde en annen arm, et annet endepunkt eller et annet tidspunkt ' +
-        '— men fraværet kan da ikke regnes som kontrollert.',
-    )
+
+    // Ledd 2: gjennomlesningen. Uten den er ingenting dekket, uansett hva søket
+    // ikke fant. Se hodekommentaren: et negativt søkeresultat er et manglende
+    // motbevis, ikke et bevis.
+    const answer = reviewFor(review, field)
+    if (answer === null) {
+      covered = false
+      const why =
+        review === null
+          ? 'ingen gjennomlesning av hele representasjonen er lagt inn for dette funnet'
+          : review.kind === 'missing'
+            ? review.reason
+            : `gjennomlesningen svarte ikke på «${field}»`
+      notes.push(
+        `Fraværet av «${field}» er ikke motbevist av søket, men det er heller ikke kontrollert: ` +
+          `${why}. Et søk som ikke fant noe, har bare vist at ingen av formene det kjenner står ` +
+          'der — ikke at ingen form gjør det.',
+      )
+      continue
+    }
+
+    if (answer.verdict === 'present') {
+      covered = false
+      const quote = answer.quote ?? ''
+      const stands = verbatimOccursWholeWordsIn(projections, quote)
+      notes.push(
+        `Gjennomlesningen av hele representasjonen fant en verdi for «${field}»: «${quote}». ` +
+          (stands
+            ? 'Utdraget står ordrett i teksten. '
+            : 'Utdraget lot seg IKKE gjenfinne ordrett i teksten, så det er ikke lagt til grunn ' +
+              'som et funn — men fraværet kan uansett ikke regnes som kontrollert. ') +
+          `Begrunnelsen var: ${answer.rationale}`,
+      )
+      continue
+    }
+
+    if (answer.verdict === 'uncertain') {
+      covered = false
+      notes.push(`Gjennomlesningen kunne ikke avgjøre fraværet av «${field}»: ${answer.rationale}`)
+      continue
+    }
+
+    concluded.push(field)
   }
 
-  if (!discharged) {
-    return { discharged, notes }
+  if (!covered) {
+    return { covered, notes }
   }
+
+  const reviewed = review as Extract<AbsenceReviewOutcome, { kind: 'reviewed' }>
+  const caveat =
+    notSearchable.length === 0
+      ? ''
+      : ` For ${notSearchable.map((field) => `«${field}»`).join(', ')} har søket ingen form å ` +
+        'prøve — en populasjon er en etikett og ikke et tall — så for de feltene hviler ' +
+        'konklusjonen på gjennomlesningen alene.'
   return {
-    discharged,
+    covered,
     notes: [
-      `Et søk gjennom hele den reproduserte ${representationName(item)} fant ingen verdi for ` +
-        `${notFound.map((field) => `«${field}»`).join(', ')} noe sted. Det betyr at ` +
-        'opplysningen ikke står i den kildeversjonen raden viser til — ikke at den ikke står i ' +
-        'publikasjonen: en representasjon kan mangle figurer, som er bilder, og et supplement, ' +
-        'som er en egen fil.',
+      `Fraværet av ${concluded.map((field) => `«${field}»`).join(', ')} er kontrollert i to ledd ` +
+        `mot hele den reproduserte ${representationName(item)}: et deterministisk søk fant ingen ` +
+        `verdi av den arten, og en uavhengig gjennomlesning (${reviewerName(reviewed)}, ` +
+        `promptmal ${reviewed.promptTemplateVersion}, forespørsel ${reviewed.requestDigest}) ` +
+        'svarte at opplysningen ikke står noe sted i teksten. Det betyr at opplysningen ikke ' +
+        'står i den kildeversjonen raden viser til — ikke at den ikke står i publikasjonen: en ' +
+        'representasjon kan mangle figurer, som er bilder, og et supplement, som er en egen fil.' +
+        caveat,
     ],
   }
 }
@@ -2267,22 +2398,23 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     )
   }
 
-  // 4b. Det kildeomfattende søket, når raden fører et globalt fravær.
+  // 4b. Den kildeomfattende halvdelen, når raden fører et globalt fravær.
   //
-  // Egen del, fordi den er den ene halvdelen av en fraværspåstand et menneske
-  // aldri kan bære: kontrolløkten ser ett lokalt utdrag, og dette er et søk
-  // gjennom hele representasjonen (migrasjon 005ae). Feltet føres opp bare når
-  // *alle* de globalt fraværende feltene er avklart, og en merknad sier alltid
-  // hva søket faktisk gjennomsøkte.
+  // Egen del, fordi den er den halvdelen av en fraværspåstand et menneske aldri
+  // kan bære: kontrolløkten ser ett lokalt utdrag, og dette gjelder hele
+  // representasjonen (migrasjon 005ae). To ledd må være enige før feltet føres
+  // opp — et deterministisk søk som ikke fant noe, og en uavhengig
+  // gjennomlesning som konkluderte — og en merknad sier alltid hva som faktisk
+  // ble gjennomgått, og av hvem.
   const absence = sourceWideAbsenceCheck(context)
   const absenceRequired = item.sourceWideAbsenceFields.length > 0
   // Et udekket kildeomfattende fravær er en uavklart kontroll, ikke bare en
   // merknad. Uten dette kunne raden komme ut som `verified` med `findings`
   // null, mens begrunnelsen sa at fraværet ikke lot seg bekrefte — en
   // bekreftelse som motsa sin egen tekst.
-  const absenceUnresolved = absenceRequired && !absence.discharged
+  const absenceUnresolved = absenceRequired && !absence.covered
   if (absenceRequired) {
-    if (absence.discharged) {
+    if (absence.covered) {
       checked.push('source_wide_absence')
       notes.push(...absence.notes)
     } else {

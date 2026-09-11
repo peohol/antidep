@@ -497,7 +497,7 @@ describe('parseVerifierArguments', () => {
   const parse = (argv: readonly string[]) => parseVerifierArguments(argv, spec)
 
   it('leser en tom argumentliste som «hele køen, registrer»', () => {
-    expect(parse([])).toEqual({ targetId: null, dryRun: false, limit: null })
+    expect(parse([])).toEqual({ targetId: null, dryRun: false, limit: null, paths: {} })
   })
 
   it('leser de tre valgene', () => {
@@ -505,7 +505,29 @@ describe('parseVerifierArguments', () => {
       targetId: 'abc',
       dryRun: true,
       limit: 3,
+      paths: {},
     })
+  })
+
+  // Katalogvalg finnes bare for den kjøreren som oppgir dem. Uten det ville
+  // claim-verifikatoren tatt imot `--absence-reviews` og stilltiende ignorert
+  // den — et valg som ser ut som om det virket.
+  it('avviser et katalogvalg kjøreren ikke oppgir', () => {
+    expect(() => parse(['--absence-reviews', '/tmp/x'])).toThrow(/Ukjent valg/)
+  })
+
+  it('leser katalogvalgene kjøreren oppgir', () => {
+    const medKataloger = { ...spec, pathFlags: ['absence-reviews'] }
+    expect(parseVerifierArguments(['--absence-reviews', '/tmp/x'], medKataloger).paths).toEqual({
+      'absence-reviews': '/tmp/x',
+    })
+  })
+
+  it('avviser et katalogvalg uten verdi', () => {
+    const medKataloger = { ...spec, pathFlags: ['absence-reviews'] }
+    expect(() => parseVerifierArguments(['--absence-reviews'], medKataloger)).toThrow(
+      /krever en katalogsti/,
+    )
   })
 
   it('avviser målflagget uten verdi', () => {

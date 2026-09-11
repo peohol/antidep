@@ -8,18 +8,36 @@ import {
   sourceWideAbsenceSearch,
   trimNumericText,
 } from './extraction-checks'
-import { FIXTURE_SOURCE_TEXT, sourceVersionFixture, verificationItemFixture } from './test-support'
+import {
+  absenceReviewFixture,
+  FIXTURE_SOURCE_TEXT,
+  sourceVersionFixture,
+  verificationItemFixture,
+} from './test-support'
+import type { AbsenceReviewOutcome } from './absence-review'
 import type { VerificationExtraction } from './verification-input'
 
+/**
+ * Kontrollen av fiksturen, med den kildeomfattende gjennomlesningen på plass.
+ *
+ * Standardverdien er en gjennomlesning som konkluderte «absent» på hvert felt
+ * raden fører som globalt fraværende. Uten den kan `source_wide_absence` aldri
+ * dekkes, og enhver prøve om noe annet ville blitt uavklart av en grunn den
+ * ikke prøver (`absence-review.ts`). Prøvene som handler om selve halvdelen,
+ * oppgir den selv — også som `null`, som er «ingen gjennomlesning foreligger».
+ */
 function check(
   overrides: Parameters<typeof verificationItemFixture>[0] = {},
   sourceText: string = FIXTURE_SOURCE_TEXT,
   representationReproduced = true,
+  absenceReview?: AbsenceReviewOutcome | null,
 ) {
+  const item = verificationItemFixture(overrides)
   return checkExtraction({
-    item: verificationItemFixture(overrides),
+    item,
     sourceText,
     representationReproduced,
+    absenceReview: absenceReview === undefined ? absenceReviewFixture(item) : absenceReview,
   })
 }
 
@@ -2196,19 +2214,25 @@ describe('checkExtraction — når kontrollen ikke kan konkludere', () => {
 })
 
 // ----------------------------------------------------------------------------
-// Det kildeomfattende fraværssøket
+// Den kildeomfattende fraværskontrollen
 //
-// `not_reported` og `not_measured` er påstander om kilden SOM HELHET. Denne
-// kontrollen er den halvdelen av dem en maskin kan bære: et søk gjennom hele
-// representasjonen etter en verdi av den arten, bundet til funnets arm
-// (migrasjon 005ae, issue #74).
+// `not_reported` og `not_measured` er påstander om kilden SOM HELHET, og de har
+// to ledd: et deterministisk søk som kan FALSIFISERE, og en uavhengig
+// gjennomlesning av hele representasjonen som kan KONKLUDERE (issue #74,
+// migrasjon 005ae, `absence-review.ts`).
 //
-// Prøvene under holder fire ting fast: at feltet bare føres opp når søket
-// faktisk kunne gjøres, at et treff stopper dekningen uten å bli et avvik, at
-// grunnlaget må være en reprodusert fulltekst, og at teksten aldri påstår mer
-// enn «ikke funnet i det Antidep har kontrollert».
+// Prøvene under holder fem ting fast:
+//
+//   1. Et negativt søkeresultat dekker ALDRI feltet alene. Det er funnet fra
+//      teknisk review av denne leveransen, og det viktigste her.
+//   2. Et treff — fra søket eller fra gjennomlesningen — stopper dekningen uten
+//      å bli et avvik.
+//   3. Begge leddene må gjelde den reproduserte representasjonen.
+//   4. Alle feltene raden fører som globalt fraværende må være avklart.
+//   5. Teksten påstår aldri mer enn den dekker, og navngir både
+//      representasjonen og hvem som leste den.
 // ----------------------------------------------------------------------------
-describe('checkExtraction — det kildeomfattende fraværssøket', () => {
+describe('checkExtraction — den kildeomfattende fraværskontrollen', () => {
   // En tekst som ikke oppgir noe konfidensintervall noe sted.
   const UTEN_INTERVALL = [
     '<PubmedArticle>',
@@ -2230,26 +2254,120 @@ describe('checkExtraction — det kildeomfattende fraværssøket', () => {
     },
   } as const
 
-  it('fører opp feltet når søket gjennom hele kildeversjonen ikke fant noen slik verdi', () => {
-    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL)
-    expect(report.checkedFields).toContain('source_wide_absence')
-    expect(report.rationale).toMatch(/søk gjennom hele den reproduserte kildeversjonen/)
-    expect(report.rationale).toMatch(/«confidence_interval»/)
+  /** Fiksturens gjennomlesning for en rad, med et valgfritt svar per felt. */
+  const lest = (
+    overrides: Parameters<typeof verificationItemFixture>[0],
+    verdicts: Record<string, 'absent' | 'present' | 'uncertain'> = {},
+  ) => absenceReviewFixture(verificationItemFixture(overrides), verdicts)
+
+  // ------------------------------------------------------------------------
+  // Funnet fra teknisk review: søket alene dekker ingenting
+  //
+  // Den første utgaven førte feltet opp så snart mønsterlisten ikke fant noe.
+  // Mønstrene kjente `CI`, `C.I.` og `confidence interval(s)`, men ikke `CIs`
+  // og ikke `confidence limits`, og et fravær kan ikke bevises av et søk.
+  // ------------------------------------------------------------------------
+
+  it('dekker aldri feltet på et negativt søk alene', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, null)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/ingen gjennomlesning av hele representasjonen/)
+    expect(report.findings).toMatch(/ikke at ingen form gjør det/)
   })
 
-  // Ordlyden er den sannheten søket faktisk bærer, og det er ikke pynt:
+  // Den konkrete falske negativen review konstruerte. Teksten oppgir et
+  // intervall i en form den første mønsterlisten ikke kjente. Prøven holder to
+  // ting fast på én gang: at en gyldig, ukjent formulering aldri blir til
+  // `checked` av seg selv, og at listen nå kjenner nettopp denne.
+  const MED_CIs = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="RESULTS">Sertraline-treated patients with major depressive',
+    '  disorder had a mean weight change of 1.5 kg. The 95% CIs were 0.4 to 2.6.',
+    '  </AbstractText>',
+    '</PubmedArticle>',
+  ].join('\n')
+
+  const MED_CONFIDENCE_LIMITS = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="RESULTS">Sertraline-treated patients with major depressive',
+    '  disorder had a mean weight change of 1.5 kg (confidence limits 0.4 and 2.6).',
+    '  </AbstractText>',
+    '</PubmedArticle>',
+  ].join('\n')
+
+  it.each([
+    ['CIs', MED_CIs],
+    ['confidence limits', MED_CONFIDENCE_LIMITS],
+  ])('dekker ikke et intervall skrevet som «%s», uansett hvem som leser', (_form, tekst) => {
+    // Uten gjennomlesning: ingen dekning, fordi søket aldri dekker alene.
+    expect(check({ extraction: UTEN_KI }, tekst, true, null).checkedFields).not.toContain(
+      'source_wide_absence',
+    )
+    // Med en gjennomlesning som ser intervallet: fortsatt ingen dekning.
+    expect(
+      check(
+        { extraction: UTEN_KI },
+        tekst,
+        true,
+        lest(
+          { extraction: UTEN_KI },
+          {
+            confidence_interval: 'present',
+          },
+        ),
+      ).checkedFields,
+    ).not.toContain('source_wide_absence')
+    // Og søket selv skal nå kjenne formen, slik at det falsifiserer den uten
+    // hjelp. Det gjør ikke listen uttømmende — det er derfor ledd to finnes.
+    const bareSøket = check({ extraction: UTEN_KI }, tekst, true, lest({ extraction: UTEN_KI }))
+    expect(bareSøket.checkedFields).not.toContain('source_wide_absence')
+    expect(bareSøket.findings).toMatch(/Søket gjennom hele representasjonen fant noe som ligner/)
+  })
+
+  // Et søketreff kan ikke overstyres av en gjennomlesning som mener noe annet:
+  // to ledd som er uenige om hvorvidt verdien står der, er ikke et grunnlag for
+  // å påstå at den ikke gjør det.
+  it('lar et søketreff veie tyngre enn en gjennomlesning som sier «absent»', () => {
+    const report = check(
+      { extraction: UTEN_KI },
+      FIXTURE_SOURCE_TEXT,
+      true,
+      lest({
+        extraction: UTEN_KI,
+      }),
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/Søket gjennom hele representasjonen fant noe som ligner/)
+  })
+
+  // ------------------------------------------------------------------------
+  // Når begge leddene konkluderer
+  // ------------------------------------------------------------------------
+
+  it('fører opp feltet når begge leddene konkluderte', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL)
+    expect(report.checkedFields).toContain('source_wide_absence')
+    expect(report.rationale).toMatch(/kontrollert i to ledd/)
+    expect(report.rationale).toMatch(/«confidence_interval»/)
+    // Begrunnelsen navngir hvem som leste, og hvilken forespørsel svaret gjaldt.
+    expect(report.rationale).toMatch(/test\/gjennomlesning/)
+    expect(report.rationale).toMatch(/promptmal evidence-extraction\/source-wide-absence\/1/)
+  })
+
+  // Ordlyden er den sannheten kontrollen faktisk bærer, og det er ikke pynt:
   // `not_reported` gjelder kildeversjonen, ikke publikasjonen. Sier raden noe
-  // annet, påstår auditsporet mer enn søket bærer (DATABASE_ARCHITECTURE.md §29).
+  // annet, påstår auditsporet mer enn kontrollen bærer (DATABASE_ARCHITECTURE.md §29).
   it('påstår ikke at opplysningen mangler i publikasjonen, bare i kildeversjonen', () => {
     const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL)
     expect(report.rationale).toMatch(/ikke står i den kildeversjonen raden viser til/)
     expect(report.rationale).toMatch(/ikke at den ikke står i publikasjonen/)
   })
 
-  // …og den navngir hva som faktisk ble gjennomsøkt. Et søk gjennom et
-  // abstrakt sier mindre om publikasjonen enn et søk gjennom en fulltekst, og
-  // dekningen skal aldri leses som mer enn den er (EVIDENCE_PIPELINE.md §13).
-  it('navngir representasjonen søket gikk gjennom', () => {
+  // …og den navngir hva som faktisk ble gjennomgått. Et abstrakt sier mindre om
+  // publikasjonen enn en fulltekst, og dekningen skal aldri leses som mer enn
+  // den er (EVIDENCE_PIPELINE.md §13).
+  it('navngir representasjonen som ble gjennomgått', () => {
     expect(check({ extraction: UTEN_KI }, UTEN_INTERVALL).rationale).toMatch(/«full_text»/)
     const abstrakt = check(
       {
@@ -2273,9 +2391,13 @@ describe('checkExtraction — det kildeomfattende fraværssøket', () => {
     expect(report.rationale).toMatch(/ikke har en registrert representasjonstype/)
   })
 
-  // Fiksturteksten oppgir «95% CI 0.4 to 2.6» for sertralinarmen. Et funn som
-  // fører intervallet som ikke rapportert, kan da ikke få fraværet kontrollert.
-  it('fører ikke opp feltet når kildeversjonen oppgir en slik verdi for armen', () => {
+  // ------------------------------------------------------------------------
+  // Når ett av leddene stopper
+  // ------------------------------------------------------------------------
+
+  // Fiksturteksten oppgir «95% CI 0.4 to 2.6». Et funn som fører intervallet som
+  // ikke rapportert, kan da ikke få fraværet kontrollert.
+  it('fører ikke opp feltet når kildeversjonen oppgir en slik verdi', () => {
     const report = check({ extraction: UTEN_KI })
     expect(report.checkedFields).not.toContain('source_wide_absence')
     expect(report.findings).toMatch(/Søket gjennom hele representasjonen fant noe som ligner/)
@@ -2289,33 +2411,87 @@ describe('checkExtraction — det kildeomfattende fraværssøket', () => {
     expect(report.findings).toMatch(/ikke i seg selv et avvik/)
   })
 
+  it('dekker ikke feltet når gjennomlesningen fant verdien', () => {
+    const report = check(
+      { extraction: UTEN_KI },
+      UTEN_INTERVALL,
+      true,
+      lest({ extraction: UTEN_KI }, { confidence_interval: 'present' }),
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/Gjennomlesningen av hele representasjonen fant en verdi/)
+  })
+
+  // Et sitat gjennomlesningen skrev om — eller fant på — skal ikke legges til
+  // grunn som et funn. Fraværet dekkes uansett ikke, men teksten skal si hvilken
+  // av de to tingene som skjedde.
+  it('sier fra når gjennomlesningens sitat ikke står i teksten', () => {
+    const review = lest({ extraction: UTEN_KI }, { confidence_interval: 'present' })
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, review)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/lot seg IKKE gjenfinne ordrett/)
+  })
+
+  it('dekker ikke feltet når gjennomlesningen ikke kunne avgjøre det', () => {
+    const report = check(
+      { extraction: UTEN_KI },
+      UTEN_INTERVALL,
+      true,
+      lest({ extraction: UTEN_KI }, { confidence_interval: 'uncertain' }),
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/kunne ikke avgjøre fraværet/)
+  })
+
+  // En gjennomlesning som gjelder et annet funn, dekker ingenting her. Filen kan
+  // være lagt i feil mappe, og mappenavnet alene skal ikke avgjøre det.
+  it('ser bort fra en gjennomlesning som gjelder et annet evidensfunn', () => {
+    const review = lest({ extraction: UTEN_KI })
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, {
+      ...review,
+      evidenceItemId: '00000000-0000-4000-8000-000000000000',
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/gjelder evidensfunnet 00000000/)
+  })
+
+  // Grunnen til at halvdelen står åpen, skal stå i teksten. «Ingen fil» og «et
+  // svar på en annen tekst» er ikke det samme for den som skal gjøre noe.
+  it('gjengir grunnen til at ingen gjennomlesning kunne brukes', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, {
+      kind: 'missing',
+      reason: 'svaret gjaldt en annen forespørsel',
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/svaret gjaldt en annen forespørsel/)
+  })
+
   // Funn i teknisk review: et udekket kildeomfattende fravær er en uavklart
   // kontroll, ikke bare en merknad. Raden kunne før komme ut som `verified`
   // med `findings` null, mens begrunnelsen sa at fraværet ikke lot seg
   // bekrefte — en bekreftelse som motsa sin egen tekst.
   it('lar et udekket fravær avgjøre utfallet, ikke bare merknadene', () => {
     // Alt annet stemmer: utdraget er radens eget, står ordrett i kilden, og
-    // binder arm, endepunkt, populasjon og verdi sammen. Uten fraværssøket
+    // binder arm, endepunkt, populasjon og verdi sammen. Uten fraværskontrollen
     // ville denne raden vært `verified`.
     const støtte =
       'Sertraline-treated patients with major depressive disorder had a mean weight ' +
       'change of 1.5 kg'
-    const report = check(
-      {
-        extraction: {
-          sampleSize: null,
-          // Kilden oppgir «N = 284», så søket finner en utvalgsstørrelse og
-          // fraværet kan ikke regnes som kontrollert.
-          sampleSizeAvailability: 'not_reported',
-          ciLower: null,
-          ciUpper: null,
-          ciLevelPercent: null,
-          confidenceIntervalAvailability: 'not_applicable',
-          rawExtraction: { støtte },
-        },
+    const overrides = {
+      extraction: {
+        sampleSize: null,
+        // Kilden oppgir «N = 284», så søket finner en utvalgsstørrelse og
+        // fraværet kan ikke regnes som kontrollert.
+        sampleSizeAvailability: 'not_reported',
+        ciLower: null,
+        ciUpper: null,
+        ciLevelPercent: null,
+        confidenceIntervalAvailability: 'not_applicable',
+        rawExtraction: { støtte },
       },
-      `${FIXTURE_SOURCE_TEXT}\n<p>${støtte}</p>`,
-    )
+    } as const
+    const report = check(overrides, `${FIXTURE_SOURCE_TEXT}\n<p>${støtte}</p>`)
     expect(report.checkedFields).not.toContain('source_wide_absence')
     expect(report.outcome).toBe('uncertain')
     // …og et uavklart utfall må ha et funn: databasen krever det.
@@ -2323,9 +2499,9 @@ describe('checkExtraction — det kildeomfattende fraværssøket', () => {
     expect(report.findings).toMatch(/«sample_size»/)
   })
 
-  // Stemmer ikke fingeravtrykket, gjelder søket en annen tekst enn den
+  // Stemmer ikke fingeravtrykket, gjelder begge leddene en annen tekst enn den
   // ekstraksjonen ble laget av.
-  it('søker ikke i en representasjon som ikke lot seg reprodusere', () => {
+  it('kontrollerer ikke en representasjon som ikke lot seg reprodusere', () => {
     const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, false)
     expect(report.checkedFields).not.toContain('source_wide_absence')
     expect(report.findings).toMatch(/ikke samme fingeravtrykk/)
@@ -2350,8 +2526,7 @@ describe('checkExtraction — det kildeomfattende fraværssøket', () => {
     ).not.toContain('source_wide_absence')
   })
 
-  // En utvalgsstørrelse ført som ikke rapportert, mens teksten oppgir «N = 284»
-  // for armen. Fraværet kan ikke regnes som kontrollert.
+  // En utvalgsstørrelse ført som ikke rapportert, mens teksten oppgir «N = 284».
   it('finner en utvalgsstørrelse som står i kildeversjonen', () => {
     const report = check({
       extraction: {
@@ -2368,8 +2543,8 @@ describe('checkExtraction — det kildeomfattende fraværssøket', () => {
     expect(report.findings).toMatch(/«sample_size»/)
   })
 
-  // …og motsatt, når teksten ikke oppgir noe antall for armen.
-  it('fører opp feltet når kildeversjonen ikke oppgir noe antall for armen', () => {
+  // …og motsatt, når teksten ikke oppgir noe antall og gjennomlesningen bekrefter det.
+  it('fører opp feltet når verken søket eller gjennomlesningen fant et antall', () => {
     const report = check(
       {
         extraction: {
@@ -2392,44 +2567,54 @@ describe('checkExtraction — det kildeomfattende fraværssøket', () => {
   })
 
   // Populasjonen er en etikett og ikke et tall, og radens egen er norsk mens
-  // kilden er engelsk. Søket kan da verken bekrefte eller avkrefte fraværet, og
-  // sier det framfor å godkjenne det i stillhet.
-  it('sier fra når feltet ikke har en maskinelt søkbar form', () => {
-    const report = check(
-      {
-        extraction: {
-          populationLabel: null,
-          populationAvailability: 'not_reported',
-          timepointAvailability: 'not_applicable',
-          ciLower: null,
-          ciUpper: null,
-          ciLevelPercent: null,
-          confidenceIntervalAvailability: 'not_applicable',
-          rawExtraction: {
-            resultat:
-              'Sertraline-treated patients with major depressive disorder had a mean weight ' +
-              'change of 1.5 kg',
-          },
-        },
-      },
-      UTEN_INTERVALL,
-    )
+  // kilden er engelsk. Søket har da ingen form å prøve — men gjennomlesningen
+  // leser teksten og kan svare. Dekningen sier eksplisitt at den hviler på ett
+  // ledd (issue #79).
+  const UTEN_POPULASJONSVERDI = {
+    populationLabel: null,
+    populationAvailability: 'not_reported',
+    timepointAvailability: 'not_applicable',
+    ciLower: null,
+    ciUpper: null,
+    ciLevelPercent: null,
+    confidenceIntervalAvailability: 'not_applicable',
+    rawExtraction: {
+      resultat:
+        'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+        'change of 1.5 kg',
+    },
+  } as const
+
+  it('sier fra når søket ikke har en form å prøve, men lar gjennomlesningen avgjøre', () => {
+    const report = check({ extraction: UTEN_POPULASJONSVERDI }, UTEN_INTERVALL)
+    expect(report.checkedFields).toContain('source_wide_absence')
+    expect(report.rationale).toMatch(/har søket ingen form å prøve/)
+    expect(report.rationale).toMatch(/hviler konklusjonen på gjennomlesningen alene/)
+  })
+
+  it('dekker ikke et felt uten søkbar form når ingen gjennomlesning foreligger', () => {
+    const report = check({ extraction: UTEN_POPULASJONSVERDI }, UTEN_INTERVALL, true, null)
     expect(report.checkedFields).not.toContain('source_wide_absence')
-    expect(report.findings).toMatch(/lar seg ikke søke etter maskinelt/)
+    expect(report.findings).toMatch(/«population»/)
   })
 
   // Alle de globalt fraværende feltene må være avklart. Ett udekket felt er en
   // udekket påstand, og hele feltet holdes tilbake.
   it('holder feltet tilbake når bare ett av flere fravær er avklart', () => {
-    const report = check(
-      {
-        extraction: {
-          ...UTEN_KI,
-          populationLabel: null,
-          populationAvailability: 'not_reported',
-        },
+    const overrides = {
+      extraction: {
+        ...UTEN_KI,
+        populationLabel: null,
+        populationAvailability: 'not_reported',
       },
+    } as const
+    const report = check(
+      overrides,
       UTEN_INTERVALL,
+      true,
+      lest(overrides, {
+        population: 'uncertain',
+      }),
     )
     expect(report.checkedFields).not.toContain('source_wide_absence')
   })
@@ -2620,10 +2805,12 @@ describe('searchProjections — ugyldige entiteter i kildeinnhold', () => {
   })
 
   it('stopper ikke kontrollen av et funn når kilden har en ugyldig entitet', () => {
+    const item = verificationItemFixture()
     const report = checkExtraction({
-      item: verificationItemFixture(),
+      item,
       sourceText: `${FIXTURE_SOURCE_TEXT}\n<p>&#x110000;</p>`,
       representationReproduced: true,
+      absenceReview: absenceReviewFixture(item),
     })
     expect(report.outcome).toBe('verified')
   })

@@ -372,7 +372,7 @@ export function buildExtractionSteps({
   const counts = extractionTally(dossier.semanticCheckFields, state.fields)
   const derived = derivedExtractionFor(item, state)
   // Feltene der svaret gjelder den lokale halvdelen av en påstand om kilden som
-  // helhet. Den kildeomfattende halvdelen er et eget kontrollobjekt, og
+  // helhet. Den kildeomfattende halvdelen er et eget maskinelt kontrollobjekt, og
   // kontrolløren skal vite hvor den står — ikke oppdage det som en blokkert
   // publisering senere (PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
   const localOnly = sourceWideAbsenceFields(dossier.semanticCheckFields, dossier.extraction).filter(
@@ -410,11 +410,11 @@ export function buildExtractionSteps({
           <p className="control-summary__note">
             {`Svaret ditt på ${localOnly.map(checkFieldLabel).join(', ')} gjelder stedet
               opplysningen ville stått, og det er nøyaktig det som blir registrert. Om
-              opplysningen står noe annet sted i den registrerte kildeversjonen, avgjøres av et
-              maskinelt søk gjennom hele den. ${
+              opplysningen står noe annet sted i den registrerte kildeversjonen, avgjøres av en
+              egen maskinell gjennomgang av hele den. ${
                 sourceWideOutstanding
-                  ? 'Det søket har ennå ikke gått god for dette funnet, så publiseringsgaten er fortsatt åpen på det. Det er ikke noe du skal gjøre.'
-                  : 'Det søket er allerede gjort for dette funnet.'
+                  ? 'Den gjennomgangen har ennå ikke gått god for dette funnet, så publiseringsgaten er fortsatt åpen på det. Det er ikke noe du skal gjøre.'
+                  : 'Den gjennomgangen er allerede gjort for dette funnet.'
               }`.replace(/\s+/g, ' ')}
           </p>
         ) : null}

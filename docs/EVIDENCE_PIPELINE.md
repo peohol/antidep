@@ -596,7 +596,7 @@ fordi de har hvert sitt kontrollgrunnlag — og gi hver av dem et eget felt i
 | Halvdel | Spørsmål | Grunnlag | Hvem | Felt |
 |---|---|---|---|---|
 | Lokal | Mangler opplysningen der forankringsutdraget viser at den ville stått, og er grunnen av riktig art? | Utdraget flaten viser | Et menneske | `availability_semantics` |
-| Kildeomfattende | Står opplysningen noe annet sted i kildeversjonen? | Hele den registrerte representasjonen | En maskin | `source_wide_absence` |
+| Kildeomfattende | Står opplysningen noe annet sted i kildeversjonen? | Hele den registrerte representasjonen | To maskinelle ledd | `source_wide_absence` |
 
 `workflow.required_check_fields(uuid)` krever `source_wide_absence` når og bare
 når raden fører minst ett felt som `not_reported` eller `not_measured`
@@ -604,59 +604,111 @@ når raden fører minst ett felt som `not_reported` eller `not_measured`
 før, ikke løsere: hullet var der hele tiden, men det var navnløst og så ut som
 et udekket `availability_semantics`.
 
-#### Hva det kildeomfattende søket er, og hva det med vilje ikke sier
+#### Den kildeomfattende halvdelen har to ledd, og bare det ene kan konkludere
 
-Den deterministiske ekstraksjonskontrollen (§25.1) gjør søket. For hvert felt
-raden fører som fraværende søker den gjennom **hele** representasjonen etter en
-verdi av den arten — uten noen binding til raden.
+Et fravær kan ikke bevises av et søk. Det er premisset i issue #74, og det
+gjelder også når søket er aldri så bredt:
 
+| Ledd | Hva det kan | Hva det ikke kan |
+|---|---|---|
+| Det deterministiske søket (§25.1) | **Falsifisere.** Finner det en verdi av den arten, står fraværet ikke, og feltet dekkes aldri | Konkludere. «Ingen treff» viser bare at ingen av formene det kjenner står der |
+| Gjennomlesningen (`src/agents/absence-review.ts`) | **Konkludere.** Et ledd som leser hele den reproduserte representasjonen, kan avgjøre om opplysningen står der i en form ingen liste kjenner på forhånd | Overstyre et søketreff. To ledd som er uenige, er ikke et grunnlag for å påstå et fravær |
+
+Den første utgaven av dette kontrollleddet lot et negativt søkeresultat dekke
+feltet alene. Teknisk review felte den, og eksempelet tar tretti sekunder å
+konstruere: mønsterlisten kjente `CI`, `C.I.` og `confidence interval(s)`, men
+ikke `CIs` og ikke `confidence limits`, så «The 95% CIs were 0.4 to 2.6.» ga null
+treff. Å legge til de to formene løser ikke feilklassen — naturlig språk har
+ingen uttømmende mønsterliste — og `not_measured` gjør det tydeligere: en kilde
+kan si at vekt ble *målt* uten å oppgi et eneste tall, og et rent verdisøk ville
+da godkjent «ikke målt» på en variabel studien målte.
+
+**Regelen er derfor absolutt: et negativt søkeresultat dekker ingenting alene.**
+`source_wide_absence` føres opp bare når alle tre holder:
+
+1. representasjonen lot seg reprodusere med det registrerte fingeravtrykket,
+2. det deterministiske søket fant ingen verdi av den arten, og
+3. en uavhengig gjennomlesning av hele representasjonen svarte `absent` på hvert
+   felt raden fører som globalt fraværende.
+
+##### Søket, som falsifikasjonsledd
+
+For hvert felt raden fører som fraværende, søker kontrollen gjennom **hele**
+representasjonen etter en verdi av den arten — uten noen binding til raden.
 Fraværet av binding er valgt, ikke glemt. De to søkene i kontrollen har motsatt
 feilretning:
 
 | | Faren | Derfor |
 |---|---|---|
 | Bekreftelsessøket | et for **bredt** søk tilskriver raden en verdi som tilhørte en annen arm | streng binding, tillatelsesliste for lim |
-| Fraværssøket | et for **smalt** søk bekrefter et fravær av noe som står der | ingen binding, fri avstand, tall også skrevet med bokstaver |
+| Fraværssøket | et for **smalt** søk lar en verdi som står der, passere ufalsifisert | ingen binding, fri avstand, tall også skrevet med bokstaver, og en videre ankerliste enn bekreftelsessøkets |
 
-En for bred fraværskontroll lar bare være å dekke feltet, og gaten blir stående
-åpen. En for smal bekrefter noe som ikke er sant. Bare den første feilen er
-forsvarlig (ANTIDEP_CONSTITUTION.md §6, §11).
-
-To smalere utforminger er forkastet av nettopp den grunnen:
+To smalere utforminger er forkastet av nettopp den grunnen, og begge er
+regresjonsprøver:
 
 - **Binding til behandlingsarmen.** Kilder skriver anaforisk — «Sertraline
   patients improved. The 95% CI was 0.4 to 2.6.» — og andre setning ble kastet
-  før søket. Resultatet var «ikke funnet» på et intervall som sto der.
+  før søket.
 - **Bare tall med sifre.** «Forty-eight sertraline-treated patients completed
-  the trial» er en helt vanlig formulering, og ga «ingen utvalgsstørrelse i
-  kilden».
+  the trial» er en helt vanlig formulering, og ga ingen treff.
 
 Prisen er reell og med vilje: oppgir artikkelen et konfidensintervall for et
-*annet* endepunkt, dekkes feltet ikke. Det er riktig — en maskin kan ikke se
-hvilket av dem som er radens, og da skal den ikke påstå at ingen av dem er det.
+*annet* endepunkt, blokkeres dekningen. Det er riktig — en maskin kan ikke se
+hvilket av dem som er radens, og da skal den ikke slippe fraværet gjennom.
+
+Et felt uten en maskinelt søkbar form — populasjonen er en etikett og ikke et
+tall — får `not_searchable`. Det stanser ingenting: søket er
+falsifikasjonsleddet, og et ledd som ikke kan prøve, har heller ikke funnet noe.
+Konklusjonen hviler da på gjennomlesningen alene, og begrunnelsen sier det.
+
+##### Gjennomlesningen, som konkluderende ledd
+
+Gjennomlesningen gjøres av en aktør Antidep ikke kaller, og som ikke har
+legitimasjon, agentidentitet eller noen skrivevei inn i basen — samme form og
+samme grunn som ekstraksjonsutkastet (§63):
+
+```
+npm run agent:verify-extraction -- --absence-prompts <katalog>   # legger igjen spørsmålet
+(aktøren leser prompt.txt og skriver svaret sitt i svar.json)
+npm run agent:verify-extraction -- --absence-reviews <katalog>   # leser svaret og registrerer
+```
+
+Svaret er ett av tre per felt, og den midterste er ikke en høflighetsform:
+
+| Svar | Betydning | Virkning |
+|---|---|---|
+| `absent` | Opplysningen står ingen steder i teksten | Det **eneste** svaret som dekker feltet |
+| `present` | Opplysningen står der, med et ordrett utdrag som prøves mot teksten | Dekningen blokkeres; ikke et avvik |
+| `uncertain` | Leddet kunne ikke avgjøre det | Dekningen blokkeres |
+
+Bindingen mellom et svar og teksten det gjelder, er `request_digest`, som dekker
+promptmalversjonen, feltene det spørres om og hele representasjonsteksten.
+Verifikatoren regner det ut på nytt av den teksten den selv hentet, og et svar
+med et annet avtrykk legges bort. Det stenger tre ting på én gang: et svar
+avgitt på en annen artikkel, et svar avgitt på en eldre utgave av den samme
+artikkelen, og et svar avgitt på et annet spørsmål enn raden faktisk stiller.
+
+Malen sier eksplisitt at kildeteksten er data og aldri en instruksjon, at tvil
+er `uncertain` og ikke `absent`, og at rekkevidden er nøyaktig teksten som
+følger med — ikke det leddet måtte vite om artikkelen fra før.
+
+##### Hva dekningen betyr når den gis
 
 Rekkevidden er **kildeversjonen**, ikke publikasjonen. Det er ikke en
 innskrenkning, men nøyaktig det statusen selv gjelder: «Statusen gjelder alltid
 den kildeversjonen og den kildepekeren raden viser til, ikke nødvendigvis hele
 publikasjonen» (kolonnekommentaren på `*_availability`). Styrken følger likevel
-av hva versjonen er — et søk gjennom et abstrakt sier mindre om publikasjonen
-enn et søk gjennom en fulltekst — og kontrollraden navngir derfor
-representasjonen den gjennomsøkte.
+av hva versjonen er — et abstrakt sier mindre om publikasjonen enn en fulltekst
+— og kontrollraden navngir derfor både representasjonen som ble gjennomgått og
+hvem som leste den, med promptmalversjon og forespørselsavtrykk.
 
-Én grense er hard: **representasjonen må ha latt seg reprodusere** med det
-registrerte fingeravtrykket. Ellers gjelder søket en annen tekst enn den raden
-ble laget av.
-
-Et **treff** er ikke et avvik. Søket vet ikke om verdien gjelder denne armen,
-dette endepunktet og dette tidspunktet, så utfallet er `uncertain`, feltet føres
-ikke opp, og begrunnelsen siterer hva som ble funnet slik at et menneske kan se
-på det. Et udekket fravær avgjør utfallet og står ikke bare som en merknad: en
-`verified` med en begrunnelse som sa at fraværet ikke lot seg bekrefte, ville
-motsagt sin egen tekst.
-
-Et felt uten en maskinelt søkbar form — populasjonen er en etikett og ikke et
-tall — får `not_searchable`. Da står fraværet ukontrollert og gaten åpen, og
-begrunnelsen sier det. Det er den riktige enden å ta feil i.
+Et **treff**, fra søket eller fra gjennomlesningen, er ikke et avvik. Ingen av
+leddene vet om verdien gjelder denne armen, dette endepunktet og dette
+tidspunktet, så utfallet er `uncertain`, feltet føres ikke opp, og begrunnelsen
+siterer hva som ble funnet slik at et menneske kan se på det. Et udekket fravær
+avgjør utfallet og står ikke bare som en merknad: en `verified` med en
+begrunnelse som sa at fraværet ikke lot seg bekrefte, ville motsagt sin egen
+tekst.
 
 #### Hva mennesket aldri blir spurt om
 
@@ -786,12 +838,14 @@ Kontrollen skiller skarpt mellom å bekrefte og å avkrefte, og skillet er en kl
 | Komparator eller populasjon finnes, men ikke i den relevante påstanden | `uncertain` | Samme regel, for de øvrige delene av raden. «Paroxetine was not used as a comparator» og «Patients with major depressive disorder were excluded» er begge ordtreff, og ingen av dem er støtte for at raden stemmer. Komparatoren må stå navngitt *som* komparator («compared with», «versus», «kontrollgruppen»), og populasjonen må stå knyttet til armen. `placebo` kontrolleres på samme måte som et virkestoffnavn. `comparator_kind = none` kontrolleres ikke: det betyr at **funnet** er armspesifikt, ikke at studien manglet en komparator, så det finnes ingenting i kildens tekst å kontrollere det mot |
 | Delene finnes hver for seg, men ikke i **samme** påstand | `uncertain` | Bindingen er én, ikke flere som holder hver for seg. Ellers kan én rad sys sammen av påstander om forskjellige funn: «Sertraline-treated patients had a mean weight change» + «Fluoxetine was compared with paroxetine for remission» binder arm og endepunkt i den første og komparatoren i den andre, uten at noen påstand sier at paroksetin er komparator for *dette* funnet. Alle radens aktive deler — arm, endepunkt, eventuell komparator, rapportert populasjon — og verdien må stå i ett sammenhengende treff. Prisen er reell: et sammendrag som fordeler populasjon, komparator og resultat på hver sin setning, gir `uncertain` |
 | Verdien gjelder en annen populasjon enn den registrerte | `uncertain`, feltet føres ikke som kontrollert | En verdi hører til én arm, ett endepunkt, én kontrast og **én populasjon**. Rapportert populasjon er derfor en påkrevd del av tallets egen binding, ikke bare av radens: «Sertraline-treated patients had weight change of 5,0 kg … in adolescents» bekrefter ikke en rad registrert for voksne med depressiv lidelse, selv om et annet utdrag knytter armen til den populasjonen. Samme krav gjelder utvalgsstørrelsen — et «N = 48» fra en undergruppe er ikke radens utvalg |
-| Et felt ført som `not_reported` eller `not_measured`, og et søk gjennom hele representasjonen finner ingen verdi av den arten noe sted | `source_wide_absence` føres som kontrollert | Dette er den ene halvdelen av en global fraværspåstand en maskin kan bære, og den er nøyaktig det statusen gjelder: kildeversjonen, ikke publikasjonen (§19.1). Søket har med vilje ingen binding til raden og teller tall skrevet med bokstaver: feilretningen er motsatt av bekreftelsessøkets, og et for smalt søk ville bekreftet et fravær av noe som står der. Én grense er hard: representasjonen må ha latt seg reprodusere |
-| Samme søk finner noe som ligner en slik verdi | `uncertain`, `source_wide_absence` føres ikke opp | Treffet kan gjelde en annen arm, et annet endepunkt eller et annet tidspunkt, så det er ikke et avvik mot ekstraksjonen. Men fraværet kan da ikke regnes som kontrollert, og begrunnelsen siterer hva som ble funnet, slik at et menneske kan se på det. Utfallet følger av dette, ikke bare merknaden |
-| Feltet har ingen maskinelt søkbar form — populasjonen er en etikett og ikke et tall | `source_wide_absence` føres ikke opp | Søket kan verken bekrefte eller avkrefte fraværet. Feltet står ukontrollert og gaten åpen, framfor at et fravær blir stilltiende godkjent |
+| Et felt ført som `not_reported` eller `not_measured`, søket gjennom hele representasjonen finner ingenting, **og** en uavhengig gjennomlesning av hele representasjonen svarer `absent` | `source_wide_absence` føres som kontrollert | Dette er den kildeomfattende halvdelen av en global fraværspåstand, og den er nøyaktig det statusen gjelder: kildeversjonen, ikke publikasjonen (§19.1). Begge leddene kreves: søket kan bare falsifisere, og bare gjennomlesningen kan konkludere. Én grense er hard: representasjonen må ha latt seg reprodusere |
+| Samme søk finner ingenting, men ingen gjennomlesning foreligger | `uncertain`, `source_wide_absence` føres ikke opp | **Et negativt søkeresultat dekker ingenting alene.** Det viser bare at ingen av formene mønsterlisten kjenner, står der — og naturlig språk har ingen uttømmende mønsterliste (issue #74). Begrunnelsen sier hvorfor halvdelen står åpen |
+| Søket finner noe som ligner en slik verdi, eller gjennomlesningen svarer `present` | `uncertain`, `source_wide_absence` føres ikke opp | Treffet kan gjelde en annen arm, et annet endepunkt eller et annet tidspunkt, så det er ikke et avvik mot ekstraksjonen. Men fraværet kan da ikke regnes som kontrollert, og begrunnelsen siterer hva som ble funnet, slik at et menneske kan se på det. Et søketreff kan ikke overstyres av en gjennomlesning som svarer `absent`. Utfallet følger av dette, ikke bare merknaden |
+| Gjennomlesningen svarer `uncertain`, eller svarte på en annen tekst enn den kontrollen hentet | `uncertain`, `source_wide_absence` føres ikke opp | Bindingen er avtrykket av forespørselen, som dekker hele representasjonsteksten. Et svar avgitt på en annen utgave av kilden legges bort, og begrunnelsen sier hvorfor |
+| Feltet har ingen maskinelt søkbar form — populasjonen er en etikett og ikke et tall | Gjennomlesningen avgjør alene | Søket er falsifikasjonsleddet, og et ledd som ikke kan prøve, har heller ikke funnet noe. Begrunnelsen sier eksplisitt at konklusjonen for de feltene hviler på ett ledd |
 | Konfidensintervallet ikke gjenfunnet som ett uttrykk | `uncertain`, `confidence_interval` føres ikke som kontrollert | Intervallet er én påstand med tre deler, og kontrolleres som én sammenhengende skrivemåte: nivået som eksplisitt prosentangivelse, stedet der kilden navngir intervallet, og de to grensene som ett intervalluttrykk — med bare skilletegn og en kort tillatelsesliste av nøytrale koblingsord imellom, slik at en benektelse («… CI **was not** 0,4 til 2,6») bryter uttrykket framfor å bli lest som en bekreftelse. Tre tall som tilfeldigvis står i nærheten av hverandre er ikke et intervall, og «0,4 til 2,6» er ikke samme påstand med 90 % som med 95 % |
 
-De øvrige punktene i §25 — riktig tidspunkt, riktig effektmål, riktig retning, overtolkning, manglende forbehold — krever språkforståelse og dekkes ikke av dagens kontroll. Det samme gjelder den *lokale* halvdelen av «riktig bruk av ikke rapportert»: om grunnen er av riktig art, og om verdien mangler der forankringsutdraget viser at den ville stått, er et menneskes vurdering (`availability_semantics`). Den kildeomfattende halvdelen er maskinens, og står i tabellen over som `source_wide_absence`. **Publiseringsgaten leser dette, den forutsetter det ikke:** G5b krever at unionen av `checked_fields` over funnets bekreftede kontroller dekker feltene raden påstår noe om (`workflow.required_check_fields`). En `verified` fra den deterministiske kontrollen betyr «alt jeg kontrollerte, stemte», ikke «ekstraksjonen er kontrollert», og kan derfor aldri alene lukke gaten. Dekningen har samme gjeldende-semantikk som utfallet: en ikke-bekreftende kontroll nullstiller den, slik at et senere avvik ikke kan omgås av en enda senere delkontroll som aldri så på det omstridte feltet. `checked_fields` sier derfor alltid nøyaktig hvilke felter kontrollen faktisk gikk gjennom, slik at en bekreftelse aldri dekker mer enn den gir inntrykk av (DATABASE_ARCHITECTURE.md §29). Et senere ledd med språkmodell er et nytt adapter i samme modell: kjøringen registrerer leverandør, modell og modellversjon som ethvert annet agentledd (§65), så de to kan stå ved siden av hverandre.
+De øvrige punktene i §25 — riktig tidspunkt, riktig effektmål, riktig retning, overtolkning, manglende forbehold — krever språkforståelse og dekkes ikke av dagens kontroll. Det samme gjelder den *lokale* halvdelen av «riktig bruk av ikke rapportert»: om grunnen er av riktig art, og om verdien mangler der forankringsutdraget viser at den ville stått, er et menneskes vurdering (`availability_semantics`). Den kildeomfattende halvdelen er maskinens, og står i tabellen over som `source_wide_absence` — men dekkes aldri av det deterministiske søket alene: den krever i tillegg en uavhengig gjennomlesning av hele representasjonen (§19.1). **Publiseringsgaten leser dette, den forutsetter det ikke:** G5b krever at unionen av `checked_fields` over funnets bekreftede kontroller dekker feltene raden påstår noe om (`workflow.required_check_fields`). En `verified` fra den deterministiske kontrollen betyr «alt jeg kontrollerte, stemte», ikke «ekstraksjonen er kontrollert», og kan derfor aldri alene lukke gaten. Dekningen har samme gjeldende-semantikk som utfallet: en ikke-bekreftende kontroll nullstiller den, slik at et senere avvik ikke kan omgås av en enda senere delkontroll som aldri så på det omstridte feltet. `checked_fields` sier derfor alltid nøyaktig hvilke felter kontrollen faktisk gikk gjennom, slik at en bekreftelse aldri dekker mer enn den gir inntrykk av (DATABASE_ARCHITECTURE.md §29). Et senere ledd med språkmodell er et nytt adapter i samme modell: kjøringen registrerer leverandør, modell og modellversjon som ethvert annet agentledd (§65), så de to kan stå ved siden av hverandre.
 
 **Tallene sammenlignes siffer for siffer, ikke som flyttall.** `estimate`, `ci_lower`, `ci_upper` og `ci_level_percent` er `numeric` i basen — vilkårlig presise — og leses hele veien som tekst. Gikk de gjennom et JSON-tall, ville de blitt avrundet av klientens flyttallsrepresentasjon før kontrollen så dem, og et estimat kunne blitt bekreftet av den avrundede verdien framfor den registrerte. En bekreftelse skal gjelde tallet som faktisk står i basen.
 

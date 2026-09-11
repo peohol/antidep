@@ -505,7 +505,7 @@ describe('Kontrolløkten — feltkontrollen', () => {
       step.getByText('Mangler opplysningen der utdraget viser at den ville stått?'),
     ).toBeInTheDocument()
     expect(step.getByText(/stedet der opplysningen ville stått/)).toBeInTheDocument()
-    expect(step.getByText(/søkes det etter maskinelt/)).toBeInTheDocument()
+    expect(step.getByText(/avgjøres maskinelt ved en egen/)).toBeInTheDocument()
     expect(step.getByText(/ikke din oppgave/)).toBeInTheDocument()
     // Og ikke det globale ja/nei-spørsmålet, som ingen kunne svart «Ja» på ut
     // fra det flaten viser.
@@ -714,7 +714,7 @@ describe('Kontrolløkten — en global fraværspåstand har to halvdeler', () =>
     // Økten er gjennomførbar: alle spørsmålene er besvart fra det flaten viser.
     await screen.findByText('Dette blir registrert som: Bekreftet.')
     // Og den sier hvor den andre halvdelen står, og at den ikke er hans.
-    expect(screen.getByText(/maskinelt søk gjennom hele den/)).toBeInTheDocument()
+    expect(screen.getByText(/egen maskinell gjennomgang av hele den/)).toBeInTheDocument()
     expect(screen.getByText(/ikke noe du skal gjøre/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
@@ -742,7 +742,7 @@ describe('Kontrolløkten — en global fraværspåstand har to halvdeler', () =>
 
   // Motstykket: en lokal fraværsgrunn har ingen andre halvdel, og flaten skal
   // ikke finne på en.
-  it('sier ingenting om et kildeomfattende søk når grunnen gjelder funnet', async () => {
+  it('sier ingenting om en kildeomfattende kontroll når grunnen gjelder funnet', async () => {
     const { rpcCalls } = renderExtractionControl({
       extraction: reviewExtraction({
         ci_lower: null,
@@ -753,7 +753,7 @@ describe('Kontrolløkten — en global fraværspåstand har to halvdeler', () =>
     })
     await answerEverythingYes()
     await screen.findByText('Dette blir registrert som: Bekreftet.')
-    expect(screen.queryByText(/maskinelt søk gjennom hele den/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/egen maskinell gjennomgang av hele den/)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
     await waitFor(() => {

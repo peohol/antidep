@@ -33,9 +33,10 @@
 --                    det flaten viser. Feltet er `availability_semantics`.
 --
 --   KILDEOMFATTENDE  står opplysningen noe annet sted i kildeversjonen?
---                    Grunnlag: hele den registrerte representasjonen. En maskin
---                    avgjør det med et reproduserbart søk. Feltet er
---                    `source_wide_absence`.
+--                    Grunnlag: hele den registrerte representasjonen. To
+--                    maskinelle ledd avgjør det — et deterministisk søk som kan
+--                    AVKREFTE, og en uavhengig gjennomlesning av hele teksten
+--                    som kan KONKLUDERE. Feltet er `source_wide_absence`.
 --
 -- Begge kreves nå eksplisitt av publiseringsgaten for et funn som fører et
 -- slikt fravær. Det er en **strengere** gate enn før, ikke en løsere: hullet
@@ -54,7 +55,7 @@
 --
 -- `evidence_verifications_source_wide_absence_check` gjør det umulig framfor
 -- frarådet: feltet kan bare føres opp av en rad med en agentkjøring, og bare
--- når kontrollen hadde mer enn et avledet sammendrag å søke i. Skal et menneske
+-- når kontrollen hadde mer enn et avledet sammendrag å gå gjennom. Skal et menneske
 -- kunne bære påstanden senere, er det et eget kontrollobjekt med sin egen
 -- dekning og sin egen flate — ikke en oppmyking av denne regelen.
 --
@@ -63,18 +64,30 @@
 --
 -- Rekkevidden er **kildeversjonen**, ikke publikasjonen — som er nøyaktig det
 -- `*_availability`-kolonnene selv sier at statusen gjelder (migrasjon 003).
--- Søket kontrollerer derfor den påstanden raden faktisk gjør.
+-- Kontrollen gjelder derfor den påstanden raden faktisk gjør.
 --
 -- Styrken følger av hva versjonen er, og ordlyden sier det: kontrollraden
--- navngir representasjonen som ble gjennomsøkt, slik at et søk gjennom et
--- abstrakt ikke leses som et søk gjennom en fulltekst.
+-- navngir representasjonen som ble gjennomgått, slik at et abstrakt ikke leses
+-- som en fulltekst.
 --
--- `src/agents/extraction-checks.ts` fører feltet opp bare når representasjonen
--- lot seg reprodusere, og søket der er med vilje bygget for maksimal
--- gjenfinning: ingen binding til raden, fri avstand mellom anker og verdi, og
--- tall også skrevet med bokstaver. Feilretningen er motsatt av
--- bekreftelsessøkets — et for smalt fraværssøk bekrefter et fravær av noe som
--- står der, og det er nøyaktig den overdrivelsen §29 forbyr.
+-- ----------------------------------------------------------------------------
+-- Hvorfor et søk ALENE ikke fører feltet opp
+--
+-- Den første utgaven av kontrollleddet førte feltet opp så snart et mønstersøk
+-- ikke fant noe. Teknisk review felte den: mønstrene kjente `CI`, `C.I.` og
+-- `confidence interval(s)`, men ikke `CIs` og ikke `confidence limits`, og «The
+-- 95% CIs were 0.4 to 2.6.» ville da blitt bokført som «ingen konfidensintervall
+-- i kildeversjonen». Å legge til de to formene løser ikke feilklassen: naturlig
+-- språk har ingen uttømmende mønsterliste, og `not_measured` gjør det tydeligere
+-- — en kilde kan si at vekt ble *målt* uten å oppgi et eneste tall.
+--
+-- `src/agents/extraction-checks.ts` fører derfor feltet opp bare når ALLE tre
+-- holder: representasjonen lot seg reprodusere, det deterministiske søket fant
+-- ingenting, og en uavhengig gjennomlesning av hele representasjonen
+-- (`src/agents/absence-review.ts`) svarte at opplysningen ikke står der. Søket
+-- er falsifikasjonsleddet — et treff blokkerer alene — og gjennomlesningen er
+-- det ene leddet som kan konkludere. Et negativt søkeresultat er et manglende
+-- motbevis, ikke et bevis (issue #74).
 --
 -- Styrende dokumenter:
 --   docs/ANTIDEP_CONSTITUTION.md §4, §6, §10, §11, §17
@@ -89,14 +102,14 @@
 --
 -- Ett sted, fordi tre lesere trenger svaret: gaten (for å vite om
 -- `source_wide_absence` kreves), det kildeomfattende kontrollleddet (for å vite
--- hva det skal søke etter) og kontrollflaten (for å si hva mennesket ikke blir
--- spurt om). Tre formuleringer av den samme regelen ville før eller siden
--- svart forskjellig.
+-- hva det skal lete etter, og hva gjennomlesningen skal spørres om) og
+-- kontrollflaten (for å si hva mennesket ikke blir spurt om). Tre formuleringer
+-- av den samme regelen ville før eller siden svart forskjellig.
 --
 -- `not_applicable` og `not_extractable` er ikke med, og det er poenget:
 -- `not_applicable` er en påstand om funnet, og `not_extractable` sier at
 -- opplysningen *står* i kilden. Ingen av dem er en påstand om kilden som
--- helhet, og et kildeomfattende søk ville verken kunnet bekrefte eller
+-- helhet, og en kildeomfattende kontroll ville verken kunnet bekrefte eller
 -- avkrefte dem.
 -- ----------------------------------------------------------------------------
 create function workflow.source_wide_absence_fields(p_evidence_item_id uuid)
@@ -136,7 +149,7 @@ as $$
 $$;
 
 comment on function workflow.source_wide_absence_fields(uuid) is
-  'Feltene et evidensfunn fører uten verdi med en begrunnelse som gjelder kilden eller studien SOM HELHET: not_reported («ikke rapportert i kilden») og not_measured («ikke målt i studien»). Tom liste betyr at raden ikke gjør noen slik påstand — aldri at den er ukjent. not_applicable og not_extractable er med vilje utelatt: den første er en påstand om funnet, og den andre sier at opplysningen står i kilden men ikke lar seg lese entydig ut, så et kildeomfattende søk kan verken bekrefte eller avkrefte dem. Leses tre steder og er skrevet ett: workflow.required_check_fields(uuid) krever source_wide_absence når listen ikke er tom, det deterministiske kontrollleddet leser den for å vite hva det skal søke etter i hele representasjonen, og kontrollflaten leser den for å kunne si hva mennesket ikke blir spurt om. SECURITY DEFINER fordi knowledge har RLS med default deny.';
+  'Feltene et evidensfunn fører uten verdi med en begrunnelse som gjelder kilden eller studien SOM HELHET: not_reported («ikke rapportert i kilden») og not_measured («ikke målt i studien»). Tom liste betyr at raden ikke gjør noen slik påstand — aldri at den er ukjent. not_applicable og not_extractable er med vilje utelatt: den første er en påstand om funnet, og den andre sier at opplysningen står i kilden men ikke lar seg lese entydig ut, så en kildeomfattende kontroll kan verken bekrefte eller avkrefte dem. Leses tre steder og er skrevet ett: workflow.required_check_fields(uuid) krever source_wide_absence når listen ikke er tom, det kildeomfattende kontrollleddet leser den for å vite hvilke felter det skal lete etter i hele representasjonen og be gjennomlesningen om et svar på, og kontrollflaten leser den for å kunne si hva mennesket ikke blir spurt om. SECURITY DEFINER fordi knowledge har RLS med default deny.';
 
 revoke execute on function workflow.source_wide_absence_fields(uuid) from public;
 
@@ -200,7 +213,7 @@ comment on function workflow.required_check_fields(uuid) is
   'Feltene et evidensfunn faktisk påstår noe om, og som til sammen må være kontrollert før funnet kan bære en publisert påstand (publiseringsgatens G5b). Utledet av raden selv framfor av en vedlikeholdt liste: et felt som ikke er rapportert, påstår ingenting og kreves ikke — men at det er ført som ikke rapportert, dekkes av availability_semantics, som alltid kreves. Fra migrasjon 005ae kreves i tillegg source_wide_absence når raden fører minst ett felt med not_reported eller not_measured (workflow.source_wide_absence_fields(uuid)): de to statusene er påstander om kilden som helhet, og availability_semantics dekker bare den lokale halvdelen av dem. Fra migrasjon 005y gjelder det samme raw_extraction: kolonnen er valgfri, og fra agentkontrakten i 005v er kildeforankringen kontrollgrunnlaget, så en rad uten rå gjengivelse påstår ingenting der. Én kontroll trenger ikke dekke alt; kravet gjelder unionen over funnets kontroller (workflow.covered_check_fields(uuid)), slik at flere verifikatorledd kan dele arbeidet.';
 
 -- ----------------------------------------------------------------------------
--- 3. Mennesket får ikke et steg for det kildeomfattende søket
+-- 3. Mennesket får ikke et steg for den kildeomfattende halvdelen
 --
 -- `semantic_check_fields` er feltene en kliniker kontrollerer ett av gangen, og
 -- den utelater allerede `raw_extraction` og `source_locator` fordi de er
@@ -212,7 +225,7 @@ comment on function workflow.required_check_fields(uuid) is
 --
 -- Det følger av dette at forankringskravet heller ikke gjelder feltet:
 -- `workflow.assert_extraction_fully_grounded(uuid)` leser
--- `semantic_check_fields`, og et kildeomfattende søk har ingen ett enkelt
+-- `semantic_check_fields`, og en kildeomfattende kontroll har ingen ett enkelt
 -- utdrag å forankres i. Det er riktig — grunnlaget er hele representasjonen,
 -- og fingeravtrykket av den står i kontrollraden.
 -- ----------------------------------------------------------------------------
@@ -242,7 +255,7 @@ comment on function workflow.semantic_check_fields(uuid) is
   'Feltene et evidensfunn påstår noe *om studien*, og som en kliniker kontrollerer ett av gangen: workflow.required_check_fields(uuid) uten raw_extraction, source_locator og source_wide_absence. De to første er provenansfelter og ikke kliniske påstander — «er noe bevart ordrett?» og «hvor i dokumentet står funnet som helhet?» — og som egne beslutninger i en kontrolløkt ville de vært spørsmål uten klinisk innhold. Garantien de bærer er ikke svekket, men flyttet dit den er sterkere: hver kildeforankring har sitt eget ordrette utdrag og sin egen presise peker, så en bekreftet semantisk delkontroll er en kontroll av begge deler for nøyaktig det feltet. source_wide_absence utelates av en sterkere grunn (migrasjon 005ae): spørsmålet er om opplysningen står noe annet sted i hele artikkelen, og det kan bare besvares ved å lese hele artikkelen — arbeidsformen PRODUCT_INFORMATION_ARCHITECTURE.md §63.1 finnes for å fjerne. Det leddet er maskinelt og har sin egen rad. Publiseringsgatens G5b leser fortsatt required_check_fields(uuid), uendret. Rekkefølgen er den required_check_fields(uuid) gir, altså kolonnerekkefølgen på raden.';
 
 -- ----------------------------------------------------------------------------
--- 4. Feltet kan bare føres opp av et ledd som faktisk gjennomsøkte kilden
+-- 4. Feltet kan bare føres opp av et ledd som faktisk gjennomgikk kilden
 --
 -- Deklarativt og på tabellen, ikke i én skrivevei: begge veiene inn i
 -- workflow.evidence_verifications går gjennom
@@ -256,8 +269,8 @@ comment on function workflow.semantic_check_fields(uuid) is
 -- kan derfor ikke føre feltet opp.
 --
 -- Kildetilgangen er med av samme grunn som i
--- `evidence_verifications_source_access_check`: et søk gjennom et annet ledds
--- sammendrag er ikke et søk gjennom kilden, og ANTIDEP_CONSTITUTION.md §11
+-- `evidence_verifications_source_access_check`: en gjennomgang av et annet
+-- ledds sammendrag er ikke en gjennomgang av kilden, og ANTIDEP_CONSTITUTION.md §11
 -- forbyr å bygge en bekreftelse på det.
 -- ----------------------------------------------------------------------------
 alter table workflow.evidence_verifications
@@ -268,7 +281,7 @@ alter table workflow.evidence_verifications
   );
 
 comment on column workflow.evidence_verifications.checked_fields is
-  'Nøyaktig de feltene denne ene operasjonen gikk gjennom og fant i orden — aldri flere. En rad skal aldri påstå større dekning enn operasjonen faktisk hadde (DATABASE_ARCHITECTURE.md §29). Publiseringsgatens G5b leser unionen over funnets kontroller (workflow.covered_check_fields(uuid)), slik at maskinen kan dekke provenansfeltene og mennesket de semantiske, uten at noen av dem overdriver. Fram til migrasjon 005y krevde evidence_verifications_locator_checked_check at enhver bekreftelse førte opp source_locator; kravet er flyttet til gaten, der unionen avgjør. Fra migrasjon 005ae kan source_wide_absence bare føres opp av en rad med en agentkjøring og med mer enn et avledet sammendrag som grunnlag (evidence_verifications_source_wide_absence_check): feltet er påstanden om at et søk gjennom hele den kontrollerte representasjonen ikke fant opplysningen, og en menneskelig kontrolløkt stiller ikke det spørsmålet.';
+  'Nøyaktig de feltene denne ene operasjonen gikk gjennom og fant i orden — aldri flere. En rad skal aldri påstå større dekning enn operasjonen faktisk hadde (DATABASE_ARCHITECTURE.md §29). Publiseringsgatens G5b leser unionen over funnets kontroller (workflow.covered_check_fields(uuid)), slik at maskinen kan dekke provenansfeltene og mennesket de semantiske, uten at noen av dem overdriver. Fram til migrasjon 005y krevde evidence_verifications_locator_checked_check at enhver bekreftelse førte opp source_locator; kravet er flyttet til gaten, der unionen avgjør. Fra migrasjon 005ae kan source_wide_absence bare føres opp av en rad med en agentkjøring og med mer enn et avledet sammendrag som grunnlag (evidence_verifications_source_wide_absence_check): feltet er påstanden om at opplysningen ikke står noe sted i hele den kontrollerte representasjonen, avgjort av to maskinelle ledd — et deterministisk søk som kan avkrefte og en uavhengig gjennomlesning som kan konkludere — og en menneskelig kontrolløkt stiller ikke det spørsmålet.';
 
 -- ----------------------------------------------------------------------------
 -- 5. Grunnlaget sier hvilke felter som bærer en kildeomfattende fraværspåstand

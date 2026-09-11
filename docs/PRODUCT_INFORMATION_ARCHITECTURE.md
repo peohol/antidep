@@ -919,14 +919,18 @@ presenterer det:
   - den **lokale** — mangler verdien der den ville stått, og er grunnen av
     riktig art? — er kontrollørens, og svaret dekker den fullt ut,
   - den **kildeomfattende** — står verdien noe annet sted i kildeversjonen? — er
-    et maskinelt søk gjennom hele den registrerte representasjonen, og
+    en egen maskinell gjennomgang av hele den registrerte representasjonen, og
     kontrolløren blir aldri spurt om den.
 
   Flaten skal si dette der kontrolløren svarer, og ikke bare i en oppsummering:
   hen skal vite at hen ikke skal lete, og at ingen venter på at hen gjør det.
-  I lagringssteget skal flaten dessuten si om det maskinelle søket allerede har
-  gått god for funnet, eller om publiseringsgaten fortsatt står åpen på det —
-  og at det i så fall ikke er kontrollørens oppgave. Å la den lokale
+  I lagringssteget skal flaten dessuten si om den maskinelle gjennomgangen
+  allerede har gått god for funnet, eller om publiseringsgaten fortsatt står
+  åpen på det — og at det i så fall ikke er kontrollørens oppgave.
+  Formuleringen skal være **gjennomgang**, ikke **søk**: den kildeomfattende
+  halvdelen avgjøres ikke av et mønstersøk alene, og en flate som sa «søk»,
+  ville gitt kontrolløren et feilaktig bilde av hvor sterkt leddet er
+  (EVIDENCE_PIPELINE.md §19.1). Å la den lokale
   bekreftelsen dekke den globale statusen ville vært å endre den epistemiske
   policyen for å få implementasjonen til å gå opp; å be kontrolløren om den
   globale, ville vært å gjeninnføre nettopp den fulltekstlesingen kravet over

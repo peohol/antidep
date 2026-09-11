@@ -31,33 +31,48 @@
 --                              verdien faktisk mangler der forankringsutdraget
 --                              viser at den ville stått. Et menneske avgjør den
 --                              fra det flaten viser.
---   `source_wide_absence`      den KILDEOMFATTENDE halvdelen: at et
---                              søk gjennom **hele** den registrerte
---                              kildeversjonen ikke fant noen verdi av den arten
---                              noe sted. En maskin avgjør den, og bare en
---                              maskin: søket er reproduserbart, og
---                              fingeravtrykket av representasjonen står i
---                              kontrollraden.
+--   `source_wide_absence`      den KILDEOMFATTENDE halvdelen: at opplysningen
+--                              ikke står noe sted i **hele** den registrerte
+--                              kildeversjonen. En maskin avgjør den, og bare en
+--                              maskin — men ikke med ett ledd: et deterministisk
+--                              søk kan AVKREFTE fraværet, og en uavhengig
+--                              gjennomlesning av hele representasjonen kan
+--                              KONKLUDERE. Fingeravtrykket av representasjonen
+--                              står i kontrollraden, så begge er etterprøvbare.
 --
 -- ----------------------------------------------------------------------------
--- Hvorfor et søk kan bære påstanden, og hva det med vilje ikke sier
+-- Hvorfor et SØK ikke kan bære påstanden alene
+--
+-- Feltet ble først dekket av et mønstersøk alene: fant søket ingen verdi av den
+-- arten, var fraværet kontrollert. Teknisk review felte den utgaven, og
+-- eksempelet tar tretti sekunder å konstruere: mønstrene kjente `CI`, `C.I.` og
+-- `confidence interval(s)`, men ikke `CIs` og ikke `confidence limits`. «The 95%
+-- CIs were 0.4 to 2.6.» ga da null treff, og fraværet ville blitt bokført som
+-- kontrollert. Å legge til de to formene løser ikke feilklassen — naturlig språk
+-- har ingen uttømmende mønsterliste — og `not_measured` gjør det verre: en kilde
+-- kan si at vekt ble *målt* uten å oppgi et eneste tall.
+--
+-- Feltet dekkes derfor bare når to ledd er enige: søket fant ingenting, OG en
+-- uavhengig gjennomlesning av hele den reproduserte representasjonen svarte at
+-- opplysningen ikke står der. Søket kan avkrefte alene; bare gjennomlesningen
+-- kan konkludere (issue #74, `src/agents/absence-review.ts`).
+--
+-- ----------------------------------------------------------------------------
+-- Hva feltet sier, og hva det med vilje ikke sier
 --
 -- `not_reported` er i datamodellen definert relativt til **kildeversjonen**, og
 -- ikke til publikasjonen: «Statusen gjelder alltid den kildeversjonen og den
 -- kildepekeren raden viser til, ikke nødvendigvis hele publikasjonen»
--- (kolonnekommentaren på `*_availability`, migrasjon 003). Et søk gjennom hele
--- den kildeversjonen kontrollerer derfor nøyaktig den påstanden raden gjør —
--- verken mer eller mindre. Det er grunnen til at et søk kan bære den der ett
--- lokalt utdrag ikke kan.
+-- (kolonnekommentaren på `*_availability`, migrasjon 003). Kontrollen gjelder
+-- derfor nøyaktig den påstanden raden gjør — verken mer eller mindre.
 --
--- Styrken følger likevel av hva versjonen er: et søk gjennom et abstrakt sier
--- mindre om publikasjonen enn et søk gjennom en fulltekst, og en representasjon
--- kan dessuten mangle figurer, som er bilder, og supplementer, som er egne
--- filer. Kontrollraden navngir derfor representasjonen den gjennomsøkte, slik
--- at dekningen aldri leses som mer enn den er. Det alternativet som ville vært
--- å senke evidenskravet, er å la den lokale bekreftelsen dekke den globale
--- statusen; det er nettopp den overdrivelsen DATABASE_ARCHITECTURE.md §29
--- forbyr.
+-- Styrken følger likevel av hva versjonen er: et abstrakt sier mindre om
+-- publikasjonen enn en fulltekst, og en representasjon kan dessuten mangle
+-- figurer, som er bilder, og supplementer, som er egne filer. Kontrollraden
+-- navngir derfor representasjonen som ble gjennomgått, slik at dekningen aldri
+-- leses som mer enn den er. Det alternativet som ville vært å senke
+-- evidenskravet, er å la den lokale bekreftelsen dekke den globale statusen;
+-- det er nettopp den overdrivelsen DATABASE_ARCHITECTURE.md §29 forbyr.
 --
 -- Styrende dokumenter:
 --   docs/ANTIDEP_CONSTITUTION.md §4, §6, §11, §17
@@ -75,4 +90,4 @@ alter type workflow.evidence_check_field
   add value 'source_wide_absence' after 'availability_semantics';
 
 comment on type workflow.evidence_check_field is
-  'Kontrollerbare felter på et evidensfunn, brukt til å registrere hvilke felter en ekstraksjonsverifikasjon faktisk gikk gjennom (DATABASE_ARCHITECTURE.md §29). Vokabularet følger kolonnene i knowledge.evidence_items, med to unntak som ikke er kolonner men kontrollpunkter på tvers av dem. availability_semantics dekker den LOKALE kontrollen av at not_measured, not_reported, not_extractable og uncertain_extraction er brukt riktig: at hvert felt uten verdi bærer en fraværsgrunn av riktig art, og at verdien mangler der forankringsutdraget viser at den ville stått. Det er en av de enkleste måtene en ekstraksjon kan være feil på uten at noe tall ser galt ut, og et menneske kan avgjøre det av utdraget. source_wide_absence dekker den KILDEOMFATTENDE halvdelen av det samme, og bare den: at et søk gjennom hele den registrerte kildeversjonen ikke fant noen verdi av den arten noe sted. De to er skilt fordi not_reported og not_measured er påstander om kildeversjonen som helhet, og ett lokalt utdrag kan ikke bære dem — det var gjelden i issue #74. Rekkevidden er kildeversjonen og ikke publikasjonen, som er nøyaktig det *_availability-kolonnene selv sier at statusen gjelder; kontrollraden navngir representasjonen den gjennomsøkte, slik at et søk gjennom et abstrakt ikke leses som et søk gjennom en fulltekst. source_wide_absence kan derfor bare registreres av en agentkjøring som faktisk har gjennomsøkt representasjonen (evidence_verifications_source_wide_absence_check), aldri av en menneskelig kontrolløkt.';
+  'Kontrollerbare felter på et evidensfunn, brukt til å registrere hvilke felter en ekstraksjonsverifikasjon faktisk gikk gjennom (DATABASE_ARCHITECTURE.md §29). Vokabularet følger kolonnene i knowledge.evidence_items, med to unntak som ikke er kolonner men kontrollpunkter på tvers av dem. availability_semantics dekker den LOKALE kontrollen av at not_measured, not_reported, not_extractable og uncertain_extraction er brukt riktig: at hvert felt uten verdi bærer en fraværsgrunn av riktig art, og at verdien mangler der forankringsutdraget viser at den ville stått. Det er en av de enkleste måtene en ekstraksjon kan være feil på uten at noe tall ser galt ut, og et menneske kan avgjøre det av utdraget. source_wide_absence dekker den KILDEOMFATTENDE halvdelen av det samme, og bare den: at opplysningen ikke står noe sted i hele den registrerte kildeversjonen. De to er skilt fordi not_reported og not_measured er påstander om kildeversjonen som helhet, og ett lokalt utdrag kan ikke bære dem — det var gjelden i issue #74. Halvdelen avgjøres av to maskinelle ledd, fordi ingen av dem er nok alene: et deterministisk søk kan AVKREFTE fraværet, mens bare en uavhengig gjennomlesning av hele den reproduserte representasjonen kan KONKLUDERE at opplysningen ikke står der — naturlig språk har ingen uttømmende mønsterliste, og et negativt søkeresultat er et manglende motbevis og ikke et bevis. Rekkevidden er kildeversjonen og ikke publikasjonen, som er nøyaktig det *_availability-kolonnene selv sier at statusen gjelder; kontrollraden navngir representasjonen som ble gjennomgått, slik at et abstrakt ikke leses som en fulltekst. source_wide_absence kan derfor bare registreres av en agentkjøring som faktisk har gjennomgått representasjonen (evidence_verifications_source_wide_absence_check), aldri av en menneskelig kontrolløkt.';

@@ -29,12 +29,23 @@ export interface VerifierCliOptions {
   readonly targetId: string | null
   readonly dryRun: boolean
   readonly limit: number | null
+  /**
+   * Katalogene kjøreren ba om, slått opp på flaggnavnet uten `--`.
+   *
+   * Tom for en kjører som ikke oppgir `pathFlags`. Formen er en oppslagsbok og
+   * ikke et felt per flagg fordi de to verifikatorene deler denne parseren, og
+   * et felt her ville gitt claim-verifikatoren et valg den ikke kan gjøre noe
+   * med — men som den da ville tatt imot uten å avvise.
+   */
+  readonly paths: Readonly<Record<string, string | null>>
 }
 
 export interface VerifierCliSpec {
   /** Flagget som avgrenser kjøringen, uten `--`, for eksempel `claim-revision`. */
   readonly targetFlag: string
   readonly usage: string
+  /** Valg som tar en katalogsti, uten `--`. Alt annet avvises som ukjent. */
+  readonly pathFlags?: readonly string[]
 }
 
 /**
@@ -48,13 +59,25 @@ export function parseVerifierArguments(
   spec: VerifierCliSpec,
 ): VerifierCliOptions {
   const target = `--${spec.targetFlag}`
+  const pathFlags = spec.pathFlags ?? []
   let targetId: string | null = null
   let dryRun = false
   let limit: number | null = null
+  const paths: Record<string, string | null> = Object.fromEntries(
+    pathFlags.map((flag) => [flag, null]),
+  )
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
-    if (argument === '--dry-run') {
+    const pathFlag = pathFlags.find((flag) => argument === `--${flag}`)
+    if (pathFlag !== undefined) {
+      const value = argv[index + 1]
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error(`--${pathFlag} krever en katalogsti.`)
+      }
+      paths[pathFlag] = value
+      index += 1
+    } else if (argument === '--dry-run') {
       dryRun = true
     } else if (argument === target) {
       const value = argv[index + 1]
@@ -77,7 +100,7 @@ export function parseVerifierArguments(
     }
   }
 
-  return { targetId, dryRun, limit }
+  return { targetId, dryRun, limit, paths }
 }
 
 // ----------------------------------------------------------------------------

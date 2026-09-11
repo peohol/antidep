@@ -360,6 +360,36 @@ deterministiske ekstraksjonskontrollen under verifikatorens **egen** identitet �
 generering og verifikasjon er to operasjoner, av to aktører
 (`ANTIDEP_CONSTITUTION.md` §10, §11).
 
+### 6.0 Fører raden et fravær som gjelder hele kilden, kreves ett ledd mer
+
+Er et felt ført som `not_reported` eller `not_measured`, er det en påstand om
+kildeversjonen **som helhet**, og den kan ikke avgjøres av et mønstersøk: et
+fravær kan ikke bevises av et søk (issue #74, `EVIDENCE_PIPELINE.md` §19.1).
+Kontrollen går da i to trinn, med en gjennomlesning imellom:
+
+```bash
+npm run agent:verify-extraction -- --absence-prompts <sti>/fravaer   # legger igjen spørsmålet
+# aktøren leser prompt.txt og skriver svaret sitt i svar.json
+npm run agent:verify-extraction -- --absence-reviews <sti>/fravaer   # leser svaret og registrerer
+```
+
+Første trinn registrerer ingenting. Det legger igjen én mappe per evidensfunn,
+med `prompt.txt`, en tom `svar.json` og `forespoersel.json`. Gjennomlesningen
+gjøres av en aktør uten legitimasjon, på samme vilkår som modell-leddet ellers
+(§3): den ser bare filer.
+
+Svaret er ett av `absent`, `present` eller `uncertain` per felt. Bare `absent`
+dekker feltet, og et `present` skal bære det ordrette utdraget som viser hva som
+står der. Er du i tvil, er svaret `uncertain`: et `uncertain` stanser ingenting
+galt, mens et uriktig `absent` lar Antidep påstå at kilden ikke oppgir noe den
+faktisk oppgir.
+
+Andre trinn binder svaret til teksten det gjelder, ved avtrykket av
+forespørselen. Er kilden hentet på nytt og endret siden mappa ble åpnet, legges
+svaret bort og den kildeomfattende halvdelen står åpen — med grunnen i
+begrunnelsen. Kjøres andre trinn uten at noe svar ligger der, kommer funnet ut
+som `uncertain`, og det er riktig svar: ingen har gått gjennom kilden ennå.
+
 Legitimasjonen settes som beskrevet i
 [`../supabase/README.md`](../supabase/README.md), avsnittet «Legitimasjon til
 agentidentiteten».

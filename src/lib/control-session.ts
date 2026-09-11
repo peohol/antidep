@@ -300,10 +300,14 @@ function joinFindings(sentences: readonly string[]): string | null {
  *                             verdien der forankringsutdraget viser at den ville
  *                             stått? Det er spørsmålet økten stiller, og svaret
  *                             dekker nøyaktig det.
- *   `source_wide_absence`     den KILDEOMFATTENDE: fant et søk gjennom hele den
- *                             registrerte kildeversjonen ingen slik verdi noe
- *                             sted? Den stiller økten aldri, og databasen
- *                             avviser en menneskelig kontroll som fører den opp
+ *   `source_wide_absence`     den KILDEOMFATTENDE: står opplysningen noe annet
+ *                             sted i hele den registrerte kildeversjonen? Den
+ *                             avgjøres av to maskinelle ledd — et deterministisk
+ *                             søk som kan avkrefte, og en uavhengig
+ *                             gjennomlesning av hele teksten som kan konkludere
+ *                             (`absence-review.ts`). Økten stiller den aldri, og
+ *                             databasen avviser en menneskelig kontroll som
+ *                             fører den opp
  *                             (`evidence_verifications_source_wide_absence_check`).
  *
  * Begrunnelsen sier derfor hva kontrolløren faktisk bedømte, og navngir det
@@ -365,8 +369,8 @@ export function deriveExtractionVerification(input: {
           `${rationale} For ${localOnly.map(fieldLabel).join(', ')} bekreftet kontrolløren at ` +
             'opplysningen mangler der forankringsutdraget viser at den ville stått. Det er den ' +
             'lokale halvdelen av påstanden. At opplysningen heller ikke står noe annet sted i ' +
-            'kilden, er et eget kontrollobjekt med sin egen dekning: et maskinelt søk gjennom ' +
-            'hele den registrerte kildeversjonen.',
+            'kilden, er et eget kontrollobjekt med sin egen dekning: en maskinell gjennomgang ' +
+            'av hele den registrerte kildeversjonen.',
         )
 
   if (outcome === 'verified') {

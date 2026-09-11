@@ -114,6 +114,8 @@ import { createModelClient } from '../src/agents/model-adapters.ts'
 import { prepareDraftingRequest, runExtractionDrafting } from '../src/agents/drafting-run.ts'
 import { closeDraftingJob, JOB_FILES, openDraftingJob } from '../src/agents/drafting-job.ts'
 import { MODEL_ANSWER_VERSION } from '../src/agents/model-answer.ts'
+import { ABSENCE_REVIEW_VERSION } from '../src/agents/absence-review.ts'
+import { ABSENCE_REVIEW_FILES } from '../src/agents/absence-review-job.ts'
 import { readProposalFile } from '../src/agents/proposal-files.ts'
 import { documentsIn } from '../src/agents/source-document.ts'
 import { syntheticPdf } from '../src/agents/test-support.ts'
@@ -503,14 +505,75 @@ async function main(): Promise<void> {
   )
 
   // ---- Ledd 2: den deterministiske kontrollen, gjennom den ekte porten ------
-  const verification = await runExtractionVerification({
-    api: createExtractionVerificationApi(client, {
+  //
+  // Kontrollen går i to trinn, fordi den kildeomfattende halvdelen av et globalt
+  // fravær ikke kan avgjøres av et søk alene (issue #74, `absence-review.ts`).
+  // Første trinn legger igjen spørsmålet og registrerer ingenting; en aktør uten
+  // legitimasjon svarer i filen; andre trinn leser svaret og registrerer.
+  const verifierApi = () =>
+    createExtractionVerificationApi(client, {
       identityKey: 'agent-identity:extraction-verification-01',
       secret: agentSecret(verifierSecret),
-    }),
+    })
+  const absenceDirectory = mkdtempSync(join(tmpdir(), 'antidep-fravaer-'))
+
+  const spurt = await runExtractionVerification({
+    api: verifierApi(),
     premises: EXTRACTION_VERIFICATION_PREMISES,
     evidenceItemId: itemId,
     retrieve: retrieve(contentHash),
+    absencePrompts: absenceDirectory,
+  })
+  check(
+    'kjøringen som bare spør, registrerer ingenting',
+    spurt.runStatus === 'aborted' && spurt.items[0]?.decision === 'previewed',
+    JSON.stringify(spurt.items[0]),
+  )
+  const promptDirectory = spurt.items[0]?.absencePromptDirectory ?? null
+  check('og den la igjen spørsmålet', promptDirectory !== null)
+
+  // Aktøren som svarer, ser bare filer: ingen legitimasjon, ingen agentidentitet
+  // og ingen skrivevei inn i basen (EVIDENCE_PIPELINE.md §63). Her står den
+  // deterministisk, slik opptaksadapteret gjør for modell-leddet ellers.
+  if (promptDirectory !== null) {
+    const forespørsel = JSON.parse(
+      readFileSync(join(promptDirectory, ABSENCE_REVIEW_FILES.request), 'utf8'),
+    ) as { request_digest: string; fields: string[] }
+    writeFileSync(
+      join(promptDirectory, ABSENCE_REVIEW_FILES.answer),
+      `${JSON.stringify(
+        {
+          answer_version: MODEL_ANSWER_VERSION,
+          request_digest: forespørsel.request_digest,
+          identity: {
+            provider: 'antidep',
+            model: 'kjedeprove-gjennomlesning',
+            model_version: '1.0.0',
+          },
+          answered_at: new Date().toISOString(),
+          draft: {
+            review_version: ABSENCE_REVIEW_VERSION,
+            evidence_item_id: itemId,
+            fields: forespørsel.fields.map((field) => ({
+              check_field: field,
+              verdict: 'absent',
+              rationale: `Leste gjennom hele representasjonen og fant ingen ${field} noe sted.`,
+            })),
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+  }
+
+  const verification = await runExtractionVerification({
+    api: verifierApi(),
+    premises: EXTRACTION_VERIFICATION_PREMISES,
+    evidenceItemId: itemId,
+    retrieve: retrieve(contentHash),
+    absenceReviews: absenceDirectory,
   })
 
   check(
@@ -524,17 +587,17 @@ async function main(): Promise<void> {
   )
 
   // Den kildeomfattende halvdelen av et globalt fravær (migrasjon 005ae).
-  // Raden fører fire felter som ikke rapportert, og gaten krever derfor at noen
-  // har gjennomsøkt hele kildeversjonen etter dem. Det kan bare maskinen.
+  // Raden fører flere felter som ikke rapportert, og gaten krever derfor at noen
+  // har gjennomgått hele kildeversjonen etter dem. Det kan bare maskinen.
   check(
-    'gaten krever det kildeomfattende søket, fordi raden fører et globalt fravær',
+    'gaten krever den kildeomfattende kontrollen, fordi raden fører et globalt fravær',
     psql(
       config,
       `select ('source_wide_absence' = any (workflow.required_check_fields(${q(itemId)})))::text`,
     ) === 'true',
   )
   check(
-    'og søket gjennom hele kildeversjonen er registrert av maskinen, ikke av et menneske',
+    'og den er registrert av maskinen, ikke av et menneske',
     psql(
       config,
       `select count(*) from workflow.evidence_verifications ev
@@ -543,6 +606,19 @@ async function main(): Promise<void> {
          and ev.agent_run_id is not null`,
     ) === '1',
   )
+  // …og den ble ikke dekket av søket alene: begrunnelsen navngir hvem som leste
+  // gjennom representasjonen. Uten gjennomlesningen ville feltet stått åpent.
+  check(
+    'og begrunnelsen navngir gjennomlesningen som konkluderte',
+    psql(
+      config,
+      `select count(*) from workflow.evidence_verifications ev
+       where ev.evidence_item_id = ${q(itemId)}
+         and 'source_wide_absence' = any (ev.checked_fields)
+         and ev.rationale like '%kjedeprove-gjennomlesning%'`,
+    ) === '1',
+  )
+  rmSync(absenceDirectory, { recursive: true, force: true })
   // …og kontrolløkten stiller aldri det spørsmålet, så feltet er ikke et
   // semantisk steg.
   check(

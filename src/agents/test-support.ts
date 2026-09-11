@@ -8,6 +8,11 @@
 // felles testen, er det testen sier den prøver.
 // ============================================================================
 
+import {
+  ABSENCE_REVIEW_PROMPT_VERSION,
+  type AbsenceReviewOutcome,
+  type AbsenceVerdict,
+} from './absence-review.ts'
 import type {
   ClaimEvidenceLink,
   ClaimRevisionInput,
@@ -468,4 +473,35 @@ export function syntheticPdf(lines: readonly string[]): Uint8Array {
   body += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(startxref)}\n%%EOF\n`
 
   return new TextEncoder().encode(body)
+}
+
+/**
+ * Den uavhengige gjennomlesningen av hele representasjonen, slik den ser ut når
+ * den konkluderte.
+ *
+ * Fiksturen er den positive kontrollen: uten en slik gjennomlesning dekkes
+ * `source_wide_absence` aldri, og hver prøve som handler om noe annet ville
+ * blitt uavklart av en grunn den ikke prøver. Hva som skjer når den mangler,
+ * svarer «present» eller «uncertain», prøves av testene som setter den selv.
+ */
+export function absenceReviewFixture(
+  item: VerificationItem,
+  verdicts: Readonly<Record<string, AbsenceVerdict>> = {},
+): Extract<AbsenceReviewOutcome, { kind: 'reviewed' }> {
+  return {
+    kind: 'reviewed',
+    evidenceItemId: item.evidenceItemId,
+    identity: { provider: 'test', model: 'gjennomlesning', modelVersion: '1' },
+    promptTemplateVersion: ABSENCE_REVIEW_PROMPT_VERSION,
+    requestDigest: `sha256:${'a'.repeat(64)}`,
+    fields: item.sourceWideAbsenceFields.map((field) => {
+      const verdict = verdicts[field] ?? 'absent'
+      return {
+        checkField: field,
+        verdict,
+        quote: verdict === 'present' ? 'n = 284 patients completed the trial' : null,
+        rationale: `Leste gjennom hele representasjonen etter ${field}.`,
+      }
+    }),
+  }
 }

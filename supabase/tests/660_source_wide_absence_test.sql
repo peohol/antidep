@@ -11,9 +11,11 @@
 --   availability_semantics   den LOKALE: er grunnen av riktig art, og mangler
 --                            verdien der forankringsutdraget viser at den ville
 --                            stått? Et menneske avgjør den.
---   source_wide_absence      den KILDEOMFATTENDE: fant et søk gjennom hele den
---                            kontrollerte representasjonen ingen slik verdi? En
---                            maskin avgjør den, og bare en maskin.
+--   source_wide_absence      den KILDEOMFATTENDE: står opplysningen noe annet
+--                            sted i hele den kontrollerte representasjonen? To
+--                            maskinelle ledd avgjør den — et deterministisk søk
+--                            som kan avkrefte, og en uavhengig gjennomlesning
+--                            som kan konkludere — og bare maskinen.
 --
 -- Filen prøver de fire tingene som holder skillet oppe: at settet er utledet av
 -- raden selv, at gaten krever den kildeomfattende halvdelen når og bare når
@@ -128,7 +130,7 @@ values
    'Tabell 2', 'ai_assisted', (select id from fixture where name = 'extractor'));
 
 -- Kildeforankring for hvert semantisk felt. Poenget under er at
--- source_wide_absence IKKE er blant dem: grunnlaget for et kildeomfattende søk
+-- source_wide_absence IKKE er blant dem: grunnlaget for en kildeomfattende kontroll
 -- er hele representasjonen, ikke ett utdrag.
 insert into knowledge.evidence_field_groundings
   (evidence_item_id, created_by_actor_id, check_field,
@@ -173,7 +175,7 @@ select is_empty(
 select ok(
   'source_wide_absence' = any (workflow.required_check_fields(
     '66000000-0000-4000-8000-000000000011')),
-  'gaten krever det kildeomfattende søket når raden fører et globalt fravær'
+  'gaten krever den kildeomfattende kontrollen når raden fører et globalt fravær'
 );
 select ok(
   'source_wide_absence' = any (workflow.required_check_fields(
@@ -233,8 +235,8 @@ select is(
 -- ===========================================================================
 -- Del 6 — Bare en maskinell kontroll kan føre feltet opp
 --
--- Et menneske blir aldri spurt om det kildeomfattende søket, og en rad som
--- førte det opp uten å ha gjort søket, ville påstått større dekning enn
+-- Et menneske blir aldri spurt om den kildeomfattende halvdelen, og en rad som
+-- førte den opp uten å ha gjort kontrollen, ville påstått større dekning enn
 -- operasjonen hadde (DATABASE_ARCHITECTURE.md §29).
 -- ===========================================================================
 create temporary table run (label text primary key, id uuid, actor_id uuid) on commit drop;
@@ -250,7 +252,7 @@ with r as (
 )
 insert into run select 'verify', r.id, r.actor_id from r;
 
--- Uten kjøring: aktøren har mandatet, men ingen kjøring har gjort noe søk.
+-- Uten kjøring: aktøren har mandatet, men ingen kjøring har gjort noen kontroll.
 -- Det er nøyaktig den forskjellen constrainten finnes for; at den menneskelige
 -- skriveveien avvises av den samme regelen, prøves i 570.
 select throws_ok(
@@ -271,8 +273,8 @@ select throws_ok(
   'en kontroll uten agentkjøring kan ikke føre opp det kildeomfattende søket'
 );
 
--- Med kjøring, men bare et annet ledds sammendrag å søke i: heller ikke da.
--- Et søk gjennom et sammendrag er ikke et søk gjennom kilden
+-- Med kjøring, men bare et annet ledds sammendrag å gå gjennom: heller ikke da.
+-- En gjennomgang av et sammendrag er ikke en gjennomgang av kilden
 -- (ANTIDEP_CONSTITUTION.md §11).
 select throws_ok(
   $$
@@ -282,17 +284,17 @@ select throws_ok(
     select e.id, e.created_by_actor_id, (select actor_id from run where label = 'verify'),
            'uncertain', 'derived_summary',
            array['source_wide_absence']::workflow.evidence_check_field[],
-           'Prøve i 660: søk gjennom et avledet sammendrag.',
+           'Prøve i 660: gjennomgang av et avledet sammendrag.',
            now(), (select id from run where label = 'verify')
     from knowledge.evidence_items e
     where e.id = '66000000-0000-4000-8000-000000000011'
   $$,
   '23514', null,
-  'et søk gjennom et avledet sammendrag er ikke et kildeomfattende søk'
+  'en gjennomgang av et avledet sammendrag er ikke en kildeomfattende kontroll'
 );
 
 -- Med kjøring og en etterprøvbar representasjon: dette er leddet som faktisk
--- gjorde søket.
+-- gjorde kontrollen.
 select lives_ok(
   $$
     insert into workflow.evidence_verifications
@@ -301,13 +303,13 @@ select lives_ok(
     select e.id, e.created_by_actor_id, (select actor_id from run where label = 'verify'),
            'uncertain', 'verifiable_representation',
            array['source_locator', 'source_wide_absence']::workflow.evidence_check_field[],
-           'Prøve i 660: hele representasjonen ble gjennomsøkt uten treff.',
+           'Prøve i 660: hele representasjonen ble gjennomgått uten treff.',
            'Tallene lot seg ikke bedømme maskinelt.', now(),
            (select id from run where label = 'verify')
     from knowledge.evidence_items e
     where e.id = '66000000-0000-4000-8000-000000000011'
   $$,
-  'det kildeomfattende søket registreres av leddet som faktisk gjorde det'
+  'den kildeomfattende kontrollen registreres av leddet som faktisk gjorde den'
 );
 
 -- …og en uavklart maskinkontroll teller i dekningen, som enhver annen

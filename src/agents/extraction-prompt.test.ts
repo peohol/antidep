@@ -16,8 +16,8 @@ import { parseExtractionAssignment } from './extraction-assignment'
 import {
   buildExtractionDraftingRequest,
   EXTRACTION_DRAFTING_PROMPT_VERSION,
-  sourceFence,
 } from './extraction-prompt'
+import { sourceFence } from './source-fence'
 
 const HASH = `sha256:${'ab'.repeat(32)}`
 

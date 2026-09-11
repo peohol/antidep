@@ -7349,7 +7349,7 @@ kontrollgrunnlag**, og hver halvdel har fått sitt eget felt i
 | Halvdel | Spørsmål | Grunnlag | Hvem | Felt |
 |---|---|---|---|---|
 | Lokal | Mangler opplysningen der forankringsutdraget viser at den ville stått, og er grunnen av riktig art? | Utdraget flaten viser | Et menneske | `availability_semantics` |
-| Kildeomfattende | Står opplysningen noe annet sted i kildeversjonen? | Hele den registrerte representasjonen | En maskin | `source_wide_absence` |
+| Kildeomfattende | Står opplysningen noe annet sted i kildeversjonen? | Hele den registrerte representasjonen | To maskinelle ledd | `source_wide_absence` |
 
 `workflow.required_check_fields(uuid)` krever den andre når og bare når raden
 fører minst ett slikt fravær (`workflow.source_wide_absence_fields(uuid)`, som
@@ -7357,29 +7357,55 @@ er den ene definisjonen gaten, kontrollleddet og kontrollflaten alle leser).
 **Gaten er dermed strengere enn før, ikke løsere:** hullet var der hele tiden,
 men det var navnløst og så ut som et udekket `availability_semantics`.
 
-**Det kildeomfattende leddet er den deterministiske ekstraksjonskontrollen, ikke
-et nytt ledd med ny legitimasjon.** Den henter allerede representasjonen og
-pinner fingeravtrykket, så `npm run agent:verify-extraction` gjør søket uten at
-noe nytt må settes opp. Det var det avgjørende valget mot alternativ 2 i issue
-#74: en menneskelig global bekreftelse ville gjort Peder til manuell
-fulltekstleser for hvert eneste felt uten verdi.
+**Den kildeomfattende halvdelen har selv to ledd, og bare det ene kan
+konkludere.** Første utgave av leveransen lot den deterministiske
+ekstraksjonskontrollen dekke halvdelen alene: fant mønstersøket ingen verdi, var
+fraværet kontrollert. Teknisk review felte den, og eksempelet tar tretti
+sekunder å konstruere — mønstrene kjente `CI`, `C.I.` og `confidence
+interval(s)`, men ikke `CIs` og ikke `confidence limits`, så «The 95% CIs were
+0.4 to 2.6.» ga null treff og ville blitt bokført som «ingen konfidensintervall i
+kildeversjonen».
+
+Å legge til de to formene løser ikke feilklassen. Naturlig språk har ingen
+uttømmende mønsterliste, og `not_measured` gjør det tydeligere: en kilde kan si
+at vekt ble *målt* uten å oppgi et eneste tall, og et rent verdisøk ville da
+godkjent «ikke målt» på en variabel studien målte. **Et fravær kan ikke bevises
+av et søk** — det er premisset i issue #74, og det står nå i koden:
+
+| Ledd | Hva det kan | Rolle |
+|---|---|---|
+| Det deterministiske søket | **Falsifisere.** Et treff blokkerer dekningen alene | Forutsetning |
+| Gjennomlesningen (`src/agents/absence-review.ts`) | **Konkludere.** Leser hele den reproduserte representasjonen og svarer `absent`, `present` eller `uncertain` per felt | Det eneste som dekker |
+
+Feltet føres opp bare når representasjonen lot seg reprodusere, søket fant
+ingenting, **og** gjennomlesningen svarte `absent` på hvert felt. Et søketreff
+kan ikke overstyres av en gjennomlesning som mener noe annet.
+
+**Gjennomlesningen har ingen legitimasjon, og det er hele formen på den.**
+Verifikatoren legger igjen spørsmålet som filer
+(`--absence-prompts <katalog>`), en aktør Antidep ikke kaller svarer i
+`svar.json`, og neste kjøring leser svaret (`--absence-reviews <katalog>`).
+Bindingen er avtrykket av forespørselen, som dekker promptmalversjonen, feltene
+det spørres om og hele representasjonsteksten: et svar avgitt på en annen
+artikkel, en annen utgave eller et annet spørsmål legges bort. Samme form og
+samme grunn som ekstraksjonsutkastet (EVIDENCE_PIPELINE.md §63). Det var også
+det avgjørende valget mot alternativ 2 i issue #74: en menneskelig global
+bekreftelse ville gjort Peder til manuell fulltekstleser for hvert eneste felt
+uten verdi.
 
 **Søket er bevisst bredere enn kontrollens øvrige søk.** Resten av modulen
 binder en verdi til raden med en limkjede, fordi den skal *tilskrive* verdien
-denne raden. Her er påstanden motsatt: et for smalt søk bekrefter et fravær av
-noe som står der. Søket har derfor **ingen binding til raden**, fri avstand
-mellom anker og verdi, og teller tall skrevet med bokstaver.
+denne raden. Her er retningen motsatt: søket skal finne noe, og et treff
+blokkerer. Søket har derfor **ingen binding til raden**, fri avstand mellom
+anker og verdi, teller tall skrevet med bokstaver, og har en videre ankerliste
+for konfidensintervall enn bekreftelsessøket.
 
 To smalere utforminger ble forkastet i teknisk review av denne leveransen, og
 begge er nå regresjonsprøver. Et krav om at verdien sto i en passasje som selv
 navngir behandlingsarmen, kastet andre setning i «Sertraline patients improved.
-The 95% CI was 0.4 to 2.6.» Et sifferbasert mønster ga «ingen utvalgsstørrelse
-i kilden» på «Forty-eight sertraline-treated patients completed the trial» — en
-setning som står i denne kodebasens egen PDF-fikstur.
-
-Prisen er reell og med vilje: oppgir artikkelen et konfidensintervall for et
-*annet* endepunkt, dekkes feltet ikke. En maskin kan ikke se hvilket av dem som
-er radens, og skal da ikke påstå at ingen av dem er det.
+The 95% CI was 0.4 to 2.6.» Et sifferbasert mønster ga ingen treff på
+«Forty-eight sertraline-treated patients completed the trial» — en setning som
+står i denne kodebasens egen PDF-fikstur.
 
 **Rekkevidden er kildeversjonen, ikke publikasjonen, og det er ikke en
 innskrenkning.** Det er nøyaktig det statusen selv gjelder — kolonnekommentaren
@@ -7390,12 +7416,14 @@ den gjennomsøkte: et søk gjennom et abstrakt skal ikke leses som et søk gjenn
 en fulltekst.
 
 **Én hard grense: representasjonen må ha latt seg reprodusere.** Et **treff** er
-ikke et avvik: søket vet ikke om verdien gjelder denne armen og dette
+ikke et avvik: ingen av leddene vet om verdien gjelder denne armen og dette
 endepunktet, så utfallet er `uncertain`, feltet føres ikke opp, og begrunnelsen
 siterer hva som ble funnet. Et udekket fravær avgjør utfallet og står ikke bare
 som en merknad — også det et reviewfunn. Et felt uten maskinelt søkbar form —
-populasjonen er en etikett og ikke et tall — står ukontrollert, og gaten åpen
-(issue #79).
+populasjonen er en etikett og ikke et tall — stanser ingenting: søket er
+falsifikasjonsleddet, og et ledd som ikke kan prøve, har heller ikke funnet noe.
+Gjennomlesningen avgjør da alene, og begrunnelsen sier eksplisitt at
+konklusjonen hviler på ett ledd (issue #79).
 
 **Mennesket kan ikke ta halvdelen på seg, og det er håndhevet framfor frarådet.**
 `workflow.semantic_check_fields(uuid)` utelater feltet, så kontrolløkten stiller
@@ -7418,10 +7446,20 @@ forankringskravet ikke gjelder det, og at det avvises både uten agentkjøring o
 med bare et avledet sammendrag som grunnlag. `570` viser det i hele kjeden, med
 et menneske som forsøker å bære påstanden og blir avvist. Kjedeprøven
 (`npm run db:test:chain`) prøver det samme mot den ekte databasen gjennom de
-ekte skriveveiene. På JavaScript-siden er søket prøvd felt for felt, med et
-treff som ikke blir et avvik, et udekket fravær som avgjør utfallet, en
-representasjon uten reprodusert fingeravtrykk, en verdi som står i setningen
-etter den som navngir armen, og tall skrevet med bokstaver.
+ekte skriveveiene, nå i begge trinn: kjøringen legger igjen spørsmålet, en aktør
+uten legitimasjon svarer i filen, og neste kjøring registrerer dekningen med en
+begrunnelse som navngir hvem som leste.
+
+På JavaScript-siden er begge leddene prøvd felt for felt. Reviewfunnets egen
+falske negativ er en regresjonsprøve i to former — «The 95% CIs were 0.4 to
+2.6.» og «confidence limits 0.4 and 2.6» — og den prøver tre ting samtidig: at
+en gyldig, ukjent formulering aldri blir `checked` av seg selv, at en
+gjennomlesning som ser verdien blokkerer, og at søket nå kjenner nettopp disse
+formene. Videre er prøvd: et søketreff som ikke blir et avvik og som ikke kan
+overstyres, et udekket fravær som avgjør utfallet, en representasjon uten
+reprodusert fingeravtrykk, en verdi som står i setningen etter den som navngir
+armen, tall skrevet med bokstaver, et svar avgitt på en annen tekst, et svar som
+gjelder et annet funn, og et svar som ikke har kontraktens form.
 
 **To fiksturer sa noe annet enn raden, og kontrollen fant det.** Kjedeprøvens
 sammendrag sa «randomised for 8 weeks» mens funnet førte tidspunktet som ikke
@@ -7446,9 +7484,10 @@ Tre ting gjenstår, i denne rekkefølgen:
 
 1. **Migrasjon 005ad og 005ae må deployes** (`./scripts/deploy-migrations.sh`).
    Først da krever gaten den kildeomfattende halvdelen.
-2. **Den deterministiske kontrollen må kjøres på nytt** for begge funnene
-   (`npm run agent:verify-extraction`), slik at søket gjøres og
-   `source_wide_absence` enten føres opp eller navngir hva som ble funnet.
+2. **Den kildeomfattende kontrollen må kjøres for begge funnene**, i to trinn:
+   `npm run agent:verify-extraction -- --absence-prompts <katalog>` legger igjen
+   spørsmålet, en aktør svarer i `svar.json`, og
+   `npm run agent:verify-extraction -- --absence-reviews <katalog>` registrerer.
    Kjøringen må skje på en maskin som har originaldokumentene: begge
    kildeversjonene er dokumentbundne, og et ledd uten dokumentet henter aldri
    `retrieved_from` i stedet (migrasjon 003e).

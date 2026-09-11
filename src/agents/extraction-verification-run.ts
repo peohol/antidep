@@ -47,6 +47,11 @@ import type {
   ExtractionVerificationApi,
   RegisterVerificationArgs,
 } from './agent-api.ts'
+import {
+  readAbsenceReviewOutcome,
+  writeAbsenceReviewJob,
+  type AbsenceReviewJobReport,
+} from './absence-review-job.ts'
 import { checkExtraction, type ExtractionCheckReport } from './extraction-checks.ts'
 import { resolveRepresentation, type ResolvePorts } from './source-binding.ts'
 import type { RetrieveLike } from './source-retrieval.ts'
@@ -72,6 +77,8 @@ export interface ItemResult {
   readonly findings?: string | null
   /** Hvorfor ingen rad ble registrert. Alltid satt for `skipped`. */
   readonly reason?: string
+  /** Kjøremappa den kildeomfattende gjennomlesningen ble lagt igjen i, når den ble skrevet. */
+  readonly absencePromptDirectory?: string
 }
 
 export interface RunReport {
@@ -111,12 +118,44 @@ export interface RunOptions extends ResolvePorts {
    * nøyaktig som før.
    */
   readonly select?: (items: readonly VerificationItem[]) => readonly VerificationItem[]
+  /**
+   * Katalogen de kildeomfattende gjennomlesningene leses fra.
+   *
+   * Uten den dekkes `source_wide_absence` aldri, og et funn som fører et
+   * globalt fravær kommer ut som `uncertain` med en begrunnelse som sier at
+   * halvdelen står åpen. Det er riktig svar og ikke en mangel: et deterministisk
+   * søk som ikke fant noe, er ikke et bevis for et fravær (issue #74).
+   */
+  readonly absenceReviews?: string | null
+  /**
+   * Katalogen forespørslene om en slik gjennomlesning legges igjen i.
+   *
+   * Settes den, registrerer kjøringen ingenting: den henter representasjonen,
+   * skriver prompten for hvert funn som fører et globalt fravær, og lukkes som
+   * en tørrkjøring. Aktøren som svarer, ser bare filer.
+   */
+  readonly absencePrompts?: string | null
   readonly log?: (line: string) => void
 }
 
 function summarize(item: VerificationItem): string {
   return `${item.evidenceItemId} (${item.sourceTitle})`
 }
+
+/** Hvor de kildeomfattende gjennomlesningene leses fra og skrives til. */
+interface AbsencePorts {
+  readonly reviews: string | null
+  readonly prompts: string | null
+}
+
+type Evaluation =
+  | { readonly kind: 'skip'; readonly reason: string }
+  | {
+      readonly kind: 'checked'
+      readonly report: ExtractionCheckReport
+      /** Mappa forespørselen ble lagt igjen i, eller `null` når ingen ble skrevet. */
+      readonly promptDirectory: string | null
+    }
 
 /**
  * Vurderer ett funn, og lar aldri en uventet feil nå kalleren.
@@ -133,12 +172,10 @@ function summarize(item: VerificationItem): string {
 async function evaluateItem(
   item: VerificationItem,
   ports: ResolvePorts,
-): Promise<
-  | { readonly kind: 'skip'; readonly reason: string }
-  | { readonly kind: 'checked'; readonly report: ExtractionCheckReport }
-> {
+  absence: AbsencePorts,
+): Promise<Evaluation> {
   try {
-    return await evaluateItemUnguarded(item, ports)
+    return await evaluateItemUnguarded(item, ports, absence)
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
     return {
@@ -151,10 +188,8 @@ async function evaluateItem(
 async function evaluateItemUnguarded(
   item: VerificationItem,
   ports: ResolvePorts,
-): Promise<
-  | { readonly kind: 'skip'; readonly reason: string }
-  | { readonly kind: 'checked'; readonly report: ExtractionCheckReport }
-> {
+  absence: AbsencePorts,
+): Promise<Evaluation> {
   const version = item.sourceVersion
   if (version === null) {
     return {
@@ -191,13 +226,32 @@ async function evaluateItemUnguarded(
     return { kind: 'skip', reason: resolved.message }
   }
 
+  // Den kildeomfattende halvdelen, når raden fører et globalt fravær. Begge
+  // veier bruker NØYAKTIG den teksten kontrollen selv hentet: forespørselen
+  // bygges av den, og svaret bindes til avtrykket av den. Et svar avgitt på en
+  // annen utgave av kilden kan derfor ikke dekke noe her.
+  const needsAbsence = item.sourceWideAbsenceFields.length > 0
+  const job = { item, representation: resolved.text, contentHash: version.contentHash }
+
+  let promptJob: AbsenceReviewJobReport | null = null
+  if (needsAbsence && absence.prompts != null) {
+    promptJob = await writeAbsenceReviewJob({ ...job, directory: absence.prompts })
+  }
+
+  const absenceReview =
+    needsAbsence && absence.reviews != null
+      ? await readAbsenceReviewOutcome({ ...job, directory: absence.reviews })
+      : null
+
   return {
     kind: 'checked',
     report: checkExtraction({
       item,
       sourceText: resolved.text,
       representationReproduced: true,
+      absenceReview,
     }),
+    promptDirectory: promptJob?.directory ?? null,
   }
 }
 
@@ -241,10 +295,17 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     api,
     premises,
     evidenceItemId = null,
-    dryRun = false,
     limit = null,
+    absenceReviews = null,
+    absencePrompts = null,
     log = () => {},
   } = options
+  const absence: AbsencePorts = { reviews: absenceReviews, prompts: absencePrompts }
+  // Å legge igjen forespørsler er per definisjon en tørrkjøring: kjøringen
+  // stiller et spørsmål den ennå ikke har svaret på, og en rad registrert før
+  // svaret foreligger ville vært en kontroll som konkluderte uten det ene
+  // leddet som kan konkludere.
+  const dryRun = (options.dryRun ?? false) || absencePrompts !== null
   const inputManifest: Record<string, unknown> = {
     // `selected` sier at kjøringen arbeidet på et utvalg av køen, ikke på hele
     // den. Uten det ville manifestet påstått «queue» om en kjøring som bevisst
@@ -255,6 +316,11 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     dry_run: dryRun,
     limit,
     check: 'deterministic-extraction-check',
+    // Om den kildeomfattende halvdelen i det hele tatt kunne bli dekket i denne
+    // kjøringen. En kjøring uten gjennomlesninger lar hvert globale fravær stå
+    // åpent, og proveniensen skal si det framfor å la det se ut som et funn.
+    source_wide_absence_reviews: absenceReviews === null ? 'none' : 'provided',
+    source_wide_absence_prompts: absencePrompts === null ? 'none' : 'written',
   }
 
   const agentRunId = await api.beginRun(premises, inputManifest)
@@ -318,7 +384,7 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     }
 
     for (const item of queue) {
-      const evaluation = await evaluateItem(item, options)
+      const evaluation = await evaluateItem(item, options, absence)
 
       if (evaluation.kind === 'skip') {
         log(`— ${summarize(item)}: ingen verifikasjon registrert. ${evaluation.reason}`)
@@ -332,6 +398,12 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
       }
 
       const report = evaluation.report
+      if (evaluation.promptDirectory !== null) {
+        log(
+          `— ${summarize(item)}: forespørsel om kildeomfattende gjennomlesning lagt i ` +
+            `${evaluation.promptDirectory}.`,
+        )
+      }
       if (dryRun) {
         log(`— ${summarize(item)}: ${report.outcome} (tørrkjøring, ingenting registrert).`)
         results.push({
@@ -341,6 +413,9 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
           outcome: report.outcome,
           checkedFields: report.checkedFields,
           findings: report.findings,
+          ...(evaluation.promptDirectory === null
+            ? {}
+            : { absencePromptDirectory: evaluation.promptDirectory }),
         })
         continue
       }
