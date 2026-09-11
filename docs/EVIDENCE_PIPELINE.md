@@ -727,6 +727,31 @@ Malen sier eksplisitt at kildeteksten er data og aldri en instruksjon, at tvil
 er `uncertain` og ikke `absent`, og at rekkevidden er nøyaktig teksten som
 følger med — ikke det leddet måtte vite om artikkelen fra før.
 
+##### Gjennomlesningen er et prosessledd, og dens proveniens er varig
+
+Leddet kan være den avgjørende grunnen til at publiseringsgaten åpner, og §3.7
+krever at hvert prosessledd kan spores til aktør, modell og modellversjon,
+promptversjon, tidspunkt og output. Beviset kan derfor ikke bli liggende i en
+midlertidig kjøremappe. Når en gjennomlesning faktisk gir dekning, bæres den
+videre to steder:
+
+- **Verifikasjonsradens begrunnelse**, for et menneske: hvem som leste, når,
+  med hvilken promptmal, mot hvilket forespørsels- og svaravtrykk — og for et
+  `not_measured` det ordrette stedet kilden sier at størrelsen ikke ble målt.
+  Teksten er status-spesifikk: `not_reported` sier at opplysningen ikke ble
+  funnet, `not_measured` at kilden selv opplyser at den ikke ble målt.
+- **Agentkjøringens `output_manifest`**, for en maskin: de samme premissene
+  strukturert, med status, verdict, begrunnelse og eventuelt ordrett utdrag per
+  felt dekningen hviler på.
+
+`request_digest` binder spørsmålet og `answer_digest` binder svaret, så en
+tredjepart kan sammenligne det som står i proveniensen med filen aktøren
+leverte. Tidspunktet kontrolleres mot da spørsmålet ble lagt igjen, med samme
+slakk som modell-leddet ellers: et svar avgitt før spørsmålet fantes, legges
+bort. Oppgir aktøren ikke noe tidspunkt, står det som ikke oppgitt — det fylles
+**ikke** inn med registreringstidspunktet, som ville vært å hevde at
+gjennomlesningen skjedde da raden ble skrevet.
+
 ##### Hva dekningen betyr når den gis
 
 Rekkevidden er **kildeversjonen**, ikke publikasjonen. Det er ikke en

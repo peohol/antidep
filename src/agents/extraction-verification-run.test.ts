@@ -623,6 +623,7 @@ describe('runExtractionVerification — den kildeomfattende fraværskontrollen',
       absencePrompts: rot,
     })
 
+    const svartKlokkeslett = new Date().toISOString()
     const forespørsel = JSON.parse(
       readFileSync(join(rot, item.evidenceItemId, 'forespoersel.json'), 'utf8'),
     ) as { request_digest: string }
@@ -632,7 +633,7 @@ describe('runExtractionVerification — den kildeomfattende fraværskontrollen',
         answer_version: 'antidep/model-answer@1',
         request_digest: forespørsel.request_digest,
         identity: { provider: 'test', model: 'lesing', model_version: '1' },
-        answered_at: '2026-09-11T09:00:00Z',
+        answered_at: svartKlokkeslett,
         draft: {
           review_version: 'antidep/source-wide-absence-review@1',
           evidence_item_id: item.evidenceItemId,
@@ -650,13 +651,37 @@ describe('runExtractionVerification — den kildeomfattende fraværskontrollen',
     )
 
     const api = fakeApi([item])
-    await runExtractionVerification({
+    const report = await runExtractionVerification({
       api,
       premises: PREMISSER,
       retrieve,
       absenceReviews: rot,
     })
     expect(api.registered[0]?.checkedFields).toContain('source_wide_absence')
+
+    // Proveniensen for det leddet som faktisk åpnet gaten, skal overleve
+    // registreringen — ikke bare ligge i arbeidsmappa (EVIDENCE_PIPELINE.md
+    // §3.7, §65). Den står både i kjøringens output_manifest og i begrunnelsen
+    // på raden.
+    const manifest = api.completions[0]?.outputManifest
+    const resultater = manifest?.results as readonly Record<string, unknown>[]
+    const proveniens = resultater[0]?.sourceWideAbsence as Record<string, unknown>
+    expect(proveniens.provider).toBe('test')
+    expect(proveniens.model).toBe('lesing')
+    expect(proveniens.answeredAt).toBe(svartKlokkeslett)
+    expect(proveniens.promptTemplateVersion).toBe('evidence-extraction/source-wide-absence/1')
+    expect(String(proveniens.answerDigest)).toMatch(/^sha256:[0-9a-f]{64}$/)
+    expect(proveniens.fields).toEqual([
+      {
+        checkField: 'confidence_interval',
+        status: 'not_reported',
+        verdict: 'absent',
+        quote: null,
+        rationale: 'Gikk gjennom hele teksten og fant ingen presisjonsangivelse.',
+      },
+    ])
+    expect(report.items[0]?.sourceWideAbsence?.answeredAt).toBe(svartKlokkeslett)
+    expect(api.registered[0]?.rationale).toContain(svartKlokkeslett)
   })
 
   // Proveniensen skal si om halvdelen i det hele tatt KUNNE bli dekket i denne

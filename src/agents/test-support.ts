@@ -495,6 +495,8 @@ export function absenceReviewFixture(
     identity: { provider: 'test', model: 'gjennomlesning', modelVersion: '1' },
     promptTemplateVersion: ABSENCE_REVIEW_PROMPT_VERSION,
     requestDigest: `sha256:${'a'.repeat(64)}`,
+    answeredAt: '2026-09-11T09:00:00Z',
+    answerDigest: `sha256:${'b'.repeat(64)}`,
     fields: item.sourceWideAbsenceFields.flatMap((field) => {
       const status = globalAbsenceStatus(item.extraction, field)
       if (status === null) {

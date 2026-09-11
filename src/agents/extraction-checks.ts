@@ -159,6 +159,14 @@ export interface ExtractionCheckReport {
   readonly findings: string | null
   /** Hvordan kontrollen ble gjennomført, og hva den ikke kunne avgjøre. */
   readonly rationale: string
+  /**
+   * Hva en kildeomfattende dekning hviler på, når en ble gitt.
+   *
+   * Føres videre til agentkjøringens `output_manifest`. Begrunnelsen sier det
+   * samme for et menneske, men den er én tekst med en lengdegrense; dette er
+   * formen som kan leses maskinelt i ettertid (EVIDENCE_PIPELINE.md §3.7, §65).
+   */
+  readonly sourceWideAbsence?: SourceWideAbsenceProvenance
 }
 
 /** Grunnlaget kontrollen fikk: den registrerte raden, og kilden hentet på nytt. */
@@ -1853,11 +1861,42 @@ export type SourceWideAbsenceFinding =
   /** Feltet har ingen maskinelt søkbar form, så søket kunne ikke prøve. */
   | { readonly kind: 'not_searchable' }
 
+/**
+ * Proveniensen for en dekning som faktisk ble gitt.
+ *
+ * Bæres ut av kontrollen og inn i agentkjøringens `output_manifest`, slik at
+ * «hva åpnet gaten, hvem vurderte det, og når» kan rekonstrueres uten
+ * kjøremappa (EVIDENCE_PIPELINE.md §3.7, §65). Begrunnelsen på
+ * verifikasjonsraden sier det samme for et menneske; dette er formen en maskin
+ * kan lese.
+ */
+export interface SourceWideAbsenceProvenance {
+  readonly provider: string
+  readonly model: string
+  readonly modelVersion: string
+  readonly promptTemplateVersion: string
+  readonly requestDigest: string
+  readonly answerDigest: string
+  /** Da gjennomlesningen ble gjort, eller `null` når aktøren ikke oppga det. */
+  readonly answeredAt: string | null
+  /** Ett innslag per felt dekningen hviler på, med beviset den hviler på. */
+  readonly fields: readonly {
+    readonly checkField: string
+    readonly status: string
+    readonly verdict: string
+    /** Det ordrette stedet et `not_measured` hviler på. `null` for `not_reported`. */
+    readonly quote: string | null
+    readonly rationale: string
+  }[]
+}
+
 export interface SourceWideAbsenceReport {
   /** Om hele den kildeomfattende påstanden er kontrollert, for alle feltene. */
   readonly covered: boolean
   /** Hva de to leddene gjorde, og hvorfor de eventuelt ikke konkluderte. */
   readonly notes: readonly string[]
+  /** Hva dekningen hviler på. Bare satt når `covered` er sann. */
+  readonly provenance?: SourceWideAbsenceProvenance
 }
 
 /** Hvor mange treff som navngis i begrunnelsen. Nok til å se på, ikke en dump. */
@@ -2099,25 +2138,77 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
   }
 
   const reviewed = review as Extract<AbsenceReviewOutcome, { kind: 'reviewed' }>
-  const caveat =
-    notSearchable.length === 0
-      ? ''
-      : ` For ${notSearchable.map((field) => `«${field}»`).join(', ')} har søket ingen form å ` +
-        'prøve — en populasjon er en etikett og ikke et tall — så for de feltene hviler ' +
-        'konklusjonen på gjennomlesningen alene.'
+  const answered = reviewed.fields.filter((entry) => concluded.includes(entry.checkField))
+
+  // Begrunnelsen sier hva hvert felt faktisk hviler på, ikke én generisk
+  // setning for begge. De to statusene ble avgjort av forskjellige spørsmål, og
+  // en tekst som slo dem sammen, ville beskrevet `not_measured` feil: der er
+  // svaret ikke «ingen verdi står der», men «kilden opplyser at størrelsen ikke
+  // ble målt» — og det stedet skal stå i raden, ikke bare i en arbeidsmappe.
+  const reportedFields = answered.filter((entry) => entry.status === 'not_reported')
+  const measuredFields = answered.filter((entry) => entry.status === 'not_measured')
+
+  const sentences: string[] = []
+  if (reportedFields.length > 0) {
+    sentences.push(
+      `Fraværet av ${quoteList(reportedFields.map((entry) => entry.checkField))} er kontrollert i ` +
+        `to ledd mot hele den reproduserte ${representationName(item)}: et deterministisk søk ` +
+        'fant ingen verdi av den arten, og en uavhengig gjennomlesning svarte at opplysningen ' +
+        'ikke står noe sted i teksten.',
+    )
+  }
+  for (const entry of measuredFields) {
+    sentences.push(
+      `Fraværet av «${entry.checkField}» er ført som «ikke målt i studien», og den påstanden er ` +
+        `kontrollert mot hele den reproduserte ${representationName(item)}: kilden opplyser selv ` +
+        `at størrelsen ikke ble målt — «${entry.quote ?? ''}» — og utdraget er gjenfunnet ordrett ` +
+        'i representasjonen.',
+    )
+  }
+
+  sentences.push(
+    `Gjennomlesningen ble gjort av ${reviewerName(reviewed)} ` +
+      `${reviewed.answeredAt === null ? '(tidspunkt ikke oppgitt)' : `den ${reviewed.answeredAt}`}, ` +
+      `med promptmal ${reviewed.promptTemplateVersion}, forespørsel ${reviewed.requestDigest} og ` +
+      `svar ${reviewed.answerDigest}.`,
+  )
+  sentences.push(
+    'Dekningen betyr at opplysningen ikke står i den kildeversjonen raden viser til — ikke at ' +
+      'den ikke står i publikasjonen: en representasjon kan mangle figurer, som er bilder, og et ' +
+      'supplement, som er en egen fil.',
+  )
+  if (notSearchable.length > 0) {
+    sentences.push(
+      `For ${quoteList(notSearchable)} har søket ingen form å prøve — en populasjon er en etikett ` +
+        'og ikke et tall — så for de feltene hviler konklusjonen på gjennomlesningen alene.',
+    )
+  }
+
   return {
     covered,
-    notes: [
-      `Fraværet av ${concluded.map((field) => `«${field}»`).join(', ')} er kontrollert i to ledd ` +
-        `mot hele den reproduserte ${representationName(item)}: et deterministisk søk fant ingen ` +
-        `verdi av den arten, og en uavhengig gjennomlesning (${reviewerName(reviewed)}, ` +
-        `promptmal ${reviewed.promptTemplateVersion}, forespørsel ${reviewed.requestDigest}) ` +
-        'svarte at opplysningen ikke står noe sted i teksten. Det betyr at opplysningen ikke ' +
-        'står i den kildeversjonen raden viser til — ikke at den ikke står i publikasjonen: en ' +
-        'representasjon kan mangle figurer, som er bilder, og et supplement, som er en egen fil.' +
-        caveat,
-    ],
+    notes: [sentences.join(' ')],
+    provenance: {
+      provider: reviewed.identity.provider,
+      model: reviewed.identity.model,
+      modelVersion: reviewed.identity.modelVersion,
+      promptTemplateVersion: reviewed.promptTemplateVersion,
+      requestDigest: reviewed.requestDigest,
+      answerDigest: reviewed.answerDigest,
+      answeredAt: reviewed.answeredAt,
+      fields: answered.map((entry) => ({
+        checkField: entry.checkField,
+        status: entry.status,
+        verdict: entry.verdict,
+        quote: entry.quote,
+        rationale: entry.rationale,
+      })),
+    },
   }
+}
+
+/** «a», «b» og «c», for en setning et menneske leser. */
+function quoteList(fields: readonly string[]): string {
+  return fields.map((field) => `«${field}»`).join(', ')
 }
 
 function unique(fields: readonly EvidenceCheckField[]): readonly EvidenceCheckField[] {
@@ -2610,5 +2701,6 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
           ? null
           : withinDatabaseLimit(unresolved),
     rationale: withinDatabaseLimit(joinSentences([method, ...notes])),
+    ...(absence.provenance === undefined ? {} : { sourceWideAbsence: absence.provenance }),
   }
 }

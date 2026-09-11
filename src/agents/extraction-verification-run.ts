@@ -79,6 +79,17 @@ export interface ItemResult {
   readonly reason?: string
   /** Kjøremappa den kildeomfattende gjennomlesningen ble lagt igjen i, når den ble skrevet. */
   readonly absencePromptDirectory?: string
+  /**
+   * Hva en kildeomfattende dekning hvilte på, når en ble gitt.
+   *
+   * Står i kjøringens `output_manifest` fordi den er proveniensen for et
+   * KI-ledd som kan være den avgjørende grunnen til at publiseringsgaten åpnet:
+   * hvilken modell som vurderte, når, mot hvilken forespørsel og hvilket svar —
+   * og for et `not_measured` det ordrette stedet kilden sier at størrelsen ikke
+   * ble målt. Uten det ville beviset bare ligget i en midlertidig arbeidsmappe
+   * (EVIDENCE_PIPELINE.md §3.7, §65).
+   */
+  readonly sourceWideAbsence?: ExtractionCheckReport['sourceWideAbsence']
 }
 
 export interface RunReport {
@@ -416,6 +427,9 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
           ...(evaluation.promptDirectory === null
             ? {}
             : { absencePromptDirectory: evaluation.promptDirectory }),
+          ...(report.sourceWideAbsence === undefined
+            ? {}
+            : { sourceWideAbsence: report.sourceWideAbsence }),
         })
         continue
       }
@@ -457,6 +471,9 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
         outcome: report.outcome,
         checkedFields: report.checkedFields,
         findings: report.findings,
+        ...(report.sourceWideAbsence === undefined
+          ? {}
+          : { sourceWideAbsence: report.sourceWideAbsence }),
       })
     }
 

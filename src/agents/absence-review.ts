@@ -585,6 +585,25 @@ export type AbsenceReviewOutcome =
       readonly identity: ModelIdentity
       readonly promptTemplateVersion: string
       readonly requestDigest: string
+      /**
+       * Da gjennomlesningen faktisk ble gjort, slik aktøren oppga det.
+       *
+       * `null` når den ikke oppga noe. Da står det som ikke oppgitt, og fylles
+       * ikke inn med registreringstidspunktet: det ville vært å hevde at
+       * gjennomlesningen skjedde da raden ble skrevet, og en proveniens som
+       * gjetter, er verre enn en som sier at den ikke vet
+       * (ANTIDEP_CONSTITUTION.md §14).
+       */
+      readonly answeredAt: string | null
+      /**
+       * Fingeravtrykket av svaret, ordrett slik det ble lest.
+       *
+       * `request_digest` binder spørsmålet; dette binder svaret. Med begge kan
+       * en tredjepart sammenligne det som står i proveniensen med filen aktøren
+       * leverte, uten å måtte stole på at mappa fortsatt finnes
+       * (EVIDENCE_PIPELINE.md §3.7, §65).
+       */
+      readonly answerDigest: string
       readonly fields: readonly AbsenceFieldReview[]
     }
 

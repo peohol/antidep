@@ -61,14 +61,19 @@ const job = (directory: string) => ({
   contentHash: HASH,
 })
 
-function svarFil(directory: string, requestDigest: string, draft: unknown): void {
+function svarFil(
+  directory: string,
+  requestDigest: string,
+  draft: unknown,
+  answeredAt: string = new Date().toISOString(),
+): void {
   writeFileSync(
     join(directory, ITEM.evidenceItemId, ABSENCE_REVIEW_FILES.answer),
     JSON.stringify({
       answer_version: MODEL_ANSWER_VERSION,
       request_digest: requestDigest,
       identity: { provider: 'test', model: 'lesing', model_version: '1' },
-      answered_at: '2026-09-11T09:00:00Z',
+      answered_at: answeredAt,
       draft,
     }),
     'utf8',
@@ -215,6 +220,34 @@ describe('readAbsenceReviewOutcome', () => {
     expect(outcome.kind).toBe('missing')
     if (outcome.kind !== 'missing') return
     expect(outcome.reason).toMatch(/gjelder evidensfunnet 00000000/)
+  })
+
+  // Et svar avgitt før spørsmålet fantes, er ikke en unøyaktighet — det ville
+  // stått i proveniensen som når den uavhengige gjennomlesningen ble gjort.
+  it('legger bort et svar avgitt før spørsmålet ble stilt', async () => {
+    const rot = katalog()
+    const åpnet = await writeAbsenceReviewJob(job(rot))
+    svarFil(rot, åpnet.requestDigest, GYLDIG_SVAR, '2020-01-01T00:00:00Z')
+
+    const outcome = await readAbsenceReviewOutcome(job(rot))
+    expect(outcome.kind).toBe('missing')
+    if (outcome.kind !== 'missing') return
+    expect(outcome.reason).toMatch(/utenfor vinduet/)
+  })
+
+  // Proveniensen for leddet som kan åpne publiseringsgaten, skal overleve at
+  // arbeidsmappa forsvinner (EVIDENCE_PIPELINE.md §3.7, §65).
+  it('bærer tidspunktet og et fingeravtrykk av svaret videre', async () => {
+    const rot = katalog()
+    const åpnet = await writeAbsenceReviewJob(job(rot))
+    const svartKlokkeslett = new Date().toISOString()
+    svarFil(rot, åpnet.requestDigest, GYLDIG_SVAR, svartKlokkeslett)
+
+    const outcome = await readAbsenceReviewOutcome(job(rot))
+    expect(outcome.kind).toBe('reviewed')
+    if (outcome.kind !== 'reviewed') return
+    expect(outcome.answeredAt).toBe(svartKlokkeslett)
+    expect(outcome.answerDigest).toMatch(/^sha256:[0-9a-f]{64}$/)
   })
 
   it('legger bort et svar som ikke har kontraktens form', async () => {

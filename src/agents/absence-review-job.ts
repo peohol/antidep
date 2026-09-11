@@ -46,10 +46,20 @@ import {
   type AbsenceReviewOutcome,
   type AbsenceReviewSubject,
 } from './absence-review.ts'
+import { sourceVersionContentHash } from './content-hash.ts'
 import { modelRequestDigest } from './model-client.ts'
 import { MODEL_ANSWER_VERSION, parseCompletionJson, parseModelAnswer } from './model-answer.ts'
 import { PLACEHOLDER_IDENTITY, PLACEHOLDER_PREFIX } from './model-identity.ts'
 import type { VerificationItem } from './verification-input.ts'
+
+/**
+ * Hvor mye klokkene får sprike før et svartidspunkt regnes som usant.
+ *
+ * Samme grunn og samme slakk som i `drafting-job.ts`: kontrollen finnes for å
+ * fange et tidspunkt som ikke kan stemme, ikke for å kreve sekundpresisjon av en
+ * aktør som kjører på en annen maskin.
+ */
+const ANSWER_CLOCK_SLACK_MS = 5 * 60 * 1000
 
 /** Filnavnene i en kjøremappe. Faste navn, av samme grunn som i `drafting-job.ts`. */
 export const ABSENCE_REVIEW_FILES = {
@@ -243,6 +253,20 @@ export async function writeAbsenceReviewJob(
  * halvdel med en grunn — ikke en kjøring som stopper: resten av kontrollen av
  * dette funnet, og alle funnene bak det i køen, er like gyldig uten den.
  */
+/** Da spørsmålet ble lagt igjen, eller `null` når filen ikke kan leses. */
+async function readOpenedAt(directory: string): Promise<string | null> {
+  try {
+    const file = await readJsonFile(join(directory, ABSENCE_REVIEW_FILES.request))
+    if (!file.present) {
+      return null
+    }
+    const opened = (file.value as Record<string, unknown>).opened_at
+    return typeof opened === 'string' && opened.trim().length > 0 ? opened : null
+  } catch {
+    return null
+  }
+}
+
 export async function readAbsenceReviewOutcome(
   input: AbsenceReviewJobInput,
 ): Promise<AbsenceReviewOutcome> {
@@ -301,12 +325,35 @@ export async function readAbsenceReviewOutcome(
           'ikke dette',
       }
     }
+    // Tidspunktet må kunne stemme. Et svar avgitt før spørsmålet fantes, er
+    // ikke en unøyaktighet — det er usant, og det ville stått i proveniensen
+    // som når den uavhengige gjennomlesningen ble gjort. Samme kontroll og
+    // samme slakk som modell-leddet ellers (`drafting-job.ts`).
+    const openedAt = await readOpenedAt(directory)
+    if (answer.answeredAt !== null && openedAt !== null) {
+      const answered = Date.parse(answer.answeredAt)
+      if (
+        answered < Date.parse(openedAt) - ANSWER_CLOCK_SLACK_MS ||
+        answered > Date.now() + ANSWER_CLOCK_SLACK_MS
+      ) {
+        return {
+          kind: 'missing',
+          reason:
+            `gjennomlesningen i ${answerPath} oppgir answered_at ${answer.answeredAt}, som ligger ` +
+            `utenfor vinduet: spørsmålet ble lagt igjen ${openedAt}. Tidspunktet registreres som ` +
+            'da gjennomlesningen ble gjort, og skal derfor være det',
+        }
+      }
+    }
+
     return {
       kind: 'reviewed',
       evidenceItemId: review.evidenceItemId,
       identity: answer.identity,
       promptTemplateVersion: expected.promptTemplateVersion,
       requestDigest: expectedDigest,
+      answeredAt: answer.answeredAt,
+      answerDigest: await sourceVersionContentHash(answer.completion),
       fields: review.fields,
     }
   } catch (cause) {

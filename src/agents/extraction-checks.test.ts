@@ -2765,6 +2765,99 @@ describe('checkExtraction — den kildeomfattende fraværskontrollen', () => {
     expect(report.findings).toMatch(/De to er forskjellige påstander/)
   })
 
+  // ------------------------------------------------------------------------
+  // Proveniens: hva åpnet gaten, hvem vurderte det, og når
+  //
+  // Reviewfunn: gjennomlesningen er nå et selvstendig KI-ledd som kan være den
+  // avgjørende grunnen til at publiseringsgaten åpner. EVIDENCE_PIPELINE.md
+  // §3.7 krever at hvert prosessledd kan spores til aktør, modellversjon,
+  // promptversjon, tidspunkt og output, og §65 at det kan rekonstrueres hva som
+  // ble kjørt med hvilke premisser. Beviset kan derfor ikke bare ligge i en
+  // midlertidig arbeidsmappe.
+  // ------------------------------------------------------------------------
+
+  it('bevarer hvem som leste, når, og mot hvilken forespørsel og hvilket svar', () => {
+    const overrides = { extraction: UTEN_KI } as const
+    const report = check(overrides, UTEN_INTERVALL)
+    expect(report.checkedFields).toContain('source_wide_absence')
+
+    // Menneskeleselig, på selve verifikasjonsraden.
+    expect(report.rationale).toMatch(/test\/gjennomlesning/)
+    expect(report.rationale).toMatch(/den 2026-09-11T09:00:00Z/)
+    expect(report.rationale).toMatch(/promptmal evidence-extraction\/source-wide-absence\/1/)
+    expect(report.rationale).toMatch(/svar sha256:b{64}/)
+
+    // …og maskinlesbart, til kjøringens output_manifest.
+    expect(report.sourceWideAbsence).toEqual({
+      provider: 'test',
+      model: 'gjennomlesning',
+      modelVersion: '1',
+      promptTemplateVersion: 'evidence-extraction/source-wide-absence/1',
+      requestDigest: `sha256:${'a'.repeat(64)}`,
+      answerDigest: `sha256:${'b'.repeat(64)}`,
+      answeredAt: '2026-09-11T09:00:00Z',
+      // Fiksturen fører også tidspunktet som ikke rapportert, og begge feltene
+      // dekningen hviler på skal stå der — ikke bare det ene prøven handler om.
+      fields: [
+        {
+          checkField: 'timepoint',
+          status: 'not_reported',
+          verdict: 'absent',
+          quote: null,
+          rationale: 'Leste gjennom hele representasjonen etter timepoint.',
+        },
+        {
+          checkField: 'confidence_interval',
+          status: 'not_reported',
+          verdict: 'absent',
+          quote: null,
+          rationale: 'Leste gjennom hele representasjonen etter confidence_interval.',
+        },
+      ],
+    })
+  })
+
+  // Kjernen for `not_measured`: det positive beviset skal overleve kontrollen.
+  // Forsvinner arbeidsmappa, skal det fortsatt gå an å se hvilket sted i kilden
+  // som åpnet gaten.
+  it('bevarer det ordrette beviset et «ikke målt» hviler på', () => {
+    const sier = 'Weight was not assessed in this trial.'
+    const tekst = TIER_OM_MÅLING.replace('</AbstractText>', ` ${sier}</AbstractText>`)
+    const overrides = { extraction: IKKE_MÅLT_UTEN_OMTALE } as const
+    const report = check(overrides, tekst, true, lest(overrides))
+
+    expect(report.checkedFields).toContain('source_wide_absence')
+    // Begrunnelsen sier hva statusen faktisk påstår, ikke den generiske
+    // «ingen verdi står der» — og den siterer stedet.
+    expect(report.rationale).toMatch(/kilden opplyser selv at størrelsen ikke ble målt/)
+    expect(report.rationale).toContain(sier)
+    expect(report.rationale).toMatch(/gjenfunnet ordrett/)
+    expect(report.sourceWideAbsence?.fields).toEqual([
+      {
+        checkField: 'estimate',
+        status: 'not_measured',
+        verdict: 'absent',
+        quote: sier,
+        rationale: 'Leste gjennom hele representasjonen etter estimate.',
+      },
+    ])
+  })
+
+  it('sier at tidspunktet ikke er oppgitt framfor å gjette det', () => {
+    const overrides = { extraction: UTEN_KI } as const
+    const review = lest(overrides)
+    const report = check(overrides, UTEN_INTERVALL, true, { ...review, answeredAt: null })
+    expect(report.checkedFields).toContain('source_wide_absence')
+    expect(report.rationale).toMatch(/tidspunkt ikke oppgitt/)
+    expect(report.sourceWideAbsence?.answeredAt).toBeNull()
+  })
+
+  it('bærer ingen proveniens når ingenting ble dekket', () => {
+    expect(check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, null).sourceWideAbsence).toBe(
+      undefined,
+    )
+  })
+
   // Et felt hvis globale fraværsgrunn kontrollen ikke kjenner, dekkes aldri —
   // uansett hva en gjennomlesning måtte ha svart. Feiler lukket.
   it('dekker ikke et felt kontrollen ikke vet hva påstår', () => {
