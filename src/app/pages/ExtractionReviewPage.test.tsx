@@ -409,6 +409,12 @@ describe('Kontrolløkten — feltkontrollen', () => {
     const regel = /\.field-check__excerpt\s*\{[^}]*\}/u.exec(css)?.[0] ?? ''
     expect(regel).toMatch(/white-space:\s*pre;/u)
     expect(regel).toMatch(/overflow-x:\s*auto;/u)
+
+    // Rullingen over er bare nåbar hvis ruten utdraget står i, kan krympe. Et
+    // rutenettelement er `min-width: auto` som standard, så uten dette vokser
+    // sporet til den lengste linja i utdraget, og steget over klipper resten.
+    const rute = /\.field-check__pane\s*\{[^}]*\}/u.exec(css)?.[0] ?? ''
+    expect(rute).toMatch(/min-width:\s*0;/u)
   })
 
   // «Endepunktet» og «Effektmålet» leste som duplikater. De to stegene skal si

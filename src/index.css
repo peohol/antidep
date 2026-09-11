@@ -1322,7 +1322,15 @@ header nav a {
   }
 }
 
+/* `min-width: 0` er det som gjør rullingen i utdraget under mulig. Et
+   rutenettelement er `min-width: auto` som standard, altså minst så bredt som
+   innholdets minste bredde — og et preformatert utdrag har den lengste linja si
+   bredde. Uten dette ville sporet vokst forbi kolonnen sin i stedet for å la
+   utdraget rulle inne i seg, og `overflow: hidden` på steget over ville klippet
+   bort tolkningen og svarknappene ved siden av. Gjelder både den stablede
+   enkeltkolonnen og de to kolonnene over 44rem. */
 .field-check__pane {
+  min-width: 0;
   padding-inline-start: 0.75rem;
   border-inline-start: 2px solid var(--color-border);
 }
