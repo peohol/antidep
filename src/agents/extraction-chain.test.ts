@@ -136,31 +136,33 @@ async function proposal(): Promise<ExtractionProposal> {
     field_groundings: [
       {
         check_field: 'intervention_arm',
-        source_excerpt: 'randomised to sertraline for 8 weeks',
+        source_excerpt:
+          'Sertraline patients (N = 284) with major depressive disorder were randomised to sertraline for 8 weeks.',
         source_locator: 'Sammendrag, METHODS',
         justification: 'Armen er navngitt i metodeavsnittet.',
       },
       {
         check_field: 'outcome',
-        source_excerpt: 'Sertraline weight change was 1.5 kg from baseline',
+        source_excerpt: 'Sertraline weight change was 1.5 kg from baseline.',
         source_locator: 'Sammendrag, RESULTS',
         justification: 'Endepunktet er navngitt i resultatavsnittet.',
       },
       {
         check_field: 'reported_direction',
-        source_excerpt: 'Sertraline weight change was 1.5 kg from baseline',
+        source_excerpt: 'Sertraline weight change was 1.5 kg from baseline.',
         source_locator: 'Sammendrag, RESULTS',
         justification: 'Retningen leses av endringen fra baseline.',
       },
       {
         check_field: 'availability_semantics',
-        source_excerpt: 'Sertraline patients (N = 284) with major',
+        source_excerpt:
+          'Sertraline patients (N = 284) with major depressive disorder were randomised to sertraline for 8 weeks.',
         source_locator: 'Sammendrag, METHODS',
         justification: 'Feltene uten verdi er ført som ikke rapportert.',
       },
       {
         check_field: 'effect_measure',
-        source_excerpt: 'Sertraline weight change was 1.5 kg from baseline',
+        source_excerpt: 'Sertraline weight change was 1.5 kg from baseline.',
         source_locator: 'Sammendrag, RESULTS',
         justification: 'Effektmålet er gjennomsnittlig endring innen armen.',
       },
@@ -173,7 +175,8 @@ async function proposal(): Promise<ExtractionProposal> {
       },
       {
         check_field: 'timepoint',
-        source_excerpt: 'randomised to sertraline for 8 weeks',
+        source_excerpt:
+          'Sertraline patients (N = 284) with major depressive disorder were randomised to sertraline for 8 weeks.',
         source_locator: 'Sammendrag, METHODS',
         justification: 'Behandlingsvarigheten er åtte uker.',
       },

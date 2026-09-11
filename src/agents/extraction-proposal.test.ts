@@ -14,12 +14,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   EXTRACTION_PROPOSAL_VERSION,
-  MIN_SOURCE_EXCERPT_LENGTH,
   extractionMethodFor,
   parseExtractionDraft,
   parseExtractionProposal,
   serializeExtractionProposal,
 } from './extraction-proposal'
+import { MIN_SOURCE_EXCERPT_LENGTH } from './source-excerpt'
 
 const EXCERPT = 'Patients received sertraline 50 mg daily for eight weeks.'
 
@@ -257,6 +257,41 @@ describe('parseExtractionProposal — forankringen', () => {
     expect(() => parseExtractionProposal(kort)).toThrow(
       new RegExp(`kortere enn ${String(MIN_SOURCE_EXCERPT_LENGTH)} tegn`),
     )
+  })
+
+  // Regresjon fra den første reelle kildekontrollen (Fava 2000). Utdraget er
+  // langt nok, står ordrett i artikkelen, og er likevel ubrukelig: det er et
+  // fragment uten en eneste setningsgrense, og en kontrollør kan ikke se hva
+  // tallene gjelder.
+  it('avviser et løsrevet fragment, selv når det er langt nok', () => {
+    const fragment = gyldig({
+      field_groundings: [
+        {
+          check_field: 'intervention_arm',
+          source_excerpt: 'tine (N = 92), sertraline, (N = 96), or paroxetine',
+          source_locator: 'Methods',
+          justification: 'Armene er navngitt.',
+        },
+      ],
+    })
+    expect(() => parseExtractionProposal(fragment)).toThrow(/inneholder ingen setningsgrense/)
+  })
+
+  // Et desimaltegn er ingen setningsgrense. «1.0» avslutter ingen setning, og et
+  // fragment som bare inneholder tallet, skal ikke slippe gjennom fordi det står
+  // et punktum inni det.
+  it('regner ikke desimaltegnet i et tall som en setningsgrense', () => {
+    const fragment = gyldig({
+      field_groundings: [
+        {
+          check_field: 'estimate',
+          source_excerpt: 'showed a small mean increase in weight of 1.0 percent',
+          source_locator: 'Results',
+          justification: 'Estimatet står i resultatavsnittet.',
+        },
+      ],
+    })
+    expect(() => parseExtractionProposal(fragment)).toThrow(/inneholder ingen setningsgrense/)
   })
 })
 

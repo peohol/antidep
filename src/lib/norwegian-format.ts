@@ -24,10 +24,20 @@
 //   interval '12 hours'             →  "12:00:00"
 //   to_json(interval '8 weeks')     →  "56 days"   (samme form i JSON)
 //
-// Merk at uker ikke overlever: databasen normaliserer dem til dager. Vi regner
-// dem ikke tilbake. «8 uker» leser bedre enn «56 dager», men enheten databasen
-// faktisk bærer er den vi viser — en omregning ville vært en presentasjon av et
-// tall som ikke står i kilden.
+// Merk at uker ikke overlever: databasen normaliserer dem til dager. Kilder
+// oppgir likevel uker — «26 til 32 uker» hos Fava 2000 — og en kontrollør som
+// bare får «182 til 224 dager», må kontrollregne for å se om Antidep gjengir
+// kilden riktig. Det er nøyaktig den jobben flaten skal ta
+// (PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
+//
+// `formatDurationSpan()` viser derfor uker som hovedform når dagene går opp i
+// hele uker, med dagene som en **eksplisitt omregning** ved siden av:
+//
+//   «26 til 32 uker (= 182 til 224 dager)»
+//
+// Begge tallene står, så ingenting er byttet ut: den kanoniske varigheten i
+// databasen er fortsatt dager, og den er fortsatt synlig. `formatIntervalText()`
+// er uendret og gjengir det databasen bærer.
 //
 // Alt som ikke passer denne formen — ISO 8601 (`P56D`) fra en annen
 // `IntervalStyle`, eller et negativt intervall, som migrasjon 004 uansett
@@ -230,6 +240,70 @@ export function formatIntervalText(raw: string): RenderedValue {
   }
 
   return { kind: 'formatted', text: parts.join(' ') }
+}
+
+const DAYS_IN_WEEK = 7
+
+/**
+ * Hele uker i et intervall, når det er hele uker — ellers `null`.
+ *
+ * Bevisst smal: bare den ene formen PostgreSQL faktisk skriver for et intervall
+ * oppgitt i uker eller dager, «N days», og bare når N går opp i sju. Et
+ * intervall med måneder, år eller klokkeslett i seg regnes ikke om, fordi en
+ * måned ikke er et fast antall dager og omregningen da ville vært en påstand
+ * framfor en identitet.
+ */
+export function wholeWeeksOf(raw: string): number | null {
+  const match = /^(\d+)\s+days?$/.exec(raw.trim())
+  const amount = match?.[1]
+  if (amount === undefined) {
+    return null
+  }
+  const days = Number(amount)
+  if (days === 0 || days % DAYS_IN_WEEK !== 0) {
+    return null
+  }
+  return days / DAYS_IN_WEEK
+}
+
+/** «26 til 32 uker», eller «8 uker» når grensene er like. */
+function spanText(from: number, to: number, forms: readonly [string, string]): string {
+  if (from === to) {
+    return pluralise(from, forms)
+  }
+  return `${formatNumber(from).text} til ${pluralise(to, forms)}`
+}
+
+/**
+ * Tidsrommet et funn gjelder, som én lesbar setningsdel.
+ *
+ * Ett punkt når grensene er like, et intervall når de ikke er det, og uker som
+ * hovedform med dagene som eksplisitt omregning når databasens dager går opp i
+ * hele uker. `null` bare når ingen av grensene er registrert — fravær er fravær,
+ * og det håndteres av kalleren.
+ *
+ * Grensene regnes bare om når *begge* er hele uker. Ellers ville «26 uker til
+ * 200 dager» blandet to enheter i én setning, og leseren måtte selv finne ut om
+ * de var sammenlignbare.
+ */
+export function formatDurationSpan(min: string | null, max: string | null): string | null {
+  if (min === null && max === null) {
+    return null
+  }
+  const from = min ?? (max as string)
+  const to = max ?? (min as string)
+
+  const weeksFrom = wholeWeeksOf(from)
+  const weeksTo = wholeWeeksOf(to)
+  if (weeksFrom !== null && weeksTo !== null) {
+    const weeks = spanText(weeksFrom, weeksTo, ['uke', 'uker'])
+    const days = spanText(weeksFrom * DAYS_IN_WEEK, weeksTo * DAYS_IN_WEEK, ['dag', 'dager'])
+    return `${weeks} (= ${days})`
+  }
+
+  const fromText = renderedText(formatIntervalText(from), 'varighet')
+  const toText = renderedText(formatIntervalText(to), 'varighet')
+  return fromText === toText ? fromText : `${fromText} til ${toText}`
 }
 
 // ----------------------------------------------------------------------------

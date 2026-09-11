@@ -1411,16 +1411,43 @@ header nav a {
   font-weight: 600;
 }
 
-.source-address__value {
-  display: block;
-  color: var(--color-text-muted);
-  font-size: 0.8125rem;
-  overflow-wrap: anywhere;
+.source-title {
+  margin: 0.25rem 0 0;
+  font-size: 1rem;
+  line-height: 1.5;
 }
 
 .source-address--absent,
 .source-address--plain {
   color: var(--color-text-muted);
+}
+
+/* ==========================================================================
+   Innledningen til en kontrolløkt
+
+   Hva som skal kontrolleres, og mot hvilken kilde — før første delkontroll.
+   Ingen ramme og ingen farge: det er ikke en varsling, det er saken.
+   ========================================================================== */
+
+.control-intro {
+  margin: 0 0 1.5rem;
+  max-width: 52rem;
+}
+
+.control-intro__heading {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.control-intro__heading:first-child {
+  margin-block-start: 0;
+}
+
+.control-intro__lead {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
 }
 
 /* ==========================================================================

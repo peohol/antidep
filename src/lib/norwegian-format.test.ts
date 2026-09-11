@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   compareNorwegian,
   formatDateAtPrecision,
+  formatDurationSpan,
   formatIntervalText,
   formatNumber,
   formatTimestampAsDate,
   formatTimestampWithClock,
+  wholeWeeksOf,
 } from './norwegian-format'
 
 // Formene under er ikke oppdiktede. De er lest ut av PostgreSQL 16 med
@@ -220,4 +222,69 @@ describe('formatDateAtPrecision', () => {
       expect(formatDateAtPrecision(raw, 'day')).toEqual({ kind: 'unrecognised', text: raw })
     },
   )
+})
+
+// ----------------------------------------------------------------------------
+// Varigheten et funn gjelder
+//
+// Databasen normaliserer uker til dager, men kildene oppgir uker. En kontrollør
+// som bare får «182 til 224 dager», må kontrollregne for å se om Antidep
+// gjengir kilden riktig — og det er nettopp den jobben flaten skal ta. Begge
+// tallene står, så den kanoniske varigheten er ikke byttet ut.
+// ----------------------------------------------------------------------------
+
+describe('wholeWeeksOf', () => {
+  it.each([
+    ['56 days', 8],
+    ['182 days', 26],
+    ['224 days', 32],
+    ['7 days', 1],
+  ])('«%s» er %i hele uker', (raw, weeks) => {
+    expect(wholeWeeksOf(raw)).toBe(weeks)
+  })
+
+  // Måneder og år er ikke faste antall dager, og en omregning ville vært en
+  // påstand framfor en identitet. Et intervall som ikke går opp i hele uker,
+  // regnes heller ikke om.
+  it.each(['10 days', '3 mons', '1 year 6 mons', '12:00:00', '0 days', 'P56D', ''])(
+    '«%s» regnes ikke om til uker',
+    (raw) => {
+      expect(wholeWeeksOf(raw)).toBeNull()
+    },
+  )
+})
+
+describe('formatDurationSpan', () => {
+  it('viser uker som hovedform, med dagene som eksplisitt omregning', () => {
+    expect(formatDurationSpan('56 days', '56 days')).toBe('8 uker (= 56 dager)')
+  })
+
+  // Spennet Fava 2000 faktisk oppgir: «26 to 32 weeks».
+  it('viser et spenn i uker, med dagene ved siden av', () => {
+    expect(formatDurationSpan('182 days', '224 days')).toBe('26 til 32 uker (= 182 til 224 dager)')
+  })
+
+  it('bøyer entallsformen', () => {
+    expect(formatDurationSpan('7 days', '7 days')).toBe('1 uke (= 7 dager)')
+  })
+
+  // Blandede enheter ville krevd at leseren selv fant ut om grensene var
+  // sammenlignbare. Da gjengis databaseverdien som før.
+  it('regner ikke om når bare den ene grensen er hele uker', () => {
+    expect(formatDurationSpan('56 days', '60 days')).toBe('56 dager til 60 dager')
+  })
+
+  it('gjengir en varighet som ikke er hele uker i dager', () => {
+    expect(formatDurationSpan('10 days', '10 days')).toBe('10 dager')
+  })
+
+  it('merker en varighet som ikke lot seg tolke, framfor å utelate den', () => {
+    expect(formatDurationSpan('P56D', 'P56D')).toBe('P56D (ikke tolkbar som varighet)')
+  })
+
+  it('er fravær bare når ingen av grensene er registrert', () => {
+    expect(formatDurationSpan(null, null)).toBeNull()
+    expect(formatDurationSpan(null, '56 days')).toBe('8 uker (= 56 dager)')
+    expect(formatDurationSpan('56 days', null)).toBe('8 uker (= 56 dager)')
+  })
 })

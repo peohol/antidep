@@ -32,11 +32,10 @@ import { SourceLink } from './SourceLink'
 import { ControlChoice, type WizardStep } from './ControlWizard'
 import {
   EVIDENCE_CHECK_FIELD_LABELS,
-  SOURCE_REPRESENTATION_LABELS,
   VERIFICATION_OUTCOME_LABELS,
   termText,
 } from './vocabulary-labels'
-import { readEvidenceCheckField, readSourceRepresentation } from '../lib/evidence-item'
+import { readEvidenceCheckField } from '../lib/evidence-item'
 import {
   deriveExtractionVerification,
   extractionTally,
@@ -49,7 +48,6 @@ import { groundingGap, uncoveredCheckFields } from '../lib/extraction-review'
 import { designStatement, interpretField } from '../lib/extraction-statements'
 import { extractionCommitStepId, fieldStepId, sourceAccessStepId } from '../lib/control-steps'
 import type { ExtractionReviewItem } from '../lib/extraction-review'
-import type { VerificationItem } from '../agents/verification-input'
 import type { VerificationOutcome } from '../types/api'
 
 export interface ExtractionSessionHandlers {
@@ -70,25 +68,6 @@ const ACCESS_WITHOUT_FULL_TEXT = [
 
 function checkFieldLabel(field: string): string {
   return termText(readEvidenceCheckField(field), EVIDENCE_CHECK_FIELD_LABELS, 'kontrollfelt')
-}
-
-/**
- * Hva slags representasjon ekstraksjonen bygger på, som én setning.
- *
- * EVIDENCE_PIPELINE.md §13: kontrolløren skal vite om verdiene er lest ut av
- * fulltekst eller av et sammendrag, fordi det avgjør hva de i det hele tatt kan
- * si. Fravær står som fravær.
- */
-function representationSentence(dossier: VerificationItem): string {
-  const representation = dossier.sourceVersion?.representation ?? null
-  if (representation === null) {
-    return 'Antidep har ikke registrert hva slags representasjon av kilden denne ekstraksjonen bygger på.'
-  }
-  return `Ekstraksjonen bygger på ${termText(
-    readSourceRepresentation(representation),
-    SOURCE_REPRESENTATION_LABELS,
-    'representasjon',
-  ).toLowerCase()}.`
 }
 
 function outcomeLabel(outcome: string): string {
@@ -163,6 +142,7 @@ export function buildExtractionSteps({
   state,
   handlers,
   includeFieldSteps,
+  sourceIntroduced,
   titlePrefix,
 }: {
   readonly item: ExtractionReviewItem
@@ -178,6 +158,16 @@ export function buildExtractionSteps({
    * registrere hva kontrolløren hadde tilgang til for hver evidenslenke.
    */
   readonly includeFieldSteps: boolean
+  /**
+   * Om kilden allerede er presentert over økten.
+   *
+   * Kontrollflaten for ett evidensfunn innleder med hva som skal kontrolleres og
+   * hvilken kilde det gjelder (`ExtractionControlIntro.tsx`), og da er tittelen
+   * gjentatt i kildetilgangssteget bare støy. En påstandsøkt kontrollerer flere
+   * kilder etter hverandre uten en slik innledning, og der må steget selv si
+   * hvilken kilde spørsmålet gjelder.
+   */
+  readonly sourceIntroduced: boolean
   /** Prefiks som skiller flere evidensfunn fra hverandre i en lang økt. */
   readonly titlePrefix: string | null
 }): readonly WizardStep[] {
@@ -203,11 +193,14 @@ export function buildExtractionSteps({
       // ikke en av de tingene som kan bekreftes. Talt med ville progresjonen
       // oppgitt et annet tall enn oppsummeringen til slutt.
       countsTowardProgress: false,
+      // Lenken og spørsmålet, og ikke mer. Hva slags representasjon
+      // ekstraksjonen bygger på, og hvilken identifikator kilden har, er
+      // proveniens som hører til «Tekniske detaljer»; i dette steget er begge
+      // deler støy (ANTIDEP_CONSTITUTION.md §2).
       content: (
         <div className="control-step__form">
-          <p className="control-step__lead">{dossier.sourceTitle}</p>
+          {sourceIntroduced ? null : <p className="control-step__lead">{dossier.sourceTitle}</p>}
           <SourceLink identifiers={dossier.sourceIdentifiers} />
-          <p className="control-step__lead">{representationSentence(dossier)}</p>
           <ControlChoice
             legend="Har du tilgang til fullteksten?"
             onChoose={(value) => handlers.onFullText(evidenceItemId, value as ControlAnswer)}

@@ -41,7 +41,7 @@ const DRUG = '40000000-0000-4000-8000-000000000001'
 const OTHER_DRUG = '40000000-0000-4000-8000-000000000002'
 const OUTCOME = '41000000-0000-4000-8000-000000000001'
 
-const EXCERPT = 'Sertraline patients (N = 284) with major depressive disorder'
+const EXCERPT = 'Sertraline patients (N = 284) with major depressive disorder were randomised.'
 const QUOTE = 'mean weight change of 1.5 kg'
 
 const OPENED_AT = '2026-09-10T09:00:00Z'

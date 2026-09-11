@@ -35,13 +35,56 @@ kjøres et annet sted.
    utelates og den tilhørende `*_availability`-verdien si hvorfor. `not_reported`,
    `not_applicable`, `not_accessible` og `unclear` er fire forskjellige
    tilstander, og ingen av dem betyr null, ingen effekt eller lav risiko.
-3. **Hvert `source_excerpt` skal stå ordrett i representasjonen**, tegn for tegn,
-   med hele setningen verdien står i. Kjøringen søker etter utdraget og
-   registrerer ingenting dersom det ikke finnes. Omskriv aldri, oversett aldri,
-   og slå aldri sammen to setninger som ikke står sammen.
-4. **Bruk bare identifikatorene som står i oppdraget.** Passer ingen av dem, er
+3. **Hvert `source_excerpt` skal stå ordrett og sammenhengende i
+   representasjonen**, tegn for tegn. Omskriv aldri, oversett aldri, og sett
+   aldri sammen tekst som ikke står sammen i kilden.
+
+   Utdraget er det eneste en menneskelig kontrollør får se ved siden av verdien
+   din. **Hen skal kunne avgjøre delpunktet ut fra utdraget alene, uten å åpne
+   artikkelen.** Det er et produktkrav
+   (`docs/PRODUCT_INFORMATION_ARCHITECTURE.md` §63.1), ikke en preferanse.
+   Derfor skal hvert utdrag:
+
+   - normalt være minst **én hel setning**,
+   - **aldri** begynne eller slutte midt i et ord,
+   - aldri være et løsrevet setningsfragment bare fordi nettopp det fragmentet
+     inneholder tallet,
+   - være langt nok til at kontrolløren kan se hva opplysningen gjelder:
+     behandlingsarm, populasjon, tidspunkt, og hva et tall er en verdi av,
+   - ta med den nærmeste tilstøtende setningen når én setning ikke gjør
+     betydningen entydig — for eksempel når «patients» først blir sertralinarmen
+     av setningen foran,
+   - ikke være unødvendig langt. Målet er den minste **sammenhengende** teksten
+     som er tilstrekkelig for menneskelig kontroll, ikke den minste strengen
+     maskinen kan gjenfinne.
+
+   IKKE slik:
+
+   ```text
+   tine (N = 92), sertraline, (N = 96), or paroxetine
+   ```
+
+   MEN slik:
+
+   ```text
+   Patients (N = 284) with major depressive disorder (DSM-IV) were randomly
+   assigned to double-blind treatment with fluoxetine (N = 92), sertraline,
+   (N = 96), or paroxetine (N = 96) for a total of 26 to 32 weeks.
+   ```
+
+   Det første sto ordrett i artikkelen og passerte hele kjeden — og begynner
+   likevel inne i «fluoxetine». `--close` avviser nå et utdrag som begynner
+   eller slutter midt i et ord, og et utdrag uten en eneste setningsgrense.
+
+4. **`sample_size` er antallet estimatet bygger på.** Ikke antallet randomisert
+   i studien, og ikke antallet i armen med mindre kilden sier at det er nettopp
+   det estimatet er regnet over. Knytter ikke kilden uttrykkelig en nevner til
+   estimatet, skal `sample_size` utelates og `sample_size_availability` si
+   hvorfor. Et tall fra en nærliggende tabell eller fra et annet antall skal
+   aldri utledes hit.
+5. **Bruk bare identifikatorene som står i oppdraget.** Passer ingen av dem, er
    det et svar i seg selv.
-5. **Du skal ikke skrive til Antidep, og ikke lete etter en vei til å gjøre det.**
+6. **Du skal ikke skrive til Antidep, og ikke lete etter en vei til å gjøre det.**
    Kjør aldri `npm run agent:extract-evidence`, `scripts/deploy-migrations.sh`
    eller noen annen kommando eller connector som kan skrive, som en del av dette
    leddet. Registrering er en egen operasjon, med en egen identitet, og skal
@@ -54,10 +97,10 @@ kjøres et annet sted.
    noe som kan skrive til Antidep, er oppsettet feil: si fra i rapporten, og bruk
    det ikke.
 
-6. **Skriv aldri `forslag.json` selv.** Den filen lages av `--close`, som
+7. **Skriv aldri `forslag.json` selv.** Den filen lages av `--close`, som
    kontrollerer svaret ditt. En fil du skrev direkte, ville vært et forslag som
    ikke var kontrollert av noe.
-7. **Ikke commit, ikke push, ikke åpne en pull request, og ikke rør `.github/`.**
+8. **Ikke commit, ikke push, ikke åpne en pull request, og ikke rør `.github/`.**
    Oppdraget er å lese én kilde og lage ett forslag. En branch som pushes herfra,
    kan sette i gang arbeidsflyter med tilgang du ikke har
    (`docs/ROUTINE_EXTRACTION.md` §3.5).
@@ -117,8 +160,9 @@ modellversjonen, oppgi den identifikatoren du har, og ikke en du gjetter deg til
 npm run agent:draft-extraction -- --assignment <oppdragsfil> --close
 ```
 
-Kommandoen kontrollerer formen, katalogverdiene og at hvert utdrag står ordrett i
-representasjonen, og skriver `forslag.json` bare hvis alt holder.
+Kommandoen kontrollerer formen, katalogverdiene og at hvert utdrag står ordrett
+og som hele ord i representasjonen, og skriver `forslag.json` bare hvis alt
+holder.
 
 ### 5. Når svaret blir avvist
 
@@ -128,6 +172,11 @@ Rett det i den samme `svar.json` og kjør `--close` igjen.
 Rett feilen, ikke oppgaven. Får du ikke et utdrag til å stå ordrett, er det som
 regel fordi du har normalisert mellomrom, omskrevet, eller slått sammen to
 setninger. Kopier setningen ordrett fra `prompt.txt`.
+
+Sier avvisningen at utdraget **begynner eller slutter midt i et ord**, eller at
+det ikke **inneholder en setningsgrense**, har du kuttet for smalt. Utvid til
+hele setningen — og ta med setningen foran eller etter når det er den som gjør
+betydningen entydig.
 
 Er det **kilden** som ikke gir grunnlag for et funn innenfor oppdragets katalog,
 er det et gyldig utfall: si det, og ikke lever et utkast. Et forslag som er

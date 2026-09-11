@@ -7,6 +7,15 @@
 // detaljer» (ANTIDEP_CONSTITUTION.md §2).
 //
 // ----------------------------------------------------------------------------
+// Et utsagn om kilden og en mangel ved kilden er to forskjellige spørsmål
+//
+// `interpretation.kind` sier hvilket av de to steget viser
+// (`extraction-statements.ts`), og skuffen stiller spørsmålet utsagnet faktisk
+// inviterer til. «Stemmer Antideps tolkning med teksten?» er meningsløst om
+// utsagnet er at kilden ikke oppgir noe — da er spørsmålet om det stemmer at
+// den ikke gjør det.
+//
+// ----------------------------------------------------------------------------
 // Venstresiden er bevist av maskinen, høyresiden vurderes av mennesket
 //
 // Utdraget er ordrett tekst fra den representasjonen som faktisk ble hentet, og
@@ -31,6 +40,18 @@ import { CONTROL_ANSWER_OPTIONS, type ControlAnswer } from '../lib/control-sessi
 import type { FieldInterpretation } from '../lib/extraction-statements'
 import type { EvidenceFieldGrounding } from '../agents/verification-input'
 
+/** Hva høyresiden heter, og hva kontrolløren blir spurt om. */
+const PANE = {
+  interpretation: {
+    heading: 'Antideps tolkning',
+    question: 'Stemmer Antideps tolkning med teksten?',
+  },
+  absence: {
+    heading: 'Mangel i kilden',
+    question: 'Stemmer det at kilden ikke oppgir dette?',
+  },
+} as const
+
 export function ExtractionFieldStep({
   interpretation,
   grounding,
@@ -46,6 +67,7 @@ export function ExtractionFieldStep({
   readonly onAnswer: (answer: ControlAnswer) => void
   readonly onNote: (note: string) => void
 }) {
+  const pane = PANE[interpretation.kind]
   return (
     <div className="field-check">
       <div className="field-check__panes">
@@ -56,7 +78,7 @@ export function ExtractionFieldStep({
         </div>
 
         <div className="field-check__pane">
-          <h4 className="field-check__pane-heading">Antideps tolkning</h4>
+          <h4 className="field-check__pane-heading">{pane.heading}</h4>
           <p className="field-check__statement">{interpretation.statement}</p>
           {interpretation.detail === null ? null : (
             <p className="field-check__detail">{interpretation.detail}</p>
@@ -69,7 +91,7 @@ export function ExtractionFieldStep({
       </div>
 
       <ControlChoice
-        legend="Stemmer Antideps tolkning med teksten?"
+        legend={pane.question}
         onChoose={(value) => onAnswer(value as ControlAnswer)}
         options={CONTROL_ANSWER_OPTIONS}
         value={answer}

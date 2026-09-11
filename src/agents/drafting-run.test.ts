@@ -29,7 +29,7 @@ const OTHER_DRUG = '40000000-0000-4000-8000-000000000002'
 const OUTCOME = '41000000-0000-4000-8000-000000000001'
 const POPULATION = '42000000-0000-4000-8000-000000000001'
 
-const EXCERPT = 'Sertraline patients (N = 284) with major depressive disorder'
+const EXCERPT = 'Sertraline patients (N = 284) with major depressive disorder were randomised.'
 const QUOTE = 'mean weight change of 1.5 kg'
 
 async function oppdrag(overrides: Record<string, unknown> = {}) {
@@ -315,6 +315,32 @@ describe('runExtractionDrafting — det den nekter å foreslå', () => {
 
     expect(report.decision).toBe('rejected')
     expect(report.reason).toMatch(/intervention_arm/)
+  })
+
+  // Regresjon fra Fava 2000: «tine (N = 92), sertraline, (N = 96), or
+  // paroxetine» sto ordrett i artikkelen og passerte hele kjeden. Et utdrag som
+  // begynner inne i et ord, er ikke et utdrag av en setning.
+  it('avviser et utdrag som står ordrett, men begynner midt i et ord', async () => {
+    const report = await runExtractionDrafting({
+      assignment: await oppdrag(),
+      model: svarer(
+        utkast({
+          groundings: [
+            {
+              check_field: 'intervention_arm',
+              source_excerpt:
+                'traline patients (N = 284) with major depressive disorder were randomised.',
+              source_locator: 'Sammendrag',
+              justification: 'Armen står i metodeavsnittet.',
+            },
+          ],
+        }),
+      ),
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.decision).toBe('rejected')
+    expect(report.reason).toMatch(/midt i et ord/)
   })
 
   // source_quote blir raw_extraction på raden, og ekstraksjonskontrollen prøver

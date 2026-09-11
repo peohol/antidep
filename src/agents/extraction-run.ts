@@ -54,7 +54,8 @@ import type { Uuid } from '../types/api.ts'
 import type { EvidenceExtractionApi } from './agent-api.ts'
 import { collidingEvidenceItemId, isUniqueViolation } from './agent-api.ts'
 import { assignmentMismatch, type ExtractionAssignment } from './extraction-assignment.ts'
-import { searchProjections, verbatimOccursIn } from './extraction-checks.ts'
+import { searchProjections } from './extraction-checks.ts'
+import { excerptSourceProblem } from './source-excerpt.ts'
 import type { ExtractionProposal } from './extraction-proposal.ts'
 import {
   extractionMethodFor,
@@ -160,18 +161,23 @@ type Verdict =
  * Rekkefølgen er ikke tilfeldig: uten riktig fingeravtrykk er det ingen vits i
  * å søke, fordi et treff da ville vært i en annen utgave enn den ekstraksjonen
  * skal peke på.
+ *
+ * «Står i den» er ikke bare en delstrengsjekk. Et utdrag som begynner eller
+ * slutter midt i et ord, står ordrett i teksten og er likevel ikke et utdrag av
+ * en setning — og dette er den siste grensen før en slik forankring blir en rad
+ * et menneske må kontrollere (`source-excerpt.ts`).
  */
 function judge(proposal: ExtractionProposal, sourceText: string): string | null {
   const projections = searchProjections(sourceText)
-  const missing = proposal.fieldGroundings.filter(
-    (grounding) => !verbatimOccursIn(projections, grounding.sourceExcerpt),
-  )
-  if (missing.length > 0) {
-    const fields = missing.map((grounding) => grounding.checkField).join(', ')
-    return (
-      `Kildeforankringen for ${fields} oppgir utdrag som ikke står ordrett i ` +
-      `representasjonen fra ${proposal.retrievedFrom}. Ekstraksjonen ble ikke registrert.`
-    )
+  for (const grounding of proposal.fieldGroundings) {
+    const issue = excerptSourceProblem(projections, grounding.sourceExcerpt)
+    if (issue !== null) {
+      return (
+        `Kildeforankringen for ${grounding.checkField} oppgir et utdrag som ${issue}, ` +
+        `målt mot representasjonen fra ${proposal.retrievedFrom}. Ekstraksjonen ble ikke ` +
+        'registrert.'
+      )
+    }
   }
   return null
 }

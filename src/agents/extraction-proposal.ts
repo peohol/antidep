@@ -77,6 +77,7 @@ import {
   type ExtractionMethod,
   type Uuid,
 } from '../types/api.ts'
+import { excerptShapeProblem } from './source-excerpt.ts'
 import {
   parseDocumentBinding,
   serializeDocumentBinding,
@@ -135,17 +136,6 @@ export const EXTRACTION_PROPOSAL_VERSION = 'antidep/extraction-proposal@3'
  */
 export const PROPOSAL_PRODUCERS = ['model', 'human'] as const
 export type ProposalProducer = (typeof PROPOSAL_PRODUCERS)[number]
-
-/**
- * Hvor kort et ordrett kildeutdrag kan være og fortsatt bære kontekst.
- *
- * Et utdrag er kontrollgrunnlaget et menneske ser på venstre side i
- * kontrolløkten, og «284» eller «8 weeks» alene er ikke et grunnlag: tallet står
- * kanskje fem steder i artikkelen, og utdraget sier ikke hvilket. Grensen er den
- * samme som `MIN_QUOTE_LENGTH` i `extraction-checks.ts` bruker for at et sitat
- * skal være verdt å kontrollere ordrett, og av samme grunn.
- */
-export const MIN_SOURCE_EXCERPT_LENGTH = 24
 
 /** Én forankring: feltet, utdraget, pekeren og begrunnelsen. */
 export interface ProposedGrounding {
@@ -401,12 +391,14 @@ function parseGrounding(parent: Fields, value: unknown, index: number): Proposed
   }
   rejectUnknown(fields)
 
-  if (grounding.sourceExcerpt.trim().length < MIN_SOURCE_EXCERPT_LENGTH) {
-    problem(
-      fields.subject,
-      `${fields.where}.source_excerpt`,
-      `er kortere enn ${String(MIN_SOURCE_EXCERPT_LENGTH)} tegn og bærer derfor ikke nok kontekst til å være kontrollgrunnlag. Ta med setningen verdien står i, ordrett`,
-    )
+  // Formkravet til selve utdraget, og ikke bare til lengden av det: et utdrag
+  // er venstresiden i kontrolløkten, og et fragment er ikke et kontrollgrunnlag
+  // (`source-excerpt.ts`). Det som bare kan avgjøres mot representasjonen —
+  // om utdraget begynner midt i et ord — kontrolleres av leddene som har
+  // teksten.
+  const shape = excerptShapeProblem(grounding.sourceExcerpt)
+  if (shape !== null) {
+    problem(fields.subject, `${fields.where}.source_excerpt`, shape)
   }
   return grounding
 }

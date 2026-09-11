@@ -866,6 +866,37 @@ Admin-UI bør tilby handlinger som:
 
 ikke en stor «rediger monografi»-textarea.
 
+## 63.1 Kildekontroll skal være mulig uten fullteksten ved siden av
+
+Kildekontrollen er flaten der et menneske avgjør om Antideps strukturerte verdier
+følger av kilden. Den bærende regelen er:
+
+> **Kildekontrolløren skal få nok lokal kildekontekst til å kunne vurdere hvert
+> utsagn uten å måtte lete i fullteksten selv.**
+
+Dette er et produktkrav, ikke en promptpreferanse. Det binder både hva
+ekstraksjonen må levere (EVIDENCE_PIPELINE.md §19.1) og hvordan kontrollflaten
+presenterer det:
+
+- Økten skal innlede med **hva som skal kontrolleres** — virkestoff, endepunkt og
+  eventuell populasjon — og med **hvilken kilde** det gjelder, som en lenke til
+  artikkelen. Innledningen bygges av den kanoniske raden, aldri av generert tekst.
+- Hvert kildeutdrag skal vises i sin helhet, uten avkorting.
+- Flaten skal skille mellom **Antideps tolkning** — hva Antidep mener kilden sier
+  — og en **mangel**, altså en relevant opplysning kilden ikke gir. Bokføring om
+  hvor mange felter som står uten verdi, er ingen av delene og skal ikke
+  presenteres som en tolkning. En mangel skal aldri bli til en klinisk påstand
+  utledet av fraværet.
+- To utsagn som ser like ut, skal gjøres eksplisitt forskjellige. Endepunktet er
+  hva som ble målt; effektmålet er hvordan resultatet er uttrykt.
+- Tall skal presenteres i den formen kilden bruker, med databasens egen form som
+  eksplisitt omregning ved siden av. En varighet lagret som 182 til 224 dager
+  vises som «26 til 32 uker (= 182 til 224 dager)», slik at kontrolløren slipper
+  å kontrollregne. Den kanoniske verdien skal ikke gå tapt.
+- Steget skal inneholde det som trengs for å svare, og ikke mer. Identifikatorer,
+  henteadresser og representasjonstype er proveniens og hører til under tekniske
+  detaljer.
+
 ## 64. Preview skal være tilgjengelig
 
 Før publisering skal editor/reviewer kunne forhåndsvise hvordan den aktuelle revisjonen vil se ut i:
