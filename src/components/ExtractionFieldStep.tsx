@@ -75,12 +75,20 @@ const PANE: Record<FieldStatementKind, Pane> = {
   // (EVIDENCE_PIPELINE.md §19.1). Et forbehold ved siden av et globalt
   // ja/nei-spørsmål ville ikke endret sannhetsbetingelsen, og ville latt
   // kontrolløren stå igjen med «Kan ikke avgjøres» hver gang.
+  //
+  // Den andre halvdelen — om opplysningen står noe annet sted i kilden — er
+  // ikke kontrollørens arbeid og blir aldri spurt om her. Den er et eget
+  // kontrollobjekt: en maskinell gjennomgang av hele den registrerte
+  // kildeversjonen (migrasjon 005ae, `absence-review.ts`). Setningen under sier
+  // det, slik at kontrolløren vet at hen ikke skal lete — og at ingen andre
+  // venter på at hen gjør det.
   absence_in_source: {
     heading: 'Hvorfor verdien mangler',
     question: 'Mangler opplysningen der utdraget viser at den ville stått?',
     basis:
       'Utdraget til venstre er stedet der opplysningen ville stått. Du skal bare avgjøre om ' +
-      'den mangler der — ikke lete gjennom resten av kilden.',
+      'den mangler der. Om den står noe annet sted i kilden, avgjøres maskinelt ved en egen ' +
+      'gjennomgang av hele den registrerte kildeversjonen — det er ikke din oppgave.',
   },
   // Ingen fraværskolonne finnes for feltet. Da er «ingenting er ført» hele
   // påstanden, og den handler om registreringen — ikke om hva kilden oppgir.

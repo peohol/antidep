@@ -314,6 +314,11 @@ export const EVIDENCE_CHECK_FIELD_LABELS: Record<EvidenceCheckField, string> = {
   estimate: 'Selve estimatet',
   confidence_interval: 'Konfidensintervallet',
   availability_semantics: 'Begrunnelsen for felter uten verdi',
+  // Navnet sier hva som faktisk ble gjennomsøkt, ikke hva Antidep skulle ønske
+  // den kunne si. Rekkevidden er kildeversjonen — den utgaven raden viser til —
+  // og ikke publikasjonen, så «kontrollert mot kilden» ville vært en sterkere
+  // påstand enn søket bærer (migrasjon 005ae).
+  source_wide_absence: 'Fraværet, gjennomgått i hele den registrerte kildeversjonen',
   limitations: 'Forbeholdene',
   source_locator: 'Hvor i kilden funnet står',
   raw_extraction: 'Den rå ekstraksjonen, ordrett',

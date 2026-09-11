@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import type {
   AgentRunPremises,
@@ -22,6 +25,8 @@ const RUN_ID = '11111111-1111-4111-8111-111111111111'
 
 interface FakeApi extends ExtractionVerificationApi {
   readonly registered: RegisterVerificationArgs[]
+  /** Inndatamanifestet kjøringen ble åpnet med, slik proveniensen fikk det. */
+  readonly openedWith: (Record<string, unknown> | null)[]
   readonly completions: {
     status: string
     outputManifest: Record<string, unknown> | null
@@ -37,11 +42,16 @@ interface FakeApi extends ExtractionVerificationApi {
 function fakeApi(items: readonly VerificationItem[], overrides: Partial<FakeApi> = {}): FakeApi {
   const registered: RegisterVerificationArgs[] = []
   const completions: FakeApi['completions'] = []
+  const openedWith: (Record<string, unknown> | null)[] = []
 
   return {
     registered,
     completions,
-    beginRun: () => Promise.resolve(RUN_ID),
+    openedWith,
+    beginRun: (_premises, inputManifest) => {
+      openedWith.push(inputManifest)
+      return Promise.resolve(RUN_ID)
+    },
     readInput: () =>
       Promise.resolve({
         agent_run_id: RUN_ID,
@@ -119,6 +129,7 @@ function toPayload(item: VerificationItem): Record<string, unknown> {
     })),
     semantic_check_fields: item.semanticCheckFields,
     grounded_check_fields: item.groundedCheckFields,
+    source_wide_absence_fields: item.sourceWideAbsenceFields,
     extraction: {
       design_code: e.designCode,
       population_label: e.populationLabel,
@@ -165,8 +176,19 @@ function retrieveFixture(overrides: { content?: string; hash?: string } = {}): R
   })
 }
 
-async function matchingItem(): Promise<VerificationItem> {
+/**
+ * Et funn som lar seg reprodusere, og som IKKE fører noe globalt fravær.
+ *
+ * Standardfiksturen fører tidspunktet som `not_reported`, og et slikt fravær
+ * krever en kildeomfattende gjennomlesning som ikke finnes i disse prøvene
+ * (`absence-review.ts`). Da ville hver prøve om registrering blitt `uncertain`
+ * av en grunn den ikke prøver. Selve halvdelen prøves for seg, lenger nede.
+ */
+async function matchingItem(
+  extraction: Partial<VerificationItem['extraction']> = {},
+): Promise<VerificationItem> {
   return verificationItemFixture({
+    extraction: { timepointAvailability: 'not_applicable', ...extraction },
     sourceVersion: {
       sourceVersionId: '51000000-0000-4000-8000-000000000001',
       retrievedAt: '2026-09-01T00:00:00+00:00',
@@ -491,5 +513,192 @@ describe('runExtractionVerification — dokumentbundne funn uten dokumentet', ()
 
     expect(report.items[0]?.decision).toBe('registered')
     expect(api.registered).toHaveLength(1)
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Den kildeomfattende halvdelen, gjennom hele kjøreren
+//
+// To trinn med en fil imellom: kjøringen legger igjen spørsmålet, en aktør uten
+// legitimasjon svarer, og neste kjøring lar svaret avgjøre. Prøvene under er
+// den ene ende-til-ende-prøven på at `source_wide_absence` faktisk kan dekkes —
+// og på at den ikke blir dekket av et søk alene (issue #74).
+// ----------------------------------------------------------------------------
+
+const kataloger: string[] = []
+
+function katalog(): string {
+  const path = mkdtempSync(join(tmpdir(), 'antidep-kjoring-'))
+  kataloger.push(path)
+  return path
+}
+
+afterEach(() => {
+  for (const path of kataloger.splice(0)) {
+    rmSync(path, { recursive: true, force: true })
+  }
+})
+
+/** En kildetekst uten noe konfidensintervall noe sted. */
+const UTEN_INTERVALL = FIXTURE_SOURCE_TEXT.replace(' (95% CI 0.4 to 2.6)', '')
+
+/**
+ * Et funn som fører konfidensintervallet som ikke rapportert i kilden.
+ *
+ * Utdragene følger med: fiksturens eget resultatutdrag gjengir intervallet, og
+ * et utdrag som ikke står i teksten, ville felt raden på noe annet enn det
+ * prøvene her handler om.
+ */
+const UTEN_KI = {
+  ciLower: null,
+  ciUpper: null,
+  ciLevelPercent: null,
+  confidenceIntervalAvailability: 'not_reported',
+  rawExtraction: {
+    metode:
+      'Sertraline patients (N = 284) with major depressive disorder were randomised. ' +
+      'Fluoxetine was the comparator.',
+    resultat:
+      'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+      'change of 1.5 kg',
+  },
+} as const
+
+describe('runExtractionVerification — den kildeomfattende fraværskontrollen', () => {
+  async function itemUtenKi(): Promise<VerificationItem> {
+    return verificationItemFixture({
+      extraction: { timepointAvailability: 'not_applicable', ...UTEN_KI },
+      sourceVersion: {
+        sourceVersionId: '51000000-0000-4000-8000-000000000001',
+        retrievedAt: '2026-09-01T00:00:00+00:00',
+        retrievedFrom: 'https://eksempel.invalid/kilde',
+        externalVersion: null,
+        contentHash: await sourceVersionContentHash(UTEN_INTERVALL),
+        representation: 'full_text',
+        document: null,
+        hasStorageReference: false,
+      },
+    })
+  }
+
+  async function hent(): Promise<RetrieveLike> {
+    const hash = await sourceVersionContentHash(UTEN_INTERVALL)
+    return retrieveFixture({ content: UTEN_INTERVALL, hash })
+  }
+
+  it('registrerer ingen dekning når ingen gjennomlesning foreligger', async () => {
+    const api = fakeApi([await itemUtenKi()])
+    await runExtractionVerification({ api, premises: PREMISSER, retrieve: await hent() })
+    expect(api.registered[0]?.checkedFields).not.toContain('source_wide_absence')
+    expect(api.registered[0]?.outcome).toBe('uncertain')
+  })
+
+  it('legger igjen spørsmålet uten å registrere noe', async () => {
+    const rot = katalog()
+    const item = await itemUtenKi()
+    const api = fakeApi([item])
+    const report = await runExtractionVerification({
+      api,
+      premises: PREMISSER,
+      retrieve: await hent(),
+      absencePrompts: rot,
+    })
+
+    expect(report.runStatus).toBe('aborted')
+    expect(api.registered).toHaveLength(0)
+    const prompt = readFileSync(join(rot, item.evidenceItemId, 'prompt.txt'), 'utf8')
+    expect(prompt).toMatch(/confidence_interval/)
+    expect(report.items[0]?.absencePromptDirectory).toBe(join(rot, item.evidenceItemId))
+  })
+
+  it('dekker feltet når svaret gjelder nøyaktig den teksten kontrollen hentet', async () => {
+    const rot = katalog()
+    const item = await itemUtenKi()
+    const retrieve = await hent()
+
+    await runExtractionVerification({
+      api: fakeApi([item]),
+      premises: PREMISSER,
+      retrieve,
+      absencePrompts: rot,
+    })
+
+    const svartKlokkeslett = new Date().toISOString()
+    const forespørsel = JSON.parse(
+      readFileSync(join(rot, item.evidenceItemId, 'forespoersel.json'), 'utf8'),
+    ) as { request_digest: string }
+    writeFileSync(
+      join(rot, item.evidenceItemId, 'svar.json'),
+      JSON.stringify({
+        answer_version: 'antidep/model-answer@1',
+        request_digest: forespørsel.request_digest,
+        identity: { provider: 'test', model: 'lesing', model_version: '1' },
+        answered_at: svartKlokkeslett,
+        draft: {
+          review_version: 'antidep/source-wide-absence-review@1',
+          evidence_item_id: item.evidenceItemId,
+          fields: [
+            {
+              check_field: 'confidence_interval',
+              status: 'not_reported',
+              verdict: 'absent',
+              rationale: 'Gikk gjennom hele teksten og fant ingen presisjonsangivelse.',
+            },
+          ],
+        },
+      }),
+      'utf8',
+    )
+
+    const api = fakeApi([item])
+    const report = await runExtractionVerification({
+      api,
+      premises: PREMISSER,
+      retrieve,
+      absenceReviews: rot,
+    })
+    expect(api.registered[0]?.checkedFields).toContain('source_wide_absence')
+
+    // Proveniensen for det leddet som faktisk åpnet gaten, skal overleve
+    // registreringen — ikke bare ligge i arbeidsmappa (EVIDENCE_PIPELINE.md
+    // §3.7, §65). Den står både i kjøringens output_manifest og i begrunnelsen
+    // på raden.
+    const manifest = api.completions[0]?.outputManifest
+    const resultater = manifest?.results as readonly Record<string, unknown>[]
+    const proveniens = resultater[0]?.sourceWideAbsence as Record<string, unknown>
+    expect(proveniens.provider).toBe('test')
+    expect(proveniens.model).toBe('lesing')
+    expect(proveniens.answeredAt).toBe(svartKlokkeslett)
+    expect(proveniens.promptTemplateVersion).toBe('evidence-extraction/source-wide-absence/1')
+    expect(String(proveniens.answerDigest)).toMatch(/^sha256:[0-9a-f]{64}$/)
+    expect(proveniens.fields).toEqual([
+      {
+        checkField: 'confidence_interval',
+        status: 'not_reported',
+        verdict: 'absent',
+        quote: null,
+        rationale: 'Gikk gjennom hele teksten og fant ingen presisjonsangivelse.',
+      },
+    ])
+    expect(report.items[0]?.sourceWideAbsence?.answeredAt).toBe(svartKlokkeslett)
+    expect(api.registered[0]?.rationale).toContain(svartKlokkeslett)
+  })
+
+  // Proveniensen skal si om halvdelen i det hele tatt KUNNE bli dekket i denne
+  // kjøringen. Ellers ser et udekket felt ut som et funn.
+  it('fører i proveniensen om gjennomlesninger var med', async () => {
+    const api = fakeApi([await itemUtenKi()])
+    await runExtractionVerification({ api, premises: PREMISSER, retrieve: await hent() })
+    expect(api.completions[0]?.status).toBe('succeeded')
+    expect(api.openedWith[0]?.source_wide_absence_reviews).toBe('none')
+
+    const med = fakeApi([await itemUtenKi()])
+    await runExtractionVerification({
+      api: med,
+      premises: PREMISSER,
+      retrieve: await hent(),
+      absenceReviews: katalog(),
+    })
+    expect(med.openedWith[0]?.source_wide_absence_reviews).toBe('provided')
   })
 })

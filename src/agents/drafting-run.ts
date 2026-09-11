@@ -73,6 +73,7 @@ import {
   EXTRACTION_PROPOSAL_VERSION,
 } from './extraction-proposal.ts'
 import { buildExtractionDraftingRequest } from './extraction-prompt.ts'
+import { parseCompletionJson } from './model-answer.ts'
 import { modelRequestDigest, type ModelClient, type ModelRequest } from './model-client.ts'
 import { resolveRepresentation, type ResolvePorts } from './source-binding.ts'
 
@@ -160,22 +161,6 @@ export async function prepareDraftingRequest(
     representation: read.text,
   })
   return { request, requestDigest: await modelRequestDigest(request) }
-}
-
-/**
- * Modellsvaret som JSON, med ett innpakningsmønster tålt.
- *
- * Malen ber uttrykkelig om JSON uten kodegjerder, og et svar med gjerder er
- * derfor et svar som ikke fulgte malen. Ett enkelt gjerde rundt hele svaret
- * pakkes likevel ut, fordi det er den ene avviksformen som er entydig og som
- * ikke endrer et eneste tegn i innholdet. Alt annet — forklaring foran, to
- * objekter, tekst etter — avvises, fordi det ikke finnes én riktig måte å tolke
- * det på.
- */
-function parseCompletionJson(text: string): unknown {
-  const trimmed = text.trim()
-  const fenced = /^```(?:json)?\s*\n([\s\S]*)\n```$/.exec(trimmed)
-  return JSON.parse(fenced?.[1] ?? trimmed) as unknown
 }
 
 /** Den ordrette kontrollen av modellens eget svar mot teksten den fikk. */

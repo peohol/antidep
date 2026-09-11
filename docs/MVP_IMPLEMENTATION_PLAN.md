@@ -1395,7 +1395,9 @@ PR G  db: add publication events and gate                                   (#15
       feat: add the model link that reads a source and drafts a proposal    (#68)  merget   migrasjon 005ab, 005ac
       feat: make the model link runnable by a Claude Code Routine          (#69)  merget   ingen migrasjon
       feat: extract from a local full-text PDF, end to end                 (#70)  merget   migrasjon 003e, 007i
-      feat: gjør kildekontrollen mulig uten artikkelen ved siden av         (#73)  åpen     ingen migrasjon
+      feat: gjør kildekontrollen mulig uten artikkelen ved siden av         (#73)  merget   ingen migrasjon
+      fix: keep a two-column source excerpt readable in the control session (#75)  merget   ingen migrasjon
+      feat: gi et kildeomfattende fravær et kontrollledd som kan bære det   (#78)  åpen     migrasjon 005ad, 005ae
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1497,7 +1499,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2123 pgTAP-assertions over 65 testfiler.
+Databaselaget teller nå 2147 pgTAP-assertions over 66 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1665,18 +1667,18 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de syttien migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de syttitre migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
    007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab,
-   005ac, 003e, 007i og 003f — i
+   005ac, 003e, 007i, 003f, 005ad og 005ae — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle syttien ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle syttitre ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -1760,7 +1762,6 @@ gyldighetslogikk bør lese dette før `now()` brukes i et predikat.
 
 | Gjeld | Risiko | Trigger for opprydding |
 |---|---|---|
-| Et globalt fravær (`not_reported`, `not_measured`) har ikke et kontrollledd som kan bære påstanden | Kontrolløren kan bare bekrefte at opplysningen mangler der den ville stått. Et konfidensintervall kan stå i en tabell, en figurtekst eller et supplement, så den lokale bekreftelsen dekker ikke feltet. Feltet føres derfor ikke opp i `checked_fields`, og publiseringsgaten blir stående åpen på det — også for Fava 2000, der konfidensintervallet er ført som ikke rapportert | [#74](https://github.com/peohol/antidep/issues/74). Krever en klinisk og redaksjonell beslutning om hva Antidep skal kreve før et fravær kan regnes som kontrollert, før det kan bygges |
 | Tidsbasert utløp av review er ikke håndhevet i publiseringsgaten | En godkjenning eldes uten at noe fanger det | Migrasjonen som innfører `workflow.review_requirements` / `review_due_at`. Krever først en klinisk policy for hvor lenge en godkjenning er gyldig per kunnskapstype og risiko |
 | Godkjenningens evidensavtrykk beregnes ved innsetting, ikke fra det reviewer faktisk så | En lenke som commiter mellom reviewers lesing og lagring av beslutningen havner i avtrykket | Admin-flyten oppgir avtrykket den viste reviewer. Kolonnen er utformet for det |
 | `knowledge.publication_object_type` har én verdi, og hendelsen har én ekte fremmednøkkel | En andre publiserbar objekttype kan friste til å gjenbruke `claim_id` som generisk `object_id` | Migrasjonen som innfører objekttype nummer to må legge til egen fremmednøkkelkolonne og eget speil |
@@ -7328,6 +7329,181 @@ etter det vi har sett ikke uttrykkelig at `+0,8 ± 2,7 kg` er beregnet over dem.
 Uten en eksplisitt kildepassasje som knytter nevneren til estimatet, skal
 `sample_size` være `null` med riktig availability-status og ordrett grounding som
 viser hvorfor.
+
+---
+
+### 74.45 Et globalt fravær har fått et kontrollledd som kan bære det
+
+§74.44 lot én ting stå åpen, og den var den dyreste: `not_reported` («ikke
+rapportert i kilden») og `not_measured` («ikke målt i studien») er påstander om
+kildeversjonen **som helhet**, og ingen av Antideps to kontrollgrunnlag kunne
+bære dem. Kontrolløren ser ett lokalt utdrag, og et utdrag viser hva som står
+ett sted — ikke hva som ikke står noe sted. Feltet ble derfor bevisst ikke ført
+opp som kontrollert, og publiseringsgatens G5b ble stående åpen uten at noe
+navnga hva som manglet (issue [#74](https://github.com/peohol/antidep/issues/74)).
+
+**Påstanden er delt i de to halvdelene som faktisk har hvert sitt
+kontrollgrunnlag**, og hver halvdel har fått sitt eget felt i
+`workflow.evidence_check_field`:
+
+| Halvdel | Spørsmål | Grunnlag | Hvem | Felt |
+|---|---|---|---|---|
+| Lokal | Mangler opplysningen der forankringsutdraget viser at den ville stått, og er grunnen av riktig art? | Utdraget flaten viser | Et menneske | `availability_semantics` |
+| Kildeomfattende | Står opplysningen noe annet sted i kildeversjonen? | Hele den registrerte representasjonen | To maskinelle ledd | `source_wide_absence` |
+
+`workflow.required_check_fields(uuid)` krever den andre når og bare når raden
+fører minst ett slikt fravær (`workflow.source_wide_absence_fields(uuid)`, som
+er den ene definisjonen gaten, kontrollleddet og kontrollflaten alle leser).
+**Gaten er dermed strengere enn før, ikke løsere:** hullet var der hele tiden,
+men det var navnløst og så ut som et udekket `availability_semantics`.
+
+**Den kildeomfattende halvdelen har selv to ledd, og bare det ene kan
+konkludere.** Første utgave av leveransen lot den deterministiske
+ekstraksjonskontrollen dekke halvdelen alene: fant mønstersøket ingen verdi, var
+fraværet kontrollert. Teknisk review felte den, og eksempelet tar tretti
+sekunder å konstruere — mønstrene kjente `CI`, `C.I.` og `confidence
+interval(s)`, men ikke `CIs` og ikke `confidence limits`, så «The 95% CIs were
+0.4 to 2.6.» ga null treff og ville blitt bokført som «ingen konfidensintervall i
+kildeversjonen».
+
+Å legge til de to formene løser ikke feilklassen. Naturlig språk har ingen
+uttømmende mønsterliste, og `not_measured` gjør det tydeligere: en kilde kan si
+at vekt ble *målt* uten å oppgi et eneste tall, og et rent verdisøk ville da
+godkjent «ikke målt» på en variabel studien målte. **Et fravær kan ikke bevises
+av et søk** — det er premisset i issue #74, og det står nå i koden:
+
+| Ledd | Hva det kan | Rolle |
+|---|---|---|
+| Det deterministiske søket | **Falsifisere.** Et treff blokkerer dekningen alene | Forutsetning |
+| Gjennomlesningen (`src/agents/absence-review.ts`) | **Konkludere.** Leser hele den reproduserte representasjonen og svarer `absent`, `present` eller `uncertain` per felt | Det eneste som dekker |
+
+Feltet føres opp bare når representasjonen lot seg reprodusere, søket fant
+ingenting, **og** gjennomlesningen svarte `absent` på hvert felt. Et søketreff
+kan ikke overstyres av en gjennomlesning som mener noe annet.
+
+**De to fraværsgrunnene er heller ikke det samme spørsmålet.** `not_reported` er
+en påstand om kildeversjonen; `not_measured` betyr «kilden opplyser at størrelsen
+ikke ble målt», og er dermed en påstand om at noe **står** i kilden. Statusen
+følger feltet helt fram til spørsmålet og inngår i forespørselens avtrykk, og et
+`absent` på `not_measured` må vise til stedet som sier det — ordrett, prøvd mot
+representasjonen. Tier teksten om målingen, er svaret `uncertain`. «Ingen evidens
+for at det ble målt» er ikke «evidens for at det ikke ble målt», og et ledd som
+blandet dem, ville gjort taushet til en påstand om studien.
+
+**Gjennomlesningen har ingen legitimasjon, og det er hele formen på den.**
+Verifikatoren legger igjen spørsmålet som filer
+(`--absence-prompts <katalog>`), en aktør Antidep ikke kaller svarer i
+`svar.json`, og neste kjøring leser svaret (`--absence-reviews <katalog>`).
+Bindingen er avtrykket av forespørselen, som dekker promptmalversjonen, feltene
+det spørres om og hele representasjonsteksten: et svar avgitt på en annen
+artikkel, en annen utgave eller et annet spørsmål legges bort. Samme form og
+samme grunn som ekstraksjonsutkastet (EVIDENCE_PIPELINE.md §63). Det var også
+det avgjørende valget mot alternativ 2 i issue #74: en menneskelig global
+bekreftelse ville gjort Peder til manuell fulltekstleser for hvert eneste felt
+uten verdi.
+
+**Søket er bevisst bredere enn kontrollens øvrige søk.** Resten av modulen
+binder en verdi til raden med en limkjede, fordi den skal *tilskrive* verdien
+denne raden. Her er retningen motsatt: søket skal finne noe, og et treff
+blokkerer. Søket har derfor **ingen binding til raden**, fri avstand mellom
+anker og verdi, teller tall skrevet med bokstaver, og har en videre ankerliste
+for konfidensintervall enn bekreftelsessøket.
+
+To smalere utforminger ble forkastet i teknisk review av denne leveransen, og
+begge er nå regresjonsprøver. Et krav om at verdien sto i en passasje som selv
+navngir behandlingsarmen, kastet andre setning i «Sertraline patients improved.
+The 95% CI was 0.4 to 2.6.» Et sifferbasert mønster ga ingen treff på
+«Forty-eight sertraline-treated patients completed the trial» — en setning som
+står i denne kodebasens egen PDF-fikstur.
+
+**Rekkevidden er kildeversjonen, ikke publikasjonen, og det er ikke en
+innskrenkning.** Det er nøyaktig det statusen selv gjelder — kolonnekommentaren
+på `*_availability` har hele tiden sagt «den kildeversjonen og den
+kildepekeren raden viser til, ikke nødvendigvis hele publikasjonen». Styrken
+følger likevel av hva versjonen er, så kontrollraden navngir representasjonen
+den gjennomsøkte: et søk gjennom et abstrakt skal ikke leses som et søk gjennom
+en fulltekst.
+
+**Én hard grense: representasjonen må ha latt seg reprodusere.** Et **treff** er
+ikke et avvik: ingen av leddene vet om verdien gjelder denne armen og dette
+endepunktet, så utfallet er `uncertain`, feltet føres ikke opp, og begrunnelsen
+siterer hva som ble funnet. Et udekket fravær avgjør utfallet og står ikke bare
+som en merknad — også det et reviewfunn. Et felt uten maskinelt søkbar form —
+populasjonen er en etikett og ikke et tall — stanser ingenting: søket er
+falsifikasjonsleddet, og et ledd som ikke kan prøve, har heller ikke funnet noe.
+Gjennomlesningen avgjør da alene, og begrunnelsen sier eksplisitt at
+konklusjonen hviler på ett ledd (issue #79).
+
+**Mennesket kan ikke ta halvdelen på seg, og det er håndhevet framfor frarådet.**
+`workflow.semantic_check_fields(uuid)` utelater feltet, så kontrolløkten stiller
+aldri spørsmålet, og `evidence_verifications_source_wide_absence_check` avviser
+enhver rad uten agentkjøring som fører det opp. Et framtidig menneskelig
+kontrollobjekt for globalt fravær er mulig, men er da et eget objekt med sin
+egen dekning — ikke en oppmyking av denne regelen.
+
+**Kontrollflaten sier hvem som tar hva.** Feltsteget for et slikt fravær sier at
+det bare er stedet som skal avgjøres, og at resten søkes etter maskinelt — «det
+er ikke din oppgave». Lagringssteget sier om søket allerede har gått god for
+funnet, eller om gaten fortsatt står åpen på det. Kontrolløren skal aldri
+oppdage et udekket felt som en blokkert publisering senere
+(PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
+
+**Prøvene.** `660_source_wide_absence_test.sql` prøver at settet er utledet av
+raden og bare av de to globale grunnene, at gaten krever feltet når og bare når
+raden gjør påstanden, at kontrolløkten aldri får et steg for det, at
+forankringskravet ikke gjelder det, og at det avvises både uten agentkjøring og
+med bare et avledet sammendrag som grunnlag. `570` viser det i hele kjeden, med
+et menneske som forsøker å bære påstanden og blir avvist. Kjedeprøven
+(`npm run db:test:chain`) prøver det samme mot den ekte databasen gjennom de
+ekte skriveveiene, nå i begge trinn: kjøringen legger igjen spørsmålet, en aktør
+uten legitimasjon svarer i filen, og neste kjøring registrerer dekningen med en
+begrunnelse som navngir hvem som leste.
+
+På JavaScript-siden er begge leddene prøvd felt for felt. Reviewfunnets egen
+falske negativ er en regresjonsprøve i to former — «The 95% CIs were 0.4 to
+2.6.» og «confidence limits 0.4 and 2.6» — og den prøver tre ting samtidig: at
+en gyldig, ukjent formulering aldri blir `checked` av seg selv, at en
+gjennomlesning som ser verdien blokkerer, og at søket nå kjenner nettopp disse
+formene. Videre er prøvd: et søketreff som ikke blir et avvik og som ikke kan
+overstyres, et udekket fravær som avgjør utfallet, en representasjon uten
+reprodusert fingeravtrykk, en verdi som står i setningen etter den som navngir
+armen, tall skrevet med bokstaver, et svar avgitt på en annen tekst, et svar som
+gjelder et annet funn, og et svar som ikke har kontraktens form.
+
+**To fiksturer sa noe annet enn raden, og kontrollen fant det.** Kjedeprøvens
+sammendrag sa «randomised for 8 weeks» mens funnet førte tidspunktet som ikke
+rapportert, og funnet førte populasjonen som ikke rapportert uten at noe kunne
+kontrollere det. Begge er rettet i fiksturen framfor å bli dempet i kontrollen.
+
+#### Hva som står i produksjon, og hva som gjenstår
+
+De to fulltekstekstraksjonene §74.44 etterlyste, **er kjørt**. Produksjonsbasen
+har fire fulltekstutledede evidensfunn, og de to nyeste er nettopp dem:
+
+| Funn | Kilde | Verdi | Fravær |
+|---|---|---|---|
+| `9ba56fb4` sertralin × vektendring | Fava 2000, fulltekst | 1,0 % over 48 deltakere | konfidensintervall `not_reported` |
+| `9570760c` mirtazapin × vektendring | Versiani 2005, fulltekst | 0,8 kg | utvalg og konfidensintervall `not_reported` |
+
+Begge har komplett forankring for hvert semantiske felt og et gyldig
+maskinbevis, og `9570760c` fører `sample_size` som `null` — n = 117 er ikke
+lenger ført, som §74.44 krevde.
+
+Tre ting gjenstår, i denne rekkefølgen:
+
+1. **Migrasjon 005ad og 005ae må deployes** (`./scripts/deploy-migrations.sh`).
+   Først da krever gaten den kildeomfattende halvdelen.
+2. **Den kildeomfattende kontrollen må kjøres for begge funnene**, i to trinn:
+   `npm run agent:verify-extraction -- --absence-prompts <katalog>` legger igjen
+   spørsmålet, en aktør svarer i `svar.json`, og
+   `npm run agent:verify-extraction -- --absence-reviews <katalog>` registrerer.
+   Kjøringen må skje på en maskin som har originaldokumentene: begge
+   kildeversjonene er dokumentbundne, og et ledd uten dokumentet henter aldri
+   `retrieved_from` i stedet (migrasjon 003e).
+3. **Den menneskelige kildekontrollen** i `/extraction-review`. Funnene står
+   allerede i køen. Publisering kan først skje etter den, og forutsetter i
+   tillegg en redaksjonell beslutning: de to påstandsrevisjonene som finnes, er
+   lenket til de gamle sammendragsutledede funnene, ikke til disse.
 
 ---
 

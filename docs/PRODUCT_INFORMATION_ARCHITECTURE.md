@@ -911,13 +911,30 @@ presenterer det:
   stått?». Flaten skal si hva utdraget er, slik at kontrolløren vet at hen bare
   skal avgjøre stedet — ikke lete gjennom resten av kilden.
 
-- **Et innsnevret spørsmål gir en innsnevret bekreftelse, og flaten skal si
-  det.** Svaret på det lokale spørsmålet er ikke den globale påstanden raden
-  bærer, og det skal ikke bokføres som om det var det. Feltet blir stående som
-  ikke kontrollert, publiseringsgaten er fortsatt åpen på det, og kontrolløren
-  får vite det i det hen lagrer — ikke som en blokkert publisering senere. Å la
-  den lokale bekreftelsen dekke den globale statusen ville vært å endre den
-  epistemiske policyen for å få implementasjonen til å gå opp.
+- **Det innsnevrede spørsmålet er en hel halvdel, ikke en halv bekreftelse, og
+  flaten skal si hvem som tar den andre.** Påstanden «kilden oppgir ikke dette»
+  har to halvdeler med hvert sitt kontrollgrunnlag, og de har hvert sitt felt i
+  publiseringsgatens krav (EVIDENCE_PIPELINE.md §19.1):
+
+  - den **lokale** — mangler verdien der den ville stått, og er grunnen av
+    riktig art? — er kontrollørens, og svaret dekker den fullt ut,
+  - den **kildeomfattende** — står verdien noe annet sted i kildeversjonen? — er
+    en egen maskinell gjennomgang av hele den registrerte representasjonen, og
+    kontrolløren blir aldri spurt om den.
+
+  Flaten skal si dette der kontrolløren svarer, og ikke bare i en oppsummering:
+  hen skal vite at hen ikke skal lete, og at ingen venter på at hen gjør det.
+  I lagringssteget skal flaten dessuten si om den maskinelle gjennomgangen
+  allerede har gått god for funnet, eller om publiseringsgaten fortsatt står
+  åpen på det — og at det i så fall ikke er kontrollørens oppgave.
+  Formuleringen skal være **gjennomgang**, ikke **søk**: den kildeomfattende
+  halvdelen avgjøres ikke av et mønstersøk alene, og en flate som sa «søk»,
+  ville gitt kontrolløren et feilaktig bilde av hvor sterkt leddet er
+  (EVIDENCE_PIPELINE.md §19.1). Å la den lokale
+  bekreftelsen dekke den globale statusen ville vært å endre den epistemiske
+  policyen for å få implementasjonen til å gå opp; å be kontrolløren om den
+  globale, ville vært å gjeninnføre nettopp den fulltekstlesingen kravet over
+  finnes for å fjerne.
 - To utsagn som ser like ut, skal gjøres eksplisitt forskjellige. Endepunktet er
   hva som ble målt; effektmålet er hvordan resultatet er uttrykt.
 - Tall skal presenteres i den formen kilden bruker, med databasens egen form som

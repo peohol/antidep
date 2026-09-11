@@ -114,6 +114,8 @@ import { createModelClient } from '../src/agents/model-adapters.ts'
 import { prepareDraftingRequest, runExtractionDrafting } from '../src/agents/drafting-run.ts'
 import { closeDraftingJob, JOB_FILES, openDraftingJob } from '../src/agents/drafting-job.ts'
 import { MODEL_ANSWER_VERSION } from '../src/agents/model-answer.ts'
+import { ABSENCE_REVIEW_VERSION } from '../src/agents/absence-review.ts'
+import { ABSENCE_REVIEW_FILES } from '../src/agents/absence-review-job.ts'
 import { readProposalFile } from '../src/agents/proposal-files.ts'
 import { documentsIn } from '../src/agents/source-document.ts'
 import { syntheticPdf } from '../src/agents/test-support.ts'
@@ -233,7 +235,8 @@ const EDITOR_ACTOR = 'c0000000-0000-4000-8000-0000000000e1'
 
 const KILDETEKST = [
   '<PubmedArticle>',
-  '  <AbstractText Label="METHODS">Sertraline patients were randomised for 8 weeks.</AbstractText>',
+  '  <AbstractText Label="METHODS">Sertraline patients with major depressive disorder were',
+  '  randomised in a double-blind trial.</AbstractText>',
   '  <AbstractText Label="RESULTS">Sertraline weight change increased from baseline.',
   '  The increase was consistent across visits.</AbstractText>',
   '</PubmedArticle>',
@@ -406,8 +409,12 @@ async function main(): Promise<void> {
     content_hash: contentHash,
     extraction: {
       design_code: 'randomized_controlled_trial',
-      population_availability: 'not_reported',
-      population_detail: 'Voksne.',
+      population_id: psql(
+        config,
+        `select id from catalog.populations where canonical_label = 'voksne med depressiv lidelse'`,
+      ),
+      population_availability: 'reported_value',
+      population_detail: 'Voksne med depressiv lidelse.',
       sample_size_availability: 'not_reported',
       intervention_drug_id: psql(
         config,
@@ -428,7 +435,8 @@ async function main(): Promise<void> {
     field_groundings: [
       {
         check_field: 'intervention_arm',
-        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_excerpt:
+          'Sertraline patients with major depressive disorder were randomised in a double-blind trial.',
         source_locator: 'METHODS',
         justification: 'Armen står i metodeavsnittet.',
       },
@@ -445,8 +453,16 @@ async function main(): Promise<void> {
         justification: 'Retningen står i resultatavsnittet.',
       },
       {
+        check_field: 'population',
+        source_excerpt:
+          'Sertraline patients with major depressive disorder were randomised in a double-blind trial.',
+        source_locator: 'METHODS',
+        justification: 'Populasjonen står i metodeavsnittet.',
+      },
+      {
         check_field: 'availability_semantics',
-        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_excerpt:
+          'Sertraline patients with major depressive disorder were randomised in a double-blind trial.',
         source_locator: 'METHODS',
         justification: 'Feltene uten verdi er ført som ikke rapportert.',
       },
@@ -489,14 +505,86 @@ async function main(): Promise<void> {
   )
 
   // ---- Ledd 2: den deterministiske kontrollen, gjennom den ekte porten ------
-  const verification = await runExtractionVerification({
-    api: createExtractionVerificationApi(client, {
+  //
+  // Kontrollen går i to trinn, fordi den kildeomfattende halvdelen av et globalt
+  // fravær ikke kan avgjøres av et søk alene (issue #74, `absence-review.ts`).
+  // Første trinn legger igjen spørsmålet og registrerer ingenting; en aktør uten
+  // legitimasjon svarer i filen; andre trinn leser svaret og registrerer.
+  const verifierApi = () =>
+    createExtractionVerificationApi(client, {
       identityKey: 'agent-identity:extraction-verification-01',
       secret: agentSecret(verifierSecret),
-    }),
+    })
+  const absenceDirectory = mkdtempSync(join(tmpdir(), 'antidep-fravaer-'))
+
+  const spurt = await runExtractionVerification({
+    api: verifierApi(),
     premises: EXTRACTION_VERIFICATION_PREMISES,
     evidenceItemId: itemId,
     retrieve: retrieve(contentHash),
+    absencePrompts: absenceDirectory,
+  })
+  check(
+    'kjøringen som bare spør, registrerer ingenting',
+    spurt.runStatus === 'aborted' && spurt.items[0]?.decision === 'previewed',
+    JSON.stringify(spurt.items[0]),
+  )
+  const promptDirectory = spurt.items[0]?.absencePromptDirectory ?? null
+  check('og den la igjen spørsmålet', promptDirectory !== null)
+
+  // Aktøren som svarer, ser bare filer: ingen legitimasjon, ingen agentidentitet
+  // og ingen skrivevei inn i basen (EVIDENCE_PIPELINE.md §63). Her står den
+  // deterministisk, slik opptaksadapteret gjør for modell-leddet ellers.
+  if (promptDirectory !== null) {
+    const forespørsel = JSON.parse(
+      readFileSync(join(promptDirectory, ABSENCE_REVIEW_FILES.request), 'utf8'),
+    ) as { request_digest: string; fields: { check_field: string; status: string }[] }
+    writeFileSync(
+      join(promptDirectory, ABSENCE_REVIEW_FILES.answer),
+      `${JSON.stringify(
+        {
+          answer_version: MODEL_ANSWER_VERSION,
+          request_digest: forespørsel.request_digest,
+          identity: {
+            provider: 'antidep',
+            model: 'kjedeprove-gjennomlesning',
+            model_version: '1.0.0',
+          },
+          answered_at: new Date().toISOString(),
+          draft: {
+            review_version: ABSENCE_REVIEW_VERSION,
+            evidence_item_id: itemId,
+            // Statusen står i forespørselen, og spørsmålet er et annet for hver
+            // av de to: «ikke rapportert i kilden» spør om opplysningen står
+            // der, «ikke målt i studien» om kilden sier at den ble målt
+            // (`absence-review.ts`). Begrunnelsen sier hvilket spørsmål som ble
+            // besvart, slik den ville gjort fra en ekte gjennomlesning.
+            fields: forespørsel.fields.map((field) => ({
+              check_field: field.check_field,
+              status: field.status,
+              verdict: 'absent',
+              rationale:
+                field.status === 'not_measured'
+                  ? `Leste gjennom hele representasjonen. Ingenting sier at ${field.check_field} ` +
+                    'ble målt, vurdert eller registrert, og intet resultat er oppgitt.'
+                  : `Leste gjennom hele representasjonen og fant ingen ${field.check_field} ` +
+                    'noe sted.',
+            })),
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+  }
+
+  const verification = await runExtractionVerification({
+    api: verifierApi(),
+    premises: EXTRACTION_VERIFICATION_PREMISES,
+    evidenceItemId: itemId,
+    retrieve: retrieve(contentHash),
+    absenceReviews: absenceDirectory,
   })
 
   check(
@@ -507,6 +595,49 @@ async function main(): Promise<void> {
   check(
     'og maskinbeviset gjelder nå',
     psql(config, `select workflow.grounding_machine_proved(${q(itemId)})`) === 't',
+  )
+
+  // Den kildeomfattende halvdelen av et globalt fravær (migrasjon 005ae).
+  // Raden fører flere felter som ikke rapportert, og gaten krever derfor at noen
+  // har gjennomgått hele kildeversjonen etter dem. Det kan bare maskinen.
+  check(
+    'gaten krever den kildeomfattende kontrollen, fordi raden fører et globalt fravær',
+    psql(
+      config,
+      `select ('source_wide_absence' = any (workflow.required_check_fields(${q(itemId)})))::text`,
+    ) === 'true',
+  )
+  check(
+    'og den er registrert av maskinen, ikke av et menneske',
+    psql(
+      config,
+      `select count(*) from workflow.evidence_verifications ev
+       where ev.evidence_item_id = ${q(itemId)}
+         and 'source_wide_absence' = any (ev.checked_fields)
+         and ev.agent_run_id is not null`,
+    ) === '1',
+  )
+  // …og den ble ikke dekket av søket alene: begrunnelsen navngir hvem som leste
+  // gjennom representasjonen. Uten gjennomlesningen ville feltet stått åpent.
+  check(
+    'og begrunnelsen navngir gjennomlesningen som konkluderte',
+    psql(
+      config,
+      `select count(*) from workflow.evidence_verifications ev
+       where ev.evidence_item_id = ${q(itemId)}
+         and 'source_wide_absence' = any (ev.checked_fields)
+         and ev.rationale like '%kjedeprove-gjennomlesning%'`,
+    ) === '1',
+  )
+  rmSync(absenceDirectory, { recursive: true, force: true })
+  // …og kontrolløkten stiller aldri det spørsmålet, så feltet er ikke et
+  // semantisk steg.
+  check(
+    'og kontrolløkten får aldri et steg for det',
+    psql(
+      config,
+      `select ('source_wide_absence' = any (workflow.semantic_check_fields(${q(itemId)})))::text`,
+    ) === 'false',
   )
 
   // ---- Ledd 3–6: de menneskelige leddene, som innlogget bruker --------------
@@ -572,11 +703,32 @@ async function main(): Promise<void> {
       'intervention_arm',
       'outcome',
       'reported_direction',
+      'population',
       'availability_semantics',
     ],
     p_rationale: 'Kjedeprøve: bedømte de semantiske feltene mot hvert felts eget kildeutdrag.',
   })
   check('mennesket bekreftet ekstraksjonen', human.error === null, human.error?.message ?? '')
+
+  // Og det kan ikke ta den kildeomfattende halvdelen på seg: kontrolløkten
+  // søker ikke gjennom representasjonen, og databasen avviser en rad som
+  // påstår at den gjorde det (evidence_verifications_source_wide_absence_check).
+  const overdrevet = await asUser(REVIEWER_USER).rpc('register_human_extraction_verification', {
+    p_evidence_item_id: itemId,
+    p_seen_extraction_digest: psql(
+      config,
+      `select workflow.evidence_extraction_digest(${q(itemId)})`,
+    ),
+    p_outcome: 'verified',
+    p_source_access: 'original_source',
+    p_checked_fields: ['intervention_arm', 'source_wide_absence'],
+    p_rationale: 'Kjedeprøve: et menneske forsøker å bære den kildeomfattende påstanden.',
+  })
+  check(
+    'men kan ikke ta den kildeomfattende halvdelen på seg',
+    overdrevet.error !== null && (overdrevet.error.message ?? '').includes('source_wide_absence'),
+    overdrevet.error?.message ?? 'ingen feil',
+  )
 
   check(
     'de to radene dekker til sammen det gaten krever',
@@ -690,8 +842,12 @@ async function main(): Promise<void> {
     content_hash: contentHash,
     extraction: {
       design_code: 'randomized_controlled_trial',
-      population_availability: 'not_reported',
-      population_detail: 'Voksne, re-ekstrahert.',
+      population_id: psql(
+        config,
+        `select id from catalog.populations where canonical_label = 'voksne med depressiv lidelse'`,
+      ),
+      population_availability: 'reported_value',
+      population_detail: 'Voksne med depressiv lidelse, re-ekstrahert.',
       sample_size_availability: 'not_reported',
       intervention_drug_id: psql(
         config,
@@ -712,7 +868,8 @@ async function main(): Promise<void> {
     field_groundings: [
       {
         check_field: 'intervention_arm',
-        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_excerpt:
+          'Sertraline patients with major depressive disorder were randomised in a double-blind trial.',
         source_locator: 'METHODS',
         justification: 'Armen står i metodeavsnittet.',
       },
@@ -729,8 +886,16 @@ async function main(): Promise<void> {
         justification: 'Retningen står i resultatavsnittet.',
       },
       {
+        check_field: 'population',
+        source_excerpt:
+          'Sertraline patients with major depressive disorder were randomised in a double-blind trial.',
+        source_locator: 'METHODS',
+        justification: 'Populasjonen står i metodeavsnittet.',
+      },
+      {
         check_field: 'availability_semantics',
-        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_excerpt:
+          'Sertraline patients with major depressive disorder were randomised in a double-blind trial.',
         source_locator: 'METHODS',
         justification: 'Feltene uten verdi er ført som ikke rapportert.',
       },
@@ -1048,6 +1213,11 @@ async function main(): Promise<void> {
     config,
     `select id from catalog.clinical_concepts where canonical_label = 'vektendring'`,
   )
+  const populationId = psql(
+    config,
+    `select id from catalog.populations where canonical_label = 'voksne med depressiv lidelse'`,
+  )
+
   const oppdrag = parseExtractionAssignment({
     assignment_version: 'antidep/extraction-assignment@2',
     source_id: SOURCE,
@@ -1056,7 +1226,7 @@ async function main(): Promise<void> {
     content_hash: contentHash,
     drugs: [{ drug_id: drugId, label: 'sertralin' }],
     outcomes: [{ outcome_concept_id: outcomeId, label: 'vektendring' }],
-    populations: [],
+    populations: [{ population_id: populationId, label: 'voksne med depressiv lidelse' }],
   })
 
   // Slik en operatør faktisk gjør det: --prepare gir prompten og avtrykket,
@@ -1067,7 +1237,7 @@ async function main(): Promise<void> {
   })
   check(
     'modell-leddet bygger en forespørsel av den hentede representasjonen',
-    forberedt.request.user.includes('Sertraline patients were randomised for 8 weeks.') &&
+    forberedt.request.user.includes('Sertraline patients with major depressive disorder were') &&
       /^sha256:[0-9a-f]{64}$/.test(forberedt.requestDigest),
   )
 
@@ -1094,8 +1264,12 @@ async function main(): Promise<void> {
   const modellUtkast = {
     extraction: {
       design_code: 'randomized_controlled_trial',
-      population_availability: 'not_reported',
-      population_detail: 'Voksne.',
+      population_id: psql(
+        config,
+        `select id from catalog.populations where canonical_label = 'voksne med depressiv lidelse'`,
+      ),
+      population_availability: 'reported_value',
+      population_detail: 'Voksne med depressiv lidelse.',
       sample_size_availability: 'not_reported',
       intervention_drug_id: drugId,
       comparator_kind: 'none',
@@ -1110,7 +1284,8 @@ async function main(): Promise<void> {
     field_groundings: [
       {
         check_field: 'intervention_arm',
-        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_excerpt:
+          'Sertraline patients with major depressive disorder were randomised in a double-blind trial.',
         source_locator: 'METHODS',
         justification: 'Armen står i metodeavsnittet.',
       },
@@ -1127,8 +1302,16 @@ async function main(): Promise<void> {
         justification: 'Retningen står i resultatavsnittet.',
       },
       {
+        check_field: 'population',
+        source_excerpt:
+          'Sertraline patients with major depressive disorder were randomised in a double-blind trial.',
+        source_locator: 'METHODS',
+        justification: 'Populasjonen står i metodeavsnittet.',
+      },
+      {
         check_field: 'availability_semantics',
-        source_excerpt: 'Sertraline patients were randomised for 8 weeks.',
+        source_excerpt:
+          'Sertraline patients with major depressive disorder were randomised in a double-blind trial.',
         source_locator: 'METHODS',
         justification: 'Feltene uten verdi er ført som ikke rapportert.',
       },
@@ -1316,7 +1499,7 @@ async function main(): Promise<void> {
         content_hash: contentHash,
         drugs: [{ drug_id: drugId, label: 'sertralin' }],
         outcomes: [{ outcome_concept_id: outcomeId, label: 'vektendring' }],
-        populations: [],
+        populations: [{ population_id: populationId, label: 'voksne med depressiv lidelse' }],
       }),
       'utf8',
     )
@@ -1409,7 +1592,7 @@ async function main(): Promise<void> {
         outcomes: [
           { outcome_concept_id: '41000000-0000-4000-8000-0000000000ff', label: 'et naboendepunkt' },
         ],
-        populations: [],
+        populations: [{ population_id: populationId, label: 'voksne med depressiv lidelse' }],
       }),
       retrieve: retrieve(contentHash),
     })
@@ -1491,7 +1674,8 @@ async function main(): Promise<void> {
   const dokumentmappe = mkdtempSync(join(tmpdir(), 'antidep-kjede-dokument-'))
   try {
     const fulltekstlinjer = [
-      'Patients were randomised to double-blind treatment for 26 to 32 weeks.',
+      'Patients with major depressive disorder were randomised to double-blind treatment for',
+      '26 to 32 weeks.',
       'Forty-eight sertraline-treated patients completed the trial and were analysed.',
       'The mean percent change in weight for sertraline was 1.0% at endpoint.',
     ]
@@ -1558,7 +1742,7 @@ async function main(): Promise<void> {
       retrievedFrom: 'https://example.test/kjede-fulltekst',
       drugs: ['sertralin'],
       outcomes: ['vektendring'],
-      populations: [],
+      populations: ['voksne med depressiv lidelse'],
       documentStore: lager,
     })
     const fulltekstVersjon = rapport.sourceVersionId
@@ -1619,8 +1803,12 @@ async function main(): Promise<void> {
     const fulltekstUtkast = {
       extraction: {
         design_code: 'randomized_controlled_trial',
-        population_availability: 'not_reported',
-        population_detail: 'Voksne.',
+        population_id: psql(
+          config,
+          `select id from catalog.populations where canonical_label = 'voksne med depressiv lidelse'`,
+        ),
+        population_availability: 'reported_value',
+        population_detail: 'Voksne med depressiv lidelse.',
         sample_size: 48,
         sample_size_availability: 'reported_value',
         intervention_drug_id: drugId,
@@ -1680,13 +1868,22 @@ async function main(): Promise<void> {
         },
         {
           check_field: 'timepoint',
-          source_excerpt: 'Patients were randomised to double-blind treatment for 26 to 32 weeks.',
+          source_excerpt:
+            'Patients with major depressive disorder were randomised to double-blind treatment for 26 to 32 weeks.',
           source_locator: 'Fulltekst',
           justification: 'Tidsrommet står i fullteksten.',
         },
         {
+          check_field: 'population',
+          source_excerpt:
+            'Patients with major depressive disorder were randomised to double-blind treatment for 26 to 32 weeks.',
+          source_locator: 'Fulltekst',
+          justification: 'Populasjonen står i fullteksten.',
+        },
+        {
           check_field: 'availability_semantics',
-          source_excerpt: 'Patients were randomised to double-blind treatment for 26 to 32 weeks.',
+          source_excerpt:
+            'Patients with major depressive disorder were randomised to double-blind treatment for 26 to 32 weeks.',
           source_locator: 'Fulltekst',
           justification: 'Feltene uten verdi er ført som ikke rapportert.',
         },

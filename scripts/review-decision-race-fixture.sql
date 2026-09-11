@@ -133,20 +133,35 @@ where a.actor_key = 'agent:claim-synthesis'
 -- ----------------------------------------------------------------------------
 -- G4, G5, G5b, G5c: ekstraksjonen er kontrollert av verifikatoren, som har
 -- mandatet gjennom rollen sin.
+--
+-- Den kildeomfattende halvdelen av et globalt fravær (`source_wide_absence`,
+-- migrasjon 005ae) er et søk gjennom hele kildeversjonen, og kan bare føres opp
+-- av en rad med en agentkjøring. Fiksturen åpner derfor en kjøring for
+-- verifikatoren og attribuerer hele kontrollen til den — det er også den ekte
+-- formen: maskinen gjør søket.
 -- ----------------------------------------------------------------------------
+with run as (
+  insert into provenance.agent_runs
+    (agent_identity_id, actor_id, agent_role, provider, model, model_version,
+     prompt_template_version, pipeline_version, input_manifest)
+  select ai.id, ai.actor_id, 'extraction_verification', 'prøve', 'prøve', '1',
+         'extraction-verification/1', 'antidep-evidence/1', '{"mode": "fikstur"}'::jsonb
+  from provenance.agent_identities ai
+  where ai.identity_key = 'agent-identity:extraction-verification-01'
+    and not exists (
+      select 1 from workflow.evidence_verifications ev
+      where ev.evidence_item_id = '7b000000-0000-4000-8000-000000000003'
+    )
+  returning id, actor_id
+)
 insert into workflow.evidence_verifications
   (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
-   source_access, checked_fields, rationale, verified_at)
-select e.id, e.created_by_actor_id, v.id, 'verified', 'original_source',
+   source_access, checked_fields, rationale, verified_at, agent_run_id)
+select e.id, e.created_by_actor_id, run.actor_id, 'verified', 'original_source',
        workflow.required_check_fields(e.id),
-       'Samtidighetsprøve: ekstraksjonen er kontrollert i sin helhet.', now()
-from knowledge.evidence_items e, provenance.actors v
-where e.id = '7b000000-0000-4000-8000-000000000003'
-  and v.actor_key = 'agent:extraction-verification'
-  and not exists (
-    select 1 from workflow.evidence_verifications ev
-    where ev.evidence_item_id = '7b000000-0000-4000-8000-000000000003'
-  );
+       'Samtidighetsprøve: ekstraksjonen er kontrollert i sin helhet.', now(), run.id
+from knowledge.evidence_items e, run
+where e.id = '7b000000-0000-4000-8000-000000000003';
 
 -- ----------------------------------------------------------------------------
 -- G8, G9, G9b, G9c: påstanden er kontrollert mot grunnlaget av revieweren, som

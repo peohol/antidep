@@ -31,6 +31,23 @@ import {
 import { EXTRACTION_PROPOSAL_VERSION, PROPOSAL_PRODUCERS } from './extraction-proposal.ts'
 import { MIN_SOURCE_EXCERPT_LENGTH } from './source-excerpt.ts'
 
+/**
+ * Feltene en forankring kan gjelde: kontrollfeltene uten `source_wide_absence`.
+ *
+ * En forankring er ett ordrett utdrag med én peker — grunnlaget for ett lokalt
+ * spørsmål. `source_wide_absence` er det motsatte: påstanden om at en verdi
+ * *ikke* står noe sted i representasjonen, og den har ingen passasje å peke på.
+ * Et forslag som forankret den, ville levert et utdrag som bevis for et fravær
+ * utdraget ikke kan bevise (migrasjon 005ae, EVIDENCE_PIPELINE.md §19.1).
+ *
+ * Databasen krever heller ikke forankring for feltet:
+ * `workflow.semantic_check_fields(uuid)` utelater det, og det er den funksjonen
+ * `workflow.assert_extraction_fully_grounded(uuid)` måler mot.
+ */
+const GROUNDABLE_CHECK_FIELDS = EVIDENCE_CHECK_FIELDS.filter(
+  (field) => field !== 'source_wide_absence',
+)
+
 const UUID_PATTERN = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 const CONTENT_HASH_PATTERN = '^sha256:[0-9a-f]{64}$'
 
@@ -175,7 +192,7 @@ const DRAFT_PROPERTIES: Record<string, Schema> = {
       required: ['check_field', 'source_excerpt', 'source_locator', 'justification'],
       properties: {
         check_field: vocabulary(
-          EVIDENCE_CHECK_FIELDS,
+          GROUNDABLE_CHECK_FIELDS,
           'Hvilket kontrollfelt forankringen gjelder. Hvert felt kan forankres én gang.',
         ),
         source_excerpt: {

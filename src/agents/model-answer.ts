@@ -196,3 +196,23 @@ export function parseModelAnswer(value: unknown): ModelAnswer {
     form: 'completion',
   }
 }
+
+/**
+ * Modellsvaret som JSON, med ett innpakningsmønster tålt.
+ *
+ * Malene ber uttrykkelig om JSON uten kodegjerder, og et svar med gjerder er
+ * derfor et svar som ikke fulgte malen. Ett enkelt gjerde rundt hele svaret
+ * pakkes likevel ut, fordi det er den ene avviksformen som er entydig og som
+ * ikke endrer et eneste tegn i innholdet. Alt annet — forklaring foran, to
+ * objekter, tekst etter — avvises, fordi det ikke finnes én riktig måte å tolke
+ * det på.
+ *
+ * Bor her og ikke i den ene kjøreren som først trengte den: begge modell-ledd
+ * leser det samme svarformatet, og to kopier ville kunnet komme i utakt om hva
+ * som tåles.
+ */
+export function parseCompletionJson(text: string): unknown {
+  const trimmed = text.trim()
+  const fenced = /^```(?:json)?\s*\n([\s\S]*)\n```$/.exec(trimmed)
+  return JSON.parse(fenced?.[1] ?? trimmed) as unknown
+}

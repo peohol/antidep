@@ -255,7 +255,10 @@ select set_eq(
   'ekstraksjonen forankrer nøyaktig de feltene kontrolløkten spør om'
 );
 
--- Og de to provenansfeltene er fortsatt i gatens krav, uten å være egne steg.
+-- Og de feltene ingen kontrolløkt stiller spørsmål om, er fortsatt i gatens
+-- krav: de to provenansfeltene, og — fordi denne raden fører et felt som ikke
+-- rapportert — det kildeomfattende søket, som bare en maskin kan bære
+-- (migrasjon 005ae).
 select set_eq(
   format(
     $$select unnest(workflow.required_check_fields(%L::uuid))::text
@@ -263,8 +266,8 @@ select set_eq(
     (select id from registered where name = 'grounded'),
     (select id from registered where name = 'grounded')
   ),
-  $$values ('raw_extraction'), ('source_locator')$$,
-  'publiseringsgatens krav er de semantiske feltene pluss de to provenansfeltene'
+  $$values ('raw_extraction'), ('source_locator'), ('source_wide_absence')$$,
+  'gatens krav er de semantiske feltene, de to provenansfeltene og det kildeomfattende søket'
 );
 
 -- ===========================================================================
@@ -507,7 +510,10 @@ select lives_ok(
       (select id from run where label = 'verify'),
       (select id from registered where name = 'grounded'),
       'uncertain', 'verifiable_representation',
-      array['raw_extraction', 'source_locator'],
+      -- Den kildeomfattende halvdelen av et globalt fravær hører til her og
+      -- ingen andre steder: den er et søk gjennom hele representasjonen, og
+      -- kontrolløkten stiller aldri det spørsmålet (migrasjon 005ae).
+      array['raw_extraction', 'source_locator', 'source_wide_absence'],
       'Prøve i 590: hvert forankret utdrag ble gjenfunnet ordrett i den reproduserte representasjonen.',
       'Tallene og begrepene lot seg ikke bedømme maskinelt, så kontrollen konkluderte ikke om raden som helhet.')
   $$,
@@ -558,7 +564,9 @@ reset role;
 select is(
   cardinality(workflow.covered_check_fields(
     (select id from registered where name = 'grounded'))),
-  6,
+  -- Seks fra mennesket og kontrollleddet over, pluss det kildeomfattende søket
+  -- maskinen gjorde: til sammen nøyaktig det raden påstår noe om.
+  7,
   'og dekningen er komplett: hvert felt funnet påstår noe om, er kontrollert'
 );
 

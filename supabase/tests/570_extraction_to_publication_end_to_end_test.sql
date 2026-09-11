@@ -27,7 +27,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(27);
+select plan(28);
 
 -- ===========================================================================
 -- Fikstur
@@ -212,7 +212,11 @@ select lives_ok(
       (select id from agent_run where label = 'r'),
       '57000000-0000-4000-8000-000000000011',
       'uncertain', 'verifiable_representation',
-      array['source_locator', 'raw_extraction'],
+      -- source_wide_absence er det kildeomfattende søket: raden fører et felt
+      -- som ikke rapportert, og maskinen har gjennomsøkt hele representasjonen
+      -- uten å finne en verdi for det (migrasjon 005ae). Det er den ene
+      -- halvdelen av den påstanden ingen menneskelig økt kan bære.
+      array['source_locator', 'raw_extraction', 'source_wide_absence'],
       'Prøve i 570: den deterministiske kontrollen fant ikke utdragene den trengte.',
       'Tidspunkt, retning og forbehold lot seg ikke bedømme maskinelt.')
   $$,
@@ -274,14 +278,36 @@ select throws_like(
 select pg_temp.age_earlier_extraction_checks();
 select pg_temp.refresh_digests();
 
+-- Mennesket bedømmer alt funnet påstår noe om, unntatt det kildeomfattende
+-- søket: kontrolløkten stiller ikke det spørsmålet, og maskinen har allerede
+-- besvart det i ledd 2.
 create temporary table required_fields (value text[]) on commit drop;
 insert into required_fields
-select workflow.required_check_fields('57000000-0000-4000-8000-000000000011')::text[];
+select array_remove(
+  workflow.required_check_fields('57000000-0000-4000-8000-000000000011'),
+  'source_wide_absence'::workflow.evidence_check_field)::text[];
 grant select on required_fields to authenticated;
 
 select set_config('request.jwt.claims',
                   '{"sub":"57000000-0000-4000-8000-0000000000a0"}', true);
 set local role authenticated;
+
+-- …og kan ikke ta den på seg heller. En kontrolløkt som førte opp feltet, ville
+-- påstått et søk gjennom hele representasjonen som aldri ble gjort
+-- (migrasjon 005ae).
+select throws_ok(
+  $$
+    select api.register_human_extraction_verification(
+      '57000000-0000-4000-8000-000000000011'::uuid,
+      (select value from digest where label = 'e11'),
+      'verified', 'original_source',
+      array['source_locator', 'source_wide_absence'],
+      'Prøve i 570: et menneske forsøker å bære den kildeomfattende påstanden.')
+  $$,
+  '23514', null,
+  'et menneske kan ikke registrere den kildeomfattende fraværskontrollen'
+);
+
 select lives_ok(
   $$
     select api.register_human_extraction_verification(

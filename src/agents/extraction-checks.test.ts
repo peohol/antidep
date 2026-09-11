@@ -5,27 +5,54 @@ import {
   checkExtraction,
   numberOccursIn,
   searchProjections,
+  sourceWideAbsenceSearch,
   trimNumericText,
 } from './extraction-checks'
-import { FIXTURE_SOURCE_TEXT, verificationItemFixture } from './test-support'
+import {
+  absenceReviewFixture,
+  FIXTURE_SOURCE_TEXT,
+  sourceVersionFixture,
+  verificationItemFixture,
+} from './test-support'
+import { buildAbsenceReviewRequest, type AbsenceReviewOutcome } from './absence-review'
+import { absenceReviewSubject } from './absence-review-job'
+import { modelRequestDigest } from './model-client'
 import type { VerificationExtraction } from './verification-input'
 
+/**
+ * Kontrollen av fiksturen, med den kildeomfattende gjennomlesningen på plass.
+ *
+ * Standardverdien er en gjennomlesning som konkluderte «absent» på hvert felt
+ * raden fører som globalt fraværende. Uten den kan `source_wide_absence` aldri
+ * dekkes, og enhver prøve om noe annet ville blitt uavklart av en grunn den
+ * ikke prøver (`absence-review.ts`). Prøvene som handler om selve halvdelen,
+ * oppgir den selv — også som `null`, som er «ingen gjennomlesning foreligger».
+ */
 function check(
   overrides: Parameters<typeof verificationItemFixture>[0] = {},
   sourceText: string = FIXTURE_SOURCE_TEXT,
   representationReproduced = true,
+  absenceReview?: AbsenceReviewOutcome | null,
 ) {
+  const item = verificationItemFixture(overrides)
   return checkExtraction({
-    item: verificationItemFixture(overrides),
+    item,
     sourceText,
     representationReproduced,
+    absenceReview: absenceReview === undefined ? absenceReviewFixture(item) : absenceReview,
   })
 }
 
 // Fiksturen oppgir en populasjon, og utdragene dens navngir den. En test som
 // bytter ut utdraget, forteller en annen historie: da er populasjonen støy og
 // slås av, slik at testen måler det den sier den måler.
-const UTEN_POPULASJON = { populationAvailability: 'not_reported' } as const
+//
+// `not_applicable` og ikke `not_reported`: det siste er en påstand om at kilden
+// ikke oppgir populasjonen, og den utløser et kildeomfattende krav ingen kan
+// innfri for en etikett (migrasjon 005ae). Det ville gjort hver av disse
+// prøvene uavklart av en grunn de ikke handler om. Fiksturen mener «ikke
+// aktuelt her», og skal si det.
+const UTEN_POPULASJON = { populationAvailability: 'not_applicable' } as const
 
 // ----------------------------------------------------------------------------
 // Kontrakten mot publiseringsgaten
@@ -53,7 +80,11 @@ describe('checkExtraction — fører aldri opp et felt den ikke kan bedømme', (
       { extraction: { timepointAvailability: 'reported_value' } },
     ],
     [
-      'en utvalgsstørrelse ført som ikke rapportert',
+      'en utvalgsstørrelse uten verdi',
+      { extraction: { sampleSize: null, sampleSizeAvailability: 'not_applicable' } },
+    ],
+    [
+      'en utvalgsstørrelse ført som ikke rapportert i kilden',
       { extraction: { sampleSize: null, sampleSizeAvailability: 'not_reported' } },
     ],
   ] as const)('holder seg innenfor de kontrollerbare feltene (%s)', (_navn, overrides) => {
@@ -651,7 +682,7 @@ describe('checkExtraction — tallene', () => {
         extraction: {
           ...UTEN_POPULASJON,
           sampleSize: 48,
-          confidenceIntervalAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -721,9 +752,9 @@ describe('checkExtraction — tallene', () => {
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
           outcomeLabel: 'body weight change',
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           sampleSize: null,
-          confidenceIntervalAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -746,9 +777,9 @@ describe('checkExtraction — tallene', () => {
           ...UTEN_POPULASJON,
           estimate: '5.0',
           outcomeLabel: 'body weight change',
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           sampleSize: null,
-          confidenceIntervalAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -797,8 +828,8 @@ describe('checkExtraction — tallene', () => {
           effectMeasure: 'risk_ratio',
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          confidenceIntervalAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -820,13 +851,13 @@ describe('checkExtraction — tallene', () => {
       {
         extraction: {
           ...UTEN_POPULASJON,
-          estimateAvailability: 'not_reported',
+          estimateAvailability: 'not_applicable',
           estimate: null,
           estimateUnit: null,
           effectMeasure: null,
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           rawExtraction: { sitat: utdrag },
         },
       },
@@ -848,8 +879,8 @@ describe('checkExtraction — tallene', () => {
           estimate: '5.0',
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          confidenceIntervalAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -877,7 +908,7 @@ describe('checkExtraction — tallene', () => {
           effectMeasure: 'risk_ratio',
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           ciLower: '4.0',
           ciUpper: '6.0',
           ciLevelPercent: '95',
@@ -934,13 +965,13 @@ describe('checkExtraction — tallene', () => {
       {
         extraction: {
           ...UTEN_POPULASJON,
-          estimateAvailability: 'not_reported',
+          estimateAvailability: 'not_applicable',
           estimate: null,
           estimateUnit: null,
           effectMeasure: null,
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           ciLower: '4.0',
           ciUpper: '6.0',
           ciLevelPercent: '95',
@@ -1007,8 +1038,8 @@ describe('checkExtraction — tallene', () => {
           effectMeasure: 'risk_ratio',
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          confidenceIntervalAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -1168,12 +1199,12 @@ describe('checkExtraction — tallene', () => {
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
-          confidenceIntervalAvailability: 'not_reported',
-          populationAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
+          populationAvailability: 'not_applicable',
           rawExtraction: { sitat: kilde },
         },
       },
@@ -1361,13 +1392,15 @@ describe('checkExtraction — tallene', () => {
 
   it('kontrollerer ikke et tall som ikke er oppgitt som rapportert', () => {
     // §19.1: en verdi finnes hvis og bare hvis statusen sier det. Et estimat
-    // med statusen not_reported har ingen verdi å lete etter, og feltet skal
-    // da ikke stå som kontrollert.
+    // uten en rapportert verdi har ingenting å lete etter, og feltet skal da
+    // ikke stå som kontrollert. Grunnen er `not_applicable` og ikke
+    // `not_reported`, slik at prøven måler nettopp dette og ikke det
+    // kildeomfattende kravet en påstand om kilden utløser (migrasjon 005ae).
     const report = check({
       extraction: {
         ...UTEN_POPULASJON,
         estimate: null,
-        estimateAvailability: 'not_reported',
+        estimateAvailability: 'not_applicable',
       },
     })
     expect(report.checkedFields).not.toContain('estimate')
@@ -1493,7 +1526,7 @@ describe('checkExtraction — tallet må tilhøre denne raden', () => {
       {
         estimate: '1.5',
         estimateUnit: 'kg',
-        confidenceIntervalAvailability: 'not_reported',
+        confidenceIntervalAvailability: 'not_applicable',
         ciLower: null,
         ciUpper: null,
         ciLevelPercent: null,
@@ -1522,11 +1555,11 @@ describe('checkExtraction — tallet må tilhøre denne raden', () => {
     ],
   ])('bekrefter ikke et estimat når bindingen til armen er brutt (%s)', (_navn, quote) => {
     const report = withQuote(quote, {
-      sampleSizeAvailability: 'not_reported',
+      sampleSizeAvailability: 'not_applicable',
       sampleSize: null,
       estimate: '1.5',
       estimateUnit: 'kg',
-      confidenceIntervalAvailability: 'not_reported',
+      confidenceIntervalAvailability: 'not_applicable',
       ciLower: null,
       ciUpper: null,
       ciLevelPercent: null,
@@ -1542,7 +1575,7 @@ describe('checkExtraction — tallet må tilhøre denne raden', () => {
       'Sertraline patients had a mean weight change of 1.5 kg, the change of 1.5 ' +
         '(95% CI 4.0 to 6.0)',
       {
-        sampleSizeAvailability: 'not_reported',
+        sampleSizeAvailability: 'not_applicable',
         sampleSize: null,
         estimate: '1.5',
         estimateUnit: 'kg',
@@ -1561,7 +1594,7 @@ describe('checkExtraction — tallet må tilhøre denne raden', () => {
       {
         estimate: '1.5',
         estimateUnit: '%',
-        confidenceIntervalAvailability: 'not_reported',
+        confidenceIntervalAvailability: 'not_applicable',
         ciLower: null,
         ciUpper: null,
         ciLevelPercent: null,
@@ -1622,14 +1655,14 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
   // noe annet enn bekreftet, og testene måler nettopp det de sier.
   const utenTall = {
     sampleSize: null,
-    sampleSizeAvailability: 'not_reported',
+    sampleSizeAvailability: 'not_applicable',
     estimate: null,
     estimateUnit: null,
-    estimateAvailability: 'not_reported',
+    estimateAvailability: 'not_applicable',
     ciLower: null,
     ciUpper: null,
     ciLevelPercent: null,
-    confidenceIntervalAvailability: 'not_reported',
+    confidenceIntervalAvailability: 'not_applicable',
   } as const satisfies Partial<VerificationExtraction>
 
   function utenTallMedUtdrag(quote: string, extraction: Partial<VerificationExtraction> = {}) {
@@ -1654,13 +1687,13 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
     [
       'intervensjonen',
       'Patients had a mean weight change over the trial',
-      { populationAvailability: 'not_reported' },
+      { populationAvailability: 'not_applicable' },
       'intervention_arm',
     ],
     [
       'endepunktet',
       'Sertraline-treated patients were followed over the trial',
-      { populationAvailability: 'not_reported' },
+      { populationAvailability: 'not_applicable' },
       'outcome',
     ],
     [
@@ -1669,7 +1702,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         comparatorKind: 'drug',
         comparatorDrugName: 'fluoxetine',
-        populationAvailability: 'not_reported',
+        populationAvailability: 'not_applicable',
       },
       'comparator_arm',
     ],
@@ -1696,7 +1729,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
   // handler om raden i det hele tatt.
   it('bekrefter ikke en rad der et ordrett, men irrelevant utdrag er alt som finnes', () => {
     const report = utenTallMedUtdrag('The trial was randomized and double blind', {
-      populationAvailability: 'not_reported',
+      populationAvailability: 'not_applicable',
     })
 
     expect(report.outcome).toBe('uncertain')
@@ -1739,7 +1772,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
     const quotes = Object.values(rawExtraction)
     const report = check(
       {
-        extraction: { ...utenTall, populationAvailability: 'not_reported', rawExtraction },
+        extraction: { ...utenTall, populationAvailability: 'not_applicable', rawExtraction },
       },
       `${FIXTURE_SOURCE_TEXT}\n${quotes.map((quote) => `<p>${quote}</p>`).join('\n')}`,
     )
@@ -1773,7 +1806,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
         extraction: {
           ...utenTall,
           ...extraction,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           rawExtraction: { arm: BEGGE, komparator: komparatorutdrag },
         },
       },
@@ -1822,7 +1855,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
         extraction: {
           ...utenTall,
           ...extraction,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           rawExtraction: { støtte },
         },
       },
@@ -1843,7 +1876,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           ...utenTall,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           rawExtraction: { arm, komparator },
@@ -1884,7 +1917,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           ...utenTall,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           rawExtraction: { arm: BEGGE, annet },
@@ -1925,8 +1958,8 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          populationAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           effectMeasure: 'mean_difference',
@@ -1953,8 +1986,8 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          populationAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           effectMeasure: 'mean_difference',
@@ -1992,10 +2025,10 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
           ...UTEN_POPULASJON,
           ...medPopulasjon,
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           estimate: '5.0',
           estimateUnit: 'kg',
-          confidenceIntervalAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -2021,7 +2054,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
           populationLabel: 'major depressive disorder',
           populationAvailability: 'reported_value',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           estimate: '5.0',
           estimateUnit: 'kg',
           ciLower: '4.0',
@@ -2087,7 +2120,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           ...utenTall,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           rawExtraction: { støtte },
@@ -2107,12 +2140,12 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          confidenceIntervalAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           effectMeasure: 'mean_difference',
@@ -2129,7 +2162,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
   // Den positive kontrollen: står begrepene faktisk i utdraget, er raden
   // bekreftet som før. Uten denne kunne rettelsen over gjort alt uavklart.
   it('bekrefter en rad uten tallfelt når begrepene faktisk står i utdraget', () => {
-    const report = utenTallMedUtdrag(BEGGE, { populationAvailability: 'not_reported' })
+    const report = utenTallMedUtdrag(BEGGE, { populationAvailability: 'not_applicable' })
 
     expect(report.outcome).toBe('verified')
     expect(report.checkedFields).toEqual(
@@ -2179,6 +2212,791 @@ describe('checkExtraction — når kontrollen ikke kan konkludere', () => {
       false,
     )
     expect(report.outcome).toBe('needs_correction')
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Den kildeomfattende fraværskontrollen
+//
+// `not_reported` og `not_measured` er påstander om kilden SOM HELHET, og de har
+// to ledd: et deterministisk søk som kan FALSIFISERE, og en uavhengig
+// gjennomlesning av hele representasjonen som kan KONKLUDERE (issue #74,
+// migrasjon 005ae, `absence-review.ts`).
+//
+// Prøvene under holder fem ting fast:
+//
+//   1. Et negativt søkeresultat dekker ALDRI feltet alene. Det er funnet fra
+//      teknisk review av denne leveransen, og det viktigste her.
+//   2. Et treff — fra søket eller fra gjennomlesningen — stopper dekningen uten
+//      å bli et avvik.
+//   3. Begge leddene må gjelde den reproduserte representasjonen.
+//   4. Alle feltene raden fører som globalt fraværende må være avklart.
+//   5. Teksten påstår aldri mer enn den dekker, og navngir både
+//      representasjonen og hvem som leste den.
+// ----------------------------------------------------------------------------
+describe('checkExtraction — den kildeomfattende fraværskontrollen', () => {
+  // En tekst som ikke oppgir noe konfidensintervall noe sted.
+  const UTEN_INTERVALL = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="RESULTS">Sertraline-treated patients with major depressive',
+    '  disorder had a mean weight change of 1.5 kg and the difference was significant.',
+    '  </AbstractText>',
+    '</PubmedArticle>',
+  ].join('\n')
+
+  const UTEN_KI = {
+    ciLower: null,
+    ciUpper: null,
+    ciLevelPercent: null,
+    confidenceIntervalAvailability: 'not_reported',
+    rawExtraction: {
+      resultat:
+        'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+        'change of 1.5 kg',
+    },
+  } as const
+
+  /** Fiksturens gjennomlesning for en rad, med et valgfritt svar per felt. */
+  const lest = (
+    overrides: Parameters<typeof verificationItemFixture>[0],
+    verdicts: Record<string, 'absent' | 'present' | 'uncertain'> = {},
+  ) => absenceReviewFixture(verificationItemFixture(overrides), verdicts)
+
+  // ------------------------------------------------------------------------
+  // Funnet fra teknisk review: søket alene dekker ingenting
+  //
+  // Den første utgaven førte feltet opp så snart mønsterlisten ikke fant noe.
+  // Mønstrene kjente `CI`, `C.I.` og `confidence interval(s)`, men ikke `CIs`
+  // og ikke `confidence limits`, og et fravær kan ikke bevises av et søk.
+  // ------------------------------------------------------------------------
+
+  it('dekker aldri feltet på et negativt søk alene', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, null)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/ingen gjennomlesning av hele representasjonen/)
+    expect(report.findings).toMatch(/ikke at ingen form gjør det/)
+  })
+
+  // Den konkrete falske negativen review konstruerte. Teksten oppgir et
+  // intervall i en form den første mønsterlisten ikke kjente. Prøven holder to
+  // ting fast på én gang: at en gyldig, ukjent formulering aldri blir til
+  // `checked` av seg selv, og at listen nå kjenner nettopp denne.
+  const MED_CIs = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="RESULTS">Sertraline-treated patients with major depressive',
+    '  disorder had a mean weight change of 1.5 kg. The 95% CIs were 0.4 to 2.6.',
+    '  </AbstractText>',
+    '</PubmedArticle>',
+  ].join('\n')
+
+  const MED_CONFIDENCE_LIMITS = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="RESULTS">Sertraline-treated patients with major depressive',
+    '  disorder had a mean weight change of 1.5 kg (confidence limits 0.4 and 2.6).',
+    '  </AbstractText>',
+    '</PubmedArticle>',
+  ].join('\n')
+
+  it.each([
+    ['CIs', MED_CIs],
+    ['confidence limits', MED_CONFIDENCE_LIMITS],
+  ])('dekker ikke et intervall skrevet som «%s», uansett hvem som leser', (_form, tekst) => {
+    // Uten gjennomlesning: ingen dekning, fordi søket aldri dekker alene.
+    expect(check({ extraction: UTEN_KI }, tekst, true, null).checkedFields).not.toContain(
+      'source_wide_absence',
+    )
+    // Med en gjennomlesning som ser intervallet: fortsatt ingen dekning.
+    expect(
+      check(
+        { extraction: UTEN_KI },
+        tekst,
+        true,
+        lest(
+          { extraction: UTEN_KI },
+          {
+            confidence_interval: 'present',
+          },
+        ),
+      ).checkedFields,
+    ).not.toContain('source_wide_absence')
+    // Og søket selv skal nå kjenne formen, slik at det falsifiserer den uten
+    // hjelp. Det gjør ikke listen uttømmende — det er derfor ledd to finnes.
+    const bareSøket = check({ extraction: UTEN_KI }, tekst, true, lest({ extraction: UTEN_KI }))
+    expect(bareSøket.checkedFields).not.toContain('source_wide_absence')
+    expect(bareSøket.findings).toMatch(/Søket gjennom hele representasjonen fant noe som ligner/)
+  })
+
+  // Et søketreff kan ikke overstyres av en gjennomlesning som mener noe annet:
+  // to ledd som er uenige om hvorvidt verdien står der, er ikke et grunnlag for
+  // å påstå at den ikke gjør det.
+  it('lar et søketreff veie tyngre enn en gjennomlesning som sier «absent»', () => {
+    const report = check(
+      { extraction: UTEN_KI },
+      FIXTURE_SOURCE_TEXT,
+      true,
+      lest({
+        extraction: UTEN_KI,
+      }),
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/Søket gjennom hele representasjonen fant noe som ligner/)
+  })
+
+  // ------------------------------------------------------------------------
+  // Når begge leddene konkluderer
+  // ------------------------------------------------------------------------
+
+  it('fører opp feltet når begge leddene konkluderte', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL)
+    expect(report.checkedFields).toContain('source_wide_absence')
+    expect(report.rationale).toMatch(/kontrollert i to ledd/)
+    expect(report.rationale).toMatch(/«confidence_interval»/)
+    // Begrunnelsen navngir hvem som leste, og hvilken forespørsel svaret gjaldt.
+    expect(report.rationale).toMatch(/test\/gjennomlesning/)
+    expect(report.rationale).toMatch(/promptmal evidence-extraction\/source-wide-absence\/1/)
+  })
+
+  // Ordlyden er den sannheten kontrollen faktisk bærer, og det er ikke pynt:
+  // `not_reported` gjelder kildeversjonen, ikke publikasjonen. Sier raden noe
+  // annet, påstår auditsporet mer enn kontrollen bærer (DATABASE_ARCHITECTURE.md §29).
+  it('påstår ikke at opplysningen mangler i publikasjonen, bare i kildeversjonen', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL)
+    expect(report.rationale).toMatch(/ikke står i den kildeversjonen raden viser til/)
+    expect(report.rationale).toMatch(/ikke at den ikke står i publikasjonen/)
+  })
+
+  // …og den navngir hva som faktisk ble gjennomgått. Et abstrakt sier mindre om
+  // publikasjonen enn en fulltekst, og dekningen skal aldri leses som mer enn
+  // den er (EVIDENCE_PIPELINE.md §13).
+  it('navngir representasjonen som ble gjennomgått', () => {
+    expect(check({ extraction: UTEN_KI }, UTEN_INTERVALL).rationale).toMatch(/«full_text»/)
+    const abstrakt = check(
+      {
+        extraction: UTEN_KI,
+        sourceVersion: sourceVersionFixture({ representation: 'abstract' }),
+      },
+      UTEN_INTERVALL,
+    )
+    expect(abstrakt.checkedFields).toContain('source_wide_absence')
+    expect(abstrakt.rationale).toMatch(/«abstract»/)
+  })
+
+  it('sier fra når kildeversjonen ikke har en registrert representasjonstype', () => {
+    const report = check(
+      {
+        extraction: UTEN_KI,
+        sourceVersion: sourceVersionFixture({ representation: null }),
+      },
+      UTEN_INTERVALL,
+    )
+    expect(report.rationale).toMatch(/ikke har en registrert representasjonstype/)
+  })
+
+  // ------------------------------------------------------------------------
+  // Når ett av leddene stopper
+  // ------------------------------------------------------------------------
+
+  // Fiksturteksten oppgir «95% CI 0.4 to 2.6». Et funn som fører intervallet som
+  // ikke rapportert, kan da ikke få fraværet kontrollert.
+  it('fører ikke opp feltet når kildeversjonen oppgir en slik verdi', () => {
+    const report = check({ extraction: UTEN_KI })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/Søket gjennom hele representasjonen fant noe som ligner/)
+  })
+
+  // Et treff er ikke en anklage: det kan gjelde et annet endepunkt eller et
+  // annet tidspunkt. Samme asymmetri som ellers i modulen.
+  it('gjør ikke et treff til et avvik', () => {
+    const report = check({ extraction: UTEN_KI })
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/ikke i seg selv et avvik/)
+  })
+
+  it('dekker ikke feltet når gjennomlesningen fant verdien', () => {
+    const report = check(
+      { extraction: UTEN_KI },
+      UTEN_INTERVALL,
+      true,
+      lest({ extraction: UTEN_KI }, { confidence_interval: 'present' }),
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/Gjennomlesningen av hele representasjonen fant en verdi/)
+  })
+
+  // Et sitat gjennomlesningen skrev om — eller fant på — skal ikke legges til
+  // grunn som et funn. Fraværet dekkes uansett ikke, men teksten skal si hvilken
+  // av de to tingene som skjedde.
+  it('sier fra når gjennomlesningens sitat ikke står i teksten', () => {
+    const review = lest({ extraction: UTEN_KI }, { confidence_interval: 'present' })
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, review)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/lot seg IKKE gjenfinne ordrett/)
+  })
+
+  it('dekker ikke feltet når gjennomlesningen ikke kunne avgjøre det', () => {
+    const report = check(
+      { extraction: UTEN_KI },
+      UTEN_INTERVALL,
+      true,
+      lest({ extraction: UTEN_KI }, { confidence_interval: 'uncertain' }),
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/kunne ikke avgjøre fraværet/)
+  })
+
+  // En gjennomlesning som gjelder et annet funn, dekker ingenting her. Filen kan
+  // være lagt i feil mappe, og mappenavnet alene skal ikke avgjøre det.
+  it('ser bort fra en gjennomlesning som gjelder et annet evidensfunn', () => {
+    const review = lest({ extraction: UTEN_KI })
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, {
+      ...review,
+      evidenceItemId: '00000000-0000-4000-8000-000000000000',
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/gjelder evidensfunnet 00000000/)
+  })
+
+  // Grunnen til at halvdelen står åpen, skal stå i teksten. «Ingen fil» og «et
+  // svar på en annen tekst» er ikke det samme for den som skal gjøre noe.
+  it('gjengir grunnen til at ingen gjennomlesning kunne brukes', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, {
+      kind: 'missing',
+      reason: 'svaret gjaldt en annen forespørsel',
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/svaret gjaldt en annen forespørsel/)
+  })
+
+  // Funn i teknisk review: et udekket kildeomfattende fravær er en uavklart
+  // kontroll, ikke bare en merknad. Raden kunne før komme ut som `verified`
+  // med `findings` null, mens begrunnelsen sa at fraværet ikke lot seg
+  // bekrefte — en bekreftelse som motsa sin egen tekst.
+  it('lar et udekket fravær avgjøre utfallet, ikke bare merknadene', () => {
+    // Alt annet stemmer: utdraget er radens eget, står ordrett i kilden, og
+    // binder arm, endepunkt, populasjon og verdi sammen. Uten fraværskontrollen
+    // ville denne raden vært `verified`.
+    const støtte =
+      'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+      'change of 1.5 kg'
+    const overrides = {
+      extraction: {
+        sampleSize: null,
+        // Kilden oppgir «N = 284», så søket finner en utvalgsstørrelse og
+        // fraværet kan ikke regnes som kontrollert.
+        sampleSizeAvailability: 'not_reported',
+        ciLower: null,
+        ciUpper: null,
+        ciLevelPercent: null,
+        confidenceIntervalAvailability: 'not_applicable',
+        rawExtraction: { støtte },
+      },
+    } as const
+    const report = check(overrides, `${FIXTURE_SOURCE_TEXT}\n<p>${støtte}</p>`)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    // …og et uavklart utfall må ha et funn: databasen krever det.
+    expect(report.findings).not.toBeNull()
+    expect(report.findings).toMatch(/«sample_size»/)
+  })
+
+  // Stemmer ikke fingeravtrykket, gjelder begge leddene en annen tekst enn den
+  // ekstraksjonen ble laget av.
+  it('kontrollerer ikke en representasjon som ikke lot seg reprodusere', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, false)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/ikke samme fingeravtrykk/)
+  })
+
+  // Raden gjør ingen kildeomfattende påstand: da er det ingenting å
+  // kontrollere, og et felt ført opp likevel ville vært en kontroll av
+  // ingenting.
+  it('fører aldri opp feltet for en rad uten en global fraværsstatus', () => {
+    // Standardfiksturen fører tidspunktet som ikke rapportert, så «ingen global
+    // fraværsstatus» må settes eksplisitt.
+    const ingenFravaer = {
+      timepointAvailability: 'not_applicable',
+      ...UTEN_KI,
+      confidenceIntervalAvailability: 'not_applicable',
+    } as const
+    expect(check({ extraction: ingenFravaer }).checkedFields).not.toContain('source_wide_absence')
+    expect(
+      check({
+        extraction: { ...ingenFravaer, confidenceIntervalAvailability: 'not_extractable' },
+      }).checkedFields,
+    ).not.toContain('source_wide_absence')
+  })
+
+  // En utvalgsstørrelse ført som ikke rapportert, mens teksten oppgir «N = 284».
+  it('finner en utvalgsstørrelse som står i kildeversjonen', () => {
+    const report = check({
+      extraction: {
+        sampleSize: null,
+        sampleSizeAvailability: 'not_reported',
+        rawExtraction: {
+          resultat:
+            'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+            'change of 1.5 kg',
+        },
+      },
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/«sample_size»/)
+  })
+
+  // …og motsatt, når teksten ikke oppgir noe antall og gjennomlesningen bekrefter det.
+  it('fører opp feltet når verken søket eller gjennomlesningen fant et antall', () => {
+    const report = check(
+      {
+        extraction: {
+          sampleSize: null,
+          sampleSizeAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          confidenceIntervalAvailability: 'not_applicable',
+          rawExtraction: {
+            resultat:
+              'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+              'change of 1.5 kg',
+          },
+        },
+      },
+      UTEN_INTERVALL,
+    )
+    expect(report.checkedFields).toContain('source_wide_absence')
+  })
+
+  // Populasjonen er en etikett og ikke et tall, og radens egen er norsk mens
+  // kilden er engelsk. Søket har da ingen form å prøve — men gjennomlesningen
+  // leser teksten og kan svare. Dekningen sier eksplisitt at den hviler på ett
+  // ledd (issue #79).
+  const UTEN_POPULASJONSVERDI = {
+    populationLabel: null,
+    populationAvailability: 'not_reported',
+    timepointAvailability: 'not_applicable',
+    ciLower: null,
+    ciUpper: null,
+    ciLevelPercent: null,
+    confidenceIntervalAvailability: 'not_applicable',
+    rawExtraction: {
+      resultat:
+        'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+        'change of 1.5 kg',
+    },
+  } as const
+
+  it('sier fra når søket ikke har en form å prøve, men lar gjennomlesningen avgjøre', () => {
+    const report = check({ extraction: UTEN_POPULASJONSVERDI }, UTEN_INTERVALL)
+    expect(report.checkedFields).toContain('source_wide_absence')
+    expect(report.rationale).toMatch(/har søket ingen form å prøve/)
+    expect(report.rationale).toMatch(/hviler konklusjonen på gjennomlesningen alene/)
+  })
+
+  it('dekker ikke et felt uten søkbar form når ingen gjennomlesning foreligger', () => {
+    const report = check({ extraction: UTEN_POPULASJONSVERDI }, UTEN_INTERVALL, true, null)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/«population»/)
+  })
+
+  // ------------------------------------------------------------------------
+  // «ikke målt i studien» er en annen påstand enn «ikke rapportert i kilden»
+  //
+  // Reviewfunn: gjennomlesningen fikk ikke vite hvilken av de to statusene
+  // feltet var ført med, og ble bare spurt om en tallverdi fantes. En kilde som
+  // uttrykkelig sier at variabelen BLE MÅLT, men ikke oppgir tall, ville da gitt
+  // et korrekt «absent» — og et uriktig `not_measured` ville blitt bokført som
+  // kildeomfattende kontrollert.
+  // ------------------------------------------------------------------------
+
+  // Reviewerens egen setning, ordrett.
+  const MÅLT_SETNING =
+    'Body weight was measured at baseline and endpoint, but numerical results are not reported.'
+
+  // Teksten oppgir INGEN tallverdi for utfallet — det deterministiske søket
+  // finner derfor ingenting, og det er hele poenget: uten gjennomlesningen som
+  // leser hva setningen faktisk sier, ville fraværet sett ubestridt ut.
+  const MÅLT_UTEN_TALL = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="METHODS">Sertraline patients with major depressive disorder',
+    `  were randomised. ${MÅLT_SETNING}</AbstractText>`,
+    '</PubmedArticle>',
+  ].join('\n')
+
+  const IKKE_MÅLT = {
+    estimate: null,
+    estimateUnit: null,
+    estimateAvailability: 'not_measured',
+    ciLower: null,
+    ciUpper: null,
+    ciLevelPercent: null,
+    confidenceIntervalAvailability: 'not_applicable',
+    timepointAvailability: 'not_applicable',
+    rawExtraction: { resultat: MÅLT_SETNING },
+  } as const
+
+  it('spør om variabelen ble MÅLT når feltet er ført som ikke målt', () => {
+    const subject = absenceReviewSubject(verificationItemFixture({ extraction: IKKE_MÅLT }))
+    expect(subject.fields).toEqual([{ checkField: 'estimate', status: 'not_measured' }])
+    const request = buildAbsenceReviewRequest({
+      subject,
+      contentHash: `sha256:${'ab'.repeat(32)}`,
+      representation: MÅLT_UTEN_TALL,
+    })
+    expect(request.user).toMatch(/ført som «ikke målt i studien»/)
+    expect(request.user).toMatch(/ble MÅLT, vurdert, registrert eller/)
+    expect(request.user).toMatch(/selv om ingen tallverdi står noe sted/)
+    // …og malen navngir forskjellen med reviewerens eget eksempel.
+    expect(request.system).toMatch(/Body weight was measured at baseline and endpoint/)
+  })
+
+  // Det samme feltet, ført med den andre statusen, skal gi et annet spørsmål —
+  // og dermed et annet avtrykk. Ellers kunne et svar avgitt på «står det her?»
+  // dekket påstanden «ble det målt?».
+  it('gir et annet avtrykk for de to statusene', async () => {
+    const felles = {
+      contentHash: `sha256:${'ab'.repeat(32)}`,
+      representation: MÅLT_UTEN_TALL,
+    }
+    const målt = absenceReviewSubject(verificationItemFixture({ extraction: IKKE_MÅLT }))
+    const rapportert = absenceReviewSubject(
+      verificationItemFixture({
+        extraction: { ...IKKE_MÅLT, estimateAvailability: 'not_reported' },
+      }),
+    )
+    expect(rapportert.fields).toEqual([{ checkField: 'estimate', status: 'not_reported' }])
+    const [a, b] = await Promise.all([
+      modelRequestDigest(buildAbsenceReviewRequest({ ...felles, subject: målt })),
+      modelRequestDigest(buildAbsenceReviewRequest({ ...felles, subject: rapportert })),
+    ])
+    expect(a).not.toBe(b)
+  })
+
+  // Kjernen i funnet: et uriktig `not_measured` skal ikke kunne bli dekning.
+  // Gjennomlesningen ser at kilden sier at vekten BLE målt, og svarer `present`
+  // — og da dekkes ingenting, selv om ingen tallverdi står noe sted.
+  it('dekker ikke et «ikke målt» når kilden sier at variabelen ble målt', () => {
+    const overrides = { extraction: IKKE_MÅLT } as const
+    const report = check(overrides, MÅLT_UTEN_TALL, true, lest(overrides, { estimate: 'present' }))
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/Gjennomlesningen av hele representasjonen fant en verdi/)
+    expect(report.findings).toMatch(/«estimate»/)
+  })
+
+  // …og uten gjennomlesning i det hele tatt dekkes det ikke, uansett hva søket
+  // ikke fant. Samme regel som ellers, prøvd på nettopp denne statusen.
+  it('dekker ikke et «ikke målt» på et negativt søk alene', () => {
+    // Søket finner ingenting i denne teksten, og skal ikke: den oppgir ingen
+    // tallverdi. Det er nettopp derfor et verdisøk aldri kan avgjøre «ikke
+    // målt» — setningen sier at det BLE målt.
+    expect(sourceWideAbsenceSearch(searchProjections(MÅLT_UTEN_TALL), 'estimate')).toEqual({
+      kind: 'not_found',
+    })
+    const report = check({ extraction: IKKE_MÅLT }, MÅLT_UTEN_TALL, true, null)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/ingen gjennomlesning av hele representasjonen/)
+  })
+
+  // Reviewfunn nummer tre, og det skarpeste: `not_measured` betyr «kilden
+  // OPPLYSER at størrelsen ikke ble målt» (kolonnekommentaren på
+  // `*_availability`, migrasjon 003). En kilde som ikke nevner målingen i det
+  // hele tatt, opplyser ingenting — og «ingen evidens for at det ble målt» er
+  // ikke det samme som «evidens for at det ikke ble målt».
+  const TIER_OM_MÅLING = [
+    '<PubmedArticle>',
+    '  <AbstractText Label="METHODS">Sertraline patients with major depressive disorder',
+    '  were randomised and followed to endpoint.</AbstractText>',
+    '</PubmedArticle>',
+  ].join('\n')
+
+  const IKKE_MÅLT_UTEN_OMTALE = {
+    ...IKKE_MÅLT,
+    rawExtraction: {
+      resultat: 'Sertraline patients with major depressive disorder were randomised',
+    },
+  } as const
+
+  it('dekker ikke et «ikke målt» når kilden tier om målingen', () => {
+    const overrides = { extraction: IKKE_MÅLT_UTEN_OMTALE } as const
+    // En gjennomlesning som konkluderte «absent» — men uten et sted å vise til,
+    // fordi det ikke finnes et. Det er nøyaktig tilfellet review beskrev.
+    const tausGjennomlesning = lest(overrides)
+    const report = check(overrides, TIER_OM_MÅLING, true, {
+      ...tausGjennomlesning,
+      fields: tausGjennomlesning.fields.map((felt) => ({ ...felt, quote: null })),
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    expect(report.findings).toMatch(/ikke til noe sted der kilden sier at størrelsen ikke ble målt/)
+    expect(report.findings).toMatch(/kan ikke hvile på at teksten tier/)
+  })
+
+  // …og motsatt: står utsagnet der, og gjennomlesningen viser til det ordrett,
+  // er påstanden båret. Det er den ene veien et `not_measured` kan dekkes.
+  it('dekker et «ikke målt» når kilden sier det, og utdraget står ordrett', () => {
+    const sier = 'Weight was not assessed in this trial.'
+    const tekst = TIER_OM_MÅLING.replace('</AbstractText>', ` ${sier}</AbstractText>`)
+    const overrides = { extraction: IKKE_MÅLT_UTEN_OMTALE } as const
+    const report = check(overrides, tekst, true, lest(overrides))
+    expect(report.checkedFields).toContain('source_wide_absence')
+  })
+
+  // Et utdrag gjennomlesningen skrev om — eller fant på — er ikke et
+  // kontrollgrunnlag, og skal ikke kunne bære påstanden.
+  it('dekker ikke et «ikke målt» når utdraget ikke står i teksten', () => {
+    const overrides = { extraction: IKKE_MÅLT_UTEN_OMTALE } as const
+    const report = check(overrides, TIER_OM_MÅLING, true, lest(overrides))
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/står ikke ordrett i representasjonen/)
+  })
+
+  // Et svar som oppgir feil status, dekker ingenting: avtrykket stenger for
+  // gjenbruk, og dette er den samme regelen lest av raden.
+  it('dekker ikke et svar som oppgir en annen status enn raden', () => {
+    const overrides = { extraction: UTEN_KI } as const
+    const review = lest(overrides)
+    const report = check(overrides, UTEN_INTERVALL, true, {
+      ...review,
+      fields: review.fields.map((felt) => ({ ...felt, status: 'not_measured' as const })),
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/De to er forskjellige påstander/)
+  })
+
+  // ------------------------------------------------------------------------
+  // Proveniens: hva åpnet gaten, hvem vurderte det, og når
+  //
+  // Reviewfunn: gjennomlesningen er nå et selvstendig KI-ledd som kan være den
+  // avgjørende grunnen til at publiseringsgaten åpner. EVIDENCE_PIPELINE.md
+  // §3.7 krever at hvert prosessledd kan spores til aktør, modellversjon,
+  // promptversjon, tidspunkt og output, og §65 at det kan rekonstrueres hva som
+  // ble kjørt med hvilke premisser. Beviset kan derfor ikke bare ligge i en
+  // midlertidig arbeidsmappe.
+  // ------------------------------------------------------------------------
+
+  it('bevarer hvem som leste, når, og mot hvilken forespørsel og hvilket svar', () => {
+    const overrides = { extraction: UTEN_KI } as const
+    const report = check(overrides, UTEN_INTERVALL)
+    expect(report.checkedFields).toContain('source_wide_absence')
+
+    // Menneskeleselig, på selve verifikasjonsraden.
+    expect(report.rationale).toMatch(/test\/gjennomlesning/)
+    expect(report.rationale).toMatch(/den 2026-09-11T09:00:00Z/)
+    expect(report.rationale).toMatch(/promptmal evidence-extraction\/source-wide-absence\/1/)
+    expect(report.rationale).toMatch(/svar sha256:b{64}/)
+
+    // …og maskinlesbart, til kjøringens output_manifest.
+    expect(report.sourceWideAbsence).toEqual({
+      provider: 'test',
+      model: 'gjennomlesning',
+      modelVersion: '1',
+      promptTemplateVersion: 'evidence-extraction/source-wide-absence/1',
+      requestDigest: `sha256:${'a'.repeat(64)}`,
+      answerDigest: `sha256:${'b'.repeat(64)}`,
+      answeredAt: '2026-09-11T09:00:00Z',
+      // Fiksturen fører også tidspunktet som ikke rapportert, og begge feltene
+      // dekningen hviler på skal stå der — ikke bare det ene prøven handler om.
+      fields: [
+        {
+          checkField: 'timepoint',
+          status: 'not_reported',
+          verdict: 'absent',
+          quote: null,
+          rationale: 'Leste gjennom hele representasjonen etter timepoint.',
+        },
+        {
+          checkField: 'confidence_interval',
+          status: 'not_reported',
+          verdict: 'absent',
+          quote: null,
+          rationale: 'Leste gjennom hele representasjonen etter confidence_interval.',
+        },
+      ],
+    })
+  })
+
+  // Kjernen for `not_measured`: det positive beviset skal overleve kontrollen.
+  // Forsvinner arbeidsmappa, skal det fortsatt gå an å se hvilket sted i kilden
+  // som åpnet gaten.
+  it('bevarer det ordrette beviset et «ikke målt» hviler på', () => {
+    const sier = 'Weight was not assessed in this trial.'
+    const tekst = TIER_OM_MÅLING.replace('</AbstractText>', ` ${sier}</AbstractText>`)
+    const overrides = { extraction: IKKE_MÅLT_UTEN_OMTALE } as const
+    const report = check(overrides, tekst, true, lest(overrides))
+
+    expect(report.checkedFields).toContain('source_wide_absence')
+    // Begrunnelsen sier hva statusen faktisk påstår, ikke den generiske
+    // «ingen verdi står der» — og den siterer stedet.
+    expect(report.rationale).toMatch(/kilden opplyser selv at størrelsen ikke ble målt/)
+    expect(report.rationale).toContain(sier)
+    expect(report.rationale).toMatch(/gjenfunnet ordrett/)
+    expect(report.sourceWideAbsence?.fields).toEqual([
+      {
+        checkField: 'estimate',
+        status: 'not_measured',
+        verdict: 'absent',
+        quote: sier,
+        rationale: 'Leste gjennom hele representasjonen etter estimate.',
+      },
+    ])
+  })
+
+  // Reviewfunn: å bevare mangelen korrekt er ikke det samme som å oppfylle
+  // §3.7. Et ledd som kan åpne publiseringsgaten, må kunne spores til et
+  // tidspunkt — ellers gis ingen dekning. Typen sier det, og kontrollen sier det
+  // en gang til, slik at en kaller som bygger objektet for hånd ikke kommer
+  // utenom.
+  it('dekker ikke noe når gjennomlesningen mangler tidspunkt', () => {
+    const overrides = { extraction: UTEN_KI } as const
+    const review = lest(overrides)
+    const report = check(overrides, UTEN_INTERVALL, true, {
+      ...review,
+      answeredAt: '' as unknown as string,
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/oppgir ikke når den ble gjort/)
+    expect(report.sourceWideAbsence).toBe(undefined)
+  })
+
+  // …og motsatt: enhver bevart proveniens som faktisk åpnet gaten, bærer et
+  // tidspunkt.
+  it('bærer alltid et tidspunkt når dekning ble gitt', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL)
+    expect(report.checkedFields).toContain('source_wide_absence')
+    expect(report.sourceWideAbsence?.answeredAt).toBeTruthy()
+    expect(report.rationale).toMatch(
+      /ble gjort av test\/gjennomlesning \(1\) den 2026-09-11T09:00:00Z/,
+    )
+  })
+
+  it('bærer ingen proveniens når ingenting ble dekket', () => {
+    expect(check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, null).sourceWideAbsence).toBe(
+      undefined,
+    )
+  })
+
+  // Et felt hvis globale fraværsgrunn kontrollen ikke kjenner, dekkes aldri —
+  // uansett hva en gjennomlesning måtte ha svart. Feiler lukket.
+  it('dekker ikke et felt kontrollen ikke vet hva påstår', () => {
+    const item = verificationItemFixture({ extraction: UTEN_KI })
+    const report = checkExtraction({
+      item: { ...item, sourceWideAbsenceFields: ['effect_measure'] },
+      sourceText: UTEN_INTERVALL,
+      representationReproduced: true,
+      absenceReview: {
+        ...absenceReviewFixture(item),
+        fields: [
+          {
+            checkField: 'effect_measure',
+            status: 'not_reported',
+            verdict: 'absent',
+            quote: null,
+            rationale: 'Leste gjennom hele representasjonen og fant ingenting.',
+          },
+        ],
+      },
+    })
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/kjenner ikke hvilken av de to globale fraværsgrunnene/)
+  })
+
+  // Alle de globalt fraværende feltene må være avklart. Ett udekket felt er en
+  // udekket påstand, og hele feltet holdes tilbake.
+  it('holder feltet tilbake når bare ett av flere fravær er avklart', () => {
+    const overrides = {
+      extraction: {
+        ...UTEN_KI,
+        populationLabel: null,
+        populationAvailability: 'not_reported',
+      },
+    } as const
+    const report = check(
+      overrides,
+      UTEN_INTERVALL,
+      true,
+      lest(overrides, {
+        population: 'uncertain',
+      }),
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+  })
+})
+
+describe('sourceWideAbsenceSearch', () => {
+  const TEKST = [
+    'Sertraline-treated patients (N = 48) had a mean weight change of 1.5 kg ' +
+      '(95% CI 0.4 to 2.6) at 8 weeks.',
+  ]
+
+  it('finner et intervall som står i teksten', () => {
+    expect(sourceWideAbsenceSearch(TEKST, 'confidence_interval').kind).toBe('found')
+  })
+
+  it('finner ingenting når teksten ikke oppgir en slik verdi', () => {
+    expect(
+      sourceWideAbsenceSearch(
+        ['Sertraline-treated patients had a mean weight change of 1.5 kg.'],
+        'confidence_interval',
+      ).kind,
+    ).toBe('not_found')
+  })
+
+  it('skiller feltene fra hverandre', () => {
+    expect(sourceWideAbsenceSearch(TEKST, 'sample_size').kind).toBe('found')
+    expect(sourceWideAbsenceSearch(TEKST, 'timepoint').kind).toBe('found')
+    expect(sourceWideAbsenceSearch(TEKST, 'estimate').kind).toBe('found')
+  })
+
+  it('sier fra om feltene som ikke har en søkbar form', () => {
+    expect(sourceWideAbsenceSearch(TEKST, 'population').kind).toBe('not_searchable')
+    expect(sourceWideAbsenceSearch(TEKST, 'outcome').kind).toBe('not_searchable')
+  })
+
+  // Et nakent tall er ikke en verdi av noe felt: uten et anker som navngir
+  // hva tallet er, teller det ikke som et treff.
+  it('teller ikke et nakent tall som en verdi', () => {
+    expect(
+      sourceWideAbsenceSearch(['Sertraline was given to the group in room two.'], 'estimate').kind,
+    ).toBe('not_found')
+  })
+
+  // Funn i teknisk review, og den farligste av dem: kilder skriver anaforisk.
+  // Et søk som krevde at verdien sto i en passasje som selv navngir armen,
+  // kastet andre setning før den ble søkt — og bekreftet et fravær av et
+  // intervall som sto der, svart på hvitt.
+  it('finner en verdi som står i setningen etter den som navngir armen', () => {
+    expect(
+      sourceWideAbsenceSearch(
+        ['Sertraline patients improved.', 'The 95% CI was 0.4 to 2.6.'],
+        'confidence_interval',
+      ).kind,
+    ).toBe('found')
+  })
+
+  // …og finner den også når armen ikke er nevnt i det hele tatt. Søket har
+  // ingen binding til raden, med vilje: en maskin kan ikke se hvilket intervall
+  // som er radens, og skal derfor ikke påstå at ingen av dem er det.
+  it('finner en verdi i en tekst som ikke nevner armen', () => {
+    expect(
+      sourceWideAbsenceSearch(['The 95% CI was 0.4 to 2.6.'], 'confidence_interval').kind,
+    ).toBe('found')
+  })
+
+  // Det andre reviewfunnet: tall skrevet med bokstaver er helt vanlige, og
+  // står i denne kodebasens egen PDF-fikstur. Et sifferbasert søk ga «ingen
+  // utvalgsstørrelse i kilden» på nettopp den setningen.
+  it('teller tall skrevet med bokstaver', () => {
+    expect(
+      sourceWideAbsenceSearch(
+        ['Forty-eight sertraline-treated patients completed the trial.'],
+        'sample_size',
+      ).kind,
+    ).toBe('found')
+    expect(
+      sourceWideAbsenceSearch(['Treatment continued for eight weeks.'], 'timepoint').kind,
+    ).toBe('found')
   })
 })
 
@@ -2291,10 +3109,12 @@ describe('searchProjections — ugyldige entiteter i kildeinnhold', () => {
   })
 
   it('stopper ikke kontrollen av et funn når kilden har en ugyldig entitet', () => {
+    const item = verificationItemFixture()
     const report = checkExtraction({
-      item: verificationItemFixture(),
+      item,
       sourceText: `${FIXTURE_SOURCE_TEXT}\n<p>&#x110000;</p>`,
       representationReproduced: true,
+      absenceReview: absenceReviewFixture(item),
     })
     expect(report.outcome).toBe('verified')
   })

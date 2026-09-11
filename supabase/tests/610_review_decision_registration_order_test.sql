@@ -237,12 +237,63 @@ values
    '61000000-0000-4000-8000-000000000012', 'supports', 'direct',
    'Lenke i 610.', (select id from fixture where name = 'synthesis'));
 
+-- Den kildeomfattende halvdelen av et globalt fravær (`not_reported`,
+-- `not_measured`) kan bare føres opp av en maskinell kontroll med sin egen
+-- agentkjøring (migrasjon 005ae,
+-- evidence_verifications_source_wide_absence_check): ingen menneskelig
+-- kontrolløkt søker gjennom hele representasjonen, og blir aldri spurt om det.
+-- En fikstur som skal ha full dekning, trenger derfor begge leddene.
+create function pg_temp.cover_source_wide_absence(p_evidence_item_id uuid)
+  returns void
+  language plpgsql
+as $fn$
+declare
+  v_run_id uuid;
+  v_actor_id uuid;
+begin
+  -- Fører ikke raden en slik påstand, kreves feltet ikke, og en rad som førte
+  -- det opp ville påstått en kontroll av ingenting.
+  if 'source_wide_absence' <> all (workflow.required_check_fields(p_evidence_item_id)) then
+    return;
+  end if;
+
+  insert into provenance.agent_runs
+    (agent_identity_id, actor_id, agent_role, provider, model, model_version,
+     prompt_template_version, pipeline_version, input_manifest)
+  select ai.id, ai.actor_id, 'extraction_verification', 'prøve', 'prøve', '1',
+         'extraction-verification/1', 'antidep-evidence/1', '{"mode": "fikstur"}'::jsonb
+  from provenance.agent_identities ai
+  where ai.identity_key = 'agent-identity:extraction-verification-01'
+  returning id, actor_id into v_run_id, v_actor_id;
+
+  insert into workflow.evidence_verifications
+    (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+     source_access, checked_fields, rationale, verified_at, agent_run_id)
+  select e.id, e.created_by_actor_id, v_actor_id, 'verified', 'verifiable_representation',
+         array['source_wide_absence']::workflow.evidence_check_field[],
+         'Fikstur: et søk gjennom hele den kontrollerte representasjonen fant ingen verdi '
+         || 'for de feltene raden fører som fraværende i kilden.',
+         now() - interval '30 days', v_run_id
+  from knowledge.evidence_items e
+  where e.id = p_evidence_item_id;
+end;
+$fn$;
+
+-- Den maskinelle halvdelen først, slik at den menneskelige kontrollen blir
+-- den gjeldende (registreringsrekkefølgen avgjør, migrasjon 005å).
+select pg_temp.cover_source_wide_absence(e.id)
+from knowledge.evidence_items e
+where e.id in ('61000000-0000-4000-8000-000000000011',
+               '61000000-0000-4000-8000-000000000012');
+
 insert into workflow.evidence_verifications
   (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
    source_access, checked_fields, rationale, verified_at)
 select e.id, e.created_by_actor_id,
        (select id from fixture where name = 'extraction_verifier'),
-       'verified', 'original_source', workflow.required_check_fields(e.id),
+       'verified', 'original_source',
+       array_remove(workflow.required_check_fields(e.id),
+                    'source_wide_absence'::workflow.evidence_check_field),
        'Prøve i 610: fullstendig kontrollert ekstraksjon.', now()
 from knowledge.evidence_items e
 where e.id in ('61000000-0000-4000-8000-000000000011',

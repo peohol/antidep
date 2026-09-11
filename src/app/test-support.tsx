@@ -863,6 +863,7 @@ export function reviewLink(overrides: Record<string, unknown> = {}): Record<stri
       // Maskinen har prøvd utdragene mot kilden. Uten dette stopper økten før
       // feltskuffene (migrasjon 005x, 005æ).
       grounding_machine_proved: true,
+      source_wide_absence_fields: sourceWideAbsenceFieldsOf(reviewExtraction()),
       extraction: reviewExtraction(),
     },
     current_extraction_verification: {
@@ -1037,6 +1038,26 @@ export const TEST_EXTRACTION_IDS = {
 } as const
 
 /** Feltene funnet i fiksturen påstår noe om, slik gaten regner dem ut. */
+/**
+ * Feltene raden fører uten verdi med en begrunnelse som gjelder kilden SOM
+ * HELHET, utledet slik `workflow.source_wide_absence_fields(uuid)` gjør det.
+ *
+ * Avledet av ekstraksjonen framfor satt fast, slik at en test som bytter én
+ * availability-verdi, automatisk får det grunnlaget databasen ville gitt. En
+ * fast liste ville latt fiksturen si noe annet enn raden.
+ */
+export function sourceWideAbsenceFieldsOf(extraction: Record<string, unknown>): readonly string[] {
+  const global = (key: string) =>
+    extraction[key] === 'not_reported' || extraction[key] === 'not_measured'
+  return [
+    ...(global('population_availability') ? ['population'] : []),
+    ...(global('sample_size_availability') ? ['sample_size'] : []),
+    ...(global('timepoint_availability') ? ['timepoint'] : []),
+    ...(global('estimate_availability') ? ['estimate'] : []),
+    ...(global('confidence_interval_availability') ? ['confidence_interval'] : []),
+  ]
+}
+
 const EXTRACTION_REQUIRED_FIELDS = [
   'raw_extraction',
   'source_locator',
@@ -1112,12 +1133,24 @@ export function extractionReviewPayload(
   reviewerActorId: string = REVIEW_REVIEWER_ACTOR,
 ): Record<string, unknown> {
   const dossier = reviewLink()['evidence_item'] as Record<string, unknown>
+  // Avledet etter at overstyringene er lagt på, slik at en test som endrer en
+  // availability-verdi får både fraværslisten og gatens krav som databasen
+  // ville gitt dem (migrasjon 005ae).
+  const extraction = (itemOverrides['extraction'] ?? dossier['extraction']) as Record<
+    string,
+    unknown
+  >
+  const sourceWide = sourceWideAbsenceFieldsOf(extraction)
   return {
     reviewer_actor_id: reviewerActorId,
     item: {
       ...dossier,
+      source_wide_absence_fields: sourceWide,
       extraction_digest: TEST_EXTRACTION_IDS.digest,
-      required_check_fields: EXTRACTION_REQUIRED_FIELDS,
+      required_check_fields:
+        sourceWide.length === 0
+          ? EXTRACTION_REQUIRED_FIELDS
+          : [...EXTRACTION_REQUIRED_FIELDS, 'source_wide_absence'],
       covered_check_fields: [],
       current_extraction_verification_id: null,
       extraction_verifications: [],
