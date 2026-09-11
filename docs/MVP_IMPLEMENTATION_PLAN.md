@@ -7366,10 +7366,20 @@ fulltekstleser for hvert eneste felt uten verdi.
 
 **Søket er bevisst bredere enn kontrollens øvrige søk.** Resten av modulen
 binder en verdi til raden med en limkjede, fordi den skal *tilskrive* verdien
-denne raden. Her er påstanden motsatt, og en like streng binding ville gjort
-«ikke funnet» til et nesten sikkert utfall uansett hva som står i artikkelen —
-altså et stempel. Bindingen er derfor setningen: verdien må stå i en passasje
-som selv navngir behandlingsarmen, hvor som helst i representasjonen.
+denne raden. Her er påstanden motsatt: et for smalt søk bekrefter et fravær av
+noe som står der. Søket har derfor **ingen binding til raden**, fri avstand
+mellom anker og verdi, og teller tall skrevet med bokstaver.
+
+To smalere utforminger ble forkastet i teknisk review av denne leveransen, og
+begge er nå regresjonsprøver. Et krav om at verdien sto i en passasje som selv
+navngir behandlingsarmen, kastet andre setning i «Sertraline patients improved.
+The 95% CI was 0.4 to 2.6.» Et sifferbasert mønster ga «ingen utvalgsstørrelse
+i kilden» på «Forty-eight sertraline-treated patients completed the trial» — en
+setning som står i denne kodebasens egen PDF-fikstur.
+
+Prisen er reell og med vilje: oppgir artikkelen et konfidensintervall for et
+*annet* endepunkt, dekkes feltet ikke. En maskin kan ikke se hvilket av dem som
+er radens, og skal da ikke påstå at ingen av dem er det.
 
 **Rekkevidden er kildeversjonen, ikke publikasjonen, og det er ikke en
 innskrenkning.** Det er nøyaktig det statusen selv gjelder — kolonnekommentaren
@@ -7379,14 +7389,13 @@ følger likevel av hva versjonen er, så kontrollraden navngir representasjonen
 den gjennomsøkte: et søk gjennom et abstrakt skal ikke leses som et søk gjennom
 en fulltekst.
 
-**To grenser er harde, og de finnes for at feltet aldri skal bli et stempel.**
-Representasjonen må ha latt seg reprodusere, og behandlingsarmen må stå i den.
-Uten armen har søket ingen binding, og «ingen treff» ville bare betydd at
-kilden er på engelsk mens katalogen er på norsk. Et **treff** er ikke et avvik:
-søket vet ikke om verdien gjelder dette endepunktet, så utfallet er `uncertain`,
-feltet føres ikke opp, og begrunnelsen siterer hva som ble funnet. Et felt uten
-maskinelt søkbar form — populasjonen er en etikett og ikke et tall — står
-ukontrollert, og gaten åpen.
+**Én hard grense: representasjonen må ha latt seg reprodusere.** Et **treff** er
+ikke et avvik: søket vet ikke om verdien gjelder denne armen og dette
+endepunktet, så utfallet er `uncertain`, feltet føres ikke opp, og begrunnelsen
+siterer hva som ble funnet. Et udekket fravær avgjør utfallet og står ikke bare
+som en merknad — også det et reviewfunn. Et felt uten maskinelt søkbar form —
+populasjonen er en etikett og ikke et tall — står ukontrollert, og gaten åpen
+(issue #79).
 
 **Mennesket kan ikke ta halvdelen på seg, og det er håndhevet framfor frarådet.**
 `workflow.semantic_check_fields(uuid)` utelater feltet, så kontrolløkten stiller
@@ -7410,9 +7419,9 @@ med bare et avledet sammendrag som grunnlag. `570` viser det i hele kjeden, med
 et menneske som forsøker å bære påstanden og blir avvist. Kjedeprøven
 (`npm run db:test:chain`) prøver det samme mot den ekte databasen gjennom de
 ekte skriveveiene. På JavaScript-siden er søket prøvd felt for felt, med et
-treff som ikke blir et avvik, en representasjon uten reprodusert fingeravtrykk,
-en arm kilden ikke navngir, og en ordgrense som hindrer at «citalopram» binder
-et tall i «escitalopram».
+treff som ikke blir et avvik, et udekket fravær som avgjør utfallet, en
+representasjon uten reprodusert fingeravtrykk, en verdi som står i setningen
+etter den som navngir armen, og tall skrevet med bokstaver.
 
 **To fiksturer sa noe annet enn raden, og kontrollen fant det.** Kjedeprøvens
 sammendrag sa «randomised for 8 weeks» mens funnet førte tidspunktet som ikke

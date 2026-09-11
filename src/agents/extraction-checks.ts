@@ -1629,35 +1629,52 @@ function rowBindingDescription(item: VerificationItem): string {
 // søk, og et søk er nettopp det en maskin gjør reproduserbart.
 //
 // ----------------------------------------------------------------------------
-// Søket er bevisst bredere enn bekreftelsessøket, og det er ikke en slurv
+// Feilretningen er valgt, og den er den eneste som er forsvarlig
 //
-// Resten av denne modulen søker i funnets EGNE utdrag, fordi den skal bekrefte
-// at en verdi tilhører nettopp denne raden. Her er påstanden motsatt — at
-// ingen slik verdi finnes — og da ville et smalt søk gjort «ikke funnet» til
-// et nesten sikkert utfall uansett hva som står i artikkelen. En kontroll som
-// alltid sier ja, er ingen kontroll.
+// Resten av modulen skal **tilskrive** en verdi til denne raden, og der er et
+// for bredt søk faren: en bekreftelse som bygger på et tall som tilhørte en
+// annen arm. Her er påstanden motsatt. Et for *smalt* søk gir «ikke funnet» på
+// en verdi som faktisk står der, og fører feltet opp som kontrollert — altså en
+// publiseringsgate som slipper gjennom en usann `not_reported`.
 //
-// Søket går derfor gjennom HELE representasjonen, og krever bare at verdien
-// står bundet til funnets behandlingsarm. Endepunktet er med vilje ikke et
-// krav: katalogen er norsk og kildene engelske, så «vektendring» står nesten
-// aldri i en engelsk artikkel, og et krav om den ville tømt søket for innhold.
+// De to feilene er ikke like alvorlige. Et for bredt søk lar være å dekke
+// feltet, og gaten blir stående åpen; et for smalt søk bekrefter noe som ikke
+// er sant. Søket er derfor bygget for **maksimal gjenfinning**, og alt som er
+// usikkert trekker mot å ikke dekke feltet (ANTIDEP_CONSTITUTION.md §6, §11).
+//
+// To tidligere, smalere utforminger er forkastet av nettopp den grunnen, begge
+// funnet i teknisk review av denne leveransen:
+//
+//   * **Binding til armen.** Søket krevde først at verdien sto i en passasje
+//     som selv navngir behandlingsarmen. Kilder skriver anaforisk — «Sertraline
+//     patients improved. The 95% CI was 0.4 to 2.6.» — og andre setning ble da
+//     kastet før søket. Resultatet var «ikke funnet» på et intervall som sto
+//     der, svart på hvitt.
+//   * **Bare sifre.** Mønstrene kjente bare tall skrevet med siffer.
+//     «Forty-eight sertraline-treated patients completed the trial» er en helt
+//     vanlig formulering — den står i denne kodebasens egen PDF-fikstur — og
+//     ga «ingen utvalgsstørrelse i kilden».
+//
+// Søket går derfor gjennom **hele** representasjonen uten noen binding til
+// raden, og teller tall skrevet med bokstaver. Prisen er reell og med vilje:
+// oppgir artikkelen et konfidensintervall for et *annet* endepunkt, dekkes
+// feltet ikke. Det er riktig — en maskin kan ikke se hvilket av dem som er
+// radens, og da skal den ikke påstå at ingen av dem er det.
 //
 // ----------------------------------------------------------------------------
 // Et treff er ikke et avvik
 //
-// Finner søket et konfidensintervall bundet til sertralinarmen, vet det ikke om
-// intervallet hører til DETTE endepunktet og dette tidspunktet. Treffet er
-// derfor ikke en anklage mot ekstraksjonen — det er grunnen til at fraværet
-// ikke kan regnes som kontrollert, og teksten navngir hva som ble funnet slik
-// at et menneske kan se på det. Samme asymmetri som ellers i modulen: en
-// kontroll som ikke kan konkludere, skal aldri leses som en bekreftelse
-// (ANTIDEP_CONSTITUTION.md §6, §11).
+// Finner søket et konfidensintervall, vet det ikke om intervallet hører til
+// DETTE endepunktet og dette tidspunktet. Treffet er derfor ikke en anklage mot
+// ekstraksjonen — det er grunnen til at fraværet ikke kan regnes som
+// kontrollert, og teksten navngir hva som ble funnet slik at et menneske kan se
+// på det.
 //
 // ----------------------------------------------------------------------------
 // Hva «ikke funnet» faktisk betyr, og hvorfor det er nok
 //
-// Nøyaktig dette: ingen verdi av den arten står i noen passasje som navngir
-// armen, noe sted i den kildeversjonen raden viser til.
+// Nøyaktig dette: ingen verdi av den arten står noe sted i den kildeversjonen
+// raden viser til.
 //
 // Det er den påstanden raden faktisk gjør. `not_reported` er i datamodellen
 // definert relativt til **kildeversjonen**, ikke til publikasjonen:
@@ -1671,20 +1688,79 @@ function rowBindingDescription(item: VerificationItem): string {
 // mindre om publikasjonen enn et søk gjennom en fulltekst. Begrunnelsen navngir
 // derfor representasjonen, slik at dekningen aldri leses som mer enn den er.
 //
-// To grenser er harde:
-//
-//   * Representasjonen må ha latt seg reprodusere med det registrerte
-//     fingeravtrykket. Ellers gjelder søket en annen tekst enn den raden ble
-//     laget av.
-//   * Armen må stå i representasjonen. Gjør den ikke det, har søket ingen
-//     binding, og «ingen treff» betyr bare at kilden aldri nevner armen —
-//     katalogen er norsk og kildene engelske, så det er en helt vanlig
-//     tilstand, og nettopp derfor kan den aldri telle som en bekreftelse
-//     (DATABASE_ARCHITECTURE.md §29).
+// Én grense er hard: representasjonen må ha latt seg reprodusere med det
+// registrerte fingeravtrykket. Ellers gjelder søket en annen tekst enn den
+// raden ble laget av.
 // ----------------------------------------------------------------------------
 
-/** Et tall etterfulgt av en tidsenhet: «12 weeks», «8 uker». */
-const TIMEPOINT_VALUE = `${ANY_NUMBER}\\s*(?:${TIME_UNITS.join('|')})(?![\\p{L}\\p{N}])`
+/**
+ * Tall skrevet med bokstaver.
+ *
+ * Listen er engelsk fordi kildene er det, og den er bevisst raus: her er
+ * over-treff trygt og under-treff farlig. «Forty-eight patients» skal telle som
+ * en utvalgsstørrelse, og gjør den ikke det, bekrefter kontrollen et fravær som
+ * ikke finnes.
+ *
+ * Rausheten koster: «one of the patients» treffer også, så et felt som
+ * `sample_size` sjelden vil kunne dekkes i engelsk brødtekst. Det er den
+ * riktige enden å ta feil i — en udekket gate er åpen, en falsk dekning er
+ * usann.
+ */
+const WORD_NUMBER_PARTS = [
+  'zero',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+  'ten',
+  'eleven',
+  'twelve',
+  'thirteen',
+  'fourteen',
+  'fifteen',
+  'sixteen',
+  'seventeen',
+  'eighteen',
+  'nineteen',
+  'twenty',
+  'thirty',
+  'forty',
+  'fifty',
+  'sixty',
+  'seventy',
+  'eighty',
+  'ninety',
+  'hundred',
+  'thousand',
+]
+
+/**
+ * Avstanden mellom ankeret og verdien i et fraværssøk.
+ *
+ * En bundet, men **fri** avstand — ikke tillatelseslisten `glue()` bruker.
+ * Listen finnes for bekreftelsessøket, der et ukjent ord skal bryte kjeden
+ * fordi det kan snu betydningen. Her er retningen motsatt: «Forty-eight
+ * sertraline-treated patients» har legemiddelnavnet mellom tallet og
+ * personordet, og en tillatelsesliste brøt kjeden og ga «ingen
+ * utvalgsstørrelse i kilden» på en setning som oppgir en.
+ *
+ * Grensen er derfor lengde alene. Over-treff er trygt her — det lar bare være å
+ * dekke feltet — mens under-treff bekrefter et fravær som ikke finnes.
+ */
+const ABSENCE_GAP = '[\\s\\S]{0,40}'
+
+/** Ett tall, med siffer eller med bokstaver. Brukes bare av fraværssøket. */
+const ABSENCE_NUMBER =
+  `(?:${ANY_NUMBER}|(?<![\\p{L}\\p{N}])(?:${WORD_NUMBER_PARTS.join('|')})` +
+  `(?:[-\\s](?:${WORD_NUMBER_PARTS.join('|')}))*(?![\\p{L}\\p{N}]))`
+
+/** Et tall etterfulgt av en tidsenhet: «12 weeks», «eight uker». */
+const TIMEPOINT_VALUE = `${ABSENCE_NUMBER}\\s*(?:${TIME_UNITS.join('|')})(?![\\p{L}\\p{N}])`
 
 /**
  * Formene en verdi av hvert felt kan ha i kilden.
@@ -1695,18 +1771,16 @@ const TIMEPOINT_VALUE = `${ANY_NUMBER}\\s*(?:${TIME_UNITS.join('|')})(?![\\p{L}\
  * feltet blir stående udekket framfor å bli stilltiende godkjent.
  */
 function absenceValueForms(field: string): readonly string[] | null {
-  const sampleSize = numberInRole([...MEASURE_UNITS, ...TIME_UNITS], [])
-  const estimate = numberInRole([...TIME_UNITS, ...PERSON_NOUNS], ['\\bn\\s*[=:]'])
   switch (field) {
     case 'sample_size':
       return [
-        `(?:${SAMPLE_SIZE_ANCHORS_BEFORE.join('|')})${glue()}${sampleSize}`,
-        `${sampleSize}${glue()}(?:${SAMPLE_SIZE_ANCHORS_AFTER.join('|')})`,
+        `(?:${SAMPLE_SIZE_ANCHORS_BEFORE.join('|')})${ABSENCE_GAP}${ABSENCE_NUMBER}`,
+        `${ABSENCE_NUMBER}${ABSENCE_GAP}(?:${SAMPLE_SIZE_ANCHORS_AFTER.join('|')})`,
       ]
     case 'estimate':
       return [
-        `(?:${ESTIMATE_ANCHORS.join('|')})${glue()}${estimate}`,
-        `${estimate}${glue()}(?:${ESTIMATE_ANCHORS.join('|')})`,
+        `(?:${ESTIMATE_ANCHORS.join('|')})${ABSENCE_GAP}${ABSENCE_NUMBER}`,
+        `${ABSENCE_NUMBER}${ABSENCE_GAP}(?:${ESTIMATE_ANCHORS.join('|')})`,
       ]
     case 'timepoint':
       return [TIMEPOINT_VALUE]
@@ -1715,8 +1789,8 @@ function absenceValueForms(field: string): readonly string[] | null {
       // grensepar ved siden av. To tall i nærheten av hverandre er ikke et
       // intervall, og et anker uten grenser er ikke en verdi.
       return [
-        `(?:${CI_ANCHOR_SOURCE})${CI_GLUE}${ANY_NUMBER}${CI_RANGE_SEPARATOR}${ANY_NUMBER}`,
-        `${ANY_NUMBER}${CI_RANGE_SEPARATOR}${ANY_NUMBER}${CI_GLUE}(?:${CI_ANCHOR_SOURCE})`,
+        `(?:${CI_ANCHOR_SOURCE})${ABSENCE_GAP}${ABSENCE_NUMBER}${CI_RANGE_SEPARATOR}${ABSENCE_NUMBER}`,
+        `${ABSENCE_NUMBER}${CI_RANGE_SEPARATOR}${ABSENCE_NUMBER}${ABSENCE_GAP}(?:${CI_ANCHOR_SOURCE})`,
       ]
     default:
       return null
@@ -1725,7 +1799,7 @@ function absenceValueForms(field: string): readonly string[] | null {
 
 /** Hva søket gjennom hele representasjonen fant for ett felt. */
 export type SourceWideAbsenceFinding =
-  /** Ingen verdi av den arten står i en passasje som navngir armen. */
+  /** Ingen verdi av den arten står noe sted i representasjonen. */
   | { readonly kind: 'not_found' }
   /** Noe av den arten står der. Ikke et avvik, men fraværet er ikke kontrollert. */
   | { readonly kind: 'found'; readonly quotes: readonly string[] }
@@ -1761,36 +1835,15 @@ function representationName(item: VerificationItem): string {
 }
 
 /**
- * Passasjene i representasjonen som selv navngir funnets behandlingsarm.
+ * Søker gjennom hele representasjonen etter en verdi av feltets art.
  *
- * Bindingen er **setningen**, ikke limkjeden resten av modulen bruker. Det er
- * et bevisst valg og går motsatt vei av bekreftelseskontrollen: der skal en
- * verdi tilskrives nettopp denne raden, og en streng binding er det som gjør
- * bekreftelsen troverdig. Her er påstanden at ingen slik verdi finnes, og da
- * gjør en streng binding «ikke funnet» til et nesten sikkert utfall uansett hva
- * som står i artikkelen — altså en kontroll som alltid sier ja.
- *
- * Setningen er den bredeste bindingen som fortsatt er en binding, og den er
- * lett å forklare: verdien må stå i en passasje som selv navngir armen.
- */
-function armPassages(
-  projections: readonly string[],
-  interventionDrugName: string,
-): readonly string[] {
-  return projections
-    .flatMap(sentences)
-    .filter((fragment) => termOccursIn([fragment], interventionDrugName))
-}
-
-/**
- * Søker etter en verdi av feltets art i passasjene som navngir armen.
- *
- * Eksportert for seg fordi den er den ene definisjonen av hva Antidep mener med
- * «ikke funnet i den registrerte kildeversjonen», og fordi den skal kunne
- * prøves uten resten av kontrollen.
+ * Ingen binding til raden, med vilje: se hodekommentaren over. Eksportert for
+ * seg fordi den er den ene definisjonen av hva Antidep mener med «ikke funnet i
+ * den registrerte kildeversjonen», og fordi den skal kunne prøves uten resten
+ * av kontrollen.
  */
 export function sourceWideAbsenceSearch(
-  armPassageTexts: readonly string[],
+  projections: readonly string[],
   field: string,
 ): SourceWideAbsenceFinding {
   const forms = absenceValueForms(field)
@@ -1800,8 +1853,8 @@ export function sourceWideAbsenceSearch(
   const quotes = new Set<string>()
   for (const form of forms) {
     const pattern = new RegExp(form, 'giu')
-    for (const passage of armPassageTexts) {
-      for (const hit of passage.matchAll(pattern)) {
+    for (const projection of projections) {
+      for (const hit of projection.matchAll(pattern)) {
         quotes.add(hit[0].trim().replace(/\s+/g, ' '))
       }
     }
@@ -1836,29 +1889,13 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
       ],
     }
   }
-  const arm = item.extraction.interventionDrugName
-  const passages = armPassages(searchProjections(sourceText), arm)
-  if (passages.length === 0) {
-    // Uten armen i teksten har søket ingen binding, og «ingen treff» ville
-    // bare betydd at kilden aldri nevner den. Katalogen er norsk og kildene
-    // engelske, så dette er en helt vanlig tilstand — og nettopp derfor kan
-    // den aldri telle som en bekreftelse (ANTIDEP_CONSTITUTION.md §6, §11).
-    return {
-      discharged: false,
-      notes: [
-        `Det kildeomfattende søket kunne ikke konkludere: representasjonen navngir ikke ` +
-          `«${arm}» noe sted, så det finnes ingen passasje å søke i. Kilden er som regel på ` +
-          'engelsk mens katalogen er på norsk, så et manglende treff er ikke et avvik — men ' +
-          'det er heller ingen bekreftelse av at opplysningen ikke står der.',
-      ],
-    }
-  }
 
+  const projections = searchProjections(sourceText)
   const notFound: string[] = []
   const notes: string[] = []
   let discharged = true
   for (const field of fields) {
-    const finding = sourceWideAbsenceSearch(passages, field)
+    const finding = sourceWideAbsenceSearch(projections, field)
     if (finding.kind === 'not_found') {
       notFound.push(field)
       continue
@@ -1873,11 +1910,10 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
       continue
     }
     notes.push(
-      `Søket gjennom hele representasjonen fant noe som ligner en verdi for «${field}» i en ` +
-        `passasje som navngir ${arm}: ${finding.quotes
-          .map((quote) => `«${quote}»`)
-          .join(', ')}. Det er ikke i seg selv et avvik — treffet kan gjelde et annet ` +
-        'endepunkt eller et annet tidspunkt — men fraværet kan da ikke regnes som kontrollert.',
+      `Søket gjennom hele representasjonen fant noe som ligner en verdi for «${field}»: ` +
+        `${finding.quotes.map((quote) => `«${quote}»`).join(', ')}. Det er ikke i seg selv et ` +
+        'avvik — treffet kan gjelde en annen arm, et annet endepunkt eller et annet tidspunkt ' +
+        '— men fraværet kan da ikke regnes som kontrollert.',
     )
   }
 
@@ -1888,10 +1924,10 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
     discharged,
     notes: [
       `Et søk gjennom hele den reproduserte ${representationName(item)} fant ingen verdi for ` +
-        `${notFound.map((field) => `«${field}»`).join(', ')} i noen passasje som navngir ` +
-        `${arm}. Det betyr at opplysningen ikke står i den kildeversjonen raden viser til — ` +
-        'ikke at den ikke står i publikasjonen: en representasjon kan mangle figurer, som er ' +
-        'bilder, og et supplement, som er en egen fil.',
+        `${notFound.map((field) => `«${field}»`).join(', ')} noe sted. Det betyr at ` +
+        'opplysningen ikke står i den kildeversjonen raden viser til — ikke at den ikke står i ' +
+        'publikasjonen: en representasjon kan mangle figurer, som er bilder, og et supplement, ' +
+        'som er en egen fil.',
     ],
   }
 }
@@ -2239,7 +2275,13 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   // *alle* de globalt fraværende feltene er avklart, og en merknad sier alltid
   // hva søket faktisk gjennomsøkte.
   const absence = sourceWideAbsenceCheck(context)
-  if (item.sourceWideAbsenceFields.length > 0) {
+  const absenceRequired = item.sourceWideAbsenceFields.length > 0
+  // Et udekket kildeomfattende fravær er en uavklart kontroll, ikke bare en
+  // merknad. Uten dette kunne raden komme ut som `verified` med `findings`
+  // null, mens begrunnelsen sa at fraværet ikke lot seg bekrefte — en
+  // bekreftelse som motsa sin egen tekst.
+  const absenceUnresolved = absenceRequired && !absence.discharged
+  if (absenceRequired) {
     if (absence.discharged) {
       checked.push('source_wide_absence')
       notes.push(...absence.notes)
@@ -2311,6 +2353,7 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
     unmatchedNumbers.length > 0 ||
     ambiguousNumbers.length > 0 ||
     confidenceIntervalUnresolved ||
+    absenceUnresolved ||
     unmatchedTerms.length > 0 ||
     !rowBound
   ) {

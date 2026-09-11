@@ -68,11 +68,13 @@
 -- Styrken følger av hva versjonen er, og ordlyden sier det: kontrollraden
 -- navngir representasjonen som ble gjennomsøkt, slik at et søk gjennom et
 -- abstrakt ikke leses som et søk gjennom en fulltekst.
--- `src/agents/extraction-checks.ts` fører dessuten feltet opp bare når
--- representasjonen lot seg reprodusere **og** behandlingsarmen står i den:
--- uten armen har søket ingen binding, og «ingen treff» ville bare betydd at
--- kilden er på engelsk mens katalogen er på norsk. En bekreftelse på det
--- grunnlaget ville vært nøyaktig den overdrivelsen §29 forbyr.
+--
+-- `src/agents/extraction-checks.ts` fører feltet opp bare når representasjonen
+-- lot seg reprodusere, og søket der er med vilje bygget for maksimal
+-- gjenfinning: ingen binding til raden, fri avstand mellom anker og verdi, og
+-- tall også skrevet med bokstaver. Feilretningen er motsatt av
+-- bekreftelsessøkets — et for smalt fraværssøk bekrefter et fravær av noe som
+-- står der, og det er nøyaktig den overdrivelsen §29 forbyr.
 --
 -- Styrende dokumenter:
 --   docs/ANTIDEP_CONSTITUTION.md §4, §6, §10, §11, §17

@@ -26,7 +26,13 @@ function check(
 // Fiksturen oppgir en populasjon, og utdragene dens navngir den. En test som
 // bytter ut utdraget, forteller en annen historie: da er populasjonen støy og
 // slås av, slik at testen måler det den sier den måler.
-const UTEN_POPULASJON = { populationAvailability: 'not_reported' } as const
+//
+// `not_applicable` og ikke `not_reported`: det siste er en påstand om at kilden
+// ikke oppgir populasjonen, og den utløser et kildeomfattende krav ingen kan
+// innfri for en etikett (migrasjon 005ae). Det ville gjort hver av disse
+// prøvene uavklart av en grunn de ikke handler om. Fiksturen mener «ikke
+// aktuelt her», og skal si det.
+const UTEN_POPULASJON = { populationAvailability: 'not_applicable' } as const
 
 // ----------------------------------------------------------------------------
 // Kontrakten mot publiseringsgaten
@@ -54,7 +60,11 @@ describe('checkExtraction — fører aldri opp et felt den ikke kan bedømme', (
       { extraction: { timepointAvailability: 'reported_value' } },
     ],
     [
-      'en utvalgsstørrelse ført som ikke rapportert',
+      'en utvalgsstørrelse uten verdi',
+      { extraction: { sampleSize: null, sampleSizeAvailability: 'not_applicable' } },
+    ],
+    [
+      'en utvalgsstørrelse ført som ikke rapportert i kilden',
       { extraction: { sampleSize: null, sampleSizeAvailability: 'not_reported' } },
     ],
   ] as const)('holder seg innenfor de kontrollerbare feltene (%s)', (_navn, overrides) => {
@@ -652,7 +662,7 @@ describe('checkExtraction — tallene', () => {
         extraction: {
           ...UTEN_POPULASJON,
           sampleSize: 48,
-          confidenceIntervalAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -722,9 +732,9 @@ describe('checkExtraction — tallene', () => {
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
           outcomeLabel: 'body weight change',
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           sampleSize: null,
-          confidenceIntervalAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -747,9 +757,9 @@ describe('checkExtraction — tallene', () => {
           ...UTEN_POPULASJON,
           estimate: '5.0',
           outcomeLabel: 'body weight change',
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           sampleSize: null,
-          confidenceIntervalAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -798,8 +808,8 @@ describe('checkExtraction — tallene', () => {
           effectMeasure: 'risk_ratio',
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          confidenceIntervalAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -821,13 +831,13 @@ describe('checkExtraction — tallene', () => {
       {
         extraction: {
           ...UTEN_POPULASJON,
-          estimateAvailability: 'not_reported',
+          estimateAvailability: 'not_applicable',
           estimate: null,
           estimateUnit: null,
           effectMeasure: null,
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           rawExtraction: { sitat: utdrag },
         },
       },
@@ -849,8 +859,8 @@ describe('checkExtraction — tallene', () => {
           estimate: '5.0',
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          confidenceIntervalAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -878,7 +888,7 @@ describe('checkExtraction — tallene', () => {
           effectMeasure: 'risk_ratio',
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           ciLower: '4.0',
           ciUpper: '6.0',
           ciLevelPercent: '95',
@@ -935,13 +945,13 @@ describe('checkExtraction — tallene', () => {
       {
         extraction: {
           ...UTEN_POPULASJON,
-          estimateAvailability: 'not_reported',
+          estimateAvailability: 'not_applicable',
           estimate: null,
           estimateUnit: null,
           effectMeasure: null,
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           ciLower: '4.0',
           ciUpper: '6.0',
           ciLevelPercent: '95',
@@ -1008,8 +1018,8 @@ describe('checkExtraction — tallene', () => {
           effectMeasure: 'risk_ratio',
           outcomeLabel: 'body weight change',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          confidenceIntervalAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -1169,12 +1179,12 @@ describe('checkExtraction — tallene', () => {
           estimateUnit: null,
           effectMeasure: 'risk_ratio',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
-          confidenceIntervalAvailability: 'not_reported',
-          populationAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
+          populationAvailability: 'not_applicable',
           rawExtraction: { sitat: kilde },
         },
       },
@@ -1362,13 +1372,15 @@ describe('checkExtraction — tallene', () => {
 
   it('kontrollerer ikke et tall som ikke er oppgitt som rapportert', () => {
     // §19.1: en verdi finnes hvis og bare hvis statusen sier det. Et estimat
-    // med statusen not_reported har ingen verdi å lete etter, og feltet skal
-    // da ikke stå som kontrollert.
+    // uten en rapportert verdi har ingenting å lete etter, og feltet skal da
+    // ikke stå som kontrollert. Grunnen er `not_applicable` og ikke
+    // `not_reported`, slik at prøven måler nettopp dette og ikke det
+    // kildeomfattende kravet en påstand om kilden utløser (migrasjon 005ae).
     const report = check({
       extraction: {
         ...UTEN_POPULASJON,
         estimate: null,
-        estimateAvailability: 'not_reported',
+        estimateAvailability: 'not_applicable',
       },
     })
     expect(report.checkedFields).not.toContain('estimate')
@@ -1494,7 +1506,7 @@ describe('checkExtraction — tallet må tilhøre denne raden', () => {
       {
         estimate: '1.5',
         estimateUnit: 'kg',
-        confidenceIntervalAvailability: 'not_reported',
+        confidenceIntervalAvailability: 'not_applicable',
         ciLower: null,
         ciUpper: null,
         ciLevelPercent: null,
@@ -1523,11 +1535,11 @@ describe('checkExtraction — tallet må tilhøre denne raden', () => {
     ],
   ])('bekrefter ikke et estimat når bindingen til armen er brutt (%s)', (_navn, quote) => {
     const report = withQuote(quote, {
-      sampleSizeAvailability: 'not_reported',
+      sampleSizeAvailability: 'not_applicable',
       sampleSize: null,
       estimate: '1.5',
       estimateUnit: 'kg',
-      confidenceIntervalAvailability: 'not_reported',
+      confidenceIntervalAvailability: 'not_applicable',
       ciLower: null,
       ciUpper: null,
       ciLevelPercent: null,
@@ -1543,7 +1555,7 @@ describe('checkExtraction — tallet må tilhøre denne raden', () => {
       'Sertraline patients had a mean weight change of 1.5 kg, the change of 1.5 ' +
         '(95% CI 4.0 to 6.0)',
       {
-        sampleSizeAvailability: 'not_reported',
+        sampleSizeAvailability: 'not_applicable',
         sampleSize: null,
         estimate: '1.5',
         estimateUnit: 'kg',
@@ -1562,7 +1574,7 @@ describe('checkExtraction — tallet må tilhøre denne raden', () => {
       {
         estimate: '1.5',
         estimateUnit: '%',
-        confidenceIntervalAvailability: 'not_reported',
+        confidenceIntervalAvailability: 'not_applicable',
         ciLower: null,
         ciUpper: null,
         ciLevelPercent: null,
@@ -1623,14 +1635,14 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
   // noe annet enn bekreftet, og testene måler nettopp det de sier.
   const utenTall = {
     sampleSize: null,
-    sampleSizeAvailability: 'not_reported',
+    sampleSizeAvailability: 'not_applicable',
     estimate: null,
     estimateUnit: null,
-    estimateAvailability: 'not_reported',
+    estimateAvailability: 'not_applicable',
     ciLower: null,
     ciUpper: null,
     ciLevelPercent: null,
-    confidenceIntervalAvailability: 'not_reported',
+    confidenceIntervalAvailability: 'not_applicable',
   } as const satisfies Partial<VerificationExtraction>
 
   function utenTallMedUtdrag(quote: string, extraction: Partial<VerificationExtraction> = {}) {
@@ -1655,13 +1667,13 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
     [
       'intervensjonen',
       'Patients had a mean weight change over the trial',
-      { populationAvailability: 'not_reported' },
+      { populationAvailability: 'not_applicable' },
       'intervention_arm',
     ],
     [
       'endepunktet',
       'Sertraline-treated patients were followed over the trial',
-      { populationAvailability: 'not_reported' },
+      { populationAvailability: 'not_applicable' },
       'outcome',
     ],
     [
@@ -1670,7 +1682,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         comparatorKind: 'drug',
         comparatorDrugName: 'fluoxetine',
-        populationAvailability: 'not_reported',
+        populationAvailability: 'not_applicable',
       },
       'comparator_arm',
     ],
@@ -1697,7 +1709,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
   // handler om raden i det hele tatt.
   it('bekrefter ikke en rad der et ordrett, men irrelevant utdrag er alt som finnes', () => {
     const report = utenTallMedUtdrag('The trial was randomized and double blind', {
-      populationAvailability: 'not_reported',
+      populationAvailability: 'not_applicable',
     })
 
     expect(report.outcome).toBe('uncertain')
@@ -1740,7 +1752,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
     const quotes = Object.values(rawExtraction)
     const report = check(
       {
-        extraction: { ...utenTall, populationAvailability: 'not_reported', rawExtraction },
+        extraction: { ...utenTall, populationAvailability: 'not_applicable', rawExtraction },
       },
       `${FIXTURE_SOURCE_TEXT}\n${quotes.map((quote) => `<p>${quote}</p>`).join('\n')}`,
     )
@@ -1774,7 +1786,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
         extraction: {
           ...utenTall,
           ...extraction,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           rawExtraction: { arm: BEGGE, komparator: komparatorutdrag },
         },
       },
@@ -1823,7 +1835,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
         extraction: {
           ...utenTall,
           ...extraction,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           rawExtraction: { støtte },
         },
       },
@@ -1844,7 +1856,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           ...utenTall,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           rawExtraction: { arm, komparator },
@@ -1885,7 +1897,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           ...utenTall,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           rawExtraction: { arm: BEGGE, annet },
@@ -1926,8 +1938,8 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          populationAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           effectMeasure: 'mean_difference',
@@ -1954,8 +1966,8 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          populationAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           effectMeasure: 'mean_difference',
@@ -1993,10 +2005,10 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
           ...UTEN_POPULASJON,
           ...medPopulasjon,
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           estimate: '5.0',
           estimateUnit: 'kg',
-          confidenceIntervalAvailability: 'not_reported',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
@@ -2022,7 +2034,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
           populationLabel: 'major depressive disorder',
           populationAvailability: 'reported_value',
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
           estimate: '5.0',
           estimateUnit: 'kg',
           ciLower: '4.0',
@@ -2088,7 +2100,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           ...utenTall,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           rawExtraction: { støtte },
@@ -2108,12 +2120,12 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
       {
         extraction: {
           sampleSize: null,
-          sampleSizeAvailability: 'not_reported',
-          confidenceIntervalAvailability: 'not_reported',
+          sampleSizeAvailability: 'not_applicable',
+          confidenceIntervalAvailability: 'not_applicable',
           ciLower: null,
           ciUpper: null,
           ciLevelPercent: null,
-          populationAvailability: 'not_reported',
+          populationAvailability: 'not_applicable',
           comparatorKind: 'drug',
           comparatorDrugName: 'paroxetine',
           effectMeasure: 'mean_difference',
@@ -2130,7 +2142,7 @@ describe('checkExtraction — begrepene må være gjenfunnet for at raden er bek
   // Den positive kontrollen: står begrepene faktisk i utdraget, er raden
   // bekreftet som før. Uten denne kunne rettelsen over gjort alt uavklart.
   it('bekrefter en rad uten tallfelt når begrepene faktisk står i utdraget', () => {
-    const report = utenTallMedUtdrag(BEGGE, { populationAvailability: 'not_reported' })
+    const report = utenTallMedUtdrag(BEGGE, { populationAvailability: 'not_applicable' })
 
     expect(report.outcome).toBe('verified')
     expect(report.checkedFields).toEqual(
@@ -2277,6 +2289,40 @@ describe('checkExtraction — det kildeomfattende fraværssøket', () => {
     expect(report.findings).toMatch(/ikke i seg selv et avvik/)
   })
 
+  // Funn i teknisk review: et udekket kildeomfattende fravær er en uavklart
+  // kontroll, ikke bare en merknad. Raden kunne før komme ut som `verified`
+  // med `findings` null, mens begrunnelsen sa at fraværet ikke lot seg
+  // bekrefte — en bekreftelse som motsa sin egen tekst.
+  it('lar et udekket fravær avgjøre utfallet, ikke bare merknadene', () => {
+    // Alt annet stemmer: utdraget er radens eget, står ordrett i kilden, og
+    // binder arm, endepunkt, populasjon og verdi sammen. Uten fraværssøket
+    // ville denne raden vært `verified`.
+    const støtte =
+      'Sertraline-treated patients with major depressive disorder had a mean weight ' +
+      'change of 1.5 kg'
+    const report = check(
+      {
+        extraction: {
+          sampleSize: null,
+          // Kilden oppgir «N = 284», så søket finner en utvalgsstørrelse og
+          // fraværet kan ikke regnes som kontrollert.
+          sampleSizeAvailability: 'not_reported',
+          ciLower: null,
+          ciUpper: null,
+          ciLevelPercent: null,
+          confidenceIntervalAvailability: 'not_applicable',
+          rawExtraction: { støtte },
+        },
+      },
+      `${FIXTURE_SOURCE_TEXT}\n<p>${støtte}</p>`,
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.outcome).toBe('uncertain')
+    // …og et uavklart utfall må ha et funn: databasen krever det.
+    expect(report.findings).not.toBeNull()
+    expect(report.findings).toMatch(/«sample_size»/)
+  })
+
   // Stemmer ikke fingeravtrykket, gjelder søket en annen tekst enn den
   // ekstraksjonen ble laget av.
   it('søker ikke i en representasjon som ikke lot seg reprodusere', () => {
@@ -2390,17 +2436,16 @@ describe('checkExtraction — det kildeomfattende fraværssøket', () => {
 })
 
 describe('sourceWideAbsenceSearch', () => {
-  // Passasjene som navngir armen, slik `sourceWideAbsenceCheck` bygger dem.
-  const ARMPASSASJER = [
+  const TEKST = [
     'Sertraline-treated patients (N = 48) had a mean weight change of 1.5 kg ' +
       '(95% CI 0.4 to 2.6) at 8 weeks.',
   ]
 
-  it('finner et intervall som står i passasjen', () => {
-    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'confidence_interval').kind).toBe('found')
+  it('finner et intervall som står i teksten', () => {
+    expect(sourceWideAbsenceSearch(TEKST, 'confidence_interval').kind).toBe('found')
   })
 
-  it('finner ingenting når passasjen ikke oppgir en slik verdi', () => {
+  it('finner ingenting når teksten ikke oppgir en slik verdi', () => {
     expect(
       sourceWideAbsenceSearch(
         ['Sertraline-treated patients had a mean weight change of 1.5 kg.'],
@@ -2410,22 +2455,59 @@ describe('sourceWideAbsenceSearch', () => {
   })
 
   it('skiller feltene fra hverandre', () => {
-    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'sample_size').kind).toBe('found')
-    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'timepoint').kind).toBe('found')
-    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'estimate').kind).toBe('found')
+    expect(sourceWideAbsenceSearch(TEKST, 'sample_size').kind).toBe('found')
+    expect(sourceWideAbsenceSearch(TEKST, 'timepoint').kind).toBe('found')
+    expect(sourceWideAbsenceSearch(TEKST, 'estimate').kind).toBe('found')
   })
 
   it('sier fra om feltene som ikke har en søkbar form', () => {
-    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'population').kind).toBe('not_searchable')
-    expect(sourceWideAbsenceSearch(ARMPASSASJER, 'outcome').kind).toBe('not_searchable')
+    expect(sourceWideAbsenceSearch(TEKST, 'population').kind).toBe('not_searchable')
+    expect(sourceWideAbsenceSearch(TEKST, 'outcome').kind).toBe('not_searchable')
   })
 
   // Et nakent tall er ikke en verdi av noe felt: uten et anker som navngir
   // hva tallet er, teller det ikke som et treff.
   it('teller ikke et nakent tall som en verdi', () => {
     expect(
-      sourceWideAbsenceSearch(['Sertraline was given to the 48 in group two.'], 'estimate').kind,
+      sourceWideAbsenceSearch(['Sertraline was given to the group in room two.'], 'estimate').kind,
     ).toBe('not_found')
+  })
+
+  // Funn i teknisk review, og den farligste av dem: kilder skriver anaforisk.
+  // Et søk som krevde at verdien sto i en passasje som selv navngir armen,
+  // kastet andre setning før den ble søkt — og bekreftet et fravær av et
+  // intervall som sto der, svart på hvitt.
+  it('finner en verdi som står i setningen etter den som navngir armen', () => {
+    expect(
+      sourceWideAbsenceSearch(
+        ['Sertraline patients improved.', 'The 95% CI was 0.4 to 2.6.'],
+        'confidence_interval',
+      ).kind,
+    ).toBe('found')
+  })
+
+  // …og finner den også når armen ikke er nevnt i det hele tatt. Søket har
+  // ingen binding til raden, med vilje: en maskin kan ikke se hvilket intervall
+  // som er radens, og skal derfor ikke påstå at ingen av dem er det.
+  it('finner en verdi i en tekst som ikke nevner armen', () => {
+    expect(
+      sourceWideAbsenceSearch(['The 95% CI was 0.4 to 2.6.'], 'confidence_interval').kind,
+    ).toBe('found')
+  })
+
+  // Det andre reviewfunnet: tall skrevet med bokstaver er helt vanlige, og
+  // står i denne kodebasens egen PDF-fikstur. Et sifferbasert søk ga «ingen
+  // utvalgsstørrelse i kilden» på nettopp den setningen.
+  it('teller tall skrevet med bokstaver', () => {
+    expect(
+      sourceWideAbsenceSearch(
+        ['Forty-eight sertraline-treated patients completed the trial.'],
+        'sample_size',
+      ).kind,
+    ).toBe('found')
+    expect(
+      sourceWideAbsenceSearch(['Treatment continued for eight weeks.'], 'timepoint').kind,
+    ).toBe('found')
   })
 })
 

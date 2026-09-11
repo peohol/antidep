@@ -301,9 +301,9 @@ function joinFindings(sentences: readonly string[]): string | null {
  *                             stått? Det er spørsmålet økten stiller, og svaret
  *                             dekker nøyaktig det.
  *   `source_wide_absence`     den KILDEOMFATTENDE: fant et søk gjennom hele den
- *                             registrerte kildeversjonen ingen slik verdi? Den
- *                             stiller økten aldri, og databasen avviser en
- *                             menneskelig kontroll som fører den opp
+ *                             registrerte kildeversjonen ingen slik verdi noe
+ *                             sted? Den stiller økten aldri, og databasen
+ *                             avviser en menneskelig kontroll som fører den opp
  *                             (`evidence_verifications_source_wide_absence_check`).
  *
  * Begrunnelsen sier derfor hva kontrolløren faktisk bedømte, og navngir det

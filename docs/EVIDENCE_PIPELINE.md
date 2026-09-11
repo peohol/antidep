@@ -608,14 +608,32 @@ et udekket `availability_semantics`.
 
 Den deterministiske ekstraksjonskontrollen (§25.1) gjør søket. For hvert felt
 raden fører som fraværende søker den gjennom **hele** representasjonen etter en
-verdi av den arten, i en passasje som selv navngir funnets behandlingsarm.
+verdi av den arten — uten noen binding til raden.
 
-Søket er med vilje bredere enn kontrollens øvrige søk, og bindingen er
-setningen framfor limkjeden. Grunnen er at retningen på påstanden er motsatt:
-skal en verdi *tilskrives* raden, gjør en streng binding bekreftelsen
-troverdig; skal et fravær *bekreftes*, gjør en streng binding «ikke funnet» til
-et nesten sikkert utfall uansett hva som står i artikkelen — altså en kontroll
-som alltid sier ja.
+Fraværet av binding er valgt, ikke glemt. De to søkene i kontrollen har motsatt
+feilretning:
+
+| | Faren | Derfor |
+|---|---|---|
+| Bekreftelsessøket | et for **bredt** søk tilskriver raden en verdi som tilhørte en annen arm | streng binding, tillatelsesliste for lim |
+| Fraværssøket | et for **smalt** søk bekrefter et fravær av noe som står der | ingen binding, fri avstand, tall også skrevet med bokstaver |
+
+En for bred fraværskontroll lar bare være å dekke feltet, og gaten blir stående
+åpen. En for smal bekrefter noe som ikke er sant. Bare den første feilen er
+forsvarlig (ANTIDEP_CONSTITUTION.md §6, §11).
+
+To smalere utforminger er forkastet av nettopp den grunnen:
+
+- **Binding til behandlingsarmen.** Kilder skriver anaforisk — «Sertraline
+  patients improved. The 95% CI was 0.4 to 2.6.» — og andre setning ble kastet
+  før søket. Resultatet var «ikke funnet» på et intervall som sto der.
+- **Bare tall med sifre.** «Forty-eight sertraline-treated patients completed
+  the trial» er en helt vanlig formulering, og ga «ingen utvalgsstørrelse i
+  kilden».
+
+Prisen er reell og med vilje: oppgir artikkelen et konfidensintervall for et
+*annet* endepunkt, dekkes feltet ikke. Det er riktig — en maskin kan ikke se
+hvilket av dem som er radens, og da skal den ikke påstå at ingen av dem er det.
 
 Rekkevidden er **kildeversjonen**, ikke publikasjonen. Det er ikke en
 innskrenkning, men nøyaktig det statusen selv gjelder: «Statusen gjelder alltid
@@ -625,19 +643,16 @@ av hva versjonen er — et søk gjennom et abstrakt sier mindre om publikasjonen
 enn et søk gjennom en fulltekst — og kontrollraden navngir derfor
 representasjonen den gjennomsøkte.
 
-To grenser er harde, og begge finnes for at feltet aldri skal bli et stempel:
+Én grense er hard: **representasjonen må ha latt seg reprodusere** med det
+registrerte fingeravtrykket. Ellers gjelder søket en annen tekst enn den raden
+ble laget av.
 
-- **Representasjonen må ha latt seg reprodusere.** Ellers gjelder søket en annen
-  tekst enn den raden ble laget av.
-- **Behandlingsarmen må stå i representasjonen.** Gjør den ikke det, har søket
-  ingen binding, og «ingen treff» betyr bare at kilden aldri nevner armen.
-  Katalogen er norsk og kildene engelske, så det er en helt vanlig tilstand —
-  og nettopp derfor kan den aldri telle som en bekreftelse.
-
-Et **treff** er ikke et avvik. Søket vet ikke om verdien gjelder dette
-endepunktet og dette tidspunktet, så utfallet er `uncertain`, feltet føres ikke
-opp, og begrunnelsen siterer hva som ble funnet slik at et menneske kan se på
-det.
+Et **treff** er ikke et avvik. Søket vet ikke om verdien gjelder denne armen,
+dette endepunktet og dette tidspunktet, så utfallet er `uncertain`, feltet føres
+ikke opp, og begrunnelsen siterer hva som ble funnet slik at et menneske kan se
+på det. Et udekket fravær avgjør utfallet og står ikke bare som en merknad: en
+`verified` med en begrunnelse som sa at fraværet ikke lot seg bekrefte, ville
+motsagt sin egen tekst.
 
 Et felt uten en maskinelt søkbar form — populasjonen er en etikett og ikke et
 tall — får `not_searchable`. Da står fraværet ukontrollert og gaten åpen, og
@@ -771,8 +786,8 @@ Kontrollen skiller skarpt mellom å bekrefte og å avkrefte, og skillet er en kl
 | Komparator eller populasjon finnes, men ikke i den relevante påstanden | `uncertain` | Samme regel, for de øvrige delene av raden. «Paroxetine was not used as a comparator» og «Patients with major depressive disorder were excluded» er begge ordtreff, og ingen av dem er støtte for at raden stemmer. Komparatoren må stå navngitt *som* komparator («compared with», «versus», «kontrollgruppen»), og populasjonen må stå knyttet til armen. `placebo` kontrolleres på samme måte som et virkestoffnavn. `comparator_kind = none` kontrolleres ikke: det betyr at **funnet** er armspesifikt, ikke at studien manglet en komparator, så det finnes ingenting i kildens tekst å kontrollere det mot |
 | Delene finnes hver for seg, men ikke i **samme** påstand | `uncertain` | Bindingen er én, ikke flere som holder hver for seg. Ellers kan én rad sys sammen av påstander om forskjellige funn: «Sertraline-treated patients had a mean weight change» + «Fluoxetine was compared with paroxetine for remission» binder arm og endepunkt i den første og komparatoren i den andre, uten at noen påstand sier at paroksetin er komparator for *dette* funnet. Alle radens aktive deler — arm, endepunkt, eventuell komparator, rapportert populasjon — og verdien må stå i ett sammenhengende treff. Prisen er reell: et sammendrag som fordeler populasjon, komparator og resultat på hver sin setning, gir `uncertain` |
 | Verdien gjelder en annen populasjon enn den registrerte | `uncertain`, feltet føres ikke som kontrollert | En verdi hører til én arm, ett endepunkt, én kontrast og **én populasjon**. Rapportert populasjon er derfor en påkrevd del av tallets egen binding, ikke bare av radens: «Sertraline-treated patients had weight change of 5,0 kg … in adolescents» bekrefter ikke en rad registrert for voksne med depressiv lidelse, selv om et annet utdrag knytter armen til den populasjonen. Samme krav gjelder utvalgsstørrelsen — et «N = 48» fra en undergruppe er ikke radens utvalg |
-| Et felt ført som `not_reported` eller `not_measured`, og et søk gjennom hele representasjonen finner ingen verdi av den arten i noen passasje som navngir armen | `source_wide_absence` føres som kontrollert | Dette er den ene halvdelen av en global fraværspåstand en maskin kan bære, og den er nøyaktig det statusen gjelder: kildeversjonen, ikke publikasjonen (§19.1). Søket er bredere enn kontrollens øvrige søk — bindingen er setningen, ikke limkjeden — fordi et strengt søk ville gjort «ikke funnet» til et nesten sikkert utfall og feltet til et stempel. To grenser er harde: representasjonen må ha latt seg reprodusere, og armen må stå i den. Uten armen har søket ingen binding, og «ingen treff» betyr bare at kilden er på engelsk mens katalogen er på norsk |
-| Samme søk finner noe som ligner en slik verdi | `uncertain`, `source_wide_absence` føres ikke opp | Treffet kan gjelde et annet endepunkt eller et annet tidspunkt, så det er ikke et avvik mot ekstraksjonen. Men fraværet kan da ikke regnes som kontrollert, og begrunnelsen siterer hva som ble funnet, slik at et menneske kan se på det |
+| Et felt ført som `not_reported` eller `not_measured`, og et søk gjennom hele representasjonen finner ingen verdi av den arten noe sted | `source_wide_absence` føres som kontrollert | Dette er den ene halvdelen av en global fraværspåstand en maskin kan bære, og den er nøyaktig det statusen gjelder: kildeversjonen, ikke publikasjonen (§19.1). Søket har med vilje ingen binding til raden og teller tall skrevet med bokstaver: feilretningen er motsatt av bekreftelsessøkets, og et for smalt søk ville bekreftet et fravær av noe som står der. Én grense er hard: representasjonen må ha latt seg reprodusere |
+| Samme søk finner noe som ligner en slik verdi | `uncertain`, `source_wide_absence` føres ikke opp | Treffet kan gjelde en annen arm, et annet endepunkt eller et annet tidspunkt, så det er ikke et avvik mot ekstraksjonen. Men fraværet kan da ikke regnes som kontrollert, og begrunnelsen siterer hva som ble funnet, slik at et menneske kan se på det. Utfallet følger av dette, ikke bare merknaden |
 | Feltet har ingen maskinelt søkbar form — populasjonen er en etikett og ikke et tall | `source_wide_absence` føres ikke opp | Søket kan verken bekrefte eller avkrefte fraværet. Feltet står ukontrollert og gaten åpen, framfor at et fravær blir stilltiende godkjent |
 | Konfidensintervallet ikke gjenfunnet som ett uttrykk | `uncertain`, `confidence_interval` føres ikke som kontrollert | Intervallet er én påstand med tre deler, og kontrolleres som én sammenhengende skrivemåte: nivået som eksplisitt prosentangivelse, stedet der kilden navngir intervallet, og de to grensene som ett intervalluttrykk — med bare skilletegn og en kort tillatelsesliste av nøytrale koblingsord imellom, slik at en benektelse («… CI **was not** 0,4 til 2,6») bryter uttrykket framfor å bli lest som en bekreftelse. Tre tall som tilfeldigvis står i nærheten av hverandre er ikke et intervall, og «0,4 til 2,6» er ikke samme påstand med 90 % som med 95 % |
 
