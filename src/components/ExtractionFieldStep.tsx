@@ -37,20 +37,37 @@
 
 import { ControlChoice } from './ControlWizard'
 import { CONTROL_ANSWER_OPTIONS, type ControlAnswer } from '../lib/control-session'
-import type { FieldInterpretation } from '../lib/extraction-statements'
+import type { FieldInterpretation, FieldStatementKind } from '../lib/extraction-statements'
 import type { EvidenceFieldGrounding } from '../agents/verification-input'
 
-/** Hva høyresiden heter, og hva kontrolløren blir spurt om. */
-const PANE = {
+/**
+ * Hva høyresiden heter, og hva kontrolløren blir spurt om.
+ *
+ * Spørsmålet følger utsagnets art, og det er ikke kosmetikk: et svar på feil
+ * spørsmål blir registrert som om det var et svar på riktig. «Stemmer det at
+ * kilden ikke oppgir dette?» ville for en verdi ført som `not_extractable` —
+ * «står i kilden, men lar seg ikke lese entydig ut» — bedt kontrolløren
+ * bekrefte det motsatte av det som faktisk er ført
+ * (`extraction-statements.ts`, ANTIDEP_CONSTITUTION.md §6, §11).
+ */
+const PANE: Record<FieldStatementKind, { readonly heading: string; readonly question: string }> = {
   interpretation: {
     heading: 'Antideps tolkning',
     question: 'Stemmer Antideps tolkning med teksten?',
   },
+  // Grunnen er registrert, og det er grunnen som skal bedømmes — ikke et
+  // fravær flaten har formulert på egen hånd.
   absence: {
-    heading: 'Mangel i kilden',
-    question: 'Stemmer det at kilden ikke oppgir dette?',
+    heading: 'Hvorfor verdien mangler',
+    question: 'Stemmer denne begrunnelsen?',
   },
-} as const
+  // Ingen fraværskolonne finnes for feltet. Da er «ingenting er ført» hele
+  // påstanden, og den handler om registreringen — ikke om hva kilden oppgir.
+  unrecorded: {
+    heading: 'Ingenting er ført',
+    question: 'Stemmer det at det ikke er noe å føre her?',
+  },
+}
 
 export function ExtractionFieldStep({
   interpretation,
@@ -82,6 +99,12 @@ export function ExtractionFieldStep({
           <p className="field-check__statement">{interpretation.statement}</p>
           {interpretation.detail === null ? null : (
             <p className="field-check__detail">{interpretation.detail}</p>
+          )}
+          {/* Et fravær i kilden som helhet kan ikke avgjøres av ett lokalt
+              utdrag. Forbeholdet står der kontrolløren svarer, ikke i en
+              fotnote lenger nede. */}
+          {interpretation.caveat === null ? null : (
+            <p className="field-check__caveat">{interpretation.caveat}</p>
           )}
           <details className="field-check__why">
             <summary>Hvorfor mener Antidep dette?</summary>

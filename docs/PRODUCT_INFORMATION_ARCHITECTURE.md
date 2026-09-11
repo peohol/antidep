@@ -883,10 +883,25 @@ presenterer det:
   artikkelen. Innledningen bygges av den kanoniske raden, aldri av generert tekst.
 - Hvert kildeutdrag skal vises i sin helhet, uten avkorting.
 - Flaten skal skille mellom **Antideps tolkning** — hva Antidep mener kilden sier
-  — og en **mangel**, altså en relevant opplysning kilden ikke gir. Bokføring om
-  hvor mange felter som står uten verdi, er ingen av delene og skal ikke
-  presenteres som en tolkning. En mangel skal aldri bli til en klinisk påstand
-  utledet av fraværet.
+  — og en **mangel**, altså en opplysning som ikke er ført. Bokføring om hvor
+  mange felter som står uten verdi, er ingen av delene og skal ikke presenteres
+  som en tolkning. En mangel skal aldri bli til en klinisk påstand utledet av
+  fraværet.
+- **Spørsmålet skal følge det registrerte premisset, ikke bare det at verdien er
+  tom.** Fraværsgrunnene er påstander om forskjellige ting: kilden rapporterer
+  det ikke, studien målte det ikke, det er ikke aktuelt for funnet, eller det
+  *står i kilden men lar seg ikke lese entydig ut*. Et felles spørsmål av typen
+  «stemmer det at kilden ikke oppgir dette?» ville for den siste bedt
+  kontrolløren bekrefte det motsatte av det som er ført, og svaret ville blitt
+  registrert som om det gjaldt riktig spørsmål. Der en grunn er registrert, er
+  det grunnen som skal bedømmes. Der ingen fraværskolonne finnes — effektmål,
+  forbehold, den rå gjengivelsen — er «ingenting er ført» hele påstanden, og den
+  handler om registreringen og ikke om hva kilden oppgir.
+- **Et fravær i kilden som helhet kan ikke avgjøres av ett lokalt utdrag.** Sier
+  Antidep at noe ikke er rapportert eller ikke er målt, skal flaten si at
+  utdraget er den lokale konteksten og ikke et bevis for at opplysningen ikke
+  står et annet sted. Kontrollflaten skal ikke stille et sterkere spørsmål enn
+  grunnlaget den viser, kan bære.
 - To utsagn som ser like ut, skal gjøres eksplisitt forskjellige. Endepunktet er
   hva som ble målt; effektmålet er hvordan resultatet er uttrykt.
 - Tall skal presenteres i den formen kilden bruker, med databasens egen form som

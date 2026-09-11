@@ -194,7 +194,7 @@ describe('interpretField', () => {
 
   it('sier at ingen forbehold er registrert, framfor å utelate spørsmålet', () => {
     const interpretation = interpretField('limitations', extraction())
-    expect(interpretation.kind).toBe('absence')
+    expect(interpretation.kind).toBe('unrecorded')
     expect(interpretation.statement).toBe('Antidep har ikke ført noen forbehold ved dette funnet.')
   })
 
@@ -228,7 +228,7 @@ describe('interpretField', () => {
 
   it('sier at et effektmål ikke er ført, uten å låne en begrunnelse fra et annet felt', () => {
     const interpretation = interpretField('effect_measure', extraction({ effectMeasure: null }))
-    expect(interpretation.kind).toBe('absence')
+    expect(interpretation.kind).toBe('unrecorded')
     expect(interpretation.statement).toBe('Antidep har ikke ført et effektmål for dette funnet.')
   })
 
@@ -238,6 +238,88 @@ describe('interpretField', () => {
     const interpretation = interpretField('noe_helt_nytt', extraction())
     expect(interpretation.statement).toContain('kjenner ikke feltet')
     expect(interpretation.heading).toContain('noe_helt_nytt')
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Fraværsgrunnene, én for én
+//
+// `workflow.value_availability` har fire fraværsgrunner, og de er påstander om
+// forskjellige ting. Et felles spørsmål av typen «stemmer det at kilden ikke
+// oppgir dette?» ville for `not_extractable` bedt kontrolløren bekrefte det
+// motsatte av det som er ført — og et svar på feil spørsmål registreres som om
+// det var et svar på riktig (ANTIDEP_CONSTITUTION.md §6, §11).
+// ----------------------------------------------------------------------------
+
+/** Ett funn der konfidensintervallet står uten verdi, med oppgitt grunn. */
+function utenIntervall(availability: string): VerificationExtraction {
+  return extraction({
+    ciLower: null,
+    ciUpper: null,
+    ciLevelPercent: null,
+    confidenceIntervalAvailability: availability,
+  })
+}
+
+describe('interpretField — de fire fraværsgrunnene', () => {
+  it.each([
+    ['not_reported', 'Ikke rapportert i kilden.', true],
+    ['not_measured', 'Ikke målt i studien.', true],
+    ['not_applicable', 'Ikke aktuelt for dette funnet.', false],
+    ['not_extractable', 'Står i kilden, men lar seg ikke lese entydig ut.', false],
+  ])('gjengir «%s» som den grunnen den er', (availability, reason, global) => {
+    const interpretation = interpretField('confidence_interval', utenIntervall(availability))
+    expect(interpretation.kind).toBe('absence')
+    expect(interpretation.statement).toBe(
+      `Antidep har ikke ført et konfidensintervall for dette estimatet. ${reason}`,
+    )
+    // Forbeholdet følger grunnen: bare et fravær i kilden som helhet kan ikke
+    // avgjøres av ett lokalt utdrag.
+    expect(interpretation.caveat === null).toBe(!global)
+  })
+
+  // Kjernen i funnet fra reviewen: kilden oppgir det faktisk, og flaten skal
+  // aldri påstå det motsatte.
+  it('sier aldri at kilden ikke oppgir noe når grunnen er at det ikke lot seg lese ut', () => {
+    const interpretation = interpretField('confidence_interval', utenIntervall('not_extractable'))
+    expect(interpretation.statement).toContain('Står i kilden')
+    expect(interpretation.statement).not.toContain('Ikke rapportert')
+    expect(interpretation.caveat).toBeNull()
+  })
+
+  // Databasen håndhever at en verdi finnes hvis og bare hvis statusen sier det
+  // (migrasjon 003). Skulle lesemodellen likevel levere begge deler, er det en
+  // motstrid — og den skal vises som en motstrid, ikke som en vanlig mangel.
+  it('navngir motstriden når statusen sier at verdien finnes, men ingen vises', () => {
+    const interpretation = interpretField('confidence_interval', utenIntervall('reported_value'))
+    expect(interpretation.kind).toBe('absence')
+    expect(interpretation.statement).toContain('motstrid i registreringen')
+    expect(interpretation.caveat).toBeNull()
+  })
+
+  it('tar forbeholdet med i begrunnelseskontrollen når én av grunnene gjelder hele kilden', () => {
+    expect(
+      interpretField('availability_semantics', utenIntervall('not_reported')).caveat,
+    ).not.toBeNull()
+    expect(interpretField('availability_semantics', utenIntervall('not_extractable')).caveat).toBe(
+      null,
+    )
+  })
+})
+
+describe('interpretField — feltene uten en fraværskolonne', () => {
+  // `effect_measure`, `limitations` og `raw_extraction` har ingen
+  // `*_availability`. «Antidep har ikke ført noe» er hele påstanden, og den
+  // handler om registreringen — ikke om hva kilden oppgir.
+  it.each([
+    ['effect_measure', extraction({ effectMeasure: null })],
+    ['limitations', extraction({ limitationsText: null })],
+    ['raw_extraction', extraction({ rawExtraction: null })],
+  ])('fører «%s» uten verdi som uregistrert, ikke som et fravær i kilden', (field, e) => {
+    const interpretation = interpretField(field, e)
+    expect(interpretation.kind).toBe('unrecorded')
+    expect(interpretation.statement).not.toContain('kilden')
+    expect(interpretation.caveat).toBeNull()
   })
 })
 

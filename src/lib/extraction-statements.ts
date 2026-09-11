@@ -85,13 +85,35 @@ import { formatDurationSpan } from './norwegian-format'
 import type { VerificationExtraction } from '../agents/verification-input'
 
 /**
- * Hva slags utsagn steget viser.
+ * Hva slags utsagn steget viser, og dermed hva kontrolløren faktisk blir spurt om.
  *
- * `interpretation` er hva Antidep mener kilden sier. `absence` er en opplysning
- * kilden ikke gir, og som Antidep derfor ikke har ført — aldri en klinisk
- * påstand utledet av fraværet.
+ *   `interpretation`  hva Antidep mener kilden SIER. Spørsmålet er «stemmer
+ *                     dette med teksten?».
+ *   `absence`         ingen verdi er ført, og en grunn ER registrert.
+ *                     Spørsmålet er om nettopp den grunnen stemmer.
+ *   `unrecorded`      ingen verdi er ført, og ingen grunn finnes å vise til.
+ *                     Spørsmålet er om det er riktig at ingenting er ført.
+ *
+ * Skillet mellom de to siste er ikke pedantisk. `workflow.value_availability`
+ * har fire fraværsgrunner, og de er påstander om forskjellige ting:
+ *
+ *   not_reported     kilden rapporterer det ikke
+ *   not_measured     studien målte det ikke
+ *   not_applicable   det er ikke aktuelt for dette funnet
+ *   not_extractable  **det STÅR i kilden, men lar seg ikke lese entydig ut**
+ *
+ * Et felles spørsmål av typen «stemmer det at kilden ikke oppgir dette?» ville
+ * for `not_extractable` bedt kontrolløren bekrefte det motsatte av det som er
+ * ført — og et svar på feil spørsmål er registrert som om det var et svar på
+ * riktig (ANTIDEP_CONSTITUTION.md §6, §11). Sannhetsbetingelsen må derfor følge
+ * den registrerte statusen, ikke bare det at verdien er tom.
+ *
+ * `effect_measure`, `limitations` og `raw_extraction` har ingen
+ * `*_availability` i det hele tatt. Der er «Antidep har ikke ført noe» alt som
+ * kan sies, og en flate som oversatte det til «kilden oppgir det ikke», ville
+ * lagt til en påstand ingen har ført. De er `unrecorded`.
  */
-export type FieldStatementKind = 'interpretation' | 'absence'
+export type FieldStatementKind = 'interpretation' | 'absence' | 'unrecorded'
 
 /** Ett kontrollfelt, formulert som noe en kliniker kan svare ja eller nei på. */
 export interface FieldInterpretation {
@@ -99,7 +121,7 @@ export interface FieldInterpretation {
   readonly field: string
   /** Kort overskrift til steget, for eksempel «Antall deltakere». */
   readonly heading: string
-  /** Om utsagnet er en tolkning av kilden eller en registrert mangel. */
+  /** Om utsagnet er en tolkning, en begrunnet mangel, eller en uregistrert. */
   readonly kind: FieldStatementKind
   /** Selve utsagnet: «Dette estimatet bygger på 240 deltakere.» */
   readonly statement: string
@@ -109,6 +131,11 @@ export interface FieldInterpretation {
    * `null` betyr at ingen utdypning er registrert — ikke at den er tom.
    */
   readonly detail: string | null
+  /**
+   * Forbeholdet som hører til utsagnet, når det ikke kan avgjøres av utdraget
+   * alene. `null` når utdraget er tilstrekkelig grunnlag.
+   */
+  readonly caveat: string | null
 }
 
 function availabilityText(value: string): string {
@@ -185,9 +212,7 @@ function comparatorStatement(extraction: VerificationExtraction): string {
  * ført 1 felt uten verdi» er bokføring, og en kontrollør kan ikke holde et
  * antall opp mot en artikkel.
  */
-function availabilityStatement(extraction: VerificationExtraction): {
-  readonly kind: FieldStatementKind
-  readonly statement: string
+function availabilityStatement(extraction: VerificationExtraction): Claim & {
   readonly detail: string | null
 } {
   const pairs: readonly (readonly [string, string, string, boolean])[] = [
@@ -228,15 +253,17 @@ function availabilityStatement(extraction: VerificationExtraction): {
       kind: 'interpretation',
       statement: 'Alle de fem verdifeltene er ført som oppgitt av kilden.',
       detail: null,
+      caveat: null,
     }
   }
+  // Forbeholdet følger grunnene, ikke antallet: står én av dem for et fravær i
+  // kilden som helhet, kan ikke utdraget alene avgjøre den.
+  const caveat = missing.some(([, , availability]) => GLOBAL_ABSENCE.has(availability))
+    ? GLOBAL_ABSENCE_CAVEAT
+    : null
   const first = missing[0]
   if (missing.length === 1 && first !== undefined) {
-    return {
-      kind: 'absence',
-      statement: `Antidep har ikke ført ${first[1]}. ${availabilityText(first[2])}.`,
-      detail: null,
-    }
+    return { ...absent(first[1], first[2]), detail: null, caveat }
   }
   return {
     kind: 'absence',
@@ -244,6 +271,7 @@ function availabilityStatement(extraction: VerificationExtraction): {
     detail: missing
       .map(([label, , availability]) => `${label}: ${availabilityText(availability)}.`)
       .join(' '),
+    caveat,
   }
 }
 
@@ -268,42 +296,82 @@ function rawExtractionText(raw: unknown): string | null {
   return quotes.length === 0 ? null : quotes.join(' ')
 }
 
-/** Et utsagn om hva kilden sier. */
-function says(statement: string): {
+/** Delen av et utsagn som avgjør hva kontrolløren blir spurt om. */
+interface Claim {
   readonly kind: FieldStatementKind
   readonly statement: string
-} {
-  return { kind: 'interpretation', statement }
+  readonly caveat: string | null
 }
 
 /**
- * En opplysning kilden ikke gir, med den registrerte grunnen.
+ * Statusene som betyr at en verdi finnes.
+ *
+ * Databasen håndhever det som en ekvivalens — `evidence_items_*_availability_check`
+ * i migrasjon 003: en verdi er ikke null hvis og bare hvis statusen er en av
+ * disse. En tom verdi med en slik status er derfor en motstrid i raden, ikke en
+ * vanlig mangel, og den skal vises som det.
+ */
+const AVAILABILITY_MEANS_PRESENT = new Set(['reported_value', 'uncertain_extraction'])
+
+/**
+ * Fraværsgrunnene som er påstander om kilden eller studien SOM HELHET.
+ *
+ * «Ikke rapportert i kilden» kan ikke avgjøres av ett lokalt utdrag: utdraget
+ * viser hva som står ett sted, ikke hva som ikke står noe sted. De to andre
+ * grunnene er smalere — `not_applicable` gjelder funnet, `not_extractable`
+ * gjelder lesningen — og trenger ikke forbeholdet.
+ */
+const GLOBAL_ABSENCE = new Set(['not_reported', 'not_measured'])
+
+const GLOBAL_ABSENCE_CAVEAT =
+  'Dette er en påstand om kilden som helhet. Utdraget til venstre er den lokale ' +
+  'konteksten, og kan ikke alene vise at opplysningen ikke står et annet sted i kilden.'
+
+/** Et utsagn om hva kilden sier. */
+function says(statement: string): Claim {
+  return { kind: 'interpretation', statement, caveat: null }
+}
+
+/**
+ * Ingen verdi ført, med den registrerte grunnen — og med den grunnen som det
+ * kontrolløren faktisk skal bedømme.
  *
  * Aldri en klinisk påstand utledet av fraværet: et manglende konfidensintervall
  * betyr ikke at effekten var uten statistisk signifikans, og en flate som skrev
  * det, ville laget en påstand ingen har ført (ANTIDEP_CONSTITUTION.md §6, §17).
+ *
+ * Og aldri en oversettelse av alle fire fraværsgrunnene til «kilden oppgir det
+ * ikke»: `not_extractable` sier det stikk motsatte — opplysningen står der, men
+ * lar seg ikke lese entydig ut.
  */
-function absent(
-  subject: string,
-  availability: string,
-): { readonly kind: FieldStatementKind; readonly statement: string } {
+function absent(subject: string, availability: string): Claim {
+  if (AVAILABILITY_MEANS_PRESENT.has(availability)) {
+    return {
+      kind: 'absence',
+      statement:
+        `Antidep viser ingen verdi for ${subject}, men har samtidig ført at ` +
+        `${availabilityText(availability).toLowerCase()}. Det er en motstrid i registreringen.`,
+      caveat: null,
+    }
+  }
   return {
     kind: 'absence',
     statement: `Antidep har ikke ført ${subject}. ${availabilityText(availability)}.`,
+    caveat: GLOBAL_ABSENCE.has(availability) ? GLOBAL_ABSENCE_CAVEAT : null,
   }
 }
 
 /**
- * En mangel uten en egen fraværskolonne å begrunne seg med.
+ * Ingen verdi ført, og ingen fraværskolonne å begrunne seg med.
  *
- * Effektmål, forbehold og den rå gjengivelsen har ingen `*_availability`; da
- * står fraværet alene, framfor å låne en begrunnelse fra et annet felt.
+ * Effektmål, forbehold og den rå gjengivelsen har ingen `*_availability`. Da er
+ * «ingenting er ført» hele påstanden, og den handler om registreringen — ikke
+ * om hva kilden oppgir. Å låne en begrunnelse fra et annet felt, eller å
+ * formulere det som et fravær i kilden, ville lagt til en påstand ingen har
+ * ført.
  */
-function absentWithoutReason(subject: string): {
-  readonly kind: FieldStatementKind
-  readonly statement: string
-} {
-  return { kind: 'absence', statement: `Antidep har ikke ført ${subject}.` }
+function unrecorded(subject: string): Claim {
+  return { kind: 'unrecorded', statement: `Antidep har ikke ført ${subject}.`, caveat: null }
 }
 
 /**
@@ -397,7 +465,7 @@ export function interpretField(
       // størrelse tallet er, og i hvilken enhet. Endepunktet har sitt eget steg.
       const measure = extraction.effectMeasure
       if (measure === null) {
-        return { ...base, ...absentWithoutReason('et effektmål for dette funnet'), detail: null }
+        return { ...base, ...unrecorded('et effektmål for dette funnet'), detail: null }
       }
       const unit = extraction.estimateUnit
       const unitClause =
@@ -435,14 +503,20 @@ export function interpretField(
     }
     case 'availability_semantics': {
       const summary = availabilityStatement(extraction)
-      return { ...base, kind: summary.kind, statement: summary.statement, detail: summary.detail }
+      return {
+        ...base,
+        kind: summary.kind,
+        statement: summary.statement,
+        detail: summary.detail,
+        caveat: summary.caveat,
+      }
     }
     case 'limitations': {
       const limitations = present(extraction.limitationsText)
       return {
         ...base,
         ...(limitations === null
-          ? absentWithoutReason('noen forbehold ved dette funnet')
+          ? unrecorded('noen forbehold ved dette funnet')
           : says('Antidep har registrert disse forbeholdene ved funnet.')),
         detail: limitations,
       }
@@ -458,7 +532,7 @@ export function interpretField(
       return {
         ...base,
         ...(raw === null
-          ? absentWithoutReason('noen ordrett gjengivelse ved siden av de strukturerte feltene')
+          ? unrecorded('noen ordrett gjengivelse ved siden av de strukturerte feltene')
           : says('Dette er bevart ordrett fra kilden ved siden av de strukturerte feltene.')),
         detail: raw,
       }

@@ -1361,6 +1361,17 @@ header nav a {
   font-size: 0.9375rem;
 }
 
+/* Forbeholdet som hører til et fravær: utdraget til venstre viser hva som står
+   ett sted, ikke hva som ikke står noe sted. Dempet, men aldri skjult. */
+.field-check__caveat {
+  margin: 0 0 0.5rem;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
 /* «Hvorfor mener Antidep dette?» — en kort, eksplisitt begrunnelse, ikke en
    modells indre resonnement. Lukket som standard: den trengs når tolkningen
    overrasker, ikke ellers. */

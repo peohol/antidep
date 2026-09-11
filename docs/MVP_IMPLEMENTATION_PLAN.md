@@ -7252,13 +7252,28 @@ lete i fullteksten selv. Konkret:
 - **Kildetilgangssteget** er strippet for identifikatorverdi, representasjonstype
   og gjentatt tittel. Begge de to første er flyttet til «Tekniske detaljer», der
   de ikke var før.
-- **Tolkning og mangel er skilt.** `FieldInterpretation.kind` avgjør om
-  høyresiden heter «Antideps tolkning» og spør «stemmer dette med teksten?»,
-  eller heter «Mangel i kilden» og spør «stemmer det at kilden ikke oppgir
-  dette?». Bokføringssetningen «Antidep har ført 1 felt uten verdi, med en
-  begrunnelse for hvert» er borte. En mangel blir aldri en klinisk påstand
-  utledet av fraværet: et manglende konfidensintervall betyr ikke at effekten var
-  uten statistisk signifikans.
+- **Tolkning og mangel er skilt, og spørsmålet følger premisset.**
+  `FieldInterpretation.kind` har tre verdier. `interpretation` heter «Antideps
+  tolkning» og spør «stemmer dette med teksten?». `absence` — ingen verdi, men en
+  registrert grunn — heter «Hvorfor verdien mangler» og spør «stemmer denne
+  begrunnelsen?». `unrecorded` — ingen verdi og ingen fraværskolonne, altså
+  effektmål, forbehold og den rå gjengivelsen — heter «Ingenting er ført» og spør
+  om det er riktig at ingenting er ført.
+
+  Skillet mellom de to siste kom av den tekniske reviewen, og det er et
+  integritetskrav og ikke en nyanse: `not_extractable` betyr «står i kilden, men
+  lar seg ikke lese entydig ut», og et felles spørsmål av typen «stemmer det at
+  kilden ikke oppgir dette?» ville bedt kontrolløren bekrefte det motsatte av det
+  som er ført — og svaret ville blitt registrert som om det gjaldt riktig
+  spørsmål. Sier en grunn noe om kilden som helhet (`not_reported`,
+  `not_measured`), står det dessuten et forbehold der kontrolløren svarer:
+  utdraget er den lokale konteksten, ikke et bevis for at opplysningen ikke står
+  et annet sted.
+
+  Bokføringssetningen «Antidep har ført 1 felt uten verdi, med en begrunnelse for
+  hvert» er borte. En mangel blir aldri en klinisk påstand utledet av fraværet:
+  et manglende konfidensintervall betyr ikke at effekten var uten statistisk
+  signifikans.
 - **Endepunkt og effektmål er gjort forskjellige.** «Det målte endepunktet er
   vektendring» mot «Resultatet er uttrykt som gjennomsnittlig endring, oppgitt i
   %», under overskriften «Hvordan resultatet er uttrykt».

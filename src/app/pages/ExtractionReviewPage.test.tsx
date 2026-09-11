@@ -418,15 +418,14 @@ describe('Kontrolløkten — feltkontrollen', () => {
     ).toBeInTheDocument()
   })
 
-  // En manglende verdi er en MANGEL, ikke en tolkning man kan holde opp mot
-  // kilden — og aldri en klinisk påstand utledet av fraværet.
-  it('presenterer en manglende verdi som mangel, og spør om noe annet', async () => {
+  /** Går fram til konfidensintervallsteget, som er det siste. */
+  async function gaaTilKonfidensintervallet(availability: string): Promise<void> {
     renderExtractionControl({
       extraction: reviewExtraction({
         ci_lower: null,
         ci_upper: null,
         ci_level_percent: null,
-        confidence_interval_availability: 'not_reported',
+        confidence_interval_availability: availability,
       }),
     })
     await screen.findByText('Har du tilgang til fullteksten?')
@@ -435,15 +434,66 @@ describe('Kontrolløkten — feltkontrollen', () => {
       await within(openStep()).findByText(field)
       clickAnswer('Ja')
     }
+    await within(openStep()).findByText('Konfidensintervallet')
+  }
+
+  // En manglende verdi er ikke en tolkning man kan holde opp mot kilden, og
+  // aldri en klinisk påstand utledet av fraværet. Det kontrolløren skal
+  // bedømme, er den registrerte begrunnelsen.
+  it('presenterer en manglende verdi som en begrunnet mangel, og spør om begrunnelsen', async () => {
+    await gaaTilKonfidensintervallet('not_reported')
     const step = within(openStep())
-    expect(await step.findByText('Mangel i kilden')).toBeInTheDocument()
+    expect(step.getByText('Hvorfor verdien mangler')).toBeInTheDocument()
     expect(
       step.getByText(
         'Antidep har ikke ført et konfidensintervall for dette estimatet. Ikke rapportert i kilden.',
       ),
     ).toBeInTheDocument()
-    expect(step.getByText('Stemmer det at kilden ikke oppgir dette?')).toBeInTheDocument()
+    expect(step.getByText('Stemmer denne begrunnelsen?')).toBeInTheDocument()
     expect(step.queryByText('Antideps tolkning')).not.toBeInTheDocument()
+    // «Ikke rapportert i kilden» gjelder hele kilden, og utdraget til venstre
+    // viser bare ett sted. Forbeholdet står der kontrolløren svarer.
+    expect(step.getByText(/påstand om kilden som helhet/)).toBeInTheDocument()
+  })
+
+  // Funnet fra den tekniske reviewen: «står i kilden, men lar seg ikke lese
+  // entydig ut» er det stikk motsatte av at kilden ikke oppgir noe. Et felles
+  // fraværsspørsmål ville bedt kontrolløren bekrefte det motsatte av det som
+  // er ført.
+  it('spør aldri om kilden mangler noe når grunnen er at det ikke lot seg lese ut', async () => {
+    await gaaTilKonfidensintervallet('not_extractable')
+    const step = within(openStep())
+    expect(
+      step.getByText(
+        'Antidep har ikke ført et konfidensintervall for dette estimatet. Står i kilden, men lar seg ikke lese entydig ut.',
+      ),
+    ).toBeInTheDocument()
+    expect(step.getByText('Stemmer denne begrunnelsen?')).toBeInTheDocument()
+    expect(step.queryByText(/kilden ikke oppgir/)).not.toBeInTheDocument()
+    // Påstanden gjelder lesningen, ikke kilden som helhet.
+    expect(step.queryByText(/påstand om kilden som helhet/)).not.toBeInTheDocument()
+  })
+
+  // Effektmålet har ingen fraværskolonne. «Ingenting er ført» er hele
+  // påstanden, og den handler om registreringen — ikke om hva kilden oppgir.
+  it('behandler et felt uten fraværskolonne som uregistrert, ikke som et fravær i kilden', async () => {
+    renderExtractionControl({
+      extraction: reviewExtraction({ effect_measure: null }),
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    for (const field of SEMANTIC_FIELDS.slice(0, 4)) {
+      await within(openStep()).findByText(field)
+      clickAnswer('Ja')
+    }
+    const step = within(openStep())
+    expect(await step.findByText('Hvordan resultatet er uttrykt')).toBeInTheDocument()
+    expect(step.getByText('Ingenting er ført')).toBeInTheDocument()
+    expect(
+      step.getByText('Antidep har ikke ført et effektmål for dette funnet.'),
+    ).toBeInTheDocument()
+    expect(step.getByText('Stemmer det at det ikke er noe å føre her?')).toBeInTheDocument()
+    expect(step.queryByText(/kilden ikke oppgir/)).not.toBeInTheDocument()
   })
 
   // Bokføring er ikke en tolkning: «Antidep har ført 1 felt uten verdi» er ikke
