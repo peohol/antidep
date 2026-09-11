@@ -7419,6 +7419,35 @@ sammendrag sa «randomised for 8 weeks» mens funnet førte tidspunktet som ikke
 rapportert, og funnet førte populasjonen som ikke rapportert uten at noe kunne
 kontrollere det. Begge er rettet i fiksturen framfor å bli dempet i kontrollen.
 
+#### Hva som står i produksjon, og hva som gjenstår
+
+De to fulltekstekstraksjonene §74.44 etterlyste, **er kjørt**. Produksjonsbasen
+har fire fulltekstutledede evidensfunn, og de to nyeste er nettopp dem:
+
+| Funn | Kilde | Verdi | Fravær |
+|---|---|---|---|
+| `9ba56fb4` sertralin × vektendring | Fava 2000, fulltekst | 1,0 % over 48 deltakere | konfidensintervall `not_reported` |
+| `9570760c` mirtazapin × vektendring | Versiani 2005, fulltekst | 0,8 kg | utvalg og konfidensintervall `not_reported` |
+
+Begge har komplett forankring for hvert semantiske felt og et gyldig
+maskinbevis, og `9570760c` fører `sample_size` som `null` — n = 117 er ikke
+lenger ført, som §74.44 krevde.
+
+Tre ting gjenstår, i denne rekkefølgen:
+
+1. **Migrasjon 005ad og 005ae må deployes** (`./scripts/deploy-migrations.sh`).
+   Først da krever gaten den kildeomfattende halvdelen.
+2. **Den deterministiske kontrollen må kjøres på nytt** for begge funnene
+   (`npm run agent:verify-extraction`), slik at søket gjøres og
+   `source_wide_absence` enten føres opp eller navngir hva som ble funnet.
+   Kjøringen må skje på en maskin som har originaldokumentene: begge
+   kildeversjonene er dokumentbundne, og et ledd uten dokumentet henter aldri
+   `retrieved_from` i stedet (migrasjon 003e).
+3. **Den menneskelige kildekontrollen** i `/extraction-review`. Funnene står
+   allerede i køen. Publisering kan først skje etter den, og forutsetter i
+   tillegg en redaksjonell beslutning: de to påstandsrevisjonene som finnes, er
+   lenket til de gamle sammendragsutledede funnene, ikke til disse.
+
 ---
 
 ## 75. Neste steg
