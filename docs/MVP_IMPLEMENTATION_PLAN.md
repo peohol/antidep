@@ -1760,6 +1760,7 @@ gyldighetslogikk bør lese dette før `now()` brukes i et predikat.
 
 | Gjeld | Risiko | Trigger for opprydding |
 |---|---|---|
+| Et globalt fravær (`not_reported`, `not_measured`) har ikke et kontrollledd som kan bære påstanden | Kontrolløren kan bare bekrefte at opplysningen mangler der den ville stått. Et konfidensintervall kan stå i en tabell, en figurtekst eller et supplement, så den lokale bekreftelsen dekker ikke feltet. Feltet føres derfor ikke opp i `checked_fields`, og publiseringsgaten blir stående åpen på det — også for Fava 2000, der konfidensintervallet er ført som ikke rapportert | [#74](https://github.com/peohol/antidep/issues/74). Krever en klinisk og redaksjonell beslutning om hva Antidep skal kreve før et fravær kan regnes som kontrollert, før det kan bygges |
 | Tidsbasert utløp av review er ikke håndhevet i publiseringsgaten | En godkjenning eldes uten at noe fanger det | Migrasjonen som innfører `workflow.review_requirements` / `review_due_at`. Krever først en klinisk policy for hvor lenge en godkjenning er gyldig per kunnskapstype og risiko |
 | Godkjenningens evidensavtrykk beregnes ved innsetting, ikke fra det reviewer faktisk så | En lenke som commiter mellom reviewers lesing og lagring av beslutningen havner i avtrykket | Admin-flyten oppgir avtrykket den viste reviewer. Kolonnen er utformet for det |
 | `knowledge.publication_object_type` har én verdi, og hendelsen har én ekte fremmednøkkel | En andre publiserbar objekttype kan friste til å gjenbruke `claim_id` som generisk `object_id` | Migrasjonen som innfører objekttype nummer to må legge til egen fremmednøkkelkolonne og eget speil |
@@ -7266,17 +7267,31 @@ lete i fullteksten selv. Konkret:
   ville bedt kontrolløren bekrefte det motsatte av det som er ført — og svaret
   ville blitt registrert som om det gjaldt riktig spørsmål.
 
-  En fjerde art, `absence_in_source`, kom av neste runde i den samme reviewen.
-  `not_reported` og `not_measured` er påstander om kilden eller studien **som
-  helhet**, og et forbehold ved siden av et globalt ja/nei-spørsmål endrer ikke
-  sannhetsbetingelsen: kontrolløren måtte fortsatt svart «kan ikke avgjøres»
-  eller gått til fullteksten. Kravet er derfor flyttet til **grunnlaget**.
-  Ekstraksjonen skal forankre et slikt fravær i passasjen der verdien *ville
-  stått* — der funnets øvrige verdier for samme arm, endepunkt og tidspunkt
-  rapporteres (EVIDENCE_PIPELINE.md §19.1) — og flaten snevrer spørsmålet inn
-  til den: «mangler opplysningen der utdraget viser at den ville stått?». Da er
-  kontrollen gjennomførbar til et bekreftet utfall uten at kontrolløren må lete
-  i artikkelen.
+  En fjerde art, `absence_in_source`, kom av de neste rundene i den samme
+  reviewen, og den koster mer enn en etikett. `not_reported` og `not_measured`
+  er påstander om kilden eller studien **som helhet**, og et forbehold ved siden
+  av et globalt ja/nei-spørsmål endrer ikke sannhetsbetingelsen: kontrolløren
+  måtte fortsatt svart «kan ikke avgjøres» eller gått til fullteksten.
+
+  To ting er gjort. Ekstraksjonen skal forankre et slikt fravær i passasjen der
+  verdien *ville stått* — der funnets øvrige verdier for samme arm, endepunkt og
+  tidspunkt rapporteres (EVIDENCE_PIPELINE.md §19.1) — og flaten snevrer
+  spørsmålet inn til den: «mangler opplysningen der utdraget viser at den ville
+  stått?». Da er økten gjennomførbar uten at kontrolløren må lete i artikkelen.
+
+  Men et bekreftet lokalt fravær **er ikke** den globale påstanden raden bærer,
+  og registreringen fører det derfor ikke opp som det. Feltet utelates fra
+  `checked_fields`, begrunnelsen sier hvorfor, og kontrolløren får vite det i
+  det hen lagrer. Feltet står udekket i publiseringsgatens union til det finnes
+  et kontrollledd som kan bære en global fraværspåstand. Alternativet ville vært
+  at auditraden og gaten sa at et menneske hadde gått god for den globale
+  semantikken på grunnlag av én valgt passasje — nøyaktig den overdrivelsen
+  DATABASE_ARCHITECTURE.md §29 forbyr.
+
+  Prisen er reell og står som registrert gjeld i §74.7: Fava 2000 fører
+  konfidensintervallet som ikke rapportert, og det feltet blir dermed ikke
+  dekket. Hva Antidep skal kreve før et fravær kan regnes som kontrollert, er en
+  klinisk og redaksjonell beslutning, og den er ikke tatt her.
 
   Bokføringssetningen «Antidep har ført 1 felt uten verdi, med en begrunnelse for
   hvert» er borte. En mangel blir aldri en klinisk påstand utledet av fraværet:

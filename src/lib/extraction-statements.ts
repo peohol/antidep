@@ -552,6 +552,28 @@ export function interpretField(
 }
 
 /**
+ * Feltene der Antideps registrerte status er en påstand om kilden SOM HELHET.
+ *
+ * Kontrolløren får et innsnevret spørsmål for disse — om opplysningen mangler
+ * der utdraget viser at den ville stått — og det er et spørsmål hen kan svare
+ * på fra det flaten viser. Men et bekreftet lokalt fravær er **ikke** den
+ * globale påstanden raden bærer: et konfidensintervall kan stå i en tabell, en
+ * figurtekst eller et annet resultatavsnitt, og «ikke målt i studien» følger
+ * ikke av at målingen mangler i én passasje.
+ *
+ * Listen finnes derfor for at registreringen skal kunne holde de to fra
+ * hverandre: det lokale svaret bevares, men feltet føres ikke opp som
+ * kontrollert (`control-session.ts`, DATABASE_ARCHITECTURE.md §29). En rad skal
+ * aldri påstå større dekning enn operasjonen faktisk hadde.
+ */
+export function sourceWideAbsenceFields(
+  fields: readonly string[],
+  extraction: VerificationExtraction,
+): readonly string[] {
+  return fields.filter((field) => interpretField(field, extraction).kind === 'absence_in_source')
+}
+
+/**
  * Hva kontrolløren faktisk skal kontrollere, som én setning.
  *
  * Bygget av den kanoniske raden — virkestoffet, endepunktet og populasjonen —

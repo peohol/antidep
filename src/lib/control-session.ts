@@ -282,6 +282,29 @@ function joinFindings(sentences: readonly string[]): string | null {
  * avviser databasen en menneskelig bekreftelse uten et maskinbevis som gjelder
  * nøyaktig dette grunnlaget, og kontrolløkten stopper før feltskuffene når
  * beviset mangler.
+ *
+ * ----------------------------------------------------------------------------
+ * Et bekreftet LOKALT fravær dekker ikke en GLOBAL fraværsstatus
+ *
+ * `not_reported` og `not_measured` er påstander om kilden eller studien som
+ * helhet. Kontrolløren får et innsnevret spørsmål for slike felter — om
+ * opplysningen mangler der utdraget viser at den ville stått — fordi det er det
+ * eneste spørsmålet grunnlaget flaten viser, kan bære
+ * (`extraction-statements.ts`).
+ *
+ * Svaret på det spørsmålet er ikke den globale påstanden. Et konfidensintervall
+ * kan stå i en tabell, en figurtekst, et supplement eller et annet
+ * resultatavsnitt enn punktestimatet, og «ikke målt i studien» følger ikke av at
+ * målingen mangler i én passasje. Førte registreringen feltet opp som
+ * kontrollert, ville auditraden og publiseringsgaten sagt at et menneske hadde
+ * gått god for den globale semantikken — på grunnlag av en lokal bekreftelse.
+ * Det er nøyaktig den overdrivelsen §29 forbyr.
+ *
+ * Svaret bevares derfor, men feltet føres **ikke** opp i `checkedFields`, og
+ * begrunnelsen sier hvorfor. Feltet står da udekket i gatens union til det
+ * finnes et kontrollledd som kan bære en global fraværspåstand. Prisen er at et
+ * funn med et slikt fravær ikke passerer gaten — og det er den riktige prisen:
+ * alternativet er en bekreftelse som dekker mindre enn den gir inntrykk av.
  */
 export function deriveExtractionVerification(input: {
   /** Publiseringsgatens krav: `workflow.required_check_fields(uuid)`. */
@@ -290,6 +313,12 @@ export function deriveExtractionVerification(input: {
   readonly semanticFields: readonly string[]
   readonly sourceAccess: string
   readonly answers: Readonly<Record<string, AnsweredCheck>>
+  /**
+   * Feltene der den registrerte statusen er en påstand om kilden som helhet
+   * (`sourceWideAbsenceFields`). Et bekreftet lokalt fravær dekker dem ikke, og
+   * de utelates fra `checkedFields` selv når kontrolløren svarte «ja».
+   */
+  readonly sourceWideAbsenceFields: readonly string[]
 }): DerivedVerification {
   const counts = extractionTally(input.semanticFields, input.answers)
   const accessCanConfirm = sourceAccessCanConfirm(input.sourceAccess)
@@ -311,17 +340,32 @@ export function deriveExtractionVerification(input: {
   )
 
   // Bare det som faktisk ble bekreftet. Et felt kontrolløren ikke kunne
-  // avgjøre, er ikke kontrollert, og et provenansfelt hen aldri ble spurt om,
-  // er det heller ikke.
+  // avgjøre, er ikke kontrollert; et provenansfelt hen aldri ble spurt om, er
+  // det heller ikke; og et felt der svaret gjaldt et lokalt fravær mens raden
+  // bærer en global påstand, er det heller ikke.
+  const beyondLocalProof = new Set(input.sourceWideAbsenceFields)
   const confirmedFields = input.semanticFields.filter(
-    (field) => input.answers[field]?.answer === 'yes',
+    (field) => input.answers[field]?.answer === 'yes' && !beyondLocalProof.has(field),
   )
+  const notDischarged = input.semanticFields.filter(
+    (field) => input.answers[field]?.answer === 'yes' && beyondLocalProof.has(field),
+  )
+
+  const fullRationale =
+    notDischarged.length === 0
+      ? rationale
+      : withinDatabaseLimit(
+          `${rationale} Kontrolløren bekreftet at opplysningen mangler der den ville stått for ` +
+            `${notDischarged.map(fieldLabel).join(', ')}, men den registrerte statusen er en ` +
+            'påstand om kilden som helhet. Et lokalt fravær kan ikke bære den, og feltet er ' +
+            'derfor ikke ført opp som kontrollert.',
+        )
 
   if (outcome === 'verified') {
     return {
       outcome,
       checkedFields: confirmedFields,
-      rationale,
+      rationale: fullRationale,
       findings: null,
     }
   }
@@ -334,7 +378,7 @@ export function deriveExtractionVerification(input: {
   return {
     outcome,
     checkedFields: confirmedFields,
-    rationale,
+    rationale: fullRationale,
     // Utfallet er ikke `verified`, så databasen krever et funn. Er ingen
     // delkontroll åpen, er det kildetilgangen som er grunnen, og setningen over
     // er da den eneste — men aldri null.

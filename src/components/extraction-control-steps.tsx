@@ -45,7 +45,11 @@ import {
   type ExtractionSessionState,
 } from '../lib/control-session'
 import { groundingGap, uncoveredCheckFields } from '../lib/extraction-review'
-import { designStatement, interpretField } from '../lib/extraction-statements'
+import {
+  designStatement,
+  interpretField,
+  sourceWideAbsenceFields,
+} from '../lib/extraction-statements'
 import { extractionCommitStepId, fieldStepId, sourceAccessStepId } from '../lib/control-steps'
 import type { ExtractionReviewItem } from '../lib/extraction-review'
 import type { VerificationOutcome } from '../types/api'
@@ -133,6 +137,13 @@ export function derivedExtractionFor(
     semanticFields: item.dossier.semanticCheckFields,
     sourceAccess: state.sourceAccess ?? 'derived_summary',
     answers: state.fields,
+    // Feltene der raden bærer en påstand om kilden som helhet. Kontrolløren har
+    // bare bekreftet et lokalt fravær, og registreringen skal ikke føre opp mer
+    // dekning enn det (DATABASE_ARCHITECTURE.md §29).
+    sourceWideAbsenceFields: sourceWideAbsenceFields(
+      item.dossier.semanticCheckFields,
+      item.dossier.extraction,
+    ),
   })
 }
 
@@ -360,6 +371,11 @@ export function buildExtractionSteps({
 
   const counts = extractionTally(dossier.semanticCheckFields, state.fields)
   const derived = derivedExtractionFor(item, state)
+  // Feltene kontrolløren svarte «ja» på, men som ikke dermed er dekket.
+  const notDischarged = sourceWideAbsenceFields(
+    dossier.semanticCheckFields,
+    dossier.extraction,
+  ).filter((field) => state.fields[field]?.answer === 'yes')
   const ready =
     state.sourceAccess !== null &&
     dossier.semanticCheckFields.every((field) => isFieldComplete(state.fields[field]))
@@ -384,6 +400,18 @@ export function buildExtractionSteps({
         <p className="control-summary__outcome">
           {`Dette blir registrert som: ${outcomeLabel(derived.outcome)}.`}
         </p>
+        {/* Et bekreftet lokalt fravær dekker ikke en status som gjelder kilden
+            som helhet, og kontrolløren skal vite at feltet blir stående udekket
+            — ikke oppdage det som en blokkert publisering senere
+            (DATABASE_ARCHITECTURE.md §29). */}
+        {notDischarged.length > 0 ? (
+          <p className="control-summary__note">
+            {`Svaret ditt på ${notDischarged.map(checkFieldLabel).join(', ')} gjelder stedet
+              opplysningen ville stått. Antidep har ført at den mangler i kilden som helhet, og et
+              lokalt fravær kan ikke bære den påstanden. Feltet blir derfor stående som ikke
+              kontrollert, og publiseringsgaten er fortsatt åpen på det.`.replace(/\s+/g, ' ')}
+          </p>
+        ) : null}
         {uncovered.length > 0 && derived.outcome !== 'verified' ? (
           <p className="control-summary__note">
             Publiseringsgaten krever at hvert felt funnet påstår noe om, er bekreftet. Med dette

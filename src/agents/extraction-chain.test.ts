@@ -382,6 +382,7 @@ describe('kjeden fra ekstraksjon til dekning', () => {
       requiredFields: REQUIRED_FIELDS,
       semanticFields: SEMANTIC_FIELDS,
       sourceAccess: 'original_source',
+      sourceWideAbsenceFields: [],
       answers: Object.fromEntries(
         SEMANTIC_FIELDS.map((field) => [field, { answer: 'yes' as const, note: '' }]),
       ),
@@ -405,6 +406,7 @@ describe('kjeden fra ekstraksjon til dekning', () => {
       requiredFields: REQUIRED_FIELDS,
       semanticFields: SEMANTIC_FIELDS,
       sourceAccess: 'original_source',
+      sourceWideAbsenceFields: [],
       answers: Object.fromEntries(
         SEMANTIC_FIELDS.map((field) => [field, { answer: 'yes' as const, note: '' }]),
       ),
@@ -421,6 +423,7 @@ describe('kjeden fra ekstraksjon til dekning', () => {
       requiredFields: REQUIRED_FIELDS,
       semanticFields: SEMANTIC_FIELDS,
       sourceAccess: 'original_source',
+      sourceWideAbsenceFields: [],
       answers: Object.fromEntries(
         SEMANTIC_FIELDS.map((field) => [field, { answer: 'yes' as const, note: '' }]),
       ),
@@ -445,6 +448,7 @@ describe('kjeden fra ekstraksjon til dekning', () => {
       requiredFields: REQUIRED_FIELDS,
       semanticFields: SEMANTIC_FIELDS,
       sourceAccess: 'original_source',
+      sourceWideAbsenceFields: [],
       answers,
     })
 

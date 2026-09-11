@@ -648,13 +648,16 @@ describe('Kontrolløkten — maskinbeviset kommer først', () => {
   })
 })
 
-describe('Kontrolløkten — en global fraværspåstand kan fullføres', () => {
-  // Kravet fra den tekniske reviewen: en not_reported-kontroll skal kunne
-  // fullføres til et BEKREFTET utfall på korrekt grunnlag, uten at
-  // kontrolløren må åpne fullteksten ved siden av. Det holder ikke å vise et
-  // forbehold — spørsmålet må være avgjørbart fra det flaten viser, og
-  // kontrollen må ende i «Bekreftet» med feltet ført som kontrollert.
-  it('går fra spørsmål til bekreftet utfall, med feltet ført som kontrollert', async () => {
+describe('Kontrolløkten — en global fraværspåstand dekker ikke seg selv', () => {
+  // Kravet fra den tekniske reviewen, i to deler. Kontrollen skal kunne
+  // FULLFØRES på korrekt grunnlag — kontrolløren får et spørsmål hen kan svare
+  // på fra det flaten viser — men det som ender i `checked_fields`, må være
+  // nøyaktig den semantiske påstanden hen har bekreftet
+  // (DATABASE_ARCHITECTURE.md §29).
+  //
+  // «Ikke rapportert i kilden» gjelder hele kilden. Kontrolløren har bekreftet
+  // et lokalt fravær, og feltet skal derfor IKKE føres opp som kontrollert.
+  it('fører ikke feltet opp som kontrollert, og sier hvorfor', async () => {
     const { rpcCalls } = renderExtractionControl({
       extraction: reviewExtraction({
         ci_lower: null,
@@ -665,11 +668,12 @@ describe('Kontrolløkten — en global fraværspåstand kan fullføres', () => {
     })
     await answerEverythingYes()
 
-    // Spørsmålet kontrolløren faktisk svarte «Ja» på, var snevret inn til
-    // stedet utdraget viser — ikke til hele kilden.
+    // Økten er gjennomførbar: alle spørsmålene er besvart fra det flaten viser.
     await screen.findByText('Dette blir registrert som: Bekreftet.')
-    fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
+    // Og den sier at feltet likevel blir stående udekket.
+    expect(screen.getByText(/Feltet blir derfor stående som ikke kontrollert/)).toBeInTheDocument()
 
+    fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
     await waitFor(() => {
       expect(rpcCalls.some((call) => call.name === 'register_human_extraction_verification')).toBe(
         true,
@@ -677,8 +681,43 @@ describe('Kontrolløkten — en global fraværspåstand kan fullføres', () => {
     })
     const call = rpcCalls.find((c) => c.name === 'register_human_extraction_verification')
     const args = call?.args as Record<string, unknown>
-    expect(args['p_outcome']).toBe('verified')
-    expect(args['p_checked_fields']).toContain('confidence_interval')
+    const checked = args['p_checked_fields'] as readonly string[]
+
+    // Kjernen: den globale påstanden er ikke bekreftet, og raden påstår ikke at
+    // den er det.
+    expect(checked).not.toContain('confidence_interval')
+    // De feltene kontrolløren faktisk bekreftet semantisk, står der.
+    expect(checked).toContain('estimate')
+    expect(checked).toContain('intervention_arm')
+    // Og begrunnelsen sier hvorfor det ene feltet mangler.
+    expect(String(args['p_rationale'])).toMatch(/påstand om kilden som helhet/)
+  })
+
+  // Motstykket: en lokal fraværsgrunn bæres av utdraget, og feltet dekkes.
+  it('dekker feltet når fraværsgrunnen gjelder funnet og ikke kilden', async () => {
+    const { rpcCalls } = renderExtractionControl({
+      extraction: reviewExtraction({
+        ci_lower: null,
+        ci_upper: null,
+        ci_level_percent: null,
+        confidence_interval_availability: 'not_applicable',
+      }),
+    })
+    await answerEverythingYes()
+    await screen.findByText('Dette blir registrert som: Bekreftet.')
+    expect(
+      screen.queryByText(/Feltet blir derfor stående som ikke kontrollert/),
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lagre og fortsett' }))
+    await waitFor(() => {
+      expect(rpcCalls.some((call) => call.name === 'register_human_extraction_verification')).toBe(
+        true,
+      )
+    })
+    const call = rpcCalls.find((c) => c.name === 'register_human_extraction_verification')
+    const checked = (call?.args as Record<string, unknown>)['p_checked_fields'] as readonly string[]
+    expect(checked).toContain('confidence_interval')
   })
 })
 

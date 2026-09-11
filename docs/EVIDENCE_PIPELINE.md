@@ -579,6 +579,19 @@ skulle, eller ikke? Kontrollflaten snevrer spørsmålet inn til nettopp det
 `not_extractable` er smalere påstander — om funnet og om lesningen — og
 bedømmes av begrunnelsen som den står.
 
+**Et bekreftet lokalt fravær er ikke den globale påstanden, og skal ikke
+registreres som om det var det.** Et konfidensintervall kan stå i en tabell, en
+figurtekst, et supplement eller et annet resultatavsnitt enn punktestimatet, og
+«ikke målt i studien» følger ikke av at målingen mangler i én passasje. At
+ekstraksjonen *valgte* passasjen, gjør den ikke uttømmende: valget er modellens,
+og `justification` er modellens forklaring — ikke et uavhengig bevis.
+
+Den menneskelige bekreftelsen av et slikt fravær bevares derfor, men feltet
+føres **ikke** opp i `checked_fields`, og begrunnelsen sier hvorfor
+(DATABASE_ARCHITECTURE.md §29). Feltet står udekket i publiseringsgatens union
+til det finnes et kontrollledd som kan bære en global fraværspåstand. Det er
+registrert gjeld, ikke en løst oppgave (MVP_IMPLEMENTATION_PLAN.md §74.7).
+
 Bakgrunnen er konkret. Den første reelle menneskelige kildekontrollen møtte
 dette som forankring for behandlingsarmene:
 

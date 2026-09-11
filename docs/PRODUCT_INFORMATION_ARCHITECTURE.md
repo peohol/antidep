@@ -908,9 +908,16 @@ presenterer det:
   Kravet ligger derfor på grunnlaget. Et slikt fravær skal forankres i passasjen
   der verdien **ville stått** (EVIDENCE_PIPELINE.md §19.1), og flaten snevrer
   spørsmålet inn til den: «mangler opplysningen der utdraget viser at den ville
-  stått?». Da er kontrollen gjennomførbar til et bekreftet utfall på korrekt
-  grunnlag. Flaten skal si hva utdraget er, slik at kontrolløren vet at hen bare
+  stått?». Flaten skal si hva utdraget er, slik at kontrolløren vet at hen bare
   skal avgjøre stedet — ikke lete gjennom resten av kilden.
+
+- **Et innsnevret spørsmål gir en innsnevret bekreftelse, og flaten skal si
+  det.** Svaret på det lokale spørsmålet er ikke den globale påstanden raden
+  bærer, og det skal ikke bokføres som om det var det. Feltet blir stående som
+  ikke kontrollert, publiseringsgaten er fortsatt åpen på det, og kontrolløren
+  får vite det i det hen lagrer — ikke som en blokkert publisering senere. Å la
+  den lokale bekreftelsen dekke den globale statusen ville vært å endre den
+  epistemiske policyen for å få implementasjonen til å gå opp.
 - To utsagn som ser like ut, skal gjøres eksplisitt forskjellige. Endepunktet er
   hva som ble målt; effektmålet er hvordan resultatet er uttrykt.
 - Tall skal presenteres i den formen kilden bruker, med databasens egen form som
