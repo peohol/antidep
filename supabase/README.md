@@ -58,6 +58,14 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     den fysiske plasseringen og la tekst fra to spalter på samme tekstlinje; listen har
     fortsatt den gamle oppskriften som en av to rader, slik at radene som bærer den, kan
     etterprøves slik de faktisk ble laget
+  - 008i `extraction_artifact_discarded` lagt til `audit.event_operation`, alene i sin egen
+    migrasjon av samme grunn som 008a og 008b
+  - 005af `knowledge.discard_unpublished_extraction_artifacts(...)`: den ene, sterkt
+    guardede veien til å fjerne et upublisert testartefakt med sine forankringer og
+    maskinelle kontroller. Ingen klientrolle kan kalle den, den krever en autorisert
+    redaktøridentitet og en begrunnelse, den feiler lukket på hver rad som er menneskelig
+    kontrollert eller bærer en påstand, og den skriver en auditrad med hele
+    kontrollgrunnlaget. Dette er ikke en redaksjonell funksjon
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at

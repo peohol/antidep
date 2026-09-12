@@ -38,9 +38,10 @@ select enum_has_labels(
     'agent_identity_credential_issued', 'agent_identity_revoked',
     'evidence_verification_registered', 'source_version_registered',
     'claim_verification_registered', 'review_decision_registered',
-    'evidence_field_grounding_recorded'
+    'evidence_field_grounding_recorded',
+    'extraction_artifact_discarded'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen og kildeforankringen per kontrollfelt'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt og fjerningen av et testartefakt'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
