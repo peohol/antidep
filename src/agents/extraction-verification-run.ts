@@ -379,12 +379,23 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     }
 
     for (const item of unavailable) {
+      // Setningen er hele beskjeden operatøren får, og den skal navngi den
+      // kjøringen som faktisk lukker gaten for nettopp dette funnet. Fører raden
+      // et globalt fravær, holder det ikke å kontrollere én gang: den halvdelen
+      // avgjøres av to trinn, og en kommando uten dem ville gitt `uncertain` om
+      // igjen uten å si hvorfor (migrasjon 005ae, `absence-review-job.ts`).
+      const command = `ANTIDEP_DOCUMENT_DIR=<katalog> npm run agent:verify-extraction -- --evidence-item ${item.evidenceItemId}`
       const reason =
         'Funnet er utledet av originaldokumentet ' +
         `${item.sourceVersion?.document?.sha256 ?? 'ukjent'}, som ikke ligger i ` +
         'dokumentkatalogen denne kjøringen leser. Kontrollen krever dokumentet, og henter aldri ' +
         'adressen i stedet. Kjør den fra en maskin som har det: ' +
-        `ANTIDEP_DOCUMENT_DIR=<katalog> npm run agent:verify-extraction -- --evidence-item ${item.evidenceItemId}`
+        (item.sourceWideAbsenceFields.length > 0
+          ? `${command} --absence-prompts <katalog> — la deretter en aktør uten legitimasjon ` +
+            `svare i svar.json, og kjør ${command} --absence-reviews <katalog> for å registrere. ` +
+            'Funnet fører et fravær som gjelder hele kildeversjonen, og den halvdelen dekkes ' +
+            'bare av de to trinnene.'
+          : command)
       log(`— ${summarize(item)}: ingen verifikasjon registrert. ${reason}`)
       results.push({
         evidenceItemId: item.evidenceItemId,

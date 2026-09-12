@@ -7489,21 +7489,112 @@ Begge har komplett forankring for hvert semantiske felt og et gyldig
 maskinbevis, og `9570760c` fører `sample_size` som `null` — n = 117 er ikke
 lenger ført, som §74.44 krevde.
 
-Tre ting gjenstår, i denne rekkefølgen:
+Tre ting gjensto, i denne rekkefølgen. Det første er gjort, det andre er
+forberedt og står på én ting som ikke kan gjøres fra en agentsesjon, og det
+tredje er klart til å begynne.
 
-1. **Migrasjon 005ad og 005ae må deployes** (`./scripts/deploy-migrations.sh`).
-   Først da krever gaten den kildeomfattende halvdelen.
-2. **Den kildeomfattende kontrollen må kjøres for begge funnene**, i to trinn:
-   `npm run agent:verify-extraction -- --absence-prompts <katalog>` legger igjen
-   spørsmålet, en aktør svarer i `svar.json`, og
-   `npm run agent:verify-extraction -- --absence-reviews <katalog>` registrerer.
-   Kjøringen må skje på en maskin som har originaldokumentene: begge
-   kildeversjonene er dokumentbundne, og et ledd uten dokumentet henter aldri
-   `retrieved_from` i stedet (migrasjon 003e).
-3. **Den menneskelige kildekontrollen** i `/extraction-review`. Funnene står
-   allerede i køen. Publisering kan først skje etter den, og forutsetter i
-   tillegg en redaksjonell beslutning: de to påstandsrevisjonene som finnes, er
-   lenket til de gamle sammendragsutledede funnene, ikke til disse.
+##### 1. Migrasjon 005ad og 005ae er deployet
+
+Kjørt med `./scripts/deploy-migrations.sh` mot det hostede prosjektet.
+Etterkontrollen er ikke skriptets exit-status, men basen selv:
+`--dry-run` melder nå «73 migrasjoner registrert i prosjektet, 73 filer i
+repoet. Ingenting mangler», `workflow.evidence_check_field` har verdien
+`source_wide_absence` plassert rett etter `availability_semantics` slik
+migrasjonen krever, og `workflow.source_wide_absence_fields(uuid)` finnes.
+
+Gaten er dermed strengere enn før for begge funnene:
+
+| Funn | `source_wide_absence_fields` | `source_wide_absence` i `required_check_fields` |
+|---|---|---|
+| `9ba56fb4-fbb9-414b-899b-7296683f274d` | `{confidence_interval}` | ja |
+| `9570760c-b0d3-493c-8042-eb92c4547340` | `{sample_size, confidence_interval}` | ja |
+
+##### 2. Den kildeomfattende kontrollen står på originaldokumentene
+
+Begge kildeversjonene er **dokumentbundne**, og et ledd uten dokumentet henter
+aldri `retrieved_from` i stedet (migrasjon 003e):
+
+| Funn | Kildeversjon | Originaldokument | Byte |
+|---|---|---|---|
+| `9ba56fb4` | `1287e69b-2904-44ea-af7a-28ef99d403b4` | `sha256:0f5ac7810fe0a04407c48a472352f390f9d67f84032757291fee4c2e0cfeed56` | 55 291 |
+| `9570760c` | `d3c27d3d-cc11-46da-ac26-984a6f35e969` | `sha256:be804f4ee84a8ebabeeed709f2c6aec2d6929468ff1d7a912d7b9cfbf1bbf508` | 139 515 |
+
+`--absence-prompts` ble kjørt mot produksjon fra en sesjon uten dokumentene, og
+kjøringen gjorde nøyaktig det den skal: den la ikke igjen noe spørsmål,
+registrerte ingenting, og lukket seg som `aborted` med en begrunnelse som navngir
+dokumentet som mangler. Rekkefølgen er dermed avklart, og den er ikke det planen
+antok: **det er dokumentet, ikke gjennomlesningen, som er første hindring.**
+Aktøren uten legitimasjon har ingenting å lese før representasjonen lot seg
+reprodusere, så trinn to kan ikke prøves uavhengig av trinn én.
+
+Selve totrinnsflyten er likevel prøvd ende til ende mot en ekte database —
+kjøringen legger igjen spørsmålet, en aktør uten legitimasjon svarer i filen, og
+neste kjøring registrerer dekningen — av kjedeprøven (`npm run db:test:chain`).
+Det som gjenstår for disse to radene, er bare å kjøre den der dokumentene ligger:
+
+```bash
+# 1. Legitimasjon til verifikatoren. Den forrige ble ugyldig da denne kjøringen
+#    utstedte en ny (secret_version 8); en hemmelighet kan ikke leses ut igjen.
+./scripts/issue-agent-credential.sh --management-api --write-env
+
+# 2. Spørsmålet legges igjen. Katalogen er den med de to originaldokumentene.
+ANTIDEP_DOCUMENT_DIR=documents npm run agent:verify-extraction -- \
+  --evidence-item 9ba56fb4-fbb9-414b-899b-7296683f274d --absence-prompts fravaer
+ANTIDEP_DOCUMENT_DIR=documents npm run agent:verify-extraction -- \
+  --evidence-item 9570760c-b0d3-493c-8042-eb92c4547340 --absence-prompts fravaer
+
+# 3. En aktør uten legitimasjon leser prompt.txt og svarer i svar.json.
+
+# 4. Svaret avgjør, og dekningen registreres.
+ANTIDEP_DOCUMENT_DIR=documents npm run agent:verify-extraction -- \
+  --evidence-item 9ba56fb4-fbb9-414b-899b-7296683f274d --absence-reviews fravaer
+ANTIDEP_DOCUMENT_DIR=documents npm run agent:verify-extraction -- \
+  --evidence-item 9570760c-b0d3-493c-8042-eb92c4547340 --absence-reviews fravaer
+```
+
+##### 3. Den menneskelige kildekontrollen er klar til å begynne
+
+Kontrollert mot produksjonsdata, gjennom `api.extraction_review_workspace` som
+reviewer og gjennom repoets egne parsere og kontrollsteg:
+
+| Egenskap | `9ba56fb4` | `9570760c` |
+|---|---|---|
+| Gjeldende ekstraksjonsverifikasjon | `8c69b16f…`, `uncertain` | `898471b2…`, `uncertain` |
+| `covered_check_fields` | `{intervention_arm, source_locator, raw_extraction}` | samme |
+| `source_wide_absence` dekket | nei — ingen gjennomlesning foreligger | nei — samme |
+| `semantic_check_fields` inneholder `source_wide_absence` | nei | nei |
+| Semantiske felter uten forankring | ingen | ingen |
+| Maskinbevis på forankringen | ja | ja |
+| Står i reviewerens kø | ja | ja |
+
+Ingen gate er åpnet på et svakere grunnlag enn dokumentasjonen tillater: det
+eneste feltet gaten mangler ut over det mennesket skal svare på, er nettopp
+`source_wide_absence`, og det står åpent fordi ingen gjennomlesning foreligger.
+Kontrolløkten stiller aldri spørsmålet, fordi `semantic_check_fields` ikke
+inneholder feltet; at lagringssteget i tillegg sier fra om at gaten står åpen på
+det, er prøvd i `ExtractionReviewPage.test.tsx` og ikke mot produksjonsraden.
+
+Publisering kan først skje etter den menneskelige kontrollen, og forutsetter i
+tillegg en redaksjonell beslutning: de to påstandsrevisjonene som finnes, er
+lenket til de gamle sammendragsutledede funnene, ikke til disse.
+
+##### To rettelser funnet under kontrollen av produksjonstilstanden
+
+**Begrunnelsen navnga en henting som aldri fant sted.** Begge maskinbevisene i
+produksjon sier «representasjonen ble hentet på nytt fra
+`https://doi.org/…`», mens en dokumentbundet kildeversjon per migrasjon 003e
+**aldri** hentes over nett — teksten ble trukket ut av originaldokumentet med den
+registrerte oppskriften. Setningen bygges nå av den registrerte raden og navngir
+dokumentet og oppskriften for den veien, slik `source-binding.ts` allerede
+avgjør retningen. De to radene som står med den gamle ordlyden, er append-only og
+blir stående; neste kontroll av de samme funnene skriver en rad med riktig
+ordlyd ved siden av.
+
+**Beskjeden til operatøren navnga en kommando som ikke kunne lukke gaten.**
+Et funn som hoppes over fordi dokumentet mangler, fikk én kommando å kjøre — uten
+`--absence-prompts`. For et funn som fører et globalt fravær, ville den gitt
+`uncertain` om igjen uten å si hvorfor. Beskjeden navngir nå begge trinnene, og
+bare for de radene som faktisk fører et slikt fravær.
 
 ---
 

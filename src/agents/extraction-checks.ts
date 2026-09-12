@@ -1921,6 +1921,41 @@ function representationName(item: VerificationItem): string {
 }
 
 /**
+ * Hvordan kontrollen skaffet representasjonen, sagt slik det faktisk skjedde.
+ *
+ * Begrunnelsen er den varige, append-only nedtegnelsen av hva kontrollen gjorde,
+ * og den skal ikke navngi en henting som ikke fant sted. En dokumentbundet
+ * kildeversjon hentes **aldri** over nett: teksten trekkes ut av originaldokumentet
+ * med den registrerte oppskriften, og adressen hentes ikke i stedet
+ * (`source-binding.ts`, migrasjon 003e). En begrunnelse som likevel sa «hentet på
+ * nytt fra <doi-adresse>», ville beskrevet grunnlaget som et nettoppslag mot en
+ * adresse kontrollen aldri var innom — og nettopp den forvekslingen mellom en
+ * adresse og et dokument er hele grunnen til at de to veiene er skilt.
+ *
+ * Retningen leses av **den registrerte raden**, ikke av kalleren, og av samme
+ * grunn som i `source-binding.ts`: det er raden som avgjør hvilken vei som
+ * gjelder, så et ledd som fikk oppgitt retningen utenfra, ville vært ett sted til
+ * å oppgi den feil.
+ */
+function representationOrigin(item: VerificationItem): string {
+  const version = item.sourceVersion ?? null
+  const document = version?.document ?? null
+  if (document === null) {
+    return (
+      'representasjonen ble hentet på nytt fra ' +
+      `${version?.retrievedFrom ?? 'kildeversjonens adresse'}`
+    )
+  }
+  const recipe = document.textExtraction
+  return (
+    'representasjonen ble trukket ut på nytt av originaldokumentet ' +
+    `${document.sha256} med «${recipe.tool} ${recipe.arguments}», og ikke hentet fra ` +
+    `${version?.retrievedFrom ?? 'kildeversjonens adresse'} — en dokumentbundet kildeversjon ` +
+    'hentes aldri over nett'
+  )
+}
+
+/**
  * Søker gjennom hele representasjonen etter en verdi av feltets art.
  *
  * Ingen binding til raden, med vilje: se hodekommentaren over. Eksportert for
@@ -2681,11 +2716,10 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
   }
 
   const method =
-    'Deterministisk ekstraksjonskontroll: representasjonen ble hentet på nytt fra ' +
-    `${item.sourceVersion?.retrievedFrom ?? 'kildeversjonens adresse'} og ` +
+    `Deterministisk ekstraksjonskontroll: ${representationOrigin(item)}. ` +
     (representationReproduced
-      ? 'ga samme sha256-fingeravtrykk som den registrerte kildeversjonen'
-      : 'ga et annet sha256-fingeravtrykk enn den registrerte kildeversjonen') +
+      ? 'Teksten ga samme sha256-fingeravtrykk som den registrerte kildeversjonen'
+      : 'Teksten ga et annet sha256-fingeravtrykk enn den registrerte kildeversjonen') +
     '. Hvert ordrett utdrag i raw_extraction og hvert utdrag i kildeforankringen ble søkt ' +
     'ordrett, og hvert oppgitt tall ble søkt som selvstendig tall i funnets egne utdrag, i ' +
     'både råsvaret og en taggfri projeksjon av det. Ingen språkmodell er brukt.'
