@@ -1714,6 +1714,7 @@ async function main(): Promise<void> {
           p_text_extraction_tool: input.recipe.tool,
           p_text_extraction_tool_version: input.recipe.toolVersion,
           p_text_extraction_arguments: input.recipe.arguments,
+          p_text_extraction_transform: input.recipe.transform,
           p_external_version: input.externalVersion,
         })
         if (error !== null) {
@@ -1759,9 +1760,12 @@ async function main(): Promise<void> {
       psql(
         config,
         `select representation::text || '|' || text_extraction_tool || '|'
-                || text_extraction_arguments || '|' || document_media_type
+                || text_extraction_arguments || '|' || text_extraction_transform
+                || '|' || document_media_type
          from knowledge.source_versions where id = ${q(fulltekstVersjon)}`,
-      ) === 'full_text|pdftotext|-layout -enc UTF-8 -eol unix|application/pdf',
+      ) ===
+        'full_text|pdftotext|-bbox-layout -enc UTF-8 -eol unix' +
+          '|antidep-reading-order@2|application/pdf',
     )
     check(
       'oppdraget kom fra databasen med dokumentbindingen, uten at noen skrev en uuid',
