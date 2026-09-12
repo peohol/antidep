@@ -7654,6 +7654,272 @@ av de to funnene i `/extraction-review`. Etter den gjenstår fortsatt en
 redaksjonell beslutning før publisering — de to påstandsrevisjonene som finnes,
 er lenket til de gamle sammendragsutledede funnene, ikke til disse.
 
+### 74.46 Leserekkefølgen i den kanoniske teksten, og en ryddet kø
+
+§74.45 endte med at ett steg gjenstod, og at det ikke var teknisk: Peder skulle
+gjøre den menneskelige kildekontrollen av de to fulltekstfunnene i
+`/extraction-review`. Det steget kunne ikke tas, og grunnen sto i flaten selv.
+
+**Kildeutdragene viste tekst fra to spalter side om side på den samme
+tekstlinjen.** Oppskriften var `pdftotext -layout -enc UTF-8 -eol unix`, og
+`-layout` gjenskaper den **fysiske** plasseringen på papiret. I en tospaltet
+vitenskapelig artikkel står venstre og høyre spalte ved siden av hverandre — og
+da står de ved siden av hverandre i teksten også.
+
+Det er ikke et visningsproblem, og det var ikke det issue
+[#84](https://github.com/peohol/antidep/issues/84) ble skrevet om. Antideps
+ordrette kontroll normaliserer blanktegn før den søker
+(`src/agents/extraction-checks.ts`), så to uavhengige spalter ble behandlet som
+**én sammenhengende tegnstrøm**. Et «ordrett sitat» kunne dermed bestå av ord
+som aldri sto etter hverandre i kilden, og en klinisk opplysning kunne bli
+tilskrevet feil behandlingsarm, feil studie eller feil endepunkt. Det er en
+evidensintegritetsfeil (ANTIDEP_CONSTITUTION.md §8, §11).
+
+Regresjonsprøven viser feilen ordrett, på en syntetisk tospaltet PDF-fikstur:
+med den gamle oppskriften treffer sitatet «left column ends here. The right
+column ends here.» — en setning som ikke står i dokumentet i det hele tatt.
+
+#### Oppskriften henter nå posisjonsdata, og Antidep bygger rekkefølgen selv
+
+```text
+text_extraction_tool       pdftotext
+text_extraction_arguments  -bbox-layout -enc UTF-8 -eol unix
+text_extraction_transform  antidep-reading-order@1
+```
+
+`-bbox-layout` gir ikke tekst, men **koordinater**: hvert ord med sin
+avgrensning, gruppert i linjer og blokker. `antidep-reading-order@1`
+(`src/agents/reading-order.ts`) er Antideps eget, rene ledd som gjør dem om til
+logisk leserekkefølge. Det **flytter blokker** og skriver ikke ett eneste tegn:
+ingen orddeling settes sammen, ingen tegnsetting legges til, ingen ord fjernes.
+
+Rekkefølgen bygges med et rekursivt snitt på tomrom, per side og rekursivt på
+hver del:
+
+| Steg | Regel |
+|---|---|
+| 1 | Finnes en **loddrett tomromskorridor** ingen blokk krysser, bred nok til å være en spaltemarg? Del der, og les venstre del før høyre |
+| 2 | Ellers: finnes **vannrette tomromsbånd** ingen blokk krysser? Del der, øverste bånd først |
+| 3 | Ellers er delen et blad, og blokkene leses ovenfra og ned |
+
+**Loddrett før vannrett er ikke en smakssak.** Motsatt rekkefølge har en kjent
+feil: har venstre og høyre spalte et avsnittsopphold på samme høyde, finnes det
+et vannrett bånd tvers over begge, og et snitt der gir venstre-topp, høyre-topp,
+venstre-bunn, høyre-bunn — spaltene flettet, altså nøyaktig feilen som skulle
+rettes. Et loddrett snitt kan ikke gjøre det: en tittel eller en tabell over
+full sidebredde krysser korridoren, korridoren finnes da ikke, og det vannrette
+snittet skiller først full bredde fra spaltene. **Tittel, ingress og
+gjennomgående overskrifter håndteres derfor av den samme regelen som spaltene,
+uten et eget tilfelle.**
+
+#### Når rekkefølgen ikke er gitt av oppsettet, avvises dokumentet
+
+Et blad med to blokker som er atskilt vannrett og løper ved siden av hverandre
+**mer enn to tommer** nedover siden, er to spalter som ingen korridor skilte.
+Rekkefølgen mellom dem er ikke bestemt, og dokumentet markeres som ikke trygt
+ekstraherbart: `extractDocumentText` returnerer en avvisning, og ekstraksjonen
+stopper. Det er viktigere å avvise én vanskelig PDF enn å registrere kliniske
+data lest i feil rekkefølge.
+
+Grensen på to tommer er den ene terskelen som skiller to spalter fra **cellene i
+en tabellrad**, som også står side om side. Forskjellen er ikke hva de
+inneholder — det kan ingen geometri avgjøre — men hvor langt de løper sammen: en
+rad er høy som et par linjer, en spalte som en side. Den høyeste tabellraden i
+denne kodebasens egne artikler er 55 punkter; grensen er 144.
+
+**Skjev tekst holdes utenfor.** Et vannmerke på tvers av siden — «Copyright 2001
+… One personal copy may be printed» — er ikke artikkelens tekst, og det ligger
+midt i spaltemargen. Uten at det holdes utenfor, ville det gjort
+spalteinndelingen ubestemmelig og tatt hele siden med seg. Signalet er
+geometrisk og ett: **ordene på en linje står ikke på samme grunnlinje.**
+Avgrensningen til det ene signalet er tilsiktet — bredere geometriske regler
+(«linjer som ligger oppå hverandre») traff også ekte tekst, fordi Poppler legger
+cellene i en tabellrad som egne linjer i den samme blokken. Utelatelse er den
+dyre siden å ta feil på: en setning som forsvinner, kan få den kildeomfattende
+fraværskontrollen til å konkludere at en opplysning ikke står noe sted.
+Utelatelsen er derfor avgrenset og rapportert, og dekker den skjeve teksten mer
+enn en fjerdedel av ordene på en side, avvises dokumentet.
+
+#### Formen på teksten, og den harde grensen i kontrollen
+
+```text
+ord i en linje     mellomrom
+linjer i en blokk  linjeskift       (mykt skille)
+blokker            blank linje      (HARDT skille)
+sider              sideskift \f     (HARDT skille)
+```
+
+En blokk er Popplers egen avgjørelse om at teksten henger sammen — et avsnitt.
+Innenfor den skal en setning over to linjer fortsatt kunne siteres. Mellom to
+blokker er det motsatte tilfellet.
+
+`normalize()` i `extraction-checks.ts` gjør derfor **ikke** et opphold med en
+blank linje eller et sideskift om til et mellomrom, men til en grense et ordrett
+søk ikke kan krysse. Uten den kunne den samme feilen oppstått på nytt mellom en
+sidefot og en brødtekst, mellom to tabellceller, eller mellom den siste blokken
+på én side og den første på den neste. Grensen gjelder begge sider av søket: et
+utdrag som selv er kopiert med avsnittsskillet i behold, treffer fortsatt.
+
+#### Proveniensen: hele veien fra dokument til tekst står i raden
+
+Uten etterbehandlingen er representasjonen ikke reproduserbar. En tredjepart som
+kjører `pdftotext -bbox-layout` på dokumentet, får en XHTML-fil med koordinater
+— ikke teksten `content_hash` er beregnet av. Migrasjon 003g gir derfor
+`knowledge.source_versions` kolonnen `text_extraction_transform`, tar den inn i
+uforanderlighetsvernet (`knowledge.freeze_source_version()`), og eksponerer den
+i den redaksjonelle lesemodellen, i ekstraksjonsoppdraget og i
+kontrollgrunnlaget. Dokumentbindingen som jsonb har fått **én** definisjon
+(`knowledge.source_version_document_binding(uuid)`), lest av både oppdraget og
+kontrollgrunnlaget: to kopier av formen var to steder å legge til et felt.
+
+**Den lukkede oppskriftslisten har nå to rader, og den nederste er ikke en
+overgangsordning.** Hver dokumentutledet kildeversjon som allerede står i basen,
+er registrert med `-layout` og uten etterbehandling. De radene **skrives ikke
+om**: en rad som ble laget på én måte, skal ikke i ettertid påstå at den ble
+laget på en annen (ANTIDEP_CONSTITUTION.md §14). Etterprøvingen av dem skal
+gjenta det som faktisk ble gjort, og derfor må den gamle oppskriften fortsatt
+kunne kjøres.
+
+De to grensene er forskjellige grenser, og det er forskjellen som lar
+historikken bestå:
+
+| Grense | Spørsmål | Svar |
+|---|---|---|
+| CHECK på tabellen | Hva kan **lagres**? | Begge oppskriftene |
+| `api.create_source_version_from_document(...)` | Hva kan **registreres nå**? | Bare den nye |
+
+#### Kontrollflaten viser teksten, ikke papiret
+
+`source_excerpt` vises som lesbar tekst med normal linjebryting, ett avsnitt per
+uavhengig tekstblokk (`src/lib/readable-excerpt.ts`). Linjeskiftene inne i et
+avsnitt er der spaltens linje tok slutt på papiret, og å bevare dem ville tvunget
+en kontrollør på mobil til å rulle vannrett gjennom en setning. Den vannrette
+rullingen fra §74.44 var kompensasjon for en representasjon med feil
+leserekkefølge, og er borte.
+
+Orddelingen står: «selec- tive» settes ikke sammen til «selective». En regel for
+det ville måttet skille orddeling fra ekte bindestrek, og «fluoxetine- treated»
+viser at den ikke kan gjøres trygg. Prisen er et par synlige bindestreker;
+alternativet er et ord som ikke står i dokumentet.
+
+#### Produksjonsdataene er ryddet, og to funn ble ikke fjernet
+
+Køen i `/extraction-review` hadde seks evidensfunn. Den maskinelle kontrollen før
+noe ble slettet, ga to forskjellige svar:
+
+| Funn | Representasjon | Menneskelig kontroll | Påstandslenke | Reviewbeslutning | Claim-sitat | Publisert | Utfall |
+|---|---|---|---|---|---|---|---|
+| `090bd2a9` | full_text | 0 | 0 | 0 | 0 | 0 | fjernet |
+| `445bda32` | full_text | 0 | 0 | 0 | 0 | 0 | fjernet |
+| `9ba56fb4` | full_text | 0 | 0 | 0 | 0 | 0 | fjernet |
+| `9570760c` | full_text | 0 | 0 | 0 | 0 | 0 | fjernet |
+| `5b98b916` | abstract | 0 | **1** | 0 | **1** | 0 | **ikke fjernet** |
+| `fcbbb1f8` | abstract | 0 | **1** | 0 | **1** | 0 | **ikke fjernet** |
+
+Ingenting er publisert i prosjektet, og ingen av de seks var menneskelig
+kildekontrollert. **De fire fulltekstfunnene var artefaktene fra den forrige
+oppskriften, og de er fjernet** — med 41 forankringer og 8 maskinelle kontroller,
+i én transaksjon, med en auditrad per funn.
+
+**De to sammendragsutledede funnene er ikke fjernet.** De bærer hver sin
+påstandsrevisjon og er sitert i en registrert claim-verifikasjon. Å fjerne dem
+ville gjort revisjonene til påstander uten det grunnlaget de ble laget av, og
+skrevet om nedtegnelsen av en utført kontroll — publisert eller ikke
+(ANTIDEP_CONSTITUTION.md §4, §8, §14). De er dessuten ikke berørt av feilen:
+de er utledet av et sammendrag hentet som tekst, ikke av en tospaltet PDF.
+**Hva som skal skje med dem, er en redaksjonell beslutning, ikke en teknisk
+opprydding.**
+
+#### Veien ut er smal, guardet og ikke en redaksjonell funksjon
+
+Antidep sletter ikke klinisk historikk, og append-only-triggerne er fasiten.
+Alternativet til en guardet vei er likevel ikke «ingen sletting»: den som eier
+databasen, kan skru av en trigger og slette hva som helst uten et spor.
+`knowledge.discard_unpublished_extraction_artifacts(uuid[], text)` (migrasjon
+005af) **innskrenker** derfor den operasjonen framfor å utvide noen rettighet:
+
+- EXECUTE er revokert fra PUBLIC og gitt til **ingen** klientrolle — verken
+  anon, authenticated eller service_role.
+- Den krever i tillegg en autorisert redaktøridentitet
+  (`knowledge.assert_editor_authorized()`) og en begrunnelse.
+- Den tar en **eksplisitt liste** med id-er. Ikke et predikat, og ingen feiing.
+- Den **feiler lukket**, uten å slette noe, på hver rad som er menneskelig
+  kildekontrollert, bærer en påstandslenke, har en registrert reviewbeslutning
+  eller er sitert i en claim-verifikasjon. Det er prøvd mot de ekte radene: et
+  kall med hele køen ble avvist på `5b98b916`.
+- Den skriver en auditrad per fjernet funn med hele kontrollgrunnlaget som
+  `old_revision_or_snapshot`. **Det er raden som er borte, ikke sporet av den** —
+  hva de fire funnene inneholdt, kan fortsatt leses ut av `audit.events`.
+- Kilder, originaldokumenter, kildeversjoner, agentkjøringer og auditrader røres
+  ikke.
+
+Append-only-triggerne skrus av og på inne i transaksjonen, også når noe går galt,
+slik at vernet aldri står av utenfor dette kallet.
+
+#### Fava 2000 og Versiani 2005 er kjørt på nytt
+
+Begge originaldokumentene var tilgjengelige i økten, og hele kjeden er kjørt fra
+dokument til registrert kontroll — med de gamle kildeversjonene stående som
+historiske rader:
+
+| Ledd | Fava 2000 | Versiani 2005 |
+|---|---|---|
+| Ny kildeversjon | `1d84891a` | `f0811561` |
+| `content_hash` | `sha256:f6b3ca4d…` | `sha256:d6b692f3…` |
+| Gammel kildeversjon | `1287e69b`, står | `d3c27d3d`, står |
+| Nytt evidensfunn | `59f7c235` | `a861f89f` |
+| Forankrede felter | 10, alle gjenfunnet ordrett | 9, alle gjenfunnet ordrett |
+| Maskinell kontroll | `d768c785`, utfall `uncertain` | `7f20a01a`, utfall `uncertain` |
+| Dekkede av påkrevde felter | 4 av 13 | 3 av 12 |
+
+`uncertain` er ikke et avvik, og kontrollen sier selv hvorfor: de norske
+katalogetikettene («vektendring», «voksne med depressiv lidelse») finnes ikke
+ordrett i en engelsk artikkel, og et tall uten det begrepet ved siden av kan ikke
+tilskrives raden. For Versiani svarte den kildeomfattende gjennomlesningen
+`uncertain` på begge fraværene, og begrunnelsene står i kontrollraden: teksten
+oppgir flere antall, men ingen av dem er oppgitt som nevneren gjennomsnittet er
+regnet over, og presisjonen er oppgitt som standardavvik framfor som
+konfidensintervall. **Et `uncertain` stanser ingenting galt; et uriktig `absent`
+ville latt Antidep påstå at kilden ikke oppgir noe den faktisk oppgir.**
+
+Køen viser nå fire funn: de to nye fulltekstfunnene, og de to
+sammendragsutledede som ikke kunne fjernes.
+
+#### Hva som ble kjørt
+
+| Kontroll | Utfall |
+|---|---|
+| `npm run lint` | grønn |
+| `npm run format:check` | grønn |
+| `./scripts/verify-counts.sh` | grønn |
+| `npm run typecheck` | grønn |
+| `npm run test` | grønn |
+| `npm run build` | grønn |
+| pgTAP, 67 filer | kjørt mot det hostede prosjektet i en transaksjon som rulles tilbake, uten avvik mot utgangspunktet |
+| Migrasjonene | deployet med `./scripts/deploy-migrations.sh`, 76 av 76 registrert |
+| Kjeden mot produksjon | modell-ledd, registrering og maskinell kontroll kjørt med hver sin identitet |
+
+`npm run db:reset`, `npm run db:test`, `npm run db:test:lock` og
+`npm run db:test:chain` krever en lokal Supabase-stack, og den krever Docker,
+som ikke finnes i agentmiljøet. De kjøres i CI-jobben «Migrasjoner og
+databasetester på lokal Supabase-stack», som er den som avgjør. pgTAP-filene er
+i tillegg kjørt herfra mot det hostede prosjektet, én fil per transaksjon med
+`rollback` til slutt, med og uten de nye migrasjonene, og differansen er null.
+
+#### Hva som gjenstår
+
+**Peder gjør den menneskelige kildekontrollen** av de to nye fulltekstfunnene i
+`/extraction-review`. Utdragene står nå i korrekt logisk leserekkefølge, og
+flaten viser dem som lesbar tekst.
+
+To ting er redaksjonelle beslutninger og ikke teknisk gjeld:
+
+1. Hva som skal skje med `5b98b916` og `fcbbb1f8`, de to sammendragsutledede
+   funnene de eksisterende påstandsrevisjonene hviler på.
+2. Om `fluoksetin` og `paroksetin` skal registreres i katalogen. Begge artiklene
+   sammenligner mot dem, men bare `sertralin` og `mirtazapin` finnes, og et funn
+   kan derfor ikke føre dem som komparator.
+
 ---
 
 ## 75. Neste steg
