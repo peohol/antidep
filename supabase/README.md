@@ -74,6 +74,15 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     kontrollerer. En fremovermigrasjon framfor en redigering av 003g og 005af, fordi de to
     allerede er kjørt og registrert — Supabase kjører aldri en registrert versjon på nytt, så
     en redigering ville gitt en fersk database én kontrakt og det driftede prosjektet en annen
+  - 008j `claim_artifact_discarded` lagt til `audit.event_operation`, alene i sin egen
+    migrasjon av samme grunn som 008i
+  - 005ah `knowledge.discard_unpublished_claim_artifacts(...)`: den tilsvarende veien på
+    påstandssiden, bygget etter samme mal som 005af og med sine egne vilkår — ingen publisert
+    revisjon, ingen publiseringshendelse, ingen menneskelig kontroll av påstanden selv og
+    ingen menneskelig kontroll eller reviewbeslutning på evidensfunnene den er lenket til.
+    Den finnes fordi fremmednøklene peker fra påstandssiden mot funnene: et upublisert
+    testfunn som bærer en påstandsrevisjon, kan ikke fjernes før revisjonen er borte, og en
+    påstand uten grunnlaget den ble laget av, er verre enn ingen påstand
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at

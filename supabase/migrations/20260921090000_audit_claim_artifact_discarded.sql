@@ -1,0 +1,33 @@
+-- ============================================================================
+-- Migrasjon 008j — audit.event_operation får verdien claim_artifact_discarded
+--
+-- Utvider auditvokabularet med den andre fjerningen pipelineutviklingen trenger:
+-- at en **påstand** med hele opphenget sitt fjernes. 008i dekket evidensfunnet;
+-- denne dekker påstandssiden — påstandsrevisjonen, påstandslenken,
+-- evidensvurderingen, claim-verifikasjonen og sitatet den bygde på.
+--
+-- Den finnes av samme grunn som 008i: pipelinen bygges fortsatt, og de to
+-- påstandene som står i basen nå, er laget av evidensfunn issue #84 har vist at
+-- ikke kan kontrolleres. Blir funnene fjernet og påstandene stående, er
+-- resultatet en klinisk påstand uten det grunnlaget den ble laget av — som er en
+-- verre tilstand enn begge deler, ikke en forsiktigere
+-- (ANTIDEP_CONSTITUTION.md §4, §8).
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor denne ene setningen er sin egen migrasjon
+--
+-- Samme grunn som i 008a, 008b og 008i: `ALTER TYPE ... ADD VALUE` kan ikke
+-- brukes i samme transaksjon som verdien den legger til, og migrasjonsløperen
+-- sender hver fil som én transaksjon.
+-- `20260921091000_discard_unpublished_claim_artifacts.sql` bygger om
+-- CASE-uttrykkene i audit.events sine genererte kolonner og
+-- events_snapshot_shape_check for å dekke verdien, og kan derfor ikke også
+-- innføre den.
+--
+-- Migrasjonen gjør ingenting annet. Fram til neste migrasjon har kjørt, kan
+-- audit.events ikke motta en rad med denne operasjonen: object_schema og
+-- object_table ville gitt NULL og feilet på sin egen NOT NULL, og
+-- events_snapshot_shape_check ville truffet ELSE false.
+-- ============================================================================
+
+alter type audit.event_operation add value 'claim_artifact_discarded';
