@@ -44,6 +44,14 @@
 // bare en feilmelding: at ingen forelder har en `.git`. Det er uavhengig av
 // locale, av konfigurasjon og av om git finnes.
 //
+// Søket går langs den **fysiske** plasseringen, ikke langs den leksikalske banen.
+// Også det er et reviewfunn, og samme feilklasse: er en forelder en symlenke inn
+// i et repo — `/tmp/kjoring` → `/repo/fravaer` — havner filen fysisk under
+// `/repo` og kan commites derfra, mens et oppadgående søk langs `/tmp/...` aldri
+// ser `/repo/.git`. Svarer git, fanger `git -C` det selv, fordi git løser
+// katalogen fysisk; det er når git IKKE svarer at dette søket er alt som står
+// igjen. Lar den fysiske plasseringen seg ikke fastslå, er utfallet `unknown`.
+//
 //   inside    git svarte med en rot. Banen må være ignorert.
 //   outside   git svarte ikke, OG ingen forelder har en `.git`. Tillatt.
 //   unknown   git svarte ikke, men en forelder HAR en `.git` — eller oppslaget
@@ -54,7 +62,7 @@
 // ============================================================================
 
 import { execFileSync } from 'node:child_process'
-import { statSync } from 'node:fs'
+import { realpathSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 /** Om banen er en katalog som finnes. En bane som ikke finnes, er `false`. */
@@ -64,6 +72,27 @@ function isExistingDirectory(path: string): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Den nærmeste forelderen som er en katalog som finnes, eller `null`.
+ *
+ * Banen vi spør om er som regel en fil som ikke er opprettet ennå, og både
+ * `git -C` og `realpath` krever en katalog som finnes. Kravet om at det er en
+ * **katalog**, og ikke bare at den finnes, er et reviewfunn: for en fil som alt
+ * lå der — omkjøringstilfellet — ble `git -C <fil>` kalt, som gir «Not a
+ * directory», og det ble lest som «utenfor et arbeidstre».
+ */
+function nearestExistingDirectory(path: string): string | null {
+  let probe = resolve(path)
+  while (!isExistingDirectory(probe)) {
+    const parent = dirname(probe)
+    if (parent === probe) {
+      return null
+    }
+    probe = parent
+  }
+  return probe
 }
 
 /**
@@ -109,13 +138,9 @@ export type WorkTreeVerdict =
  * en `prompt.txt` som alt lå der — altså omkjøringstilfellet — slapp gjennom.
  */
 export function gitWorkTreeRoot(path: string): string | null {
-  let probe = resolve(path)
-  while (!isExistingDirectory(probe)) {
-    const parent = dirname(probe)
-    if (parent === probe) {
-      return null
-    }
-    probe = parent
+  const probe = nearestExistingDirectory(path)
+  if (probe === null) {
+    return null
   }
   try {
     const root = execFileSync('git', ['-C', probe, 'rev-parse', '--show-toplevel'], {
@@ -163,13 +188,47 @@ function nearestDotGit(path: string): { found: string | null } | { unknown: stri
 /**
  * Hvor banen ligger, med «utenfor» som en fastslått konklusjon og ikke en
  * antakelse. Se hodekommentaren for hvorfor de tre utfallene er forskjellige.
+ *
+ * `gitRoot` byttes ut i test, slik at «git svarte ikke» kan prøves sammen med en
+ * ekte katalogstruktur på disk.
  */
-export function workTreeVerdict(path: string): WorkTreeVerdict {
-  const root = gitWorkTreeRoot(path)
+export function workTreeVerdict(
+  path: string,
+  gitRoot: (path: string) => string | null = gitWorkTreeRoot,
+): WorkTreeVerdict {
+  const root = gitRoot(path)
   if (root !== null) {
     return { kind: 'inside', root }
   }
-  const dotGit = nearestDotGit(path)
+
+  // Søket må gå langs den FYSISKE plasseringen, ikke den leksikalske banen.
+  // Reviewfunn, og nok en fail-open: er en forelder en symlenke inn i et repo —
+  // `/tmp/kjoring` → `/repo/fravaer` — havner filen fysisk under `/repo` og kan
+  // commites derfra, mens et oppadgående søk langs `/tmp/...` aldri ser
+  // `/repo/.git`. Når git svarer, fanger `git -C` det selv, fordi git løser
+  // katalogen fysisk. Det er nettopp når git IKKE svarer at dette søket er det
+  // eneste som står igjen.
+  const probe = nearestExistingDirectory(path)
+  if (probe === null) {
+    return {
+      kind: 'unknown',
+      reason: 'ingen katalog over banen finnes, så den fysiske plasseringen lot seg ikke fastslå',
+    }
+  }
+  let physical: string
+  try {
+    physical = realpathSync(probe)
+  } catch (cause) {
+    const code = (cause as { code?: string }).code
+    return {
+      kind: 'unknown',
+      reason:
+        `den fysiske plasseringen av ${probe} lot seg ikke fastslå (${code ?? 'ukjent feil'}), ` +
+        'og en symlenke inn i et arbeidstre ville da sett ut som en bane utenfor',
+    }
+  }
+
+  const dotGit = nearestDotGit(physical)
   if ('unknown' in dotGit) {
     return { kind: 'unknown', reason: dotGit.unknown }
   }
@@ -177,9 +236,9 @@ export function workTreeVerdict(path: string): WorkTreeVerdict {
     return {
       kind: 'unknown',
       reason:
-        `git kunne ikke oppgi arbeidstreet for banen, men ${join(dotGit.found, '.git')} finnes. ` +
-        'Banen kan dermed ligge i et arbeidstre som en annen maskin, eller et annet oppsett, ' +
-        'kan commite fra',
+        `git kunne ikke oppgi arbeidstreet for banen, men ${join(dotGit.found, '.git')} finnes ` +
+        `over den fysiske plasseringen ${physical}. Banen kan dermed ligge i et arbeidstre som en ` +
+        'annen maskin, eller et annet oppsett, kan commite fra',
     }
   }
   return { kind: 'outside' }

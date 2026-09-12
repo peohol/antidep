@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -108,6 +108,8 @@ describe('gitWorkTreeRoot', () => {
 // «utenfor», og da kunne fullteksten skrives i et arbeidstre fordi git på DENNE
 // maskinen ikke kunne svare — og commites fra en maskin der den kan.
 // ----------------------------------------------------------------------------
+const hvaFravaer = 'spørsmålet inneholder hele representasjonen av kilden'
+
 describe('workTreeVerdict', () => {
   it('sier «inside» med roten for en bane i repoet', () => {
     expect(workTreeVerdict('src/agents/git-paths.ts')).toEqual({
@@ -137,10 +139,34 @@ describe('workTreeVerdict', () => {
       CommittablePathRefused,
     )
   })
+
+  // Reviewfunn nummer to på samme avgjørelse, og samme feilklasse: et søk langs
+  // den LEKSIKALSKE banen ser ikke at en forelder er en symlenke inn i et repo.
+  // `/tmp/kjoring` → `/repo/fravaer` gir en fil som fysisk havner under `/repo`
+  // og kan commites derfra, mens søket oppover fra `/tmp/...` aldri ser
+  // `/repo/.git`. Svarer git, fanger `git -C` det selv; prøven her er nettopp
+  // tilfellet der git IKKE svarer, som er det rettelsen skal være lukket for.
+  it('sier «unknown» for en symlenke inn i et repo når git ikke svarer', () => {
+    const iRepo = join(resolve('.'), `fravaer-symprove-${randomBytes(4).toString('hex')}`)
+    iRepoet.push(iRepo)
+    mkdirSync(iRepo)
+    const lenke = join(midlertidigKatalog(), 'kjoring')
+    symlinkSync(iRepo, lenke)
+    const fil = join(lenke, '9ba56fb4-fbb9-414b-899b-7296683f274d', 'prompt.txt')
+
+    // Den ekte git-veien fanger det, fordi git løser katalogen fysisk.
+    expect(gitWorkTreeRoot(fil)).toBe(resolve('.'))
+    // …og når git ikke svarer, skal utfallet være «unknown» og ikke «outside».
+    const stille = () => null
+    expect(workTreeVerdict(fil, stille).kind).toBe('unknown')
+    expect(() =>
+      assertNotCommittable(fil, hvaFravaer, { workTree: (p) => workTreeVerdict(p, stille) }),
+    ).toThrow(CommittablePathRefused)
+  })
 })
 
 describe('assertNotCommittable', () => {
-  const hva = 'spørsmålet inneholder hele representasjonen av kilden'
+  const hva = hvaFravaer
 
   it('avviser den dokumenterte kjøremappa i repoets rot', () => {
     // Regresjonen. `fravaer/<uuid>/prompt.txt` er ikke ignorert av noen regel i

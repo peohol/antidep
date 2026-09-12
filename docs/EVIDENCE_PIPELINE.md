@@ -692,6 +692,11 @@ filsystemfaktum: ingen forelder har en `.git`. Svarer ikke git, og finnes det en
 kunne fullteksten blitt skrevet i et arbeidstre fordi git på *denne* maskinen
 ikke kunne svare, og commitet fra en maskin der den kan.
 
+Søket går langs den **fysiske** plasseringen. Er en forelder en symlenke inn i et
+repo, havner filen fysisk i arbeidstreet og kan commites derfra, mens et søk
+langs den leksikalske banen aldri ser repoets `.git`. Lar den fysiske
+plasseringen seg ikke fastslå, er utfallet også da «ikke fastslått».
+
 Svaret er ett av tre per felt, og den midterste er ikke en høflighetsform:
 
 | Svar | Betydning | Virkning |

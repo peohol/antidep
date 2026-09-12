@@ -7617,6 +7617,13 @@ To reviewfunn på nettopp denne kontrollen, begge reelle og begge rettet:
    Utfallet er nå tredelt, og «utenfor» krever et filsystemfaktum: ingen forelder
    har en `.git`. Svarer ikke git, og finnes det en `.git` over banen, skrives
    ingenting.
+3. **Søket fulgte den leksikalske banen, ikke den fysiske.** Samme feilklasse en
+   gang til: er en forelder en symlenke inn i et repo — `/tmp/kjoring` →
+   `/repo/fravaer` — havner filen fysisk under `/repo` og kan commites derfra,
+   mens søket oppover fra `/tmp/...` aldri ser `/repo/.git`. Svarer git, fanger
+   `git -C` det selv, fordi git løser katalogen fysisk; det er når git ikke svarer
+   at søket er alt som står igjen. Søket går nå langs den fysiske plasseringen, og
+   lar den seg ikke fastslå, skrives ingenting.
 
 **Gjennomlesningen kunne forsvinne ut av proveniensen.** To ting, begge funnet på
 den ekte kjøringen av `9570760c`:
