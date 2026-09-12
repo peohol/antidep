@@ -1344,27 +1344,67 @@ header nav a {
   letter-spacing: 0.04em;
 }
 
-/* Utdraget er tekst hentet ut av en PDF med `pdftotext -layout`. Linjeskiftene
-   og kolonneavstanden er en del av den ordrette teksten: i en tospaltet artikkel
-   er det nettopp de som skiller spalten verdien står i, fra spalten ved siden av.
+/* Utdraget er den ordrette teksten kontrolløren skal lese — ikke en kopi av
+   PDF-sidens geometri.
 
-   Uten dette slår nettleseren alt blanktegn sammen til én linje, og et utdrag
-   som dekker en hel setning i én spalte, blir vevd sammen med nabospalten til
-   noe ingen kan lese. Da er forankringen verdiløs der den trengs mest — en
-   kontrollør skal kunne avgjøre delpunktet av utdraget alene, uten å åpne
-   artikkelen (PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
+   Den kanoniske representasjonen har fra nå korrekt logisk leserekkefølge, og
+   uavhengige tekstblokker er skilt med en blank linje (issue #84,
+   `src/agents/reading-order.ts`). Da er linjeskiftene inne i et avsnitt bare
+   der spaltens linje tok slutt på papiret, og å bevare dem ville tvunget en
+   kontrollør på mobil til å rulle vannrett gjennom en setning. Avsnittene
+   settes derfor av markupen (`readable-excerpt.ts`), og teksten brytes normalt
+   innenfor kortets bredde.
 
-   `pre` framfor `pre-wrap`, og vannrett rulling framfor linjebryting: en brutt
-   linje flytter nabospalten inn i setningen igjen og gjeninnfører nøyaktig det
-   problemet. Fast bredde på skriften, fordi spaltene er rettet inn med
-   mellomrom og bare står rett når hvert tegn er like bredt. */
+   Tidligere sto dette som `white-space: pre` med vannrett rulling, fordi
+   kolonneavstanden var det eneste som skilte de to spaltene i en `-layout`-tekst.
+   Det var å gjenskape papiret for å kompensere for en representasjon med feil
+   leserekkefølge; nå er rekkefølgen riktig, og geometrien er ikke lenger en
+   opplysning (PRODUCT_INFORMATION_ARCHITECTURE.md §63.1).
+
+   `overflow-wrap: anywhere` gjelder det ene som fortsatt kan være for bredt for
+   en telefon: en doi-adresse eller et langt sammensatt uttrykk uten mellomrom. */
 .field-check__excerpt {
   margin: 0 0 0.5rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
-  font-size: 0.875rem;
-  line-height: 1.5;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* Ett avsnitt per uavhengig tekstblokk i utdraget. Går utdraget over en
+   blokkgrense — en sidefot og en brødtekst, to celler i en tabell — er det en
+   opplysning kontrolløren skal se, og ikke noe som skal slås sammen til én
+   setning. */
+.field-check__excerpt-paragraph {
+  margin: 0 0 0.5rem;
+}
+
+.field-check__excerpt-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+/* Den ene teksten som ikke skal flyte: en representasjon som er verktøyets
+   utdata ordrett, bærer fortsatt papirets plassering, og da ligger to spalter
+   på den samme tekstlinjen. Mellomrommet mellom dem er det eneste synlige
+   varselet om at ordene ikke hører sammen, og skal bli stående — også når
+   prisen er vannrett rulling. Rullingen er avgrenset til utdraget selv, slik at
+   siden ikke ruller vannrett. */
+.field-check__excerpt--as-placed {
   white-space: pre;
   overflow-x: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8125rem;
+  overflow-wrap: normal;
+}
+
+/* Varselet står over utdraget, ikke under, fordi det avgjør hvordan teksten
+   skal leses. Bærer sin egen tekst og ikke bare en farge. */
+.field-check__excerpt-warning {
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-inline-start: 3px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
 
 .field-check__locator {

@@ -229,6 +229,7 @@ insert into contract (view_name, column_name, sql_type, nullable) values
   ('editor_source_versions', 'text_extraction_tool', 'text', true),
   ('editor_source_versions', 'text_extraction_tool_version', 'text', true),
   ('editor_source_versions', 'text_extraction_arguments', 'text', true),
+  ('editor_source_versions', 'text_extraction_transform', 'text', true),
 
   ('editor_drugs', 'drug_id', 'uuid', false),
   ('editor_drugs', 'canonical_name', 'text', false),
@@ -470,20 +471,23 @@ values ((select id from fixture where name = 'rich_source'), 'doi', '10.1000/ant
        ((select id from fixture where name = 'rich_source'), 'pmid', '39000340');
 
 -- Den rike versjonen er dokumentutledet: den bærer representasjonstypen, hele
--- dokumentbindingen og oppskriften teksten ble hentet ut med (migrasjon 003e).
--- Uten en slik rad ville de sju kolonnene aldri båret en verdi i noen probe-rad,
--- og kontrollen «hver kolonne bærer en verdi et sted» ville stått uten dekning.
+-- dokumentbindingen og hele oppskriften teksten ble hentet ut med — verktøy,
+-- versjon, argumenter og etterbehandling (migrasjon 003e, 003g). Uten en slik
+-- rad ville de åtte kolonnene aldri båret en verdi i noen probe-rad, og
+-- kontrollen «hver kolonne bærer en verdi et sted» ville stått uten dekning.
 with inserted as (
   insert into knowledge.source_versions
     (source_id, retrieved_at, retrieved_from, external_version, content_hash,
      representation, retrieved_by_actor_id,
      document_sha256, document_byte_size, document_media_type,
-     text_extraction_tool, text_extraction_tool_version, text_extraction_arguments)
+     text_extraction_tool, text_extraction_tool_version, text_extraction_arguments,
+     text_extraction_transform)
   values ((select id from fixture where name = 'rich_source'), now() - interval '10 days',
           'https://eksempel.invalid/340', 'v2', 'sha256:' || repeat('a', 64),
           'full_text', (select id from fixture where name = 'extraction'),
           'sha256:' || repeat('b', 64), 481253, 'application/pdf',
-          'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix')
+          'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
+          'antidep-reading-order@2')
   returning id
 )
 insert into fixture (name, id) select 'rich_version', id from inserted;

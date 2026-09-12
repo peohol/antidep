@@ -38,9 +38,10 @@ select enum_has_labels(
     'agent_identity_credential_issued', 'agent_identity_revoked',
     'evidence_verification_registered', 'source_version_registered',
     'claim_verification_registered', 'review_decision_registered',
-    'evidence_field_grounding_recorded'
+    'evidence_field_grounding_recorded',
+    'extraction_artifact_discarded', 'claim_artifact_discarded'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen og kildeforankringen per kontrollfelt'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt og de to fjerningene av testartefakter'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -140,7 +141,7 @@ select is_empty(
         -- databasen beregner det selv, og dokumentet lagres ikke. Hvilke roller
         -- som faktisk har EXECUTE, kontrolleres i
         -- 640_source_document_registration_test.sql.
-        'api.create_source_version_from_document(uuid,timestamp with time zone,text,text,text,text,text,text,text,text,text)',
+        'api.create_source_version_from_document(uuid,timestamp with time zone,text,text,text,text,text,text,text,text,text,text)',
         -- Migrasjon 007i. Ekstraksjonsoppdraget bygget av databasens egne
         -- rader. Ren lesevei, bare authenticated, og den autoriserer kalleren
         -- på sitt eget kall (knowledge.assert_editor_authorized). Hvilke roller

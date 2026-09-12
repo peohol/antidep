@@ -1,0 +1,26 @@
+-- ============================================================================
+-- Migrasjon 008i — audit.event_operation får verdien extraction_artifact_discarded
+--
+-- Utvider auditvokabularet fra migrasjon 008 (§25) med den ene operasjonen
+-- Antidep ikke har hatt før: at et evidensfunn **fjernes**. Den finnes fordi
+-- pipelinen fortsatt bygges, og fordi et funn laget av en representasjon med
+-- feil leserekkefølge ikke skal bli stående i kontrollkøen som om det kunne
+-- kontrolleres (migrasjon 003g, issue #84).
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor denne ene setningen er sin egen migrasjon
+--
+-- Samme grunn som i 008a og 008b: `ALTER TYPE ... ADD VALUE` kan ikke brukes i
+-- samme transaksjon som verdien den legger til, og migrasjonsløperen sender hver
+-- fil som én transaksjon. `20260919091000_discard_unpublished_extraction_artifacts.sql`
+-- bygger om CASE-uttrykkene i audit.events sine genererte kolonner og
+-- events_snapshot_shape_check for å dekke verdien, og kan derfor ikke også
+-- innføre den.
+--
+-- Migrasjonen gjør ingenting annet. Fram til neste migrasjon har kjørt, kan
+-- audit.events ikke motta en rad med denne operasjonen: object_schema og
+-- object_table ville gitt NULL og feilet på sin egen NOT NULL, og
+-- events_snapshot_shape_check ville truffet ELSE false.
+-- ============================================================================
+
+alter type audit.event_operation add value 'extraction_artifact_discarded';

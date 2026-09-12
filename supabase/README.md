@@ -52,6 +52,43 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     `text_extraction_arguments` nøyaktig `-layout -enc UTF-8 -eol unix`. Oppskriften er den
     ene lagrede verdien som senere blir kjørt, og et fritt felt ville latt en
     skriverettighet bli kodekjøring hos den som etterprøver
+  - 003g leserekkefølgen: `text_extraction_transform` sier hvilken etterbehandling teksten
+    ble laget med, og oppskriften nye kildeversjoner registreres med, er `pdftotext`
+    `-bbox-layout -enc UTF-8 -eol unix` med `antidep-reading-order@2`. `-layout` gjenskapte
+    den fysiske plasseringen og la tekst fra to spalter på samme tekstlinje; listen har
+    tre rader, slik at radene som bærer en eldre oppskrift, ikke må skrives om for å se ut
+    som noe annet enn det de er. `antidep-reading-order@1` er den ene raden som kan lagres
+    uten å kunne kjøres: den delte ikke en tabellrad Poppler hadde lagt i én blokk, og er
+    derfor ute av den kjørbare listen i `src/agents/document-binding.ts`
+  - 008i `extraction_artifact_discarded` lagt til `audit.event_operation`, alene i sin egen
+    migrasjon av samme grunn som 008a og 008b
+  - 005af `knowledge.discard_unpublished_extraction_artifacts(...)`: den ene, sterkt
+    guardede veien til å fjerne et upublisert testartefakt med sine forankringer og
+    maskinelle kontroller. Ingen klientrolle kan kalle den, den krever en autorisert
+    redaktøridentitet og en begrunnelse, den feiler lukket på hver rad som er menneskelig
+    kontrollert eller bærer en påstand, og den skriver en auditrad med hele
+    kontrollgrunnlaget. Dette er ikke en redaksjonell funksjon
+  - 003h leserekkefølgens andre utgave, `antidep-reading-order@2`, som deler en tabellrad
+    Poppler har lagt i én blokk: listen over hva som kan lagres får en tredje rad, skriveveien
+    registrerer bare `@2`, og fjerningsveien fra 005af låser de tre tabellene før den
+    kontrollerer. En fremovermigrasjon framfor en redigering av 003g og 005af, fordi de to
+    allerede er kjørt og registrert — Supabase kjører aldri en registrert versjon på nytt, så
+    en redigering ville gitt en fersk database én kontrakt og det driftede prosjektet en annen
+  - 008j `claim_artifact_discarded` lagt til `audit.event_operation`, alene i sin egen
+    migrasjon av samme grunn som 008i
+  - 005ah `knowledge.discard_unpublished_claim_artifacts(...)`: den tilsvarende veien på
+    påstandssiden, bygget etter samme mal som 005af og med sine egne vilkår — ingen publisert
+    revisjon, ingen publiseringshendelse, ingen menneskelig kontroll av påstanden selv og
+    ingen menneskelig kontroll eller reviewbeslutning på evidensfunnene den er lenket til.
+    Den finnes fordi fremmednøklene peker fra påstandssiden mot funnene: et upublisert
+    testfunn som bærer en påstandsrevisjon, kan ikke fjernes før revisjonen er borte, og en
+    påstand uten grunnlaget den ble laget av, er verre enn ingen påstand
+  - 005ai fjerningsveien for påstandsartefakter låser også de to tabellene
+    kontrollene LESER: `workflow.evidence_verifications` og
+    `workflow.review_decisions`. Begge peker på `knowledge.evidence_items`, som
+    veien ikke rører, så en innsetting der trengte ikke røre noen låst tabell og
+    kunne commite i vinduet mellom «vakten leste ingen» og slettingen. Funnet i
+    teknisk review; prøvd av `scripts/db-lock-test.sh`, prøve 6 og 7
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at

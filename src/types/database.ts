@@ -215,6 +215,8 @@ export type Database = {
           p_text_extraction_tool: string
           p_text_extraction_tool_version: string
           p_text_extraction_arguments: string
+          /** Antideps egen etterbehandling av verktøyets utdata (migrasjon 003g). */
+          p_text_extraction_transform: string
           p_external_version?: string | null
           p_storage_reference?: string | null
         }

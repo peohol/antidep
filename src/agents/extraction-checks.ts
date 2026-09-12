@@ -100,6 +100,7 @@ import {
   type AbsenceFieldReview,
   type AbsenceReviewOutcome,
 } from './absence-review.ts'
+import type { TextExtractionRecipe } from './document-binding.ts'
 import type { VerificationExtraction, VerificationItem } from './verification-input.ts'
 
 /** Verdiene `workflow.evidence_check_field` tillater (migrasjon 005). */
@@ -185,6 +186,17 @@ export interface ExtractionCheckContext {
    * noe globalt fravær — da spør ingen om den.
    */
   readonly absenceReview?: AbsenceReviewOutcome | null
+  /**
+   * Oppskriften som gjenskapte teksten, når det **ikke** var den raden bærer.
+   *
+   * Utelatt i det normale tilfellet. Er den satt, er den registrerte oppskriften
+   * avløst og ikke lenger kjørbar, og dagens kom fram til nøyaktig det
+   * registrerte fingeravtrykket (`source-binding.ts`). Kontrollen fører det i
+   * begrunnelsen sin, fordi «gjenskapt med X under en rad registrert med Y» er
+   * en annen påstand enn «kjørt med den registrerte oppskriften», og et
+   * menneske som bedømmer raden, skal se hvilken av de to det var.
+   */
+  readonly reproducedWith?: TextExtractionRecipe | null
 }
 
 // ----------------------------------------------------------------------------
@@ -239,19 +251,59 @@ function decodeEntities(text: string): string {
 }
 
 /**
+ * Skillet et ordrett søk ikke kan krysse.
+ *
+ * U+001F er et styretegn som ikke finnes i tekst hentet ut av en artikkel, og
+ * det er hele grunnen til at det er valgt: hadde grensen vært et vanlig tegn,
+ * kunne en kilde inneholdt det og fått en grense den ikke har.
+ */
+const BLOCK_BOUNDARY = '\u001f'
+
+/**
+ * Om et blanktegnsopphold skiller to **uavhengige** tekstblokker.
+ *
+ * En blank linje eller et sideskift. Ett linjeskift gjør det ikke: en setning
+ * som går over to linjer i en spalte, er fortsatt én setning, og et krav om noe
+ * annet ville gjort hvert eneste sitat fra en PDF ukontrollerbart.
+ */
+function isBlockBreak(whitespace: string): boolean {
+  return whitespace.includes('\f') || (whitespace.match(/\n/g)?.length ?? 0) >= 2
+}
+
+/**
  * Gjør tekst sammenlignbar uten å endre hva den sier: Unicode-normalisert,
  * små bokstaver, typografiske anførselstegn og bindestreker gjort like, og alt
  * blanktegn slått sammen. Ordene og tallene er de samme.
+ *
+ * Med ett unntak, og det er ikke kosmetisk. Et opphold som inneholder en blank
+ * linje eller et sideskift, blir **ikke** et mellomrom, men en grense. Uten det
+ * ville normaliseringen gjort to uavhengige layoutblokker — to spalter, en
+ * sidefot og en brødtekst, en tabellcelle og et avsnitt — til én sammenhengende
+ * tegnstrøm, og et «ordrett sitat» kunne bestått av ord som aldri sto etter
+ * hverandre i kilden (issue #84). Det er en evidensintegritetsfeil, ikke en
+ * formatteringsdetalj.
+ *
+ * Grensen gjelder begge sider av søket: et utdrag som selv er kopiert med den
+ * blanke linjen i behold, får den samme grensen og treffer fortsatt.
  */
 function normalize(text: string): string {
-  return text
+  let normalized = text
     .normalize('NFC')
     .replaceAll(/[‘’‛′]/g, "'")
     .replaceAll(/[“”‟″]/g, '"')
     .replaceAll(/[‐-―−]/g, '-')
-    .replaceAll(/\s+/g, ' ')
+    .replaceAll(/\s+/g, (run) => (isBlockBreak(run) ? BLOCK_BOUNDARY : ' '))
     .toLowerCase()
     .trim()
+  // En grense helt i ytterkanten skiller ingenting, og et utdrag som begynner
+  // eller slutter med et avsnittsskille skal treffe teksten det er hentet fra.
+  while (normalized.startsWith(BLOCK_BOUNDARY)) {
+    normalized = normalized.slice(BLOCK_BOUNDARY.length)
+  }
+  while (normalized.endsWith(BLOCK_BOUNDARY)) {
+    normalized = normalized.slice(0, -BLOCK_BOUNDARY.length)
+  }
+  return normalized
 }
 
 function stripTags(text: string): string {
@@ -2362,6 +2414,7 @@ function joinSentences(parts: readonly string[]): string {
  */
 export function checkExtraction(context: ExtractionCheckContext): ExtractionCheckReport {
   const { item, sourceText, representationReproduced } = context
+  const reproducedWith = context.reproducedWith ?? null
   const projections = searchProjections(sourceText)
   const checked: EvidenceCheckField[] = []
   const findings: string[] = []
@@ -2779,6 +2832,12 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
 
   const method =
     `Deterministisk ekstraksjonskontroll: ${representationOrigin(item)}. ` +
+    (reproducedWith === null
+      ? ''
+      : 'Den registrerte oppskriften er avløst og kjøres ikke lenger, så teksten ble gjenskapt ' +
+        `med «${reproducedWith.tool} ${reproducedWith.arguments}» og ` +
+        `${reproducedWith.transform ?? 'uten etterbehandling'}; raden står uendret med den ` +
+        'oppskriften den faktisk ble laget med. ') +
     (representationReproduced
       ? 'Teksten ga samme sha256-fingeravtrykk som den registrerte kildeversjonen'
       : 'Teksten ga et annet sha256-fingeravtrykk enn den registrerte kildeversjonen') +

@@ -343,12 +343,17 @@ export function buildExtractionProposalSchema(): Schema {
             type: 'object',
             additionalProperties: false,
             description:
-              'Oppskriften teksten ble hentet ut med. Kjør den på dokumentet med sha256 over, og sha256 av resultatet skal være content_hash.',
+              'Oppskriften teksten ble hentet ut med. Kjør den på dokumentet med sha256 over, gjør den samme etterbehandlingen, og sha256 av resultatet skal være content_hash.',
             required: ['tool', 'tool_version', 'arguments'],
             properties: {
               tool: text('Verktøyet, for eksempel pdftotext.'),
               tool_version: text('Versjonen verktøyet selv oppgir.'),
               arguments: text('Argumentene verktøyet ble kjørt med, ordrett.'),
+              transform: {
+                type: ['string', 'null'],
+                description:
+                  'Antideps egen etterbehandling av verktøyets utdata, med versjon — i dag antidep-reading-order@2, som bygger den logiske leserekkefølgen av posisjonsdataene fra -bbox-layout. null betyr at teksten er verktøyets utdata ordrett, som er tilstanden til hver kildeversjon registrert før migrasjon 003g.',
+              },
             },
           },
         },

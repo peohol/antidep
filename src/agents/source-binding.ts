@@ -40,8 +40,9 @@ import {
   looksLikePdf,
   type DocumentBinding,
   type RepresentationBinding,
+  type TextExtractionRecipe,
 } from './document-binding.ts'
-import { extractDocumentText, type RunTool } from './document-text.ts'
+import { reproduceDocumentText, type RunTool } from './document-text.ts'
 import type { DocumentLookup, LoadedDocument } from './source-document.ts'
 import {
   retrieveRepresentation,
@@ -65,6 +66,18 @@ export type ResolvedRepresentation =
       readonly origin: 'retrieved_text' | 'extracted_from_document'
       /** Dokumentet, når teksten kom fra ett. */
       readonly document?: LoadedDocument
+      /**
+       * Oppskriften som gjenskapte teksten, når det **ikke** var den raden selv
+       * bærer.
+       *
+       * Utelatt i det normale tilfellet. Er den satt, er den registrerte
+       * oppskriften avløst og ikke lenger kjørbar, og dagens oppskrift kom fram
+       * til nøyaktig det registrerte fingeravtrykket (`document-text.ts`).
+       * Kalleren skal føre den i proveniensen sin: «gjenskapt med X, stemmer med
+       * fingeravtrykket registrert under Y» er en annen påstand enn «kjørt med
+       * den registrerte oppskriften», og de to skal ikke se like ut i ettertid.
+       */
+      readonly reproducedWith?: TextExtractionRecipe
     }
   | { readonly status: 'error'; readonly message: string }
 
@@ -158,32 +171,26 @@ async function resolveFromDocument(
     }
   }
 
-  const extracted = await extractDocumentText({
+  // Den registrerte oppskriften først. Er den avløst og ikke lenger kjørbar,
+  // prøves dagens som stedfortreder — og bare et eksakt fingeravtrykk godtas
+  // (`document-text.ts`). Avvisningen sier hvilket av de to som sviktet.
+  const reproduced = await reproduceDocumentText({
     bytes: original.bytes,
-    recipe: document.textExtraction,
+    registered: document.textExtraction,
+    contentHash: binding.contentHash,
     ...(ports.runTool === undefined ? {} : { run: ports.runTool }),
   })
-  if (extracted.status === 'error') {
-    return extracted
-  }
-
-  if (extracted.extracted.contentHash !== binding.contentHash) {
-    return {
-      status: 'error',
-      message:
-        `Tekstuttrekkingen av ${original.path} gir ${extracted.extracted.contentHash}, mens ` +
-        `kildeversjonen er registrert med ${binding.contentHash}. Dokumentet er det ` +
-        `registrerte, så avviket er i oppskriften: raden er skrevet med ` +
-        `«${document.textExtraction.toolVersion} ${document.textExtraction.arguments}». ` +
-        'Kjør den samme versjonen av verktøyet, eller registrer en ny kildeversjon for den ' +
-        'teksten denne oppskriften faktisk gir.',
-    }
+  if (reproduced.status === 'error') {
+    return { status: 'error', message: `${original.path}: ${reproduced.message}` }
   }
 
   return {
     status: 'ok',
-    text: extracted.extracted.text,
+    text: reproduced.reproduced.text,
     origin: 'extracted_from_document',
     document: original,
+    ...(reproduced.reproduced.viaRegisteredRecipe
+      ? {}
+      : { reproducedWith: reproduced.reproduced.recipe }),
   }
 }

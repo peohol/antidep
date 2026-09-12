@@ -8,9 +8,10 @@ import type {
   ExtractionVerificationApi,
   RegisterVerificationArgs,
 } from './agent-api'
+import { serializeDocumentBinding } from './document-binding'
 import { runExtractionVerification, type RetrieveLike } from './extraction-verification-run'
 import { sourceVersionContentHash } from './content-hash'
-import { FIXTURE_SOURCE_TEXT, verificationItemFixture } from './test-support'
+import { bboxLayoutDocument, FIXTURE_SOURCE_TEXT, verificationItemFixture } from './test-support'
 import type { VerificationItem } from './verification-input'
 
 const PREMISSER: AgentRunPremises = {
@@ -102,19 +103,10 @@ function toPayload(item: VerificationItem): Record<string, unknown> {
             external_version: item.sourceVersion.externalVersion,
             content_hash: item.sourceVersion.contentHash,
             representation: item.sourceVersion.representation,
-            document:
-              item.sourceVersion.document === null
-                ? null
-                : {
-                    sha256: item.sourceVersion.document.sha256,
-                    byte_size: item.sourceVersion.document.byteSize,
-                    media_type: item.sourceVersion.document.mediaType,
-                    text_extraction: {
-                      tool: item.sourceVersion.document.textExtraction.tool,
-                      tool_version: item.sourceVersion.document.textExtraction.toolVersion,
-                      arguments: item.sourceVersion.document.textExtraction.arguments,
-                    },
-                  },
+            // Skrevet av den samme koden som leser den: en kopi av formen her
+            // ville vært et sted å glemme et felt, og en glemt del av
+            // oppskriften er en oppskrift som ikke kan kjøres.
+            document: serializeDocumentBinding(item.sourceVersion.document),
             has_storage_reference: item.sourceVersion.hasStorageReference,
           },
     // Kontrollgrunnlaget: forankringen og de to feltsettene kontrollen leser.
@@ -433,6 +425,18 @@ describe('runExtractionVerification — avgrensning', () => {
 // aldri nådd fram til dem den faktisk kan kontrollere.
 // ----------------------------------------------------------------------------
 
+/**
+ * Linjene posisjonsdataene av dokumentet ville hatt, og teksten oppskriften gir
+ * av dem.
+ *
+ * Dokumentveien gir ikke den samme teksten som adressen: verktøyet svarer med
+ * koordinater, og `antidep-reading-order@2` bygger en tekst med ett avsnitt per
+ * blokk og et sideskift etter siden (`reading-order.ts`). En dobbel som svarte
+ * med adressens tekst, ville prøvd noe ingen kjøring gjør.
+ */
+const DOKUMENTLINJER = FIXTURE_SOURCE_TEXT.split('\n').map((line) => line.trim())
+const DOKUMENTTEKST = `${DOKUMENTLINJER.join('\n')}\n\f`
+
 async function documentBoundItem(
   evidenceItemId: string,
   extraction: Partial<VerificationItem['extraction']> = {},
@@ -443,6 +447,7 @@ async function documentBoundItem(
     evidenceItemId,
     sourceVersion: {
       ...(item.sourceVersion as NonNullable<VerificationItem['sourceVersion']>),
+      contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
       document: {
         sha256: `sha256:${'d'.repeat(64)}`,
         byteSize: 481253,
@@ -450,7 +455,8 @@ async function documentBoundItem(
         textExtraction: {
           tool: 'pdftotext',
           toolVersion: 'pdftotext 24.02.0',
-          arguments: '-layout -enc UTF-8 -eol unix',
+          arguments: '-bbox-layout -enc UTF-8 -eol unix',
+          transform: 'antidep-reading-order@2',
         },
       },
     },
@@ -554,7 +560,12 @@ describe('runExtractionVerification — dokumentbundne funn uten dokumentet', ()
           },
         }),
       runTool: () =>
-        Promise.resolve({ status: 'ran', exitCode: 0, stdout: FIXTURE_SOURCE_TEXT, stderr: '' }),
+        Promise.resolve({
+          status: 'ran',
+          exitCode: 0,
+          stdout: bboxLayoutDocument([DOKUMENTLINJER]),
+          stderr: '',
+        }),
     })
 
     expect(report.items[0]?.decision).toBe('registered')

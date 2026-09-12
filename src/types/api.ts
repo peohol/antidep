@@ -805,8 +805,16 @@ export type EditorSourceVersionRow = {
   document_media_type: string | null
   text_extraction_tool: string | null
   text_extraction_tool_version: string | null
-  /** Argumentene verktøyet ble kjørt med. Sammen med de to over: hele oppskriften. */
+  /** Argumentene verktøyet ble kjørt med. */
   text_extraction_arguments: string | null
+  /**
+   * Antideps egen etterbehandling av verktøyets utdata, med versjon.
+   *
+   * `null` betyr at teksten er verktøyets utdata ordrett — tilstanden til hver
+   * dokumentutledet kildeversjon registrert før migrasjon 003g. Sammen med de
+   * tre over: hele oppskriften.
+   */
+  text_extraction_transform: string | null
 }
 
 /** Ett virkestoff i katalogen, som intervensjon eller komparator. */

@@ -53,6 +53,7 @@
 import type { Uuid } from '../types/api.ts'
 import type { EvidenceExtractionApi } from './agent-api.ts'
 import { collidingEvidenceItemId, isUniqueViolation } from './agent-api.ts'
+import type { TextExtractionRecipe } from './document-binding.ts'
 import { assignmentMismatch, type ExtractionAssignment } from './extraction-assignment.ts'
 import { searchProjections } from './extraction-checks.ts'
 import { excerptSourceProblem } from './source-excerpt.ts'
@@ -153,7 +154,21 @@ export interface ExtractionRunReport {
 type Verdict =
   | { readonly kind: 'skip'; readonly reason: string }
   /** `requestDigestChecked` sier om forespørselsavtrykket lot seg rekonstruere. */
-  | { readonly kind: 'ok'; readonly requestDigestChecked: boolean }
+  | {
+      readonly kind: 'ok'
+      readonly requestDigestChecked: boolean
+      /**
+       * Oppskriften som gjenskapte teksten, når det **ikke** var den
+       * kildeversjonen bærer.
+       *
+       * `null` i det normale tilfellet. Er den satt, er den registrerte
+       * oppskriften avløst og ikke lenger kjørbar, og dagens kom fram til
+       * nøyaktig det registrerte fingeravtrykket (`source-binding.ts`). Verdien
+       * føres i kjøringens utdatamanifest: proveniensen skal si hvilken
+       * oppskrift teksten faktisk ble lest med, ikke bare hvilken raden bærer.
+       */
+      readonly reproducedWith?: TextExtractionRecipe | null
+    }
 
 /**
  * Representasjonen må være den registrerte, og hvert utdrag må stå i den.
@@ -207,14 +222,20 @@ async function requestDigestVerdict(
   proposal: ExtractionProposal,
   assignment: ExtractionAssignment | undefined,
   sourceText: string,
+  reproducedWith: TextExtractionRecipe | null,
 ): Promise<Verdict> {
+  const ok = (requestDigestChecked: boolean): Verdict => ({
+    kind: 'ok',
+    requestDigestChecked,
+    reproducedWith,
+  })
   const declared = proposal.generatedBy.requestDigest
   if (
     assignment === undefined ||
     declared === null ||
     proposal.generatedBy.promptTemplateVersion !== EXTRACTION_DRAFTING_PROMPT_VERSION
   ) {
-    return { kind: 'ok', requestDigestChecked: false }
+    return ok(false)
   }
 
   let expected: string
@@ -223,7 +244,7 @@ async function requestDigestVerdict(
       buildExtractionDraftingRequest({ assignment, representation: sourceText }),
     )
   } catch {
-    return { kind: 'ok', requestDigestChecked: false }
+    return ok(false)
   }
 
   if (expected !== declared) {
@@ -235,7 +256,40 @@ async function requestDigestVerdict(
         'ikke ha vært lest ut av denne forespørselen. Ekstraksjonen ble ikke registrert.',
     }
   }
-  return { kind: 'ok', requestDigestChecked: true }
+  return ok(true)
+}
+
+/**
+ * Proveniensen for en tekst gjenskapt med en annen oppskrift enn den
+ * registrerte, slik den skal stå i kjøringens utdatamanifest.
+ *
+ * Tom når teksten ble lest med oppskriften raden selv bærer — det normale
+ * tilfellet, og det manifestet ikke skal si noe om. Bygget ett sted, fordi
+ * tørrkjøringen og registreringen ellers kunne ført den samme opplysningen
+ * forskjellig.
+ */
+function reproductionManifest(
+  reproducedWith: TextExtractionRecipe | null | undefined,
+): Record<string, unknown> {
+  if (reproducedWith === null || reproducedWith === undefined) {
+    return {}
+  }
+  return {
+    text_reproduction: {
+      // Oppskriften raden bærer, står uendret i basen. Den gjentas her fordi
+      // manifestet skal kunne leses alene: «gjenskapt med X under en rad
+      // registrert med Y» er påstanden, og bare halvparten av den ville vært
+      // villedende.
+      reproduced_with_tool: reproducedWith.tool,
+      reproduced_with_tool_version: reproducedWith.toolVersion,
+      reproduced_with_arguments: reproducedWith.arguments,
+      reproduced_with_transform: reproducedWith.transform,
+      note:
+        'Den registrerte oppskriften er avløst og kjøres ikke lenger. Teksten ble gjenskapt ' +
+        'med dagens oppskrift, og fingeravtrykket er nøyaktig det registrerte. Kildeversjonen ' +
+        'er ikke endret.',
+    },
+  }
 }
 
 async function fetchAndJudge(
@@ -275,7 +329,12 @@ async function fetchAndJudge(
   if (problem !== null) {
     return { kind: 'skip', reason: problem }
   }
-  return await requestDigestVerdict(proposal, assignment, resolved.text)
+  return await requestDigestVerdict(
+    proposal,
+    assignment,
+    resolved.text,
+    resolved.reproducedWith ?? null,
+  )
 }
 
 /**
@@ -404,6 +463,7 @@ export async function runEvidenceExtraction(
           dry_run: true,
           grounded_fields: groundedFields,
           request_digest_checked: verdict.requestDigestChecked,
+          ...reproductionManifest(verdict.reproducedWith),
         },
         'Tørrkjøring: forslaget ble kontrollert, men ingen ekstraksjon ble registrert.',
       )
@@ -463,6 +523,7 @@ export async function runEvidenceExtraction(
         // erklæring. Den som leser proveniensen senere, skal kunne se hvilken
         // av de to det var.
         request_digest_checked: verdict.requestDigestChecked,
+        ...reproductionManifest(verdict.reproducedWith),
       },
       null,
     )

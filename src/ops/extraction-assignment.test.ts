@@ -17,7 +17,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { sourceVersionContentHash } from '../agents/content-hash.ts'
 import { documentDigest } from '../agents/document-binding.ts'
-import { PDF_TEXT_ARGUMENTS, PDF_TEXT_TOOL, type RunTool } from '../agents/document-text.ts'
+import {
+  PDF_TEXT_ARGUMENTS,
+  PDF_TEXT_TOOL,
+  PDF_TEXT_TRANSFORM,
+  runToolWithNode,
+} from '../agents/document-text.ts'
 import { syntheticPdf } from '../agents/test-support.ts'
 import type { EditorSourceRow, EditorSourceVersionRow, Uuid } from '../types/api.ts'
 import {
@@ -31,19 +36,21 @@ import {
 
 const LINJER = ['Mean weight change was 1.0% after 26 to 32 weeks.', 'Forty-eight completed.']
 const PDF = syntheticPdf(LINJER)
-const TEKST = `${LINJER.join('\n')}\n`
+
+/**
+ * Teksten oppskriften faktisk gir av denne PDF-en.
+ *
+ * Linjene i én spalte blir én blokk, skilt fra neste side med et sideskift —
+ * formen `antidep-reading-order@2` gir (`reading-order.ts`). Prøvene under
+ * kjører det ekte verktøyet framfor en dobbel: oppskriften er en prosess, og en
+ * dobbel som svarte med ren tekst ville prøvd noe annet enn det kommandoen gjør.
+ */
+const TEKST = `${LINJER.join('\n')}\n\f`
 
 const KILDE = '11111111-1111-4111-8111-111111111111' as Uuid
 const ANNEN_KILDE = '22222222-2222-4222-8222-222222222222' as Uuid
 const VERSJON = '33333333-3333-4333-8333-333333333333' as Uuid
 const NY_VERSJON = '44444444-4444-4444-8444-444444444444' as Uuid
-
-const verktoy: RunTool = (_tool, args) =>
-  Promise.resolve(
-    args.includes('-v')
-      ? { status: 'ran', exitCode: 99, stdout: '', stderr: 'pdftotext version 24.02.0\n' }
-      : { status: 'ran', exitCode: 0, stdout: TEKST, stderr: '' },
-  )
 
 function kilde(overrides: Partial<EditorSourceRow> = {}): EditorSourceRow {
   return {
@@ -75,6 +82,7 @@ function versjon(overrides: Partial<EditorSourceVersionRow> = {}): EditorSourceV
     text_extraction_tool: null,
     text_extraction_tool_version: null,
     text_extraction_arguments: null,
+    text_extraction_transform: null,
     ...overrides,
   }
 }
@@ -235,7 +243,7 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
     outcomes: ['vektendring'],
     populations: ['voksne med depressiv lidelse'],
     retrievedFrom: 'https://doi.org/10.4088/jcp.v61n1109',
-    runTool: verktoy,
+    runTool: runToolWithNode,
   } as const
 
   it('registrerer fullteksten med bytene, oppskriften og full_text som standard', async () => {
@@ -253,8 +261,11 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
     expect(registered?.extractedText).toBe(TEKST)
     expect(registered?.recipe).toEqual({
       tool: PDF_TEXT_TOOL,
-      toolVersion: 'pdftotext 24.02.0',
+      // Versjonen leses av verktøyet som faktisk er installert, og er derfor
+      // ikke en fast verdi her. Resten av oppskriften er det.
+      toolVersion: expect.stringContaining('pdftotext '),
       arguments: PDF_TEXT_ARGUMENTS,
+      transform: PDF_TEXT_TRANSFORM,
     })
     // Bytene sendes, ikke fingeravtrykket: databasen skal eie hashen.
     expect(Buffer.from(registered?.documentBase64 ?? '', 'base64').equals(Buffer.from(PDF))).toBe(
@@ -294,6 +305,7 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
           text_extraction_tool: PDF_TEXT_TOOL,
           text_extraction_tool_version: 'pdftotext 24.02.0',
           text_extraction_arguments: PDF_TEXT_ARGUMENTS,
+          text_extraction_transform: PDF_TEXT_TRANSFORM,
         }),
       ],
     })
@@ -324,6 +336,7 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
           text_extraction_tool: PDF_TEXT_TOOL,
           text_extraction_tool_version: 'pdftotext 24.02.0',
           text_extraction_arguments: PDF_TEXT_ARGUMENTS,
+          text_extraction_transform: PDF_TEXT_TRANSFORM,
         }),
       ],
     })
@@ -396,6 +409,7 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
           text_extraction_tool: PDF_TEXT_TOOL,
           text_extraction_tool_version: 'pdftotext 24.02.0',
           text_extraction_arguments: PDF_TEXT_ARGUMENTS,
+          text_extraction_transform: PDF_TEXT_TRANSFORM,
         }),
       ],
     })
@@ -422,6 +436,7 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
           text_extraction_tool: PDF_TEXT_TOOL,
           text_extraction_tool_version: 'pdftotext 22.02.0',
           text_extraction_arguments: PDF_TEXT_ARGUMENTS,
+          text_extraction_transform: PDF_TEXT_TRANSFORM,
         }),
       ],
     })

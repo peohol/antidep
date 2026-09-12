@@ -222,6 +222,7 @@ function catalogApi(client: Client): EditorCatalogApi {
         p_text_extraction_tool: input.recipe.tool,
         p_text_extraction_tool_version: input.recipe.toolVersion,
         p_text_extraction_arguments: input.recipe.arguments,
+        p_text_extraction_transform: input.recipe.transform ?? '',
         p_external_version: input.externalVersion,
       })
       if (error !== null) {

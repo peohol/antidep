@@ -12,24 +12,59 @@ har ikke rett til å redistribuere fullteksten
 
 Databasen lagrer **ikke** dokumentet. Den lagrer:
 
-| Opplysning            | Hva den er                                                    |
-| --------------------- | ------------------------------------------------------------- |
-| `document_sha256`     | sha256 av dokumentets byte, beregnet av databasen selv        |
-| `document_byte_size`  | antall byte                                                   |
-| `document_media_type` | avlest av dokumentets egen signatur, i dag `application/pdf`  |
-| `text_extraction_*`   | verktøyet, versjonen og argumentene teksten ble hentet ut med |
-| `content_hash`        | sha256 av **teksten** oppskriften ga                          |
+| Opplysning                  | Hva den er                                                   |
+| --------------------------- | ------------------------------------------------------------ |
+| `document_sha256`           | sha256 av dokumentets byte, beregnet av databasen selv       |
+| `document_byte_size`        | antall byte                                                  |
+| `document_media_type`       | avlest av dokumentets egen signatur, i dag `application/pdf` |
+| `text_extraction_tool`      | verktøyet, i dag `pdftotext`                                 |
+| `text_extraction_arguments` | argumentene, ordrett                                         |
+| `text_extraction_transform` | Antideps egen etterbehandling av utdataene, med versjon      |
+| `content_hash`              | sha256 av **teksten** oppskriften ga                         |
 
 Det er nok til at hvem som helst med sin egen lovlige kopi kan etterprøve alt:
 
 ```bash
 sha256sum artikkel.pdf                       # skal gi document_sha256
-pdftotext -layout -enc UTF-8 -eol unix artikkel.pdf - | sha256sum
-                                             # skal gi content_hash
+pdftotext -bbox-layout -enc UTF-8 -eol unix artikkel.pdf -   # posisjonsdata
+```
+
+Posisjonsdataene er ikke tekst: de er hvert ord med sine koordinater. Siste ledd
+i oppskriften er Antideps egen, deterministiske rekonstruksjon av **logisk
+leserekkefølge** — `antidep-reading-order@2`, som ligger i
+`src/agents/reading-order.ts` og er den samme koden kjeden selv bruker. sha256 av
+teksten den gir, skal være `content_hash`.
+
+Kjeden gjør begge leddene i én operasjon, og den korteste veien til den samme
+teksten er derfor å kalle det samme leddet:
+
+```bash
+node -e '
+  const { execFileSync } = require("node:child_process")
+  import("./src/agents/document-text.ts").then(async (m) => {
+    const bytes = require("node:fs").readFileSync(process.argv[1])
+    const r = await m.extractDocumentText({
+      bytes,
+      recipe: {
+        tool: "pdftotext",
+        toolVersion: "les av pdftotext -v",
+        arguments: "-bbox-layout -enc UTF-8 -eol unix",
+        transform: "antidep-reading-order@2",
+      },
+    })
+    console.log(r.status === "ok" ? r.extracted.contentHash : r.message)
+  })
+' artikkel.pdf                               # skal gi content_hash
 ```
 
 Stemmer begge, er teksten ekstraksjonen ble lest av, nøyaktig den som er
 registrert.
+
+Den forrige oppskriften var `pdftotext -layout -enc UTF-8 -eol unix` uten
+etterbehandling. `-layout` gjenskaper den fysiske plasseringen på papiret, og la
+dermed tekst fra to spalter på den samme tekstlinjen — en evidensintegritetsfeil
+(issue #84). Kildeversjoner registrert med den står fortsatt som historikk og
+etterprøves med den; nye registreres bare med oppskriften over.
 
 ## 2. Filnavnet er fingeravtrykket
 
