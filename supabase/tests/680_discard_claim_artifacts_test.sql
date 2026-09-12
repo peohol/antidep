@@ -22,7 +22,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(35);
+select plan(38);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten og stengslene
@@ -81,6 +81,38 @@ select ok(
    from pg_proc p
    where p.oid = 'knowledge.discard_unpublished_claim_artifacts(uuid[],text)'::regprocedure),
   'tabellene låses før kontrollene leser dem, så kallet feiler lukket også under samtidighet'
+);
+
+-- Og de to tabellene kontrollene leser UTENFOR de seks veien sletter fra.
+--
+-- Funnet i teknisk review av PR #86, rettet i migrasjon 005ai:
+-- workflow.evidence_verifications og workflow.review_decisions peker på
+-- knowledge.evidence_items, som denne veien ikke rører. En innsetting der
+-- trengte derfor ikke røre noen låst tabell, og kunne commite i vinduet mellom
+-- «vakten leste ingen» og slettingen — og kallet ville returnert suksess
+-- samtidig som vilkåret det lover å feile lukket på, var sant. `on delete
+-- restrict` beskytter ikke her, i motsetning til i migrasjon 005af: der pekte de
+-- samme radene på funnet som ble slettet.
+select ok(
+  (select position('lock table workflow.evidence_verifications in access exclusive mode'
+                   in p.prosrc) > 0
+      and position('lock table workflow.evidence_verifications in access exclusive mode'
+                   in p.prosrc)
+        < position('a.actor_type = ''human''' in p.prosrc)
+   from pg_proc p
+   where p.oid = 'knowledge.discard_unpublished_claim_artifacts(uuid[],text)'::regprocedure),
+  'workflow.evidence_verifications låses før vakten leser den etter en menneskelig kontroll'
+);
+
+select ok(
+  (select position('lock table workflow.review_decisions in access exclusive mode'
+                   in p.prosrc) > 0
+      and position('lock table workflow.review_decisions in access exclusive mode'
+                   in p.prosrc)
+        < position('from workflow.review_decisions rd' in p.prosrc)
+   from pg_proc p
+   where p.oid = 'knowledge.discard_unpublished_claim_artifacts(uuid[],text)'::regprocedure),
+  'workflow.review_decisions låses før vakten leser den etter en reviewbeslutning'
 );
 
 -- ===========================================================================
@@ -451,6 +483,32 @@ insert into utfall (label, value)
 select 'ren', knowledge.discard_unpublished_claim_artifacts(
   array[(select id from fixture where name = 'ren')],
   'Testartefakt fra den foreløpige pipelinen, issue #84.');
+
+-- Låsene, prøvd som tilstand og ikke bare som kildetekst.
+--
+-- Dette er den ene stien der det lar seg gjøre fra én økt: kallet over står i
+-- transaksjonen selv, ikke i en undertransaksjon, så låsene det tok, holdes
+-- fortsatt. (På en avvisningssti slippes de når undertransaksjonen rulles
+-- tilbake, og derfor er rekkefølgen prøvd på funksjonskroppen i Del 1.)
+--
+-- Den samtidige halvdelen — at en innsetting i de to tabellene faktisk må vente
+-- — kan ikke prøves her i det hele tatt: en pgTAP-fil er én transaksjon, og en
+-- andre forbindelse ville verken sett fiksturen eller kunnet kappes mot den.
+-- Den prøven er scripts/db-lock-test.sh, prøve 6 og 7.
+select is(
+  (select array_agg(v.tabell order by v.tabell)
+   from (values ('workflow.evidence_verifications'), ('workflow.review_decisions')) as v(tabell)
+   where exists (
+     select 1 from pg_locks l
+     where l.locktype = 'relation'
+       and l.relation = v.tabell::regclass
+       and l.pid = pg_backend_pid()
+       and l.mode = 'AccessExclusiveLock'
+       and l.granted
+   )),
+  array['workflow.evidence_verifications', 'workflow.review_decisions'],
+  'begge tabellene kontrollene leser utenfor de seks, er faktisk låst av kallet'
+);
 
 select is(
   (select value -> 'deleted_claim_revisions' from utfall where label = 'ren'),

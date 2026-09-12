@@ -172,6 +172,38 @@ describe('checkExtraction — den lykkede stien', () => {
       'hentet på nytt fra https://doi.org/10.4088/jcp.v61n1109',
     )
   })
+
+  // Teksten kan ha blitt gjenskapt med en annen oppskrift enn den raden bærer:
+  // en avløst Antidep-oppskrift kjøres ikke lenger, og dagens brukes som
+  // stedfortreder når den kommer fram til nøyaktig det registrerte
+  // fingeravtrykket (`document-text.ts`). «Gjenskapt med X under en rad
+  // registrert med Y» er en annen påstand enn «kjørt med den registrerte
+  // oppskriften», og et menneske som bedømmer raden, skal se hvilken av de to
+  // det var — ellers ville forskjellen bare ligget i et manifest ingen leser.
+  it('sier hvilken oppskrift som gjenskapte teksten, når det ikke var radens egen', () => {
+    const item = verificationItemFixture()
+    const report = checkExtraction({
+      item,
+      sourceText: FIXTURE_SOURCE_TEXT,
+      representationReproduced: true,
+      absenceReview: absenceReviewFixture(item),
+      reproducedWith: {
+        tool: 'pdftotext',
+        toolVersion: 'pdftotext 24.02.0',
+        arguments: '-bbox-layout -enc UTF-8 -eol unix',
+        transform: 'antidep-reading-order@2',
+      },
+    })
+    expect(report.rationale).toContain('Den registrerte oppskriften er avløst')
+    expect(report.rationale).toContain('antidep-reading-order@2')
+    // Og den sier uttrykkelig at raden ikke er skrevet om. Uten den setningen
+    // kunne begrunnelsen blitt lest som om proveniensen var rettet.
+    expect(report.rationale).toContain('raden står uendret')
+  })
+
+  it('sier ingenting om oppskriften når teksten ble lest med radens egen', () => {
+    expect(check().rationale).not.toContain('avløst')
+  })
 })
 
 // ----------------------------------------------------------------------------

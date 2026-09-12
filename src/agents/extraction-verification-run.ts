@@ -270,6 +270,11 @@ async function evaluateItemUnguarded(
       sourceText: resolved.text,
       representationReproduced: true,
       absenceReview,
+      // Satt bare når den registrerte oppskriften er avløst og dagens kom fram
+      // til nøyaktig det registrerte fingeravtrykket. Kontrollen fører det i
+      // begrunnelsen, slik at et menneske ser hvilken oppskrift som faktisk
+      // gjenskapte teksten (`source-binding.ts`).
+      reproducedWith: resolved.reproducedWith ?? null,
     }),
     promptDirectory: promptJob?.directory ?? null,
   }

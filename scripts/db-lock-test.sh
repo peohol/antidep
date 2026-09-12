@@ -62,6 +62,24 @@
 # ingen påstand er lenket til, slik at ingen gate og ingen flate påvirkes.
 #
 # ----------------------------------------------------------------------------
+# Prøve 6 og 7 er den første formen igjen, på fjerningsveien for påstander
+#
+# `knowledge.discard_unpublished_claim_artifacts` (migrasjon 005ah) lover å
+# feile lukket på en menneskelig evidenskontroll og på en reviewbeslutning på
+# funnene påstanden er lenket til. Begge kontrollene LESER utenfor de seks
+# tabellene veien sletter fra, og begge tabellene peker på
+# `knowledge.evidence_items` — som veien ikke rører. En innsetting der trengte
+# derfor ikke røre noen låst tabell, og kunne commite i vinduet mellom «vakten
+# leste ingen» og slettingen. Funnet i teknisk review av PR #86 og rettet i
+# migrasjon 005ai, som låser de to tabellene sammen med de øvrige.
+#
+# Økt A kaller fjerningen på en egen fikstur (scripts/discard-claim-race-fixture.sql)
+# og holder låsene; økt B forsøker den samtidige registreringen. Økt A rulles
+# tilbake, så fiksturen står igjen. Uten låsene venter ikke økt B i det hele
+# tatt — den commiter, og fjerningen ville returnert suksess samtidig som
+# vilkåret var sant.
+#
+# ----------------------------------------------------------------------------
 # Prøve 5 er den samme formen, på det stedet konsekvensen er alvorligst
 #
 # Der prøve 4 handler om en maskinell kontroll, handler prøve 5 om et menneskes
@@ -608,5 +626,45 @@ else
   sed 's/^/         /' "$a5_log" >&2
   exit 1
 fi
+
+# ----------------------------------------------------------------------------
+# Prøve 6 og 7 — fjerningsveien for påstandsartefakter (migrasjon 005ai)
+#
+# Fiksturen er bygget slik at fjerningen slipper gjennom hver kontroll: uten det
+# ville kallet i økt A feilet, transaksjonen blitt avbrutt og låsen sluppet, og
+# prøven ville målt ingenting.
+# ----------------------------------------------------------------------------
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -f "$(dirname "$0")/discard-claim-race-fixture.sql"
+
+fjerning_konto='7c000000-0000-4000-8000-0000000000a0'
+fjerning_aktor='7c000000-0000-4000-8000-0000000000a1'
+fjerning_funn='7c000000-0000-4000-8000-000000000003'
+fjerning_paastand='7c000000-0000-4000-8000-000000000004'
+
+fjerning_laas="select set_config('request.jwt.claims', '{\"sub\":\"$fjerning_konto\"}', true);
+select knowledge.discard_unpublished_claim_artifacts(
+  array['$fjerning_paastand']::uuid[],
+  'Samtidighetsprøve i scripts/db-lock-test.sh. Rulles tilbake.');"
+
+proev 'en samtidig menneskelig evidenskontroll må vente på fjerningen (55P03)' \
+  "$fjerning_laas" \
+  "insert into workflow.evidence_verifications
+     (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+      source_access, checked_fields, findings, rationale, verified_at)
+   select e.id, e.created_by_actor_id, '$fjerning_aktor', 'needs_correction',
+          'original_source', array['estimate']::workflow.evidence_check_field[],
+          'Samtidighetsprøve.', 'Samtidighetsprøve: menneskelig kontroll.', now()
+   from knowledge.evidence_items e where e.id = '$fjerning_funn';" \
+  'Vakten leser workflow.evidence_verifications, og ingen fremmednøkkel peker fra den mot noe fjerningen sletter. Uten låsen kan en menneskelig kontroll commite etter at vakten leste «ingen», og fjerningen lykkes likevel (migrasjon 005ai).'
+
+proev 'en samtidig reviewbeslutning må vente på fjerningen (55P03)' \
+  "$fjerning_laas" \
+  "insert into workflow.review_decisions
+     (evidence_item_id, evidence_item_creator_actor_id, review_type, decision, rationale,
+      reviewer_actor_id, reviewer_actor_type, decided_at)
+   select e.id, e.created_by_actor_id, 'extraction_withdrawal', 'extraction_upheld',
+          'Samtidighetsprøve: beslutning.', '$fjerning_aktor', 'human', now()
+   from knowledge.evidence_items e where e.id = '$fjerning_funn';" \
+  'Vakten leser workflow.review_decisions, og ingen fremmednøkkel peker fra den mot noe fjerningen sletter. Uten låsen kan en beslutning commite etter at vakten leste «ingen», og fjerningen lykkes likevel (migrasjon 005ai).'
 
 printf '\nAlle samtidighetsprøvene passerte.\n'

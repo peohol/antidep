@@ -1502,7 +1502,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2222 pgTAP-assertions over 68 testfiler.
+Databaselaget teller nå 2225 pgTAP-assertions over 68 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1670,18 +1670,18 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de syttini migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de åtti migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
    007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab,
-   005ac, 003e, 007i, 003f, 005ad, 005ae, 003g, 008i, 005af, 003h, 008j og 005ah — i
+   005ac, 003e, 007i, 003f, 005ad, 005ae, 003g, 008i, 005af, 003h, 008j, 005ah og 005ai — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle syttini ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle åtti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -7976,10 +7976,10 @@ da skilte de to kildene seg:
 | `@1`-kildeversjon | `1d84891a`, `sha256:f6b3ca4d…` | `f0811561`, `sha256:d6b692f3…` |
 | `@2` gir | `sha256:bbbf3a1d…` — **en annen tekst** | `sha256:d6b692f3…` — **byte for byte den samme** |
 | Ny `@2`-kildeversjon | `34c6d7b8` | ingen: teksten er allerede registrert |
-| Nytt evidensfunn | `833a0ea1` | ingen |
-| Forankrede felter | 11, alle gjenfunnet ordrett | — |
-| Maskinell kontroll | `7a8c14b0`, utfall `uncertain` | — |
-| Dekkede av påkrevde felter | 4 av 13 | — |
+| Nytt evidensfunn | `833a0ea1` | `b77975c5`, på den registrerte raden |
+| Forankrede felter | 11, alle gjenfunnet ordrett | 9, alle gjenfunnet ordrett |
+| Maskinell kontroll | `7a8c14b0`, utfall `uncertain` | `0e673d53`, utfall `uncertain` |
+| Dekkede av påkrevde felter | 4 av 13 | 3 av 12 |
 
 **Feilen traff aldri Versiani.** Artikkelen er ensidig satt der det betyr noe, og
 celledelingen finner ingenting å dele: `@2` gir nøyaktig den teksten som allerede
@@ -7987,16 +7987,16 @@ står registrert. `unique (source_id, content_hash)` avviser derfor en ny rad, m
 databasens egen forklaring — «bruk den registrerte versjonen framfor å lage en
 ny». Det er riktig svar: for én kilde er én tekst én kildeversjon.
 
-Konsekvensen er at Versiani ikke har fått et nytt fulltekstfunn i denne
-leveransen. Å gi den ett ville krevd én av tre ting, og ingen av dem hører i denne
-PR-en: å slette den registrerte `f0811561` for å frigjøre nøkkelen (å slette
-kildehistorikk), å skrive om raden til å si `@2` (å mutere historikk til å se ut
-som den nye algoritmen), eller å la reproduksjonskontrollen godta at dagens
-oppskrift gjenskaper en rad registrert med en avløst oppskrift (å endre en
-kontrollregel for å få leveransen grønn). Det tredje er det eneste som er verdt å
-vurdere på sikt, og det er ført som en egen `[teknisk]`-sak framfor å bli avgjort
-her. Ingenting er tapt i mellomtiden: teksten er identisk, så det finnes ingen
-evidensintegritetsfeil å rette for den kilden.
+Versiani fikk derfor **ingen ny kildeversjon** — og skal ikke ha én. Den
+registrerte raden holder nøyaktig de bytene dagens algoritme produserer. Det som
+manglet, var at raden kunne *etterprøves*: etiketten sier `@1`, som ikke kjøres.
+Det er løst i kryss-oppskrift-reproduksjonen under, og Versiani har nå sitt eget
+funn på den raden den alltid har hatt.
+
+To av de tre veiene rundt ble vurdert og forkastet: å slette den registrerte
+`f0811561` for å frigjøre nøkkelen er å slette kildehistorikk, og å skrive om
+raden til å si `@2` er å mutere historikk til å se ut som den nye algoritmen.
+Begge er uttrykkelig utelukket av issueteksten.
 
 `uncertain` på Favas maskinelle kontroll er ikke et avvik, og kontrollen sier selv
 hvorfor: de norske katalogetikettene («vektendring», «voksne med depressiv
@@ -8009,8 +8009,110 @@ den faktisk oppgir, er standardavvik for baselinevekt og t/df/p for
 paroksetinsammenligningene. **Et `uncertain` stanser ingenting galt; et uriktig
 `absent` ville latt Antidep påstå at kilden ikke oppgir noe den faktisk oppgir.**
 
-Køen viser nå **ett** funn: `833a0ea1`, på `@2`, med 11 forankringer og teksten i
-korrekt logisk leserekkefølge.
+Fravær og presisjon er ført forskjellig i de to funnene, og forskjellen er
+kildenes og ikke Antideps: Fava oppgir ingen presisjon for sertralinarmens
+vektendring ved endepunkt, mens Versiani oppgir standardavvik og p-verdi. Begge
+mangler et konfidensintervall, og begge fører det som `not_reported`.
+
+#### To rettelser etter den andre kodegjennomgangen
+
+**1. Fjerningsveien for påstander låste ikke tabellene kontrollene leser.**
+`knowledge.discard_unpublished_claim_artifacts` tar `ACCESS EXCLUSIVE` på de
+seks tabellene den sletter fra, før den første kontrollen leser noe. To av
+kontrollene leser likevel utenfor de seks: `workflow.evidence_verifications`
+(ingen menneskelig evidenskontroll) og `workflow.review_decisions` (ingen
+reviewbeslutning) på funnene påstanden er lenket til. Begge tabellene peker på
+`knowledge.evidence_items`, som denne veien ikke rører — den sletter
+påstandssiden, ikke funnene. En innsetting i en av de to trengte derfor ikke
+røre noen låst tabell, og kunne commite i vinduet mellom kontrollens lesing og
+slettingen. Kallet ville da returnert suksess samtidig som vilkåret det lover å
+feile lukket på, var sant.
+
+Migrasjon 005af har ikke det samme hullet, og grunnen er ikke at den låser mer:
+der peker de samme tabellene på `knowledge.evidence_items`, som **er** tabellen
+den sletter fra, og `on delete restrict` stopper derfor slettingen framfor å la
+raden forsvinne med den. Beskyttelsen kom fra fremmednøkkelretningen, og den
+retningen finnes ikke på påstandssiden.
+
+**Migrasjon 005ai** låser de to tabellene sammen med de øvrige, med
+`workflow.evidence_verifications` først — samme posisjon som i 005af, slik at de
+to fjerningsveiene ikke kan ta den samme låsen i motsatt rekkefølge. En
+fremovermigrasjon, fordi 005ah alt er kjørt og registrert.
+
+Prøvd i tre former, fordi ingen av dem er tilstrekkelig alene:
+
+| Form | Hva den viser |
+|---|---|
+| Kildetekst (test 680) | begge `lock table`-setningene står **før** kontrollen som leser tabellen |
+| Kjøretid (test 680) | etter den lykkede fjerningen holder transaksjonen faktisk `AccessExclusiveLock` på begge |
+| To forbindelser (`scripts/db-lock-test.sh`, prøve 6 og 7) | en samtidig menneskelig evidenskontroll og en samtidig reviewbeslutning må **vente** (55P03) |
+
+Kjøretidsformen lar seg bare gjøre på den lykkede stien: en lås tatt i en
+undertransaksjon slippes når den rulles tilbake, og en avvisning er nettopp det.
+Den samtidige halvdelen kan ikke prøves i en pgTAP-fil i det hele tatt — den er
+én transaksjon, og en andre forbindelse ville verken sett fiksturen eller kunnet
+kappes mot den. Fiksturen til prøve 6 og 7 er egen
+(`scripts/discard-claim-race-fixture.sql`) og bygget slik at fjerningen slipper
+gjennom hver kontroll: uten det ville kallet i økt A feilet, låsen sluppet, og
+prøven målt ingenting. Uten rettelsen feiler de tre prøvene; med den passerer de.
+
+**2. Versiani kunne ikke etterprøves, og det var en bieffekt av oppskriftslisten.**
+`antidep-reading-order@1` kan lagres, men ikke kjøres. Etterprøvingen kjører
+**den registrerte** oppskriften, så en rad som bærer `@1`, kunne ikke
+etterprøves i det hele tatt — og dermed ikke bære et nytt evidensfunn. For de
+radene feilen faktisk rørte, er det riktig. For Versiani var det ikke det: `@2`
+gir byte for byte den samme teksten, så raden holdt nøyaktig de bytene dagens
+algoritme produserer.
+
+Oppskriften var aldri garantien. Garantien er at teksten leddet leser, hasher
+til den registrerte `content_hash`; oppskriften er veien dit. Er den veien
+stengt, men en **kjørbar** oppskrift kommer fram til nøyaktig samme
+fingeravtrykk, er teksten etterprøvd — med en oppskrift en tredjepart faktisk
+kan kjøre i dag.
+
+`reproduceDocumentText` (`src/agents/document-text.ts`) prøver derfor den
+registrerte oppskriften først, og bare når den er **avløst**, dagens som
+stedfortreder. Tre grenser flyttes ikke:
+
+1. **Bare den lukkede listen kjøres.** Stedfortrederen er dagens oppskrift, ikke
+   noe som utledes av raden.
+2. **Bare en avløst Antidep-oppskrift får en stedfortreder.** Listen over dem er
+   like lukket som den kjørbare (`RETIRED_PDF_RECIPES`). En oppskrift som verken
+   kan kjøres eller er avløst — en verdi som aldri har vært Antideps, slik en
+   forfalsket rad kunne bære — avvises uten at noe kjøres, nøyaktig som før.
+   Til sammen dekker de to listene nøyaktig de tre radene databasen godtar som
+   lagret verdi, og det er prøvd mot migrasjonene.
+3. **Bare et eksakt fingeravtrykk godtas.** Ingen toleranse, ingen normalisering.
+
+Regelen utelater av seg selv nøyaktig de radene feilen traff: Favas `1d84891a`
+gjenskapes ikke av `@2`, og forblir ukontrollerbar.
+
+**Raden skrives ikke om.** Den sier fortsatt at den ble laget med `@1`, fordi
+den ble det. Det som er nytt, er at kjøringen *sier* hvilken oppskrift som
+gjenskapte teksten, på to steder: i agentkjøringens `output_manifest`
+(`text_reproduction`) og i verifikasjonsradens begrunnelse, som er den et
+menneske leser i kontrollflaten.
+
+#### Versiani 2005 er kjørt om, på et etterprøvbart grunnlag
+
+| Ledd | Fava 2000 | Versiani 2005 |
+|---|---|---|
+| Kildeversjon funnet står på | `34c6d7b8`, `@2` | `f0811561`, `@1` — uendret |
+| Teksten gjenskapt med | radens egen oppskrift | dagens `@2`, samme fingeravtrykk |
+| Evidensfunn | `833a0ea1` | `b77975c5` |
+| Forankrede felter | 11, alle gjenfunnet ordrett | 9, alle gjenfunnet ordrett |
+| Maskinell kontroll | `7a8c14b0`, `uncertain` | `0e673d53`, `uncertain` |
+| Kildeomfattende fravær | `confidence_interval`, svart `absent`, **dekket** | `confidence_interval`, svart `absent`, **dekket** |
+
+Utvalgsstørrelsen i Versiani-funnet er ført som `not_extractable` og ikke som
+`not_reported`: kilden oppgir flere antall — 147 randomisert, 294 behandlet, 292
+i ITT, 117 ved dag 56 — men knytter ingen av dem uttrykkelig til gjennomsnittet,
+og et av dem kan derfor ikke velges uten å utlede. `not_extractable` er med
+vilje utelatt fra den kildeomfattende fraværskontrollen (migrasjon 005ae), fordi
+et søk gjennom hele kilden verken kan bekrefte eller avkrefte at en opplysning
+står der uten å kunne leses entydig ut.
+
+Køen i `/extraction-review` viser nå **to** funn, ett per artikkel.
 
 #### Hva som ble kjørt
 
@@ -8023,10 +8125,12 @@ korrekt logisk leserekkefølge.
 | `npm run test` | grønn |
 | `npm run build` | grønn |
 | pgTAP, 68 filer | kjørt mot det hostede prosjektet i en transaksjon som rulles tilbake, uten avvik mot utgangspunktet |
-| Migrasjonene | alle 79 deployet og registrert; 003g, 008i, 005af, 003h, 008j og 005ah er denne leveransens |
+| Migrasjonene | alle 80 deployet og registrert; 003g, 008i, 005af, 003h, 008j, 005ah og 005ai er denne leveransens |
 | Oppgraderingsveien | hele pgTAP-suiten kjørt mot det driftede prosjektet med de nye migrasjonene inline, uten avvik mot utgangspunktet |
-| Kjeden mot produksjon | modell-ledd, registrering, maskinell kontroll og kildeomfattende fraværskontroll kjørt med hver sin identitet, på `@2` |
+| Kjeden mot produksjon | modell-ledd, registrering, maskinell kontroll og kildeomfattende fraværskontroll kjørt med hver sin identitet, for begge artiklene |
 | Regresjonsprøven for tabellraden | kontrollert begge veier: den feiler uten celledelingen og består med den |
+| De to rettelsene etter andre review | kontrollert begge veier: de tre nye prøvene i 680 feiler mot funksjonen fra 005ah og består mot 005ai, og de tre nye prøvene i `document-text.test.ts` feiler uten den avløste listen |
+| `scripts/db-lock-test.sh`, prøve 6 og 7 | **kjøres i CI**, ikke herfra: de krever to reelle forbindelser mot en database agentmiljøet ikke har. SQL-en i dem er validert mot det driftede prosjektet i en transaksjon som rulles tilbake, og låsene er i tillegg prøvd på kjøretid i test 680 |
 
 `npm run db:reset`, `npm run db:test`, `npm run db:test:lock` og
 `npm run db:test:chain` krever en lokal Supabase-stack, og den krever Docker,
@@ -8037,7 +8141,7 @@ i tillegg kjørt herfra mot det hostede prosjektet, én fil per transaksjon med
 
 #### Hva som gjenstår
 
-**Peder gjør den menneskelige kildekontrollen** av `833a0ea1` i
+**Peder gjør den menneskelige kildekontrollen** av `833a0ea1` og `b77975c5` i
 `/extraction-review`. Utdragene står nå i korrekt logisk leserekkefølge, og
 flaten viser dem som lesbar tekst.
 

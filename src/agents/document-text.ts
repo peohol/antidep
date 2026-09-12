@@ -74,6 +74,7 @@ import { execFile } from 'node:child_process'
 import { sourceVersionContentHash } from './content-hash.ts'
 import {
   disallowedRecipeReason,
+  isRetiredRecipe,
   PDF_TEXT_ARGUMENTS,
   PDF_TEXT_TOOL,
   PDF_TEXT_TRANSFORM,
@@ -325,6 +326,165 @@ export async function currentPdfRecipe(
       toolVersion: version.version,
       arguments: PDF_TEXT_ARGUMENTS,
       transform: PDF_TEXT_TRANSFORM,
+    },
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Å gjenskape en tekst som er registrert med en oppskrift Antidep ikke kjører
+//
+// `antidep-reading-order@1` kan lagres, men ikke kjøres: den delte ikke en
+// tabellrad Poppler hadde lagt i én blokk, og skal ikke kunne gi en tekst noen
+// bygger videre på. Konsekvensen var utilsiktet bred: en kildeversjon som bærer
+// den, kunne ikke etterprøves i det hele tatt, og dermed heller ikke bære et
+// nytt evidensfunn — også når feilen aldri rørte nettopp den teksten.
+//
+// Versiani 2005 er det tilfellet. Artikkelen er ensidig satt der det betyr noe,
+// så celledelingen finner ingenting å dele: `@2` gir **byte for byte** den
+// samme teksten som raden ble registrert med. Raden holdt altså nøyaktig de
+// bytene dagens algoritme produserer, men var ubrukelig fordi etiketten sa noe
+// annet.
+//
+// ----------------------------------------------------------------------------
+// Hva garantien egentlig er
+//
+// Oppskriften var aldri garantien. Garantien er at teksten leddet leser, hasher
+// til den registrerte `content_hash` — oppskriften er veien dit. Er den veien
+// stengt, men en **kjørbar** oppskrift kommer fram til nøyaktig samme
+// fingeravtrykk, er teksten etterprøvd; den er etterprøvd med en oppskrift en
+// tredjepart faktisk kan kjøre i dag, som er mer og ikke mindre enn før.
+//
+// Regelen utelater av seg selv nøyaktig de radene feilen traff. Favas
+// `@1`-rad gjenskapes ikke av `@2` — teksten er en annen, og det er nettopp
+// tabell 1 som skiller dem — så den forblir ukontrollerbar, som den skal være.
+//
+// ----------------------------------------------------------------------------
+// Tre grenser som ikke flyttes
+//
+//   1. **Bare den lukkede listen kjøres.** Stedfortrederen er dagens oppskrift,
+//      ikke noe som utledes av raden. Et registrert verktøynavn blir aldri en
+//      kommando.
+//   1b. **Bare en avløst Antidep-oppskrift får en stedfortreder.** Listen over
+//      dem er like lukket som den kjørbare (`RETIRED_PDF_RECIPES`). En oppskrift
+//      som verken kan kjøres eller er avløst — en verdi som aldri har vært
+//      Antideps, slik en forfalsket rad kunne bære — avvises uten at noe kjøres,
+//      nøyaktig som før.
+//   2. **Bare et eksakt fingeravtrykk godtas.** Ingen toleranse, ingen
+//      normalisering, ingen «nesten lik» tekst.
+//   3. **Raden skrives ikke om.** Den sier fortsatt at den ble laget med `@1`,
+//      fordi den ble det. Det som er nytt, er at kjøringen kan si hvilken
+//      oppskrift som gjenskapte teksten — og den sier det i proveniensen sin
+//      framfor å la det være underforstått.
+// ----------------------------------------------------------------------------
+
+/** Teksten, og oppskriften som faktisk gjenskapte den. */
+export interface ReproducedText {
+  readonly text: string
+  readonly contentHash: string
+  /** Oppskriften som ble kjørt. */
+  readonly recipe: TextExtractionRecipe
+  /**
+   * Om det var oppskriften raden selv bærer.
+   *
+   * `false` betyr at den registrerte oppskriften er avløst og ikke lenger
+   * kjøres, og at dagens oppskrift kom fram til nøyaktig det registrerte
+   * fingeravtrykket. Det er en opplysning proveniensen skal bære, ikke en
+   * detalj kalleren kan overse.
+   */
+  readonly viaRegisteredRecipe: boolean
+}
+
+export type ReproductionResult =
+  | { readonly status: 'ok'; readonly reproduced: ReproducedText }
+  | { readonly status: 'error'; readonly message: string }
+
+/**
+ * Gjenskaper teksten en kildeversjon er registrert med, av originaldokumentet.
+ *
+ * Prøver den registrerte oppskriften først. Er den ikke en Antidep kjører,
+ * prøves **dagens** oppskrift som stedfortreder, og resultatet godtas bare når
+ * fingeravtrykket er nøyaktig det registrerte.
+ */
+export async function reproduceDocumentText(options: {
+  readonly bytes: Uint8Array
+  readonly registered: TextExtractionRecipe
+  readonly contentHash: string
+  readonly run?: RunTool
+}): Promise<ReproductionResult> {
+  const { bytes, registered, contentHash } = options
+  const run = options.run ?? runToolWithNode
+  const retired = disallowedRecipeReason(registered)
+
+  if (retired !== null && !isRetiredRecipe(registered)) {
+    // Verken kjørbar eller avløst. Da finnes det ingen oppskrift å prøve, og
+    // ingen prosess startes: avvisningen er den samme som før stedfortrederen
+    // fantes.
+    return { status: 'error', message: retired }
+  }
+
+  if (retired === null) {
+    const extracted = await extractDocumentText({ bytes, recipe: registered, run })
+    if (extracted.status === 'error') {
+      return extracted
+    }
+    if (extracted.extracted.contentHash !== contentHash) {
+      return {
+        status: 'error',
+        message:
+          `Tekstuttrekkingen gir ${extracted.extracted.contentHash}, mens kildeversjonen er ` +
+          `registrert med ${contentHash}. Dokumentet er det registrerte, så avviket er i ` +
+          `oppskriften: raden er skrevet med «${registered.toolVersion} ${registered.arguments}». ` +
+          'Kjør den samme versjonen av verktøyet, eller registrer en ny kildeversjon for den ' +
+          'teksten denne oppskriften faktisk gir.',
+      }
+    }
+    return {
+      status: 'ok',
+      reproduced: {
+        text: extracted.extracted.text,
+        contentHash: extracted.extracted.contentHash,
+        recipe: registered,
+        viaRegisteredRecipe: true,
+      },
+    }
+  }
+
+  // Den registrerte oppskriften er avløst. Stedfortrederen er dagens, lest med
+  // versjonen av verktøyet som faktisk er installert — ikke den registrerte,
+  // som ville vært en usann påstand om hva som ble kjørt.
+  const current = await currentPdfRecipe(run)
+  if (current.status === 'error') {
+    return current
+  }
+  const standIn: TextExtractionRecipe = {
+    tool: current.recipe.tool,
+    toolVersion: current.recipe.toolVersion,
+    arguments: current.recipe.arguments,
+    transform: current.recipe.transform,
+  }
+  const extracted = await extractDocumentText({ bytes, recipe: standIn, run })
+  if (extracted.status === 'error') {
+    return extracted
+  }
+  if (extracted.extracted.contentHash !== contentHash) {
+    return {
+      status: 'error',
+      message:
+        `Kildeversjonen er registrert med oppskriften «${registered.arguments}» og ` +
+        `${registered.transform ?? 'uten etterbehandling'}, som Antidep ikke lenger kjører. ` +
+        `Dagens oppskrift gir ${extracted.extracted.contentHash}, mens raden er registrert med ` +
+        `${contentHash}, så den gjenskaper ikke teksten. Raden kan derfor ikke etterprøves, og ` +
+        'skal heller ikke kunne bære et nytt funn: teksten den bærer, er ikke en tekst noen kan ' +
+        'lage om igjen. Registrer en ny kildeversjon av dokumentet med dagens oppskrift.',
+    }
+  }
+  return {
+    status: 'ok',
+    reproduced: {
+      text: extracted.extracted.text,
+      contentHash: extracted.extracted.contentHash,
+      recipe: standIn,
+      viaRegisteredRecipe: false,
     },
   }
 }

@@ -23,13 +23,21 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
-import { disallowedRecipeReason, documentDigest } from './document-binding.ts'
+import {
+  ALLOWED_PDF_RECIPES,
+  disallowedRecipeReason,
+  documentDigest,
+  isRetiredRecipe,
+  RETIRED_PDF_RECIPES,
+  type AllowedRecipe,
+} from './document-binding.ts'
 import {
   extractDocumentText,
   PDF_TEXT_ARGUMENTS,
   PDF_TEXT_TOOL,
   PDF_TEXT_TRANSFORM,
   readToolVersion,
+  reproduceDocumentText,
   type RunTool,
   type TextExtractionRecipe,
 } from './document-text.ts'
@@ -62,6 +70,12 @@ const OPPSKRIFT: TextExtractionRecipe = {
   transform: PDF_TEXT_TRANSFORM,
 }
 
+/** Den avløste oppskriften: lagret, men ikke kjørbar (migrasjon 003h). */
+const AVLOEST_OPPSKRIFT: TextExtractionRecipe = {
+  ...OPPSKRIFT,
+  transform: 'antidep-reading-order@1',
+}
+
 /** Oppskriften radene fra før migrasjon 003g bærer, og som fortsatt kjøres. */
 const HISTORISK_OPPSKRIFT: TextExtractionRecipe = {
   ...OPPSKRIFT,
@@ -79,6 +93,18 @@ function teller(): { readonly run: RunTool; readonly kall: string[] } {
   const kall: string[] = []
   const run: RunTool = (tool, args) => {
     kall.push(`${tool} ${args.join(' ')}`)
+    // Versjonsoppslaget svarer som poppler gjør: på stderr. Dobbelen må kunne
+    // det, fordi stedfortrederveien leser den installerte versjonen framfor å
+    // gjenta den registrerte — å gjenta den ville vært en usann påstand om hva
+    // som ble kjørt.
+    if (args.length === 1 && args[0] === '-v') {
+      return Promise.resolve({
+        status: 'ran',
+        exitCode: 0,
+        stdout: '',
+        stderr: 'pdftotext version 24.02.0\n',
+      })
+    }
     // Dobbelen svarer med det verktøyet faktisk svarer med for hver oppskrift:
     // posisjonsdata for `-bbox-layout`, ren tekst for den historiske `-layout`.
     // En dobbel som svarte med tekst uansett, ville prøvd noe ingen kjøring gjør.
@@ -248,5 +274,135 @@ describe('de to sidene av grensen', () => {
     // Den historiske raden i listen skal stå ordrett på begge sider av grensen:
     // uten den kan ingen av de eldre kildeversjonene etterprøves.
     expect(migrasjon).toContain(`text_extraction_arguments = '${HISTORISK_OPPSKRIFT.arguments}'`)
+  })
+})
+
+// ============================================================================
+// En rad registrert med en AVLØST Antidep-oppskrift
+//
+// `antidep-reading-order@1` kan lagres, men ikke kjøres. Det gjorde hver rad som
+// bærer den, ukontrollerbar — også de radene feilen aldri rørte. Versiani 2005
+// er et slikt tilfelle: `@2` gir byte for byte den samme teksten, så raden holdt
+// nøyaktig de bytene dagens algoritme produserer.
+//
+// Regelen som løser det, er smal med vilje, og de tre prøvene under er de tre
+// grensene den ikke flytter: bare en avløst Antidep-oppskrift får en
+// stedfortreder, bare et eksakt fingeravtrykk godtas, og raden skrives ikke om.
+// ============================================================================
+
+describe('en rad registrert med en avløst Antidep-oppskrift', () => {
+  it('etterprøves med dagens oppskrift når den gir nøyaktig det registrerte fingeravtrykket', async () => {
+    const { run, kall } = teller()
+    // Fasiten regnes ut av dagens oppskrift, ikke skrevet ned: prøven skal si
+    // at et EKSAKT sammenfall godtas, ikke at en hardkodet streng gjør det.
+    const dagens = await extractDocumentText({ bytes: PDF, recipe: OPPSKRIFT, run })
+    expect(dagens.status).toBe('ok')
+    const fasit = dagens.status === 'ok' ? dagens.extracted.contentHash : ''
+    kall.length = 0
+
+    const resultat = await reproduceDocumentText({
+      bytes: PDF,
+      registered: AVLOEST_OPPSKRIFT,
+      contentHash: fasit,
+      run,
+    })
+
+    expect(resultat.status).toBe('ok')
+    if (resultat.status !== 'ok') return
+    expect(resultat.reproduced.contentHash).toBe(fasit)
+    // Opplysningen kalleren skal føre i proveniensen: teksten ble IKKE lest med
+    // oppskriften raden bærer.
+    expect(resultat.reproduced.viaRegisteredRecipe).toBe(false)
+    expect(resultat.reproduced.recipe.transform).toBe(PDF_TEXT_TRANSFORM)
+    // Og bare Antideps eget verktøy er kjørt. Den avløste verdien ble aldri en
+    // kommando, like lite som en ukjent ville blitt det.
+    expect(kall.every((linje) => linje.startsWith(PDF_TEXT_TOOL))).toBe(true)
+  })
+
+  it('avvises når dagens oppskrift gir en annen tekst enn den registrerte', async () => {
+    // Den andre halvdelen, og den viktigste: for radene feilen FAKTISK rørte,
+    // gjenskaper dagens oppskrift ikke teksten, og da skal raden forbli
+    // ukontrollerbar. Regelen utelater altså av seg selv nøyaktig dem.
+    const { run } = teller()
+    const resultat = await reproduceDocumentText({
+      bytes: PDF,
+      registered: AVLOEST_OPPSKRIFT,
+      contentHash: `sha256:${'b'.repeat(64)}`,
+      run,
+    })
+
+    expect(resultat.status).toBe('error')
+    const melding = resultat.status === 'error' ? resultat.message : ''
+    // Avvisningen skal si begge halvdelene: at den registrerte oppskriften er
+    // avløst, og at dagens ikke kommer fram til teksten. Bare den ene ville
+    // sendt leseren til feil sted.
+    expect(melding).toContain('antidep-reading-order@1')
+    expect(melding).toContain('ikke lenger kjører')
+    expect(melding).toContain('gjenskaper ikke teksten')
+  })
+
+  it('gir ingen stedfortreder til en oppskrift som verken kjøres eller er avløst', async () => {
+    const { run, kall } = teller()
+    const resultat = await reproduceDocumentText({
+      bytes: PDF,
+      registered: { ...OPPSKRIFT, transform: 'antidep-reading-order@99' },
+      contentHash: `sha256:${'c'.repeat(64)}`,
+      run,
+    })
+
+    expect(resultat.status).toBe('error')
+    expect(resultat.status === 'error' ? resultat.message : '').toContain('Listen er lukket')
+    // Ingenting kjøres. Uten denne grensen ville regelen gjeldt hver ukjent
+    // oppskrift, og en forfalsket rad kunne fått en tekst ut av kjeden.
+    expect(kall).toEqual([])
+  })
+})
+
+describe('de to lukkede listene', () => {
+  it('dekker til sammen nøyaktig de oppskriftene databasen godtar som lagret', async () => {
+    // Invarianten som gjør tilstandsrommet lukket: hver rad databasen tillater,
+    // er enten kjørbar eller avløst. En lagret oppskrift som var ingen av dem,
+    // ville vært en rad ingen kunne etterprøve og ingen kunne forklare.
+    const migrasjon = (
+      await Promise.all(MIGRASJONER.map(async (sti) => await readFile(sti, 'utf8')))
+    ).join('\n')
+    const lagret = [
+      ...migrasjon.matchAll(
+        /text_extraction_arguments = '([^']+)'\s*\n?\s*and text_extraction_transform (?:= '([^']+)'|is null)/g,
+      ),
+    ].map((treff) => ({ arguments: treff[1] ?? '', transform: treff[2] ?? null }))
+
+    // Mønsteret må faktisk ha funnet noe, ellers ville prøven vært stille.
+    expect(lagret.length).toBeGreaterThan(0)
+
+    const nøkkel = (recipe: { arguments: string; transform: string | null }) =>
+      `${recipe.arguments}|${recipe.transform ?? 'ingen'}`
+    const kjent = new Set(
+      [...ALLOWED_PDF_RECIPES, ...RETIRED_PDF_RECIPES].map((recipe: AllowedRecipe) =>
+        nøkkel(recipe),
+      ),
+    )
+
+    // Hver lagret oppskrift er dekket…
+    expect([...new Set(lagret.map(nøkkel))].filter((rad) => !kjent.has(rad))).toEqual([])
+    // …og ingen av de to listene beskriver en rad databasen ikke godtar.
+    const lagretSett = new Set(lagret.map(nøkkel))
+    expect([...kjent].filter((rad) => !lagretSett.has(rad))).toEqual([])
+  })
+
+  it('holder de to listene atskilte', () => {
+    // En oppskrift kan ikke både kjøres og være avløst. Var den begge, ville
+    // stedfortrederregelen aldri blitt prøvd for den — og «avløst» ville ikke
+    // betydd noe.
+    for (const avløst of RETIRED_PDF_RECIPES) {
+      const recipe: TextExtractionRecipe = { ...avløst, toolVersion: 'pdftotext 24.02.0' }
+      expect(isRetiredRecipe(recipe)).toBe(true)
+      expect(disallowedRecipeReason(recipe)).not.toBeNull()
+    }
+    for (const kjørbar of ALLOWED_PDF_RECIPES) {
+      const recipe: TextExtractionRecipe = { ...kjørbar, toolVersion: 'pdftotext 24.02.0' }
+      expect(isRetiredRecipe(recipe)).toBe(false)
+      expect(disallowedRecipeReason(recipe)).toBeNull()
+    }
   })
 })

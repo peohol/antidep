@@ -83,6 +83,12 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     Den finnes fordi fremmednøklene peker fra påstandssiden mot funnene: et upublisert
     testfunn som bærer en påstandsrevisjon, kan ikke fjernes før revisjonen er borte, og en
     påstand uten grunnlaget den ble laget av, er verre enn ingen påstand
+  - 005ai fjerningsveien for påstandsartefakter låser også de to tabellene
+    kontrollene LESER: `workflow.evidence_verifications` og
+    `workflow.review_decisions`. Begge peker på `knowledge.evidence_items`, som
+    veien ikke rører, så en innsetting der trengte ikke røre noen låst tabell og
+    kunne commite i vinduet mellom «vakten leste ingen» og slettingen. Funnet i
+    teknisk review; prøvd av `scripts/db-lock-test.sh`, prøve 6 og 7
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at

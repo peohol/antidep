@@ -168,6 +168,49 @@ export const ALLOWED_PDF_RECIPES: readonly AllowedRecipe[] = [
   { tool: PDF_TEXT_TOOL, arguments: '-layout -enc UTF-8 -eol unix', transform: null },
 ]
 
+/**
+ * Oppskriftene Antidep **har brukt**, men ikke lenger kjører.
+ *
+ * Listen er like lukket som den kjørbare, og den finnes for å gjøre én ting
+ * mulig uten å gjøre noe annet mulig: en rad som bærer en avløst Antidep-
+ * oppskrift, kan etterprøves ved at dagens oppskrift gjenskaper nøyaktig det
+ * registrerte fingeravtrykket (`document-text.ts`). Uten listen måtte den
+ * regelen gjelde *hver* oppskrift utenfor den kjørbare listen — også en verdi
+ * som aldri har vært Antideps, og som en forfalsket rad kunne bære.
+ *
+ * Til sammen er de to listene nøyaktig de tre radene databasen godtar som
+ * *lagret* verdi (migrasjon 003g, utvidet i 003h). Det er ikke en tilfeldighet,
+ * og det er prøvd: en lagret oppskrift som verken kan kjøres eller er avløst,
+ * ville vært en rad ingen kunne etterprøve og ingen kunne forklare.
+ *
+ * `antidep-reading-order@1` delte ikke en tabellrad Poppler hadde lagt i én
+ * blokk (`reading-order.ts`), og skal ikke kunne kjøres igjen. For de radene
+ * feilen faktisk rørte, gjenskaper dagens oppskrift heller ikke teksten, så de
+ * forblir ukontrollerbare — som de skal være.
+ */
+export const RETIRED_PDF_RECIPES: readonly AllowedRecipe[] = [
+  { tool: PDF_TEXT_TOOL, arguments: PDF_TEXT_ARGUMENTS, transform: 'antidep-reading-order@1' },
+]
+
+function matchesRecipe(candidate: AllowedRecipe, recipe: TextExtractionRecipe): boolean {
+  return (
+    candidate.tool === recipe.tool &&
+    candidate.arguments === recipe.arguments &&
+    candidate.transform === recipe.transform
+  )
+}
+
+/**
+ * Om oppskriften er en Antidep har brukt og siden avløst.
+ *
+ * Skilt fra «ikke kjørbar», som er alt annet. Bare en avløst oppskrift kan
+ * etterprøves gjennom en stedfortreder; en ukjent oppskrift avvises uten at
+ * noe kjøres.
+ */
+export function isRetiredRecipe(recipe: TextExtractionRecipe): boolean {
+  return RETIRED_PDF_RECIPES.some((candidate) => matchesRecipe(candidate, recipe))
+}
+
 /** Oppskriften en **ny** kildeversjon registreres med. */
 export const CURRENT_PDF_RECIPE: AllowedRecipe = {
   tool: PDF_TEXT_TOOL,
@@ -187,12 +230,7 @@ function describeRecipe(recipe: AllowedRecipe): string {
  * gjenta den forbudte verdien som om den var et forslag.
  */
 export function disallowedRecipeReason(recipe: TextExtractionRecipe): string | null {
-  const allowed = ALLOWED_PDF_RECIPES.some(
-    (candidate) =>
-      candidate.tool === recipe.tool &&
-      candidate.arguments === recipe.arguments &&
-      candidate.transform === recipe.transform,
-  )
+  const allowed = ALLOWED_PDF_RECIPES.some((candidate) => matchesRecipe(candidate, recipe))
   if (allowed) {
     return null
   }

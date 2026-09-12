@@ -100,6 +100,7 @@ import {
   type AbsenceFieldReview,
   type AbsenceReviewOutcome,
 } from './absence-review.ts'
+import type { TextExtractionRecipe } from './document-binding.ts'
 import type { VerificationExtraction, VerificationItem } from './verification-input.ts'
 
 /** Verdiene `workflow.evidence_check_field` tillater (migrasjon 005). */
@@ -185,6 +186,17 @@ export interface ExtractionCheckContext {
    * noe globalt fravær — da spør ingen om den.
    */
   readonly absenceReview?: AbsenceReviewOutcome | null
+  /**
+   * Oppskriften som gjenskapte teksten, når det **ikke** var den raden bærer.
+   *
+   * Utelatt i det normale tilfellet. Er den satt, er den registrerte oppskriften
+   * avløst og ikke lenger kjørbar, og dagens kom fram til nøyaktig det
+   * registrerte fingeravtrykket (`source-binding.ts`). Kontrollen fører det i
+   * begrunnelsen sin, fordi «gjenskapt med X under en rad registrert med Y» er
+   * en annen påstand enn «kjørt med den registrerte oppskriften», og et
+   * menneske som bedømmer raden, skal se hvilken av de to det var.
+   */
+  readonly reproducedWith?: TextExtractionRecipe | null
 }
 
 // ----------------------------------------------------------------------------
@@ -2402,6 +2414,7 @@ function joinSentences(parts: readonly string[]): string {
  */
 export function checkExtraction(context: ExtractionCheckContext): ExtractionCheckReport {
   const { item, sourceText, representationReproduced } = context
+  const reproducedWith = context.reproducedWith ?? null
   const projections = searchProjections(sourceText)
   const checked: EvidenceCheckField[] = []
   const findings: string[] = []
@@ -2819,6 +2832,12 @@ export function checkExtraction(context: ExtractionCheckContext): ExtractionChec
 
   const method =
     `Deterministisk ekstraksjonskontroll: ${representationOrigin(item)}. ` +
+    (reproducedWith === null
+      ? ''
+      : 'Den registrerte oppskriften er avløst og kjøres ikke lenger, så teksten ble gjenskapt ' +
+        `med «${reproducedWith.tool} ${reproducedWith.arguments}» og ` +
+        `${reproducedWith.transform ?? 'uten etterbehandling'}; raden står uendret med den ` +
+        'oppskriften den faktisk ble laget med. ') +
     (representationReproduced
       ? 'Teksten ga samme sha256-fingeravtrykk som den registrerte kildeversjonen'
       : 'Teksten ga et annet sha256-fingeravtrykk enn den registrerte kildeversjonen') +
