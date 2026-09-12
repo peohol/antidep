@@ -433,8 +433,11 @@ describe('runExtractionVerification — avgrensning', () => {
 // aldri nådd fram til dem den faktisk kan kontrollere.
 // ----------------------------------------------------------------------------
 
-async function documentBoundItem(evidenceItemId: string): Promise<VerificationItem> {
-  const item = await matchingItem()
+async function documentBoundItem(
+  evidenceItemId: string,
+  extraction: Partial<VerificationItem['extraction']> = {},
+): Promise<VerificationItem> {
+  const item = await matchingItem(extraction)
   return {
     ...item,
     evidenceItemId,
@@ -489,6 +492,49 @@ describe('runExtractionVerification — dokumentbundne funn uten dokumentet', ()
     expect(report.items[0]?.reason).toMatch(/ANTIDEP_DOCUMENT_DIR/)
     expect(api.registered).toEqual([])
     expect(api.completions[0]?.outputManifest?.['skipped_without_document']).toBe(1)
+  })
+
+  // Setningen er hele beskjeden operatøren får. Fører raden et fravær som gjelder
+  // hele kildeversjonen, lukkes den halvdelen bare av totrinnsflyten, og en
+  // beskjed som bare navnga én kjøring, ville gitt `uncertain` om igjen uten å si
+  // hvorfor (migrasjon 005ae). Begge produksjonsfunnene i §74.45 er nettopp slike.
+  it('navngir totrinnsflyten når funnet fører et kildeomfattende fravær', async () => {
+    const item = await documentBoundItem('pdf-fravaer', {
+      ciLower: null,
+      ciUpper: null,
+      ciLevelPercent: null,
+      confidenceIntervalAvailability: 'not_reported',
+    })
+    expect(item.sourceWideAbsenceFields).toContain('confidence_interval')
+
+    const api = fakeApi([item])
+    const report = await runExtractionVerification({
+      api,
+      premises: PREMISSER,
+      retrieve: retrieveFixture(),
+    })
+
+    const reason = report.items[0]?.reason ?? ''
+    expect(reason).toMatch(/--absence-prompts/)
+    expect(reason).toMatch(/--absence-reviews/)
+    expect(reason).toMatch(/aktør uten legitimasjon/)
+  })
+
+  it('holder totrinnsflyten utenfor beskjeden når raden ikke fører noe slikt fravær', async () => {
+    const item = {
+      ...(await documentBoundItem('pdf-uten-fravaer')),
+      sourceWideAbsenceFields: [],
+    }
+    const api = fakeApi([item])
+    const report = await runExtractionVerification({
+      api,
+      premises: PREMISSER,
+      retrieve: retrieveFixture(),
+    })
+
+    const reason = report.items[0]?.reason ?? ''
+    expect(reason).toMatch(/ANTIDEP_DOCUMENT_DIR/)
+    expect(reason).not.toMatch(/--absence-prompts/)
   })
 
   it('kontrollerer dem når dokumentet ligger i katalogen', async () => {

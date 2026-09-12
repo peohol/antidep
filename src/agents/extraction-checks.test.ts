@@ -129,6 +129,46 @@ describe('checkExtraction — den lykkede stien', () => {
   it('sier i begrunnelsen at ingen språkmodell er brukt', () => {
     expect(check().rationale).toContain('Ingen språkmodell er brukt')
   })
+
+  it('sier at representasjonen ble hentet fra adressen, når det er den som gjelder', () => {
+    const report = check({ sourceVersion: sourceVersionFixture({ document: null }) })
+    expect(report.rationale).toContain(
+      'representasjonen ble hentet på nytt fra https://eksempel.invalid/kilde',
+    )
+  })
+
+  // Regresjonsprøve: begrunnelsen er den varige nedtegnelsen av hva kontrollen
+  // faktisk gjorde, og en dokumentbundet kildeversjon hentes ALDRI over nett
+  // (`source-binding.ts`, migrasjon 003e). Setningen navnga likevel adressen for
+  // begge veiene, så de to fulltekstutledede funnene i produksjon ble stående med
+  // en begrunnelse som beskrev et nettoppslag mot en doi-adresse kontrollen aldri
+  // var innom. Nettopp den forvekslingen mellom en adresse og et dokument er
+  // grunnen til at de to veiene er skilt.
+  it('sier at representasjonen ble trukket ut av dokumentet, for en dokumentbundet versjon', () => {
+    const report = check({
+      sourceVersion: sourceVersionFixture({
+        retrievedFrom: 'https://doi.org/10.4088/jcp.v61n1109',
+        document: {
+          sha256: `sha256:${'b'.repeat(64)}`,
+          byteSize: 55291,
+          mediaType: 'application/pdf',
+          textExtraction: {
+            tool: 'pdftotext',
+            toolVersion: 'pdftotext 24.02.0',
+            arguments: '-layout -enc UTF-8 -eol unix',
+          },
+        },
+      }),
+    })
+    expect(report.rationale).toContain(
+      `representasjonen ble trukket ut på nytt av originaldokumentet sha256:${'b'.repeat(64)} ` +
+        'med «pdftotext -layout -enc UTF-8 -eol unix»',
+    )
+    expect(report.rationale).toContain('en dokumentbundet kildeversjon hentes aldri over nett')
+    expect(report.rationale).not.toContain(
+      'hentet på nytt fra https://doi.org/10.4088/jcp.v61n1109',
+    )
+  })
 })
 
 // ----------------------------------------------------------------------------
