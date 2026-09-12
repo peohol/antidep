@@ -378,6 +378,12 @@ med `prompt.txt`, en tom `svar.json` og `forespoersel.json`. Gjennomlesningen
 gjøres av en aktør uten legitimasjon, på samme vilkår som modell-leddet ellers
 (§3): den ser bare filer.
 
+Katalogen må være en git ikke kan ta med i en commit: `prompt.txt` er en ordrett
+kopi av hele fullteksten, og Antidep har ikke rett til å redistribuere den
+(`EVIDENCE_PIPELINE.md` §14). Kjøringen kontrollerer det og avviser før noe
+skrives. En mappe under tmp, eller en gitignorert mappe som `assignments/`, er
+greit.
+
 Svaret er ett av `absent`, `present` eller `uncertain` per felt. Bare `absent`
 dekker feltet, og et `present` skal bære det ordrette utdraget som viser hva som
 står der. Er du i tvil, er svaret `uncertain`: et `uncertain` stanser ingenting

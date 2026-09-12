@@ -673,6 +673,30 @@ npm run agent:verify-extraction -- --absence-prompts <katalog>   # legger igjen 
 npm run agent:verify-extraction -- --absence-reviews <katalog>   # leser svaret og registrerer
 ```
 
+**Katalogen må være en git ikke kan ta med i en commit.** `prompt.txt` er en
+ordrett kopi av hele representasjonen — i praksis fulltekstartikkelen — og
+Antidep har ikke rett til å redistribuere den (§14). Kjøringen kontrollerer det
+selv og avviser før noe skrives: en bane som ligger i et git-arbeidstre uten å
+være ignorert, gir ingen kjøremappe i det hele tatt (`git-paths.ts`). En katalog
+utenfor et arbeidstre — `mkdtemp` under tmp, som kjedeprøven og Routinene bruker
+— er greit; der finnes ingen historikk å havne i.
+
+**«Utenfor» må være fastslått, ikke antatt.** Det er den ene konklusjonen som
+slipper en bane gjennom uten en ignore-regel, og den kan ikke hvile på at git
+ikke svarte: `git rev-parse --show-toplevel` avslutter med 128 både for «not a
+git repository», som betyr utenfor, og for «dubious ownership», «invalid gitfile
+format» og en rettighetsfeil, som ikke betyr noe om hvor banen ligger — og
+mangler git i PATH, kommer det ingen exit-kode. Kontrollen krever derfor et
+filsystemfaktum: ingen forelder har en `.git`. Svarer ikke git, og finnes det en
+`.git` over banen, er utfallet «ikke fastslått», og da skrives ingenting. Ellers
+kunne fullteksten blitt skrevet i et arbeidstre fordi git på *denne* maskinen
+ikke kunne svare, og commitet fra en maskin der den kan.
+
+Søket går langs den **fysiske** plasseringen. Er en forelder en symlenke inn i et
+repo, havner filen fysisk i arbeidstreet og kan commites derfra, mens et søk
+langs den leksikalske banen aldri ser repoets `.git`. Lar den fysiske
+plasseringen seg ikke fastslå, er utfallet også da «ikke fastslått».
+
 Svaret er ett av tre per felt, og den midterste er ikke en høflighetsform:
 
 | Svar | Betydning | Virkning |
@@ -732,8 +756,7 @@ følger med — ikke det leddet måtte vite om artikkelen fra før.
 Leddet kan være den avgjørende grunnen til at publiseringsgaten åpner, og §3.7
 krever at hvert prosessledd kan spores til aktør, modell og modellversjon,
 promptversjon, tidspunkt og output. Beviset kan derfor ikke bli liggende i en
-midlertidig kjøremappe. Når en gjennomlesning faktisk gir dekning, bæres den
-videre to steder:
+midlertidig kjøremappe. Hver gjennomlesning som ble lest, bæres videre to steder:
 
 - **Verifikasjonsradens begrunnelse**, for et menneske: hvem som leste, når,
   med hvilken promptmal, mot hvilket forespørsels- og svaravtrykk — og for et
@@ -742,7 +765,20 @@ videre to steder:
   funnet, `not_measured` at kilden selv opplyser at den ikke ble målt.
 - **Agentkjøringens `output_manifest`**, for en maskin: de samme premissene
   strukturert, med status, verdict, begrunnelse og eventuelt ordrett utdrag per
-  felt dekningen hviler på.
+  felt leddet svarte på, og med `covered` som sier om dekningen faktisk ble gitt.
+
+**Også når dekningen ikke ble gitt.** Et `present` eller et `uncertain` er like
+mye et ledd som kjørte, og svaret står i begrunnelsen et menneske leser — da skal
+noe navngi hvem som skrev det. En proveniens som bare ble ført ved dekning, ville
+lagt et modellskrevet avsnitt i en klinisk kontrollrad uten aktør og uten
+tidspunkt. `covered` står i selve blokka fordi den leses alene av en tredjepart,
+og uten feltet kunne den bli lest som et bevis for at gaten åpnet.
+
+**Et søketreff blokkerer dekningen, men sletter ikke svaret.** Søket avgjør
+alene, og en gjennomlesning kan ikke overstyre det. Den kan likevel ha funnet noe
+søket ikke kunne: et treff som er et linjebrudd i en tospaltet PDF, mot en hel
+setning med et faktisk antall i. Begge står derfor i begrunnelsen, med hvilket av
+dem som avgjorde.
 
 `request_digest` binder spørsmålet og `answer_digest` binder svaret, så en
 tredjepart kan sammenligne det som står i proveniensen med filen aktøren

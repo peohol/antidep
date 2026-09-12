@@ -47,6 +47,7 @@ import {
   type AbsenceReviewSubject,
 } from './absence-review.ts'
 import { sourceVersionContentHash } from './content-hash.ts'
+import { assertNotCommittable, type GitPathPorts } from './git-paths.ts'
 import { modelRequestDigest } from './model-client.ts'
 import { MODEL_ANSWER_VERSION, parseCompletionJson, parseModelAnswer } from './model-answer.ts'
 import { PLACEHOLDER_IDENTITY, PLACEHOLDER_PREFIX } from './model-identity.ts'
@@ -111,6 +112,8 @@ export interface AbsenceReviewJobInput {
   /** Fingeravtrykket av den samme representasjonen. */
   readonly contentHash: string
   readonly now?: () => string
+  /** Byttes ut i test. Standard er de ekte git-oppslagene (`git-paths.ts`). */
+  readonly gitPaths?: GitPathPorts
 }
 
 export interface AbsenceReviewJobReport {
@@ -204,6 +207,18 @@ export async function writeAbsenceReviewJob(
   const requestDigest = await modelRequestDigest(request)
 
   const directory = join(input.directory, input.item.evidenceItemId)
+
+  // Før mappa i det hele tatt opprettes: `prompt.txt` er en ordrett kopi av
+  // fullteksten, og den får ikke ligge på en bane git kan ta med i en commit
+  // (`git-paths.ts`). Avvisningen gjelder hele kjøringen og ikke dette ene
+  // funnet — katalogen er den samme for alle, så en feil her er operatørens
+  // oppsett og ikke noe ved raden.
+  assertNotCommittable(
+    join(directory, ABSENCE_REVIEW_FILES.prompt),
+    'spørsmålet inneholder hele den reproduserte representasjonen av kilden',
+    input.gitPaths,
+  )
+
   await mkdir(directory, { recursive: true })
 
   // Det samme spørsmålet ble stilt den gangen det først ble stilt.

@@ -7475,126 +7475,181 @@ sammendrag sa «randomised for 8 weeks» mens funnet førte tidspunktet som ikke
 rapportert, og funnet førte populasjonen som ikke rapportert uten at noe kunne
 kontrollere det. Begge er rettet i fiksturen framfor å bli dempet i kontrollen.
 
-#### Hva som står i produksjon, og hva som gjenstår
+#### Hva som står i produksjon
 
-De to fulltekstekstraksjonene §74.44 etterlyste, **er kjørt**. Produksjonsbasen
-har fire fulltekstutledede evidensfunn, og de to nyeste er nettopp dem:
+Den kildeomfattende fraværskontrollen er **kjørt mot produksjon for begge
+funnene**, i den totrinnsflyten §74.45 beskriver, fra en sesjon som hadde
+originaldokumentene. Det som gjensto, var bare det: dokumentene.
 
-| Funn | Kilde | Verdi | Fravær |
+##### 1. Dokumentene stemmer, og representasjonen lot seg lage om igjen
+
+Begge PDF-ene ble lagt i `documents/` (gitignorert, aldri commitet) og prøvd mot
+det basen har registrert — ikke mot en antakelse:
+
+| Funn | `document_sha256` | Byte | `content_hash` reprodusert |
 |---|---|---|---|
-| `9ba56fb4` sertralin × vektendring | Fava 2000, fulltekst | 1,0 % over 48 deltakere | konfidensintervall `not_reported` |
-| `9570760c` mirtazapin × vektendring | Versiani 2005, fulltekst | 0,8 kg | utvalg og konfidensintervall `not_reported` |
+| `9ba56fb4` | `sha256:0f5ac781…eed56` | 55 291 | ja — `sha256:bc7e12d3…1fb19` |
+| `9570760c` | `sha256:be804f4e…1bbf508` | 139 515 | ja — `sha256:0999b91c…92e7a` |
 
-Begge har komplett forankring for hvert semantiske felt og et gyldig
-maskinbevis, og `9570760c` fører `sample_size` som `null` — n = 117 er ikke
-lenger ført, som §74.44 krevde.
+Kontrollen er den som står i `documents/README.md`: `sha256sum` på filen, og
+`pdftotext -layout -enc UTF-8 -eol unix` etterfulgt av `sha256sum` på teksten.
+Begge ga nøyaktig de registrerte verdiene. Verktøyet måtte installeres i miljøet
+(poppler 24.02.0, som er den registrerte versjonen), og uten det kan en
+dokumentbundet kildeversjon hverken registreres eller kontrolleres.
 
-Tre ting gjensto, i denne rekkefølgen. Det første er gjort, det andre er
-forberedt og står på én ting som ikke kan gjøres fra en agentsesjon, og det
-tredje er klart til å begynne.
+##### 2. Rollene var delt, og gjennomlesningen hadde ingen vei til basen
 
-##### 1. Migrasjon 005ad og 005ae er deployet
+Første trinn la igjen spørsmålet i en kjøremappe **utenfor arbeidstreet**.
+Gjennomlesningen ble gjort av et eget ledd uten Antidep-legitimasjon, som bare
+fikk mappa å lese og skrive i. Verifikatorens legitimasjon ble flyttet ut av
+repoet mens leddet leste, slik at en instruksjon i fullteksten ikke kunne bli en
+skrivevei: et ledd som leser utrygt innhold, skal ikke samtidig ha en (§63 i
+`EVIDENCE_PIPELINE.md`). Deretter registrerte verifikatoren svaret under sin egen
+identitet.
 
-Kjørt med `./scripts/deploy-migrations.sh` mot det hostede prosjektet.
-Etterkontrollen er ikke skriptets exit-status, men basen selv:
-`--dry-run` melder nå «73 migrasjoner registrert i prosjektet, 73 filer i
-repoet. Ingenting mangler», `workflow.evidence_check_field` har verdien
-`source_wide_absence` plassert rett etter `availability_semantics` slik
-migrasjonen krever, og `workflow.source_wide_absence_fields(uuid)` finnes.
+##### 3. Det ene fraværet er dekket, det andre står åpent med en grunn
 
-Gaten er dermed strengere enn før for begge funnene:
+| Funn | Felt | Søket | Gjennomlesningen | `source_wide_absence` |
+|---|---|---|---|---|
+| `9ba56fb4` | `confidence_interval` | ingen treff | `absent` | **dekket** |
+| `9570760c` | `sample_size` | treff | `present`, med ordrett utdrag | ikke dekket |
+| `9570760c` | `confidence_interval` | ingen treff | `uncertain` | ikke dekket |
 
-| Funn | `source_wide_absence_fields` | `source_wide_absence` i `required_check_fields` |
+Begge utfallene er de riktige, og ingen av dem er justert for å gi en grønnere
+rad. For `9570760c` blokkerer søketreffet dekningen alene, og gjennomlesningen
+fant i tillegg et faktisk antall i kilden («12 of 117 … at day 56») som den
+forklarer er nevneren i den dikotome analysen, ikke i gjennomsnittsendringen. Det
+er nøyaktig den opplysningen et menneske skal se på, og den står nå i
+kontrollradens begrunnelse.
+
+Gjeldende maskinkontroll, lest av basen etter kjøringen:
+
+| | `9ba56fb4` | `9570760c` |
 |---|---|---|
-| `9ba56fb4-fbb9-414b-899b-7296683f274d` | `{confidence_interval}` | ja |
-| `9570760c-b0d3-493c-8042-eb92c4547340` | `{sample_size, confidence_interval}` | ja |
+| Gjeldende verifikasjon | `902c2dc1…` | `9c5161d6…` |
+| Utfall | `uncertain` | `uncertain` |
+| `source_access` | `verifiable_representation` | samme |
+| Kildeversjon brukt | `1287e69b…` | `d3c27d3d…` |
+| Begrunnelsen navngir dokumentet og oppskriften | ja | ja |
+| `source_wide_absence` i `checked_fields` | ja | nei |
+| Proveniens for gjennomlesningen i `output_manifest` | ja, `covered: true` | ja, `covered: false` |
 
-##### 2. Den kildeomfattende kontrollen står på originaldokumentene
+Begrunnelsene i produksjon sier nå at representasjonen ble **trukket ut av
+originaldokumentet** med den registrerte oppskriften, og ikke hentet fra DOI-en.
+Det var rettelsen §74.45 gjorde i koden; de gamle radene står fortsatt ved siden
+av, som append-only krever.
 
-Begge kildeversjonene er **dokumentbundne**, og et ledd uten dokumentet henter
-aldri `retrieved_from` i stedet (migrasjon 003e):
+##### 4. Ingen gate er åpnet på et svakere grunnlag
 
-| Funn | Kildeversjon | Originaldokument | Byte |
-|---|---|---|---|
-| `9ba56fb4` | `1287e69b-2904-44ea-af7a-28ef99d403b4` | `sha256:0f5ac7810fe0a04407c48a472352f390f9d67f84032757291fee4c2e0cfeed56` | 55 291 |
-| `9570760c` | `d3c27d3d-cc11-46da-ac26-984a6f35e969` | `sha256:be804f4ee84a8ebabeeed709f2c6aec2d6929468ff1d7a912d7b9cfbf1bbf508` | 139 515 |
+Udekkede gatefelter, regnet av gatens egne funksjoner:
 
-`--absence-prompts` ble kjørt mot produksjon fra en sesjon uten dokumentene, og
-kjøringen gjorde nøyaktig det den skal: den la ikke igjen noe spørsmål,
-registrerte ingenting, og lukket seg som `aborted` med en begrunnelse som navngir
-dokumentet som mangler. Rekkefølgen er dermed avklart, og den er ikke det planen
-antok: **det er dokumentet, ikke gjennomlesningen, som er første hindring.**
-Aktøren uten legitimasjon har ingenting å lese før representasjonen lot seg
-reprodusere, så trinn to kan ikke prøves uavhengig av trinn én.
+| Funn | Udekket |
+|---|---|
+| `9ba56fb4` | `availability_semantics`, `effect_measure`, `estimate`, `outcome`, `population`, `reported_direction`, `sample_size`, `timepoint` |
+| `9570760c` | de samme minus `sample_size`, pluss `source_wide_absence` |
 
-Selve totrinnsflyten er likevel prøvd ende til ende mot en ekte database —
-kjøringen legger igjen spørsmålet, en aktør uten legitimasjon svarer i filen, og
-neste kjøring registrerer dekningen — av kjedeprøven (`npm run db:test:chain`).
-Det som gjenstår for disse to radene, er bare å kjøre den der dokumentene ligger:
+Alt som står igjen for `9ba56fb4`, er nøyaktig de feltene mennesket skal svare
+på. For `9570760c` står i tillegg `source_wide_absence` åpent, med grunnen i
+begrunnelsen. Ingen menneskelig kontroll er registrert på noen av dem, og ingen
+påstandsrevisjon er lenket til dem: publisering forutsetter både den
+menneskelige kontrollen og en redaksjonell beslutning som ikke er tatt.
 
-```bash
-# 1. Legitimasjon til verifikatoren. Den forrige ble ugyldig da denne kjøringen
-#    utstedte en ny (secret_version 8); en hemmelighet kan ikke leses ut igjen.
-./scripts/issue-agent-credential.sh --management-api --write-env
+##### 5. Den menneskelige kildekontrollen kan begynne i UI-et
 
-# 2. Spørsmålet legges igjen. Katalogen er den med de to originaldokumentene.
-ANTIDEP_DOCUMENT_DIR=documents npm run agent:verify-extraction -- \
-  --evidence-item 9ba56fb4-fbb9-414b-899b-7296683f274d --absence-prompts fravaer
-ANTIDEP_DOCUMENT_DIR=documents npm run agent:verify-extraction -- \
-  --evidence-item 9570760c-b0d3-493c-8042-eb92c4547340 --absence-prompts fravaer
-
-# 3. En aktør uten legitimasjon leser prompt.txt og svarer i svar.json.
-
-# 4. Svaret avgjør, og dekningen registreres.
-ANTIDEP_DOCUMENT_DIR=documents npm run agent:verify-extraction -- \
-  --evidence-item 9ba56fb4-fbb9-414b-899b-7296683f274d --absence-reviews fravaer
-ANTIDEP_DOCUMENT_DIR=documents npm run agent:verify-extraction -- \
-  --evidence-item 9570760c-b0d3-493c-8042-eb92c4547340 --absence-reviews fravaer
-```
-
-##### 3. Den menneskelige kildekontrollen er klar til å begynne
-
-Kontrollert mot produksjonsdata, gjennom `api.extraction_review_workspace` som
-reviewer og gjennom repoets egne parsere og kontrollsteg:
+Kontrollert mot **produksjonsnyttelasten** fra `api.extraction_review_workspace`,
+lest som reviewer og kjørt gjennom repoets egen parser:
 
 | Egenskap | `9ba56fb4` | `9570760c` |
 |---|---|---|
-| Gjeldende ekstraksjonsverifikasjon | `8c69b16f…`, `uncertain` | `898471b2…`, `uncertain` |
-| `covered_check_fields` | `{intervention_arm, source_locator, raw_extraction}` | samme |
-| `source_wide_absence` dekket | nei — ingen gjennomlesning foreligger | nei — samme |
-| `semantic_check_fields` inneholder `source_wide_absence` | nei | nei |
+| Står i reviewerens kø | ja | ja |
+| Nyttelasten parses av repoets egen parser | ja | ja |
 | Semantiske felter uten forankring | ingen | ingen |
 | Maskinbevis på forankringen | ja | ja |
-| Står i reviewerens kø | ja | ja |
+| `source_wide_absence` blant spørsmålene økten stiller | nei | nei |
+| Lenkede påstandsrevisjoner | 0 | 0 |
 
-Ingen gate er åpnet på et svakere grunnlag enn dokumentasjonen tillater: det
-eneste feltet gaten mangler ut over det mennesket skal svare på, er nettopp
-`source_wide_absence`, og det står åpent fordi ingen gjennomlesning foreligger.
-Kontrolløkten stiller aldri spørsmålet, fordi `semantic_check_fields` ikke
-inneholder feltet; at lagringssteget i tillegg sier fra om at gaten står åpen på
-det, er prøvd i `ExtractionReviewPage.test.tsx` og ikke mot produksjonsraden.
+Kontrolløren blir altså aldri spurt om den kildeomfattende halvdelen, og hvert
+felt hen skal svare på, har et ordrett utdrag ved siden av seg. Ingen tekniske
+mellomsteg gjenstår: `/extraction-review` viser begge funnene, og økten kan
+gjennomføres derfra.
 
-Publisering kan først skje etter den menneskelige kontrollen, og forutsetter i
-tillegg en redaksjonell beslutning: de to påstandsrevisjonene som finnes, er
-lenket til de gamle sammendragsutledede funnene, ikke til disse.
+##### Legitimasjonen: en ny ble utstedt, og ingenting fungerende ble ødelagt
 
-##### To rettelser funnet under kontrollen av produksjonstilstanden
+Verifikatoren trengte legitimasjon, og en hemmelighet kan ikke leses ut igjen.
+Før utstedelsen ble det avlest at `secret_version` allerede sto på 8, utstedt av
+en tidligere agentsesjon hvis miljøfil er borte, og at
+`extraction-verification.yml` sist kjørte grønt rundt PR #56 — altså på en
+langt eldre versjon. GitHub-secreten var derfor ugyldig fra før, og utstedelsen
+av versjon 9 gjorde ingen fungerende legitimasjon ubrukelig. Skal arbeidsflyten
+kjøres igjen, utstedes en ny i det miljøet som skal lese den.
 
-**Begrunnelsen navnga en henting som aldri fant sted.** Begge maskinbevisene i
-produksjon sier «representasjonen ble hentet på nytt fra
-`https://doi.org/…`», mens en dokumentbundet kildeversjon per migrasjon 003e
-**aldri** hentes over nett — teksten ble trukket ut av originaldokumentet med den
-registrerte oppskriften. Setningen bygges nå av den registrerte raden og navngir
-dokumentet og oppskriften for den veien, slik `source-binding.ts` allerede
-avgjør retningen. De to radene som står med den gamle ordlyden, er append-only og
-blir stående; neste kontroll av de samme funnene skriver en rad med riktig
-ordlyd ved siden av.
+#### To rettelser funnet ved å kjøre leddet mot produksjon
 
-**Beskjeden til operatøren navnga en kommando som ikke kunne lukke gaten.**
-Et funn som hoppes over fordi dokumentet mangler, fikk én kommando å kjøre — uten
-`--absence-prompts`. For et funn som fører et globalt fravær, ville den gitt
-`uncertain` om igjen uten å si hvorfor. Beskjeden navngir nå begge trinnene, og
-bare for de radene som faktisk fører et slikt fravær.
+**Kjøremappa kunne commites, og den inneholder hele artikkelen.** Kommandoen som
+sto dokumentert her, skrev spørsmålet til `fravaer` i repoets rot — en katalog
+ingen ignore-regel dekket. `prompt.txt` er en ordrett kopi av fullteksten, og
+derfra er veien inn i historikken, og videre til et offentlig repo, ett
+`git add -A`. Antidep har ikke rett til å redistribuere fullteksten
+(`EVIDENCE_PIPELINE.md` §14), og det er grunnen til at både `documents/` og
+`assignments/` har sin egen `.gitignore`.
+
+Kjøringen kontrollerer det nå selv, og avviser før mappa opprettes
+(`git-paths.ts`): en bane i et git-arbeidstre må være ignorert. Kontrollen gjelder
+**filen** og ikke katalogen over den, fordi `assignments/` er en sporet katalog
+som ignorerer alt under seg — en kontroll på katalogen ville avvist nettopp den
+plasseringen resten av pipelinen bruker. En bane utenfor et arbeidstre slipper
+gjennom, fordi det ikke finnes noen historikk å havne i. Oppslaget er det samme
+som miljøfilskriveren bruker, og ligger nå felles.
+
+To reviewfunn på nettopp denne kontrollen, begge reelle og begge rettet:
+
+1. **Omkjøringen slapp gjennom.** Arbeidstre-oppslaget stanset så snart banen
+   fantes, og for en fil ble `git -C` kalt med filen selv som katalog — «Not a
+   directory», som ble lest som «utenfor et arbeidstre». Omkjøring er det normale
+   tilfellet, så en `prompt.txt` som alt lå der på en uignorert bane, ble skrevet
+   over med fullteksten uten at kontrollen slo til. Oppslaget går nå opp til
+   nærmeste forelder som er en **katalog som finnes**.
+2. **«Utenfor» var antatt og ikke fastslått, og det gjorde kontrollen
+   fail-open.** `git rev-parse --show-toplevel` avslutter med 128 for alt — både
+   «not a git repository», som betyr utenfor, og «dubious ownership», «invalid
+   gitfile format» og en rettighetsfeil, som ikke betyr noe om hvor banen ligger
+   — og mangler git i PATH, kommer det ingen exit-kode. Alle ble til «utenfor».
+   Utfallet er nå tredelt, og «utenfor» krever et filsystemfaktum: ingen forelder
+   har en `.git`. Svarer ikke git, og finnes det en `.git` over banen, skrives
+   ingenting.
+3. **Søket fulgte den leksikalske banen, ikke den fysiske.** Samme feilklasse en
+   gang til: er en forelder en symlenke inn i et repo — `/tmp/kjoring` →
+   `/repo/fravaer` — havner filen fysisk under `/repo` og kan commites derfra,
+   mens søket oppover fra `/tmp/...` aldri ser `/repo/.git`. Svarer git, fanger
+   `git -C` det selv, fordi git løser katalogen fysisk; det er når git ikke svarer
+   at søket er alt som står igjen. Søket går nå langs den fysiske plasseringen, og
+   lar den seg ikke fastslå, skrives ingenting.
+
+**Gjennomlesningen kunne forsvinne ut av proveniensen.** To ting, begge funnet på
+den ekte kjøringen av `9570760c`:
+
+1. **Et søketreff slettet svaret.** Søket traff tre fragmenter fra den tospaltede
+   PDF-en — «-10 classification of men» — og `continue` kom før svaret i det hele
+   tatt ble lest. Begrunnelsen kontrolløren fikk, gjenga bare støyen, mens
+   gjennomlesningen hadde funnet en hel setning med et faktisk antall i. Treffet
+   avgjør fortsatt dekningen alene; svaret står nå ved siden av det.
+2. **Proveniensen ble bare ført ved dekning.** En gjennomlesning som svarte
+   `present` eller `uncertain`, endte som et modellskrevet avsnitt i en klinisk
+   kontrollrad **uten at noe navnga hvem som skrev det, eller når**. §3.7 krever
+   at hvert prosessledd kan spores, og et ledd som ikke åpnet gaten, er like mye
+   et ledd som kjørte. Blokka føres nå hver gang en gjennomlesning ble lest, med
+   `covered` i seg — den leses alene av en tredjepart, og uten feltet kunne den
+   bli lest som et bevis for at gaten åpnet.
+
+Begge er regresjonsprøver, og ingen av dem endrer hva som dekkes: de endrer bare
+hva som står om det.
+
+#### Hva som gjenstår
+
+Ett steg, og det er ikke teknisk: **Peder gjør den menneskelige kildekontrollen**
+av de to funnene i `/extraction-review`. Etter den gjenstår fortsatt en
+redaksjonell beslutning før publisering — de to påstandsrevisjonene som finnes,
+er lenket til de gamle sammendragsutledede funnene, ikke til disse.
 
 ---
 

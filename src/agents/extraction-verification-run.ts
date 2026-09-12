@@ -53,6 +53,7 @@ import {
   type AbsenceReviewJobReport,
 } from './absence-review-job.ts'
 import { checkExtraction, type ExtractionCheckReport } from './extraction-checks.ts'
+import { CommittablePathRefused } from './git-paths.ts'
 import { resolveRepresentation, type ResolvePorts } from './source-binding.ts'
 import type { RetrieveLike } from './source-retrieval.ts'
 import { parseVerificationInput, type VerificationItem } from './verification-input.ts'
@@ -188,6 +189,14 @@ async function evaluateItem(
   try {
     return await evaluateItemUnguarded(item, ports, absence)
   } catch (cause) {
+    // Ett unntak slipper forbi innkapslingen: en kjøremappe kildeteksten ikke
+    // får skrives til. Den gjelder katalogen operatøren oppgav, altså hvert funn
+    // i køen, og et `skip` per funn ville gjort en feil i oppsettet til en
+    // egenskap ved radene. Kjøringen lukkes som `failed` med grunnen
+    // (`git-paths.ts`).
+    if (cause instanceof CommittablePathRefused) {
+      throw cause
+    }
     const reason = cause instanceof Error ? cause.message : String(cause)
     return {
       kind: 'skip',

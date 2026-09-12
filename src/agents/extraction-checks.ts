@@ -1862,13 +1862,26 @@ export type SourceWideAbsenceFinding =
   | { readonly kind: 'not_searchable' }
 
 /**
- * Proveniensen for en dekning som faktisk ble gitt.
+ * Proveniensen for gjennomlesningen som faktisk ble lest.
  *
  * Bæres ut av kontrollen og inn i agentkjøringens `output_manifest`, slik at
- * «hva åpnet gaten, hvem vurderte det, og når» kan rekonstrueres uten
+ * «hvem vurderte dette, mot hvilket spørsmål, og når» kan rekonstrueres uten
  * kjøremappa (EVIDENCE_PIPELINE.md §3.7, §65). Begrunnelsen på
  * verifikasjonsraden sier det samme for et menneske; dette er formen en maskin
  * kan lese.
+ *
+ * ----------------------------------------------------------------------------
+ * Den føres også når dekningen IKKE ble gitt
+ *
+ * Første utgave satte den bare når hvert felt var dekket, og det var en
+ * proveniensmangel funnet ved å kjøre leddet mot produksjon: en gjennomlesning
+ * som svarte `present` eller `uncertain`, endte som et avsnitt i
+ * verifikasjonsradens begrunnelse **uten at noe navnga hvem som skrev det**.
+ * §3.7 krever at hvert prosessledd kan spores til identitet og tidspunkt, og et
+ * ledd som ikke åpnet gaten, er like mye et ledd som kjørte.
+ *
+ * `covered` står derfor i selve blokka: den er artefaktet en tredjepart leser
+ * alene, og uten feltet kunne den bli lest som et bevis for at gaten åpnet.
  */
 export interface SourceWideAbsenceProvenance {
   readonly provider: string
@@ -1879,12 +1892,14 @@ export interface SourceWideAbsenceProvenance {
   readonly answerDigest: string
   /** Da gjennomlesningen ble gjort. Alltid satt: uten det gis ingen dekning. */
   readonly answeredAt: string
-  /** Ett innslag per felt dekningen hviler på, med beviset den hviler på. */
+  /** Om `source_wide_absence` faktisk ble ført opp som kontrollert. */
+  readonly covered: boolean
+  /** Ett innslag per felt gjennomlesningen svarte på, med svaret det ga. */
   readonly fields: readonly {
     readonly checkField: string
     readonly status: string
     readonly verdict: string
-    /** Det ordrette stedet et `not_measured` hviler på. `null` for `not_reported`. */
+    /** Det ordrette stedet svaret viser til, når det har et. */
     readonly quote: string | null
     readonly rationale: string
   }[]
@@ -1895,7 +1910,7 @@ export interface SourceWideAbsenceReport {
   readonly covered: boolean
   /** Hva de to leddene gjorde, og hvorfor de eventuelt ikke konkluderte. */
   readonly notes: readonly string[]
-  /** Hva dekningen hviler på. Bare satt når `covered` er sann. */
+  /** Hvem som leste. Satt når en gjennomlesning ble lest, dekket eller ikke. */
   readonly provenance?: SourceWideAbsenceProvenance
 }
 
@@ -2096,6 +2111,26 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
           'avvik — treffet kan gjelde en annen arm, et annet endepunkt eller et annet tidspunkt ' +
           '— men fraværet kan da ikke regnes som kontrollert.',
       )
+      // Søketreffet avgjør dekningen alene, men det skal ikke slette det den
+      // uavhengige gjennomlesningen svarte på det samme feltet. Funn ved å kjøre
+      // leddet mot produksjon: søket traff tre fragmenter fra en tospaltet PDF
+      // («-10 classification of men»), mens gjennomlesningen hadde funnet en hel
+      // setning med et faktisk antall i — og begrunnelsen et menneske fikk,
+      // gjenga bare støyen. Svaret endrer ingenting om dekningen; det er den
+      // opplysningen kontrolløren trenger for å se på treffet.
+      const answered = reviewFor(review, field)
+      if (answered !== null) {
+        notes.push(
+          `Gjennomlesningen av hele representasjonen svarte «${answered.verdict}» på «${field}». ` +
+            'Et søketreff kan ikke overstyres av en gjennomlesning, så svaret endrer ikke ' +
+            'dekningen — det er gjengitt fordi leddet kjørte, og fordi det sier hva som faktisk ' +
+            'står i teksten.' +
+            (answered.quote === null || answered.quote.trim().length === 0
+              ? ''
+              : ` Utdraget den viste til: «${answered.quote}».`) +
+            ` Begrunnelsen var: ${answered.rationale}`,
+        )
+      }
       continue
     }
 
@@ -2184,7 +2219,16 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
   }
 
   if (!covered) {
-    return { covered, notes }
+    // Leddet kjørte selv om dekningen ikke ble gitt, og svaret er gjengitt i
+    // begrunnelsen over. Da skal proveniensen være der også — se
+    // hodekommentaren over `SourceWideAbsenceProvenance`.
+    return {
+      covered,
+      notes,
+      ...(review !== null && review.kind === 'reviewed'
+        ? { provenance: absenceProvenance(review, fields, false) }
+        : {}),
+    }
   }
 
   const reviewed = review as Extract<AbsenceReviewOutcome, { kind: 'reviewed' }>
@@ -2236,22 +2280,40 @@ export function sourceWideAbsenceCheck(context: ExtractionCheckContext): SourceW
   return {
     covered,
     notes: [sentences.join(' ')],
-    provenance: {
-      provider: reviewed.identity.provider,
-      model: reviewed.identity.model,
-      modelVersion: reviewed.identity.modelVersion,
-      promptTemplateVersion: reviewed.promptTemplateVersion,
-      requestDigest: reviewed.requestDigest,
-      answerDigest: reviewed.answerDigest,
-      answeredAt: reviewed.answeredAt,
-      fields: answered.map((entry) => ({
+    provenance: absenceProvenance(reviewed, fields, true),
+  }
+}
+
+/**
+ * Proveniensen for gjennomlesningen, uavhengig av om den ga dekning.
+ *
+ * Feltene avgrenses til dem raden faktisk spør om: et svar på et felt raden
+ * ikke fører som fraværende, hører ikke til denne kontrollen, og skal ikke bæres
+ * videre som om det gjorde det.
+ */
+function absenceProvenance(
+  reviewed: Extract<AbsenceReviewOutcome, { kind: 'reviewed' }>,
+  fields: readonly string[],
+  covered: boolean,
+): SourceWideAbsenceProvenance {
+  return {
+    provider: reviewed.identity.provider,
+    model: reviewed.identity.model,
+    modelVersion: reviewed.identity.modelVersion,
+    promptTemplateVersion: reviewed.promptTemplateVersion,
+    requestDigest: reviewed.requestDigest,
+    answerDigest: reviewed.answerDigest,
+    answeredAt: reviewed.answeredAt,
+    covered,
+    fields: reviewed.fields
+      .filter((entry) => fields.includes(entry.checkField))
+      .map((entry) => ({
         checkField: entry.checkField,
         status: entry.status,
         verdict: entry.verdict,
         quote: entry.quote,
         rationale: entry.rationale,
       })),
-    },
   }
 }
 

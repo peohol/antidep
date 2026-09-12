@@ -1,23 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import {
-  EnvFileRefused,
-  gitIgnores,
-  temporaryEnvPath,
-  writeAgentEnvFile,
-} from './agent-env-file.ts'
+import { EnvFileRefused, temporaryEnvPath, writeAgentEnvFile } from './agent-env-file.ts'
+import { gitIgnores } from './git-paths.ts'
 
 // ============================================================================
 // Miljøfilen legitimasjonen skrives til
@@ -183,22 +171,5 @@ describe('tempfilen hemmeligheten skrives gjennom', () => {
 
     expect(existsSync(fil)).toBe(false)
     expect(execFileSync('ls', ['-A', katalog]).toString().trim()).toBe('')
-  })
-})
-
-describe('gitIgnores', () => {
-  it('kjenner igjen repoets egen ignorerte miljøfil, og den sporede malen', () => {
-    // Kilden er `.gitignore` i repoet: `*.local` ignorerer den første, og
-    // `!.env.example` tar den andre eksplisitt tilbake.
-    expect(gitIgnores('.env.agent.local')).toBe(true)
-    expect(gitIgnores('.env.example')).toBe(false)
-  })
-
-  it('svarer nei framfor å anta, utenfor et git-arbeidstre', () => {
-    // Feiler lukket: uten et arbeidstre kan git ikke svare, og da skal
-    // ingenting skrives. Katalogen ligger under /tmp, som ikke er i repoet.
-    const utenfor = join(midlertidigKatalog(), 'ikke-et-repo')
-    mkdirSync(utenfor)
-    expect(gitIgnores(join(utenfor, '.env.agent.local'))).toBe(false)
   })
 })
