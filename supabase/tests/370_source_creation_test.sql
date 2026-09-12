@@ -140,7 +140,7 @@ select is_empty(
         -- databasen beregner det selv, og dokumentet lagres ikke. Hvilke roller
         -- som faktisk har EXECUTE, kontrolleres i
         -- 640_source_document_registration_test.sql.
-        'api.create_source_version_from_document(uuid,timestamp with time zone,text,text,text,text,text,text,text,text,text)',
+        'api.create_source_version_from_document(uuid,timestamp with time zone,text,text,text,text,text,text,text,text,text,text)',
         -- Migrasjon 007i. Ekstraksjonsoppdraget bygget av databasens egne
         -- rader. Ren lesevei, bare authenticated, og den autoriserer kalleren
         -- på sitt eget kall (knowledge.assert_editor_authorized). Hvilke roller

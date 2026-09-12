@@ -598,6 +598,7 @@ export function editorSourceVersionRow(
     text_extraction_tool: null,
     text_extraction_tool_version: null,
     text_extraction_arguments: null,
+    text_extraction_transform: null,
     ...overrides,
   }
 }

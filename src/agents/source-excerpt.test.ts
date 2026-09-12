@@ -113,4 +113,15 @@ describe('excerptSourceProblem', () => {
       null,
     )
   })
+
+  // Regresjonsprøve for issue #84, sett fra forankringens side. Sidefoten og
+  // brødteksten er to uavhengige layoutblokker, og den blanke linjen mellom dem
+  // er grensen den nye representasjonen setter. Uten at kontrollen respekterer
+  // grensen, ville et «ordrett» utdrag kunnet sette dem sammen — og en
+  // kontrollør ville lest en setning som ikke står i artikkelen.
+  it('avviser et utdrag som setter sammen to uavhengige layoutblokker', () => {
+    expect(
+      sourceProblem('J Clin Psychiatry 61:11, November 2000 Patients (N = 284) with major'),
+    ).toMatch(/ikke står ordrett/)
+  })
 })

@@ -7,6 +7,8 @@ import {
   searchProjections,
   sourceWideAbsenceSearch,
   trimNumericText,
+  verbatimOccursIn,
+  verbatimOccursWholeWordsIn,
 } from './extraction-checks'
 import {
   absenceReviewFixture,
@@ -155,14 +157,15 @@ describe('checkExtraction — den lykkede stien', () => {
           textExtraction: {
             tool: 'pdftotext',
             toolVersion: 'pdftotext 24.02.0',
-            arguments: '-layout -enc UTF-8 -eol unix',
+            arguments: '-bbox-layout -enc UTF-8 -eol unix',
+            transform: 'antidep-reading-order@1',
           },
         },
       }),
     })
     expect(report.rationale).toContain(
       `representasjonen ble trukket ut på nytt av originaldokumentet sha256:${'b'.repeat(64)} ` +
-        'med «pdftotext -layout -enc UTF-8 -eol unix»',
+        'med «pdftotext -bbox-layout -enc UTF-8 -eol unix»',
     )
     expect(report.rationale).toContain('en dokumentbundet kildeversjon hentes aldri over nett')
     expect(report.rationale).not.toContain(
@@ -3242,5 +3245,76 @@ describe('searchProjections', () => {
   it('gir én projeksjon for ren tekst og to når det finnes markup', () => {
     expect(searchProjections('ren tekst')).toHaveLength(1)
     expect(searchProjections('<p>med markup</p>')).toHaveLength(2)
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Blanktegnnormaliseringen kan ikke gjøre to layoutblokker til én tekstsekvens
+//
+// Dette er regresjonsprøven for feilen i issue #84, sett fra kontrollens side.
+// Representasjonen hadde tekst fra to spalter på den samme tekstlinjen, og
+// normaliseringen slo kolonneavstanden sammen til ett mellomrom. Et «ordrett
+// sitat» kunne dermed bestå av ord som aldri sto etter hverandre i kilden.
+//
+// Leserekkefølgen er rettet i `reading-order.ts`, men det er ikke nok alene: den
+// nye representasjonen skiller uavhengige blokker med en blank linje, og
+// kontrollen må behandle den blanke linjen som en grense. Ellers ville den
+// samme feilen kunne oppstå på nytt mellom en sidefot og en brødtekst, mellom
+// to tabellceller, eller mellom den siste blokken på én side og den første på
+// den neste.
+// ----------------------------------------------------------------------------
+describe('den harde grensen mellom to tekstblokker', () => {
+  const REPRESENTASJON = [
+    'Paroxetine-treated patients gained weight.',
+    '',
+    'Fluoxetine-treated patients lost weight.',
+  ].join('\n')
+
+  it('lar et sitat innenfor én blokk treffe, også over et linjeskift', () => {
+    const projeksjoner = searchProjections(
+      'Paroxetine-treated patients\ngained weight over 26 weeks.',
+    )
+    expect(
+      verbatimOccursIn(projeksjoner, 'Paroxetine-treated patients gained weight over 26 weeks.'),
+    ).toBe(true)
+  })
+
+  it('lar ikke et sitat krysse en blank linje', () => {
+    const projeksjoner = searchProjections(REPRESENTASJON)
+    expect(verbatimOccursIn(projeksjoner, 'Paroxetine-treated patients gained weight.')).toBe(true)
+    expect(verbatimOccursIn(projeksjoner, 'Fluoxetine-treated patients lost weight.')).toBe(true)
+    expect(
+      verbatimOccursIn(projeksjoner, 'gained weight. Fluoxetine-treated patients lost weight.'),
+    ).toBe(false)
+  })
+
+  it('lar ikke et sitat krysse et sideskift', () => {
+    const overSider = 'Weight increased in the paroxetine arm.\n\fTable 2. Adverse events.'
+    const projeksjoner = searchProjections(overSider)
+    expect(verbatimOccursIn(projeksjoner, 'the paroxetine arm. Table 2. Adverse events.')).toBe(
+      false,
+    )
+  })
+
+  it('lar et utdrag som selv bærer den blanke linjen, treffe', () => {
+    // Grensen gjelder begge sider av søket. Et utdrag kopiert med avsnittsskillet
+    // i behold er en ærlig gjengivelse, og skal fortsatt kunne kontrolleres.
+    const projeksjoner = searchProjections(REPRESENTASJON)
+    expect(
+      verbatimOccursIn(
+        projeksjoner,
+        'Paroxetine-treated patients gained weight.\n\nFluoxetine-treated patients lost weight.',
+      ),
+    ).toBe(true)
+  })
+
+  it('gjelder også ordgrensekontrollen forankringen bruker', () => {
+    const projeksjoner = searchProjections(REPRESENTASJON)
+    expect(
+      verbatimOccursWholeWordsIn(
+        projeksjoner,
+        'gained weight. Fluoxetine-treated patients lost weight.',
+      ),
+    ).toBe(false)
   })
 })

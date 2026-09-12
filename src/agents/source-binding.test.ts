@@ -25,18 +25,34 @@ import {
   textLooksLikePdf,
   type DocumentBinding,
 } from './document-binding.ts'
-import { PDF_TEXT_ARGUMENTS, PDF_TEXT_TOOL, type RunTool } from './document-text.ts'
+import {
+  PDF_TEXT_ARGUMENTS,
+  PDF_TEXT_TOOL,
+  PDF_TEXT_TRANSFORM,
+  type RunTool,
+} from './document-text.ts'
 import { resolveRepresentation, type ResolvePorts } from './source-binding.ts'
 import { documentsIn, loadDocumentFile } from './source-document.ts'
 import { retrieveRepresentation, type RetrieveLike } from './source-retrieval.ts'
-import { syntheticPdf } from './test-support.ts'
+import { bboxLayoutDocument, syntheticPdf } from './test-support.ts'
 
 const LINJER = [
   'Mean weight change was 1.0% after 26 to 32 weeks of treatment.',
   'Forty-eight sertraline-treated patients completed the trial.',
 ]
 const PDF = syntheticPdf(LINJER)
+
+/** Teksten som ligger på en adresse: den er sitt eget fingeravtrykk. */
 const TEKST = `${LINJER.join('\n')}\n`
+
+/**
+ * Teksten oppskriften gir av dokumentet.
+ *
+ * Den er *ikke* den samme som teksten på en adresse, og det er hele poenget med
+ * at de to veiene er skilt: linjene i én spalte blir én blokk, og siden
+ * avsluttes med et sideskift (`reading-order.ts`).
+ */
+const DOKUMENTTEKST = `${LINJER.join('\n')}\n\f`
 
 /** Et verktøy som «henter ut» nøyaktig linjene PDF-en ble bygget av. */
 const utdrag: RunTool = (tool, args, stdin) => {
@@ -52,7 +68,14 @@ const utdrag: RunTool = (tool, args, stdin) => {
     return Promise.resolve({ status: 'ran', exitCode: 1, stdout: '', stderr: 'ukjent dokument' })
   }
   expect(tool).toBe(PDF_TEXT_TOOL)
-  return Promise.resolve({ status: 'ran', exitCode: 0, stdout: TEKST, stderr: '' })
+  // Oppskriften henter posisjonsdata, ikke tekst: dobbelen svarer med det
+  // verktøyet faktisk svarer med, slik at rekonstruksjonen kjøres her også.
+  return Promise.resolve({
+    status: 'ran',
+    exitCode: 0,
+    stdout: bboxLayoutDocument([LINJER]),
+    stderr: '',
+  })
 }
 
 /** Et verktøy som gir en annen tekst — en annen versjon av poppler. */
@@ -60,13 +83,19 @@ const annenVersjon: RunTool = (_tool, args) =>
   Promise.resolve(
     args.includes('-v')
       ? { status: 'ran', exitCode: 99, stdout: '', stderr: 'pdftotext version 22.02.0\n' }
-      : { status: 'ran', exitCode: 0, stdout: `${TEKST}\f`, stderr: '' },
+      : {
+          status: 'ran',
+          exitCode: 0,
+          stdout: bboxLayoutDocument([LINJER, ['En linje denne versjonen fant.']]),
+          stderr: '',
+        },
   )
 
 const OPPSKRIFT = {
   tool: PDF_TEXT_TOOL,
   toolVersion: 'pdftotext 24.02.0',
   arguments: PDF_TEXT_ARGUMENTS,
+  transform: PDF_TEXT_TRANSFORM,
 }
 
 async function dokumentbinding(): Promise<DocumentBinding> {
@@ -226,20 +255,20 @@ describe('resolveRepresentation — teksten ut av originaldokumentet', () => {
     const resolved = await resolveRepresentation(
       {
         retrievedFrom: 'https://doi.org/10.0000/x',
-        contentHash: await sourceVersionContentHash(TEKST),
+        contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
         document: await dokumentbinding(),
       },
       await porter(),
     )
     expect(resolved.status).toBe('ok')
-    expect(resolved.status === 'ok' && resolved.text).toBe(TEKST)
+    expect(resolved.status === 'ok' && resolved.text).toBe(DOKUMENTTEKST)
     expect(resolved.status === 'ok' && resolved.origin).toBe('extracted_from_document')
   })
 
   it('henter aldri adressen i stedet når dokumentet mangler', async () => {
     // Den viktigste prøven i filen. Faller kjeden tilbake på adressen, kan et
     // sammendrag bli kontrollgrunnlaget for en fulltekstekstraksjon.
-    const hash = await sourceVersionContentHash(TEKST)
+    const hash = await sourceVersionContentHash(DOKUMENTTEKST)
     let hentetAdresse = false
     const resolved = await resolveRepresentation(
       {
@@ -265,7 +294,7 @@ describe('resolveRepresentation — teksten ut av originaldokumentet', () => {
     const resolved = await resolveRepresentation(
       {
         retrievedFrom: 'https://doi.org/10.0000/x',
-        contentHash: await sourceVersionContentHash(TEKST),
+        contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
         document: await dokumentbinding(),
       },
       { runTool: utdrag },
@@ -278,7 +307,7 @@ describe('resolveRepresentation — teksten ut av originaldokumentet', () => {
     const resolved = await resolveRepresentation(
       {
         retrievedFrom: 'https://doi.org/10.0000/x',
-        contentHash: await sourceVersionContentHash(TEKST),
+        contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
         document: await dokumentbinding(),
       },
       { documents: documentsIn(await katalogMed({ 'annen.pdf': annen })), runTool: utdrag },
@@ -290,7 +319,7 @@ describe('resolveRepresentation — teksten ut av originaldokumentet', () => {
     const resolved = await resolveRepresentation(
       {
         retrievedFrom: 'https://doi.org/10.0000/x',
-        contentHash: await sourceVersionContentHash(TEKST),
+        contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
         document: await dokumentbinding(),
       },
       await porter({ runTool: annenVersjon }),
@@ -305,7 +334,7 @@ describe('resolveRepresentation — teksten ut av originaldokumentet', () => {
     const resolved = await resolveRepresentation(
       {
         retrievedFrom: 'https://doi.org/10.0000/x',
-        contentHash: await sourceVersionContentHash(TEKST),
+        contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
         document: await dokumentbinding(),
       },
       await porter({

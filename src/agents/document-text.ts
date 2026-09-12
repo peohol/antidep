@@ -14,11 +14,25 @@
 // forskjellige valg. En kildeversjon som bare sa «tekst hentet ut av en PDF»,
 // ville derfor ikke kunnet reproduseres i det hele tatt.
 //
-// Kildeversjonen bærer derfor **oppskriften**: verktøyet, versjonen av det, og
-// argumentene ordrett (migrasjon 003e). Den som vil etterprøve, kjører den samme
-// kommandoen på det samme dokumentet og sammenligner sha256 av resultatet med
-// `content_hash`. Det er hele kontrakten, og den krever ingen kjennskap til
-// Antidep.
+// Kildeversjonen bærer derfor **oppskriften**: verktøyet, versjonen av det,
+// argumentene ordrett (migrasjon 003e) og Antideps egen etterbehandling av
+// verktøyets utdata med versjon (migrasjon 003g). Den som vil etterprøve, kjører
+// den samme kommandoen på det samme dokumentet, gjør den samme etterbehandlingen
+// og sammenligner sha256 av resultatet med `content_hash`.
+//
+// ----------------------------------------------------------------------------
+// Hvorfor det er en etterbehandling i det hele tatt
+//
+// `pdftotext -layout` gjenskaper den fysiske plasseringen på papiret. I en
+// tospaltet artikkel legger den dermed venstre og høyre spalte ved siden av
+// hverandre på den samme tekstlinjen, og Antideps ordrette kontroll — som
+// normaliserer blanktegn før den søker — kunne lese to uavhengige spalter som én
+// sammenhengende setning. Det er en evidensintegritetsfeil (issue #84).
+//
+// Oppskriften henter derfor **posisjonsdata** (`-bbox-layout`), og Antideps eget
+// deterministiske ledd (`reading-order.ts`) bygger den logiske leserekkefølgen av
+// dem — eller nekter, når rekkefølgen ikke er gitt av oppsettet. Etterbehandlingen
+// er ren: den flytter blokker, og skriver ikke ett eneste tegn.
 //
 // ----------------------------------------------------------------------------
 // Oppskriften er en lukket liste
@@ -26,10 +40,11 @@
 // Oppskriften er den ene registrerte verdien som senere blir en **prosess**.
 // Var den fri, ville en verdi lest ut av basen kunnet bli en kommando kjørt med
 // rettighetene til den som kontrollerer — kodekjøring ut av en skriverettighet.
-// Antidep støtter i dag nøyaktig én oppskrift, og listen står i
-// `document-binding.ts`. Den håndheves ved databasegrensen (migrasjon 003f) og
-// på nytt her, umiddelbart før prosessen startes: en oppskrift utenfor listen
-// gir en avvisning uten at verktøyet i det hele tatt blir kalt.
+// Listen står i `document-binding.ts` og har i dag to rader: den nye
+// oppskriften, og den hver eldre dokumentutledet rad allerede bærer. Den
+// håndheves ved databasegrensen (migrasjon 003f, utvidet i 003g) og på nytt her,
+// umiddelbart før prosessen startes: en oppskrift utenfor listen gir en
+// avvisning uten at verktøyet i det hele tatt blir kalt.
 //
 // ----------------------------------------------------------------------------
 // Hvorfor versjonen ikke er et krav, men en opplysning
@@ -61,15 +76,17 @@ import {
   disallowedRecipeReason,
   PDF_TEXT_ARGUMENTS,
   PDF_TEXT_TOOL,
+  PDF_TEXT_TRANSFORM,
   type TextExtractionRecipe,
 } from './document-binding.ts'
+import { reconstructReadingOrder } from './reading-order.ts'
 
 export type { TextExtractionRecipe }
 
 // Oppskriften Antidep kjører, og kontrollen av den, hører til formen og ligger
 // derfor i `document-binding.ts` — den modulen har ingen Node-avhengighet, og
 // den samme lukkede listen leses også der ingen prosess kan startes.
-export { disallowedRecipeReason, PDF_TEXT_ARGUMENTS, PDF_TEXT_TOOL }
+export { disallowedRecipeReason, PDF_TEXT_ARGUMENTS, PDF_TEXT_TOOL, PDF_TEXT_TRANSFORM }
 
 /** Hvor lenge tekstuttrekkingen får holde på før den regnes som mislykket. */
 const EXTRACTION_TIMEOUT_MS = 120_000
@@ -253,11 +270,31 @@ export async function extractDocumentText(options: {
         'kan ikke bære en ordrett kontroll, og en tom representasjon er ikke en fulltekst.',
     }
   }
+
+  // Etterbehandlingen. `transform` er kontrollert mot den lukkede listen over,
+  // så verdien her er enten den ene Antidep har, eller ingen — og «ingen» betyr
+  // at teksten er verktøyets utdata ordrett, som er det hver kildeversjon
+  // registrert før migrasjon 003g bærer.
+  let text = result.stdout
+  if (options.recipe.transform === PDF_TEXT_TRANSFORM) {
+    const ordered = reconstructReadingOrder(result.stdout)
+    if (ordered.status === 'rejected') {
+      return {
+        status: 'error',
+        message:
+          `Dokumentet er ikke trygt ekstraherbart: ${ordered.message} Ekstraksjonen stopper her. ` +
+          'En tekst med en gjettet leserekkefølge ville vært verre enn ingen tekst: kliniske ' +
+          'opplysninger kunne blitt tilskrevet feil arm, feil studie eller feil endepunkt.',
+      }
+    }
+    text = ordered.text
+  }
+
   return {
     status: 'ok',
     extracted: {
-      text: result.stdout,
-      contentHash: await sourceVersionContentHash(result.stdout),
+      text,
+      contentHash: await sourceVersionContentHash(text),
       recipe: options.recipe,
     },
   }
@@ -287,6 +324,7 @@ export async function currentPdfRecipe(
       tool: PDF_TEXT_TOOL,
       toolVersion: version.version,
       arguments: PDF_TEXT_ARGUMENTS,
+      transform: PDF_TEXT_TRANSFORM,
     },
   }
 }

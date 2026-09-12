@@ -426,6 +426,12 @@ export function claimRevisionFixture(
 // PDF her framfor å commite en binærfil — den er noen hundre byte, den er
 // deterministisk, og den kan leses av et menneske i denne funksjonen.
 //
+// Det siste er ikke bare praktisk. Fiksturene som prøver leserekkefølgen, må
+// være **tospaltede vitenskapelige artikler i miniatyr**, og en ekte slik
+// artikkel er opphavsrettslig beskyttet og kan ikke commites
+// (EVIDENCE_PIPELINE.md §14, documents/README.md). Den syntetiske PDF-en er
+// lovlig, lesbar og nøyaktig så komplisert som regelen som prøves.
+//
 // Ingen komprimering og ingen innebygde fonter: strømmen står i klartekst, og
 // `pdftotext` henter nøyaktig de linjene som ble skrevet.
 // ----------------------------------------------------------------------------
@@ -436,25 +442,86 @@ function pdfString(line: string): string {
 }
 
 /**
- * Bygger en gyldig énsides PDF med linjene som synlig tekst.
+ * En tekstblokk plassert på siden, slik et oppsett faktisk ser ut.
  *
- * Byte for byte deterministisk for de samme linjene: to kall gir det samme
+ * `y` måles fra sidens **øvre** kant, fordi det er slik et oppsett leses og
+ * beskrives. PDF-ens eget koordinatsystem er omvendt, og omregningen gjøres her
+ * framfor i hver fikstur.
+ */
+export interface SyntheticTextBlock {
+  /** Venstre kant, i punkter fra sidens venstre kant. */
+  readonly x: number
+  /** Øvre kant av første linje, i punkter fra sidens øvre kant. */
+  readonly y: number
+  readonly lines: readonly string[]
+  readonly fontSize?: number
+  /** Avstanden mellom to linjer. Standard er 1,3 ganger skriftstørrelsen. */
+  readonly leading?: number
+  /**
+   * Grader teksten er dreid mot klokka, eller utelatt for vannrett tekst.
+   *
+   * Finnes for at vannmerket på en tidsskriftside skal kunne prøves med et ekte
+   * vannmerke. Et slikt merke er nettopp tekst som ikke er lagt vannrett, og det
+   * er det eneste geometriske signalet leserekkefølgen bruker for å holde noe
+   * utenfor (`reading-order.ts`).
+   */
+  readonly rotate?: number
+}
+
+/** Sidens mål i punkter. A4-nær, som en tidsskriftside. */
+const PAGE_WIDTH = 612
+const PAGE_HEIGHT = 792
+
+/**
+ * Bygger en gyldig énsides PDF med blokkene plassert der de skal stå.
+ *
+ * Byte for byte deterministisk for de samme blokkene: to kall gir det samme
  * fingeravtrykket, som er det prøvene hviler på.
  */
-export function syntheticPdf(lines: readonly string[]): Uint8Array {
-  const content = [
-    'BT',
-    '/F1 11 Tf',
-    '14 TL',
-    '56 760 Td',
-    ...lines.map((line) => `(${pdfString(line)}) Tj T*`),
-    'ET',
-  ].join('\n')
+export function syntheticLayoutPdf(blocks: readonly SyntheticTextBlock[]): Uint8Array {
+  const content = blocks
+    .flatMap((block) => {
+      const fontSize = block.fontSize ?? 11
+      const leading = block.leading ?? Math.round(fontSize * 1.3)
+      const top = PAGE_HEIGHT - block.y - fontSize
+      if (block.rotate === undefined || block.rotate === 0) {
+        return [
+          'BT',
+          `/F1 ${String(fontSize)} Tf`,
+          `${String(leading)} TL`,
+          `${String(block.x)} ${String(top)} Td`,
+          ...block.lines.map((line) => `(${pdfString(line)}) Tj T*`),
+          'ET',
+        ]
+      }
+      // Dreid tekst settes med en tekstmatrise per linje. Tallene rundes til seks
+      // desimaler, slik at de samme blokkene gir de samme bytene — fingeravtrykket
+      // prøvene hviler på, skal ikke avhenge av flyttallsutskrift.
+      const radians = (block.rotate * Math.PI) / 180
+      const round = (value: number) => value.toFixed(6)
+      const cos = Math.cos(radians)
+      const sin = Math.sin(radians)
+      return [
+        'BT',
+        `/F1 ${String(fontSize)} Tf`,
+        ...block.lines.flatMap((line, index) => {
+          const offset = index * leading
+          const x = block.x + Math.sin(radians) * offset
+          const y = top - Math.cos(radians) * offset
+          return [
+            `${round(cos)} ${round(sin)} ${round(-sin)} ${round(cos)} ${round(x)} ${round(y)} Tm`,
+            `(${pdfString(line)}) Tj`,
+          ]
+        }),
+        'ET',
+      ]
+    })
+    .join('\n')
 
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${String(PAGE_WIDTH)} ${String(PAGE_HEIGHT)}] ` +
       '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
@@ -474,6 +541,74 @@ export function syntheticPdf(lines: readonly string[]): Uint8Array {
   body += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(startxref)}\n%%EOF\n`
 
   return new TextEncoder().encode(body)
+}
+
+/**
+ * Den enkleste formen: én ensøylet blokk med linjene som synlig tekst.
+ *
+ * Beholdt som den var utad, fordi de fleste prøvene bare trenger *en* PDF med
+ * kjent tekst i. Plasseringen er den samme som før, slik at fiksturene ikke
+ * endrer fingeravtrykk av en omskriving.
+ */
+export function syntheticPdf(lines: readonly string[]): Uint8Array {
+  return syntheticLayoutPdf([{ x: 56, y: 21, lines, fontSize: 11, leading: 14 }])
+}
+
+/**
+ * Posisjonsdata på formen `pdftotext -bbox-layout` gir dem, bygget av blokker.
+ *
+ * Finnes for at et ledd som bare trenger *en* tekst ut av et dokument, skal
+ * kunne prøves med en dobbel av verktøyet uten poppler installert — og uten at
+ * dobbelen svarer med noe verktøyet aldri ville sagt. Koordinatene er
+ * skjematiske: én blokk per avsnitt, én linje per tekstlinje, og ordene fordelt
+ * langs linjen. Formen er den rekonstruksjonen leser, og at den *er* Popplers
+ * form, er prøvd mot det ekte verktøyet i `reading-order.test.ts`.
+ */
+export function bboxLayoutDocument(blocks: readonly (readonly string[])[]): string {
+  const rows: string[] = [
+    '<!DOCTYPE html>',
+    '<html xmlns="http://www.w3.org/1999/xhtml">',
+    '<head><title>fikstur</title></head>',
+    '<body>',
+    '<doc>',
+    '  <page width="612.000000" height="792.000000">',
+  ]
+  let top = 60
+  for (const lines of blocks) {
+    const blockTop = top
+    const blockBottom = top + lines.length * 14
+    rows.push('    <flow>')
+    rows.push(
+      `      <block xMin="56.000000" yMin="${blockTop.toFixed(6)}" ` +
+        `xMax="300.000000" yMax="${blockBottom.toFixed(6)}">`,
+    )
+    for (const line of lines) {
+      const lineTop = top
+      const lineBottom = top + 10
+      rows.push(
+        `        <line xMin="56.000000" yMin="${lineTop.toFixed(6)}" ` +
+          `xMax="300.000000" yMax="${lineBottom.toFixed(6)}">`,
+      )
+      let x = 56
+      for (const word of line.split(' ')) {
+        const width = Math.max(4, word.length * 5)
+        rows.push(
+          `          <word xMin="${x.toFixed(6)}" yMin="${lineTop.toFixed(6)}" ` +
+            `xMax="${(x + width).toFixed(6)}" yMax="${lineBottom.toFixed(6)}">` +
+            `${word.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}` +
+            '</word>',
+        )
+        x += width + 3
+      }
+      rows.push('        </line>')
+      top += 14
+    }
+    rows.push('      </block>')
+    rows.push('    </flow>')
+    top += 14
+  }
+  rows.push('  </page>', '</doc>', '</body>', '</html>', '')
+  return rows.join('\n')
 }
 
 /**

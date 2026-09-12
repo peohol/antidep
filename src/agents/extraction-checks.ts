@@ -239,19 +239,59 @@ function decodeEntities(text: string): string {
 }
 
 /**
+ * Skillet et ordrett søk ikke kan krysse.
+ *
+ * U+001F er et styretegn som ikke finnes i tekst hentet ut av en artikkel, og
+ * det er hele grunnen til at det er valgt: hadde grensen vært et vanlig tegn,
+ * kunne en kilde inneholdt det og fått en grense den ikke har.
+ */
+const BLOCK_BOUNDARY = '\u001f'
+
+/**
+ * Om et blanktegnsopphold skiller to **uavhengige** tekstblokker.
+ *
+ * En blank linje eller et sideskift. Ett linjeskift gjør det ikke: en setning
+ * som går over to linjer i en spalte, er fortsatt én setning, og et krav om noe
+ * annet ville gjort hvert eneste sitat fra en PDF ukontrollerbart.
+ */
+function isBlockBreak(whitespace: string): boolean {
+  return whitespace.includes('\f') || (whitespace.match(/\n/g)?.length ?? 0) >= 2
+}
+
+/**
  * Gjør tekst sammenlignbar uten å endre hva den sier: Unicode-normalisert,
  * små bokstaver, typografiske anførselstegn og bindestreker gjort like, og alt
  * blanktegn slått sammen. Ordene og tallene er de samme.
+ *
+ * Med ett unntak, og det er ikke kosmetisk. Et opphold som inneholder en blank
+ * linje eller et sideskift, blir **ikke** et mellomrom, men en grense. Uten det
+ * ville normaliseringen gjort to uavhengige layoutblokker — to spalter, en
+ * sidefot og en brødtekst, en tabellcelle og et avsnitt — til én sammenhengende
+ * tegnstrøm, og et «ordrett sitat» kunne bestått av ord som aldri sto etter
+ * hverandre i kilden (issue #84). Det er en evidensintegritetsfeil, ikke en
+ * formatteringsdetalj.
+ *
+ * Grensen gjelder begge sider av søket: et utdrag som selv er kopiert med den
+ * blanke linjen i behold, får den samme grensen og treffer fortsatt.
  */
 function normalize(text: string): string {
-  return text
+  let normalized = text
     .normalize('NFC')
     .replaceAll(/[‘’‛′]/g, "'")
     .replaceAll(/[“”‟″]/g, '"')
     .replaceAll(/[‐-―−]/g, '-')
-    .replaceAll(/\s+/g, ' ')
+    .replaceAll(/\s+/g, (run) => (isBlockBreak(run) ? BLOCK_BOUNDARY : ' '))
     .toLowerCase()
     .trim()
+  // En grense helt i ytterkanten skiller ingenting, og et utdrag som begynner
+  // eller slutter med et avsnittsskille skal treffe teksten det er hentet fra.
+  while (normalized.startsWith(BLOCK_BOUNDARY)) {
+    normalized = normalized.slice(BLOCK_BOUNDARY.length)
+  }
+  while (normalized.endsWith(BLOCK_BOUNDARY)) {
+    normalized = normalized.slice(0, -BLOCK_BOUNDARY.length)
+  }
+  return normalized
 }
 
 function stripTags(text: string): string {

@@ -6,9 +6,10 @@
 // siste, bærer raden to opplysninger til (migrasjon 003e):
 //
 //   * **fingeravtrykket av dokumentet**, beregnet av databasen av bytene, og
-//   * **oppskriften teksten ble hentet ut med**: verktøy, versjon, argumenter.
+//   * **oppskriften teksten ble hentet ut med**: verktøy, versjon, argumenter og
+//     Antideps egen etterbehandling av verktøyets utdata.
 //
-// Til sammen er de kontrakten utad: *kjør denne kommandoen på dokumentet med
+// Til sammen er de kontrakten utad: *kjør denne oppskriften på dokumentet med
 // dette fingeravtrykket, og sha256 av resultatet skal være `content_hash`.*
 //
 // ----------------------------------------------------------------------------
@@ -35,12 +36,21 @@ import {
   type Fields,
 } from './strict-fields.ts'
 
-/** Verktøyet, versjonen av det, og argumentene — ordrett. */
+/** Verktøyet, versjonen av det, argumentene — og Antideps egen etterbehandling. */
 export interface TextExtractionRecipe {
   readonly tool: string
   readonly toolVersion: string
   /** Argumentene, som én streng, slik de står i basen og i en kommandolinje. */
   readonly arguments: string
+  /**
+   * Antideps egen omforming av verktøyets utdata, med versjon, eller `null`.
+   *
+   * `null` betyr at teksten er nøyaktig det verktøyet skrev. Det er tilstanden
+   * til hver kildeversjon registrert før leserekkefølgen ble rekonstruert, og
+   * den må bevares: de radene skal etterprøves slik de faktisk ble laget, ikke
+   * skrives om til å se ut som om de ble laget på den nye måten.
+   */
+  readonly transform: string | null
 }
 
 /** Originaldokumentet en kildeversjon er utledet av. */
@@ -78,12 +88,14 @@ export interface RepresentationBinding {
 // ene regelen som gjelder alt importert og lagret innhold: data blir aldri
 // instruksjoner (CLAUDE.md).
 //
-// Antidep støtter i dag nøyaktig én oppskrift, og den er derfor skrevet ned som
-// nøyaktig én. Listen håndheves to steder — av CHECK-en på
-// `knowledge.source_versions` (migrasjon 003f) og her, umiddelbart før en
-// prosess startes (`document-text.ts`) — fordi de to grensene er forskjellige
-// grenser: den ene stenger for at verdien blir lagret, den andre for at en
-// verdi som likevel er lagret, blir kjørt.
+// Listen har i dag to rader: oppskriften nye kildeversjoner registreres med, og
+// den hver eldre dokumentutledet rad allerede bærer. Den andre står der fordi
+// etterprøvingen av en gammel rad skal gjenta det som faktisk ble gjort — ikke
+// fordi den fortsatt brukes. Listen håndheves to steder — av CHECK-en på
+// `knowledge.source_versions` (migrasjon 003f, utvidet i 003g) og her,
+// umiddelbart før en prosess startes (`document-text.ts`) — fordi de to
+// grensene er forskjellige grenser: den ene stenger for at verdien blir lagret,
+// den andre for at en verdi som likevel er lagret, blir kjørt.
 //
 // Versjonen er med vilje ikke med i listen. Den er en opplysning, ikke noe som
 // kjøres: den forklarer et avvik når to bygg gir forskjellig tekst, og fasiten
@@ -91,22 +103,74 @@ export interface RepresentationBinding {
 // ----------------------------------------------------------------------------
 
 /**
- * Verktøyet Antidep bruker, og valgene det brukes med.
+ * Verktøyet Antidep bruker, valgene det brukes med, og omformingen etterpå.
  *
- * `-layout` beholder kolonner og tabeller slik de står på siden, som er
- * forskjellen på et lesbart resultatavsnitt og en tabell som er blitt til én
- * lang linje. `-enc UTF-8` og `-eol unix` gjør resultatet uavhengig av
- * maskinen: uten dem ville den samme PDF-en gitt forskjellige byte på Windows
- * og Linux, og fingeravtrykket ville beskrevet operativsystemet.
+ * `-bbox-layout` gir ikke tekst, men **posisjonsdata**: hvert ord med sine
+ * koordinater, gruppert i linjer og blokker. Det er hele poenget. Den forrige
+ * oppskriften var `-layout`, som gjenskaper den *fysiske* plasseringen på
+ * papiret — og i en tospaltet artikkel legger den dermed venstre og høyre
+ * spalte ved siden av hverandre på den samme tekstlinjen. Antideps ordrette
+ * kontroll normaliserer blanktegn før den søker, og to uavhengige spalter ble
+ * da én sammenhengende tegnstrøm: en klinisk opplysning kunne tilskrives feil
+ * arm eller feil studie (issue #84).
  *
- * Sideskift beholdes (ingen `-nopgbrk`): skilletegnet er det eneste i teksten
- * som sier hvor en side slutter, og et kildeutdrag skal kunne stedfestes.
+ * `antidep-reading-order@1` er Antideps eget, deterministiske ledd som gjør
+ * posisjonsdataene om til **logisk leserekkefølge** — spalte for spalte, ovenfra
+ * og ned, med full sidebredde håndtert av den samme regelen, og med en avvisning
+ * framfor en gjetning når rekkefølgen ikke er gitt av oppsettet
+ * (`reading-order.ts`). Den er en del av oppskriften på lik linje med
+ * argumentene: uten den kommer ingen tredjepart fram til den samme teksten, og
+ * `content_hash` ville vært et fingeravtrykk av noe bare Antidep kunne lage.
  *
- * Verdiene står ordrett likt i migrasjon 003f. De er den samme kontrakten sett
+ * `-enc UTF-8` og `-eol unix` gjør resultatet uavhengig av maskinen: uten dem
+ * ville den samme PDF-en gitt forskjellige byte på Windows og Linux, og
+ * fingeravtrykket ville beskrevet operativsystemet.
+ *
+ * Verdiene står ordrett likt i migrasjon 003g. De er den samme kontrakten sett
  * fra hver sin side av databasegrensen, og pinnes derfor av en prøve på begge.
  */
 export const PDF_TEXT_TOOL = 'pdftotext'
-export const PDF_TEXT_ARGUMENTS = '-layout -enc UTF-8 -eol unix'
+export const PDF_TEXT_ARGUMENTS = '-bbox-layout -enc UTF-8 -eol unix'
+export const PDF_TEXT_TRANSFORM = 'antidep-reading-order@1'
+
+/** En oppskrift uten versjonen: nøyaktig det som blir kjørt. */
+export interface AllowedRecipe {
+  readonly tool: string
+  readonly arguments: string
+  readonly transform: string | null
+}
+
+/**
+ * Oppskriftene Antidep kjører, og ingen andre.
+ *
+ * Listen har to rader, og det er ikke en overgangsordning som skal ryddes bort.
+ * Den nederste er oppskriften alle dokumentutledede kildeversjoner registrert
+ * før migrasjon 003g bærer, og etterprøvingen av *dem* skal gjenta det som
+ * faktisk ble gjort. En liste med bare den nye ville gjort hver eldre rad
+ * ukontrollerbar — og alternativet, å skrive om de gamle radene, ville vært å
+ * påstå at de ble laget på en måte de ikke ble laget på.
+ *
+ * Nye registreringer bruker bare den øverste. Det håndheves der en ny rad
+ * skrives (`api.create_source_version_from_document`), ikke her: denne listen
+ * svarer på hva som kan *kjøres*, som er et annet spørsmål enn hva som kan
+ * *lagres*.
+ */
+export const ALLOWED_PDF_RECIPES: readonly AllowedRecipe[] = [
+  { tool: PDF_TEXT_TOOL, arguments: PDF_TEXT_ARGUMENTS, transform: PDF_TEXT_TRANSFORM },
+  { tool: PDF_TEXT_TOOL, arguments: '-layout -enc UTF-8 -eol unix', transform: null },
+]
+
+/** Oppskriften en **ny** kildeversjon registreres med. */
+export const CURRENT_PDF_RECIPE: AllowedRecipe = {
+  tool: PDF_TEXT_TOOL,
+  arguments: PDF_TEXT_ARGUMENTS,
+  transform: PDF_TEXT_TRANSFORM,
+}
+
+function describeRecipe(recipe: AllowedRecipe): string {
+  const transform = recipe.transform === null ? 'uten etterbehandling' : `+ ${recipe.transform}`
+  return `${recipe.tool} ${recipe.arguments} ${transform}`
+}
 
 /**
  * Hvorfor en oppskrift ikke er en Antidep kan kjøre, eller `null` når den er det.
@@ -115,21 +179,21 @@ export const PDF_TEXT_ARGUMENTS = '-layout -enc UTF-8 -eol unix'
  * gjenta den forbudte verdien som om den var et forslag.
  */
 export function disallowedRecipeReason(recipe: TextExtractionRecipe): string | null {
-  if (recipe.tool !== PDF_TEXT_TOOL) {
-    return (
-      `Oppskriften oppgir verktøyet ${JSON.stringify(recipe.tool)}, og Antidep kjører bare ` +
-      `«${PDF_TEXT_TOOL}». Et registrert verktøynavn blir en prosess ved etterprøving, og ` +
-      'listen over hva som kan kjøres, er derfor lukket.'
-    )
+  const allowed = ALLOWED_PDF_RECIPES.some(
+    (candidate) =>
+      candidate.tool === recipe.tool &&
+      candidate.arguments === recipe.arguments &&
+      candidate.transform === recipe.transform,
+  )
+  if (allowed) {
+    return null
   }
-  if (recipe.arguments !== PDF_TEXT_ARGUMENTS) {
-    return (
-      `Oppskriften oppgir argumentene ${JSON.stringify(recipe.arguments)}, og Antidep kjører ` +
-      `«${PDF_TEXT_TOOL}» bare med «${PDF_TEXT_ARGUMENTS}». Argumentene er en del av det som ` +
-      'kjøres, og er derfor like lukket som verktøyet selv.'
-    )
-  }
-  return null
+  return (
+    `Oppskriften ${JSON.stringify(describeRecipe(recipe))} er ikke en Antidep kjører. ` +
+    `Listen er lukket, og har i dag ${ALLOWED_PDF_RECIPES.map((candidate) => JSON.stringify(describeRecipe(candidate))).join(' og ')}. ` +
+    'Et registrert verktøynavn og et registrert argument blir en prosess ved etterprøving, ' +
+    'og et fritt felt ville latt en skriverettighet bli kodekjøring hos den som kontrollerer.'
+  )
 }
 
 const DOCUMENT_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
@@ -231,10 +295,18 @@ export function parseDocumentBinding(parent: Fields, key = 'document'): Document
 
   const mediaType = asText(fields, 'media_type')
   const extraction = nestedFields(fields, raw(fields, 'text_extraction'), `${key}.text_extraction`)
+  const transform = raw(extraction, 'transform')
+  if (transform !== undefined && transform !== null && typeof transform !== 'string') {
+    problem(extraction.subject, `${key}.text_extraction.transform`, 'er verken en tekst eller null')
+  }
   const recipe: TextExtractionRecipe = {
     tool: asText(extraction, 'tool'),
     toolVersion: asText(extraction, 'tool_version'),
     arguments: asText(extraction, 'arguments'),
+    // Utelatt felt og `null` betyr det samme: teksten er verktøyets utdata
+    // ordrett. Formen må godta utelatelsen, fordi hver fil og hvert
+    // kontrollgrunnlag skrevet før migrasjon 003g er uten feltet.
+    transform: typeof transform === 'string' ? transform : null,
   }
   rejectUnknown(extraction)
   rejectUnknown(fields)
@@ -275,6 +347,7 @@ export function serializeDocumentBinding(document: DocumentBinding | null): unkn
       tool: document.textExtraction.tool,
       tool_version: document.textExtraction.toolVersion,
       arguments: document.textExtraction.arguments,
+      transform: document.textExtraction.transform,
     },
   }
 }
@@ -313,6 +386,11 @@ export function documentBindingMismatch(
       'document.text_extraction.arguments',
       actual.textExtraction.arguments,
       expected.textExtraction.arguments,
+    ],
+    [
+      'document.text_extraction.transform',
+      actual.textExtraction.transform ?? 'ingen',
+      expected.textExtraction.transform ?? 'ingen',
     ],
   ]
   for (const [key, proposed, wanted] of pairs) {

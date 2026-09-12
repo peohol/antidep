@@ -379,40 +379,73 @@ describe('Kontrolløkten — feltkontrollen', () => {
     expect(excerpt.textContent).toBe(langt)
   })
 
-  // Et utdrag fra en tospaltet artikkel er bare lesbart så lenge linjeskiftene
-  // og kolonneavstanden står. Slås blanktegnet sammen, veves nabospalten inn i
-  // setningen verdien står i, og kontrolløren kan ikke lenger avgjøre
-  // delpunktet av utdraget alene — som er det forankringen finnes for.
-  it('beholder linjeskiftene og kolonneavstanden i et tospaltet utdrag', async () => {
-    const tospaltet =
-      'To systematically assess the effects of extended SSRI        sional disorder, psychotic\n' +
-      'treatment on weight, we compared the mean percent            fied, bipolar disorder;\n' +
-      'change in weight for all patients who completed the trial.'
+  // Et kildeutdrag kommer fra en tekst hentet ut av en PDF, og linjeskiftene i
+  // den er der spaltens linje tok slutt på papiret — ikke der setningen tok
+  // slutt. Etter issue #84 har den kanoniske representasjonen korrekt logisk
+  // leserekkefølge, og da er papirets geometri ikke lenger en opplysning:
+  // kontrollflaten skal vise teksten kontrolløren faktisk skal lese, og den skal
+  // være lesbar på en telefon uten vannrett rulling.
+  it('viser utdraget som lesbar tekst, uten linjeombrekkingen fra PDF-en', async () => {
+    const fraPdf =
+      'Patients (N = 284) with major depressive disorder (DSM-IV) were randomly\n' +
+      'assigned to double-blind treatment with fluoxetine (N = 92), sertraline,\n' +
+      '(N = 96), or paroxetine (N = 96) for a total of 26 to 32 weeks.'
     renderExtractionControl({
       field_groundings: TEST_FIELD_GROUNDINGS.map((grounding) =>
         grounding['check_field'] === 'intervention_arm'
-          ? { ...grounding, source_excerpt: tospaltet }
+          ? { ...grounding, source_excerpt: fraPdf }
           : grounding,
       ),
     })
     await screen.findByText('Har du tilgang til fullteksten?')
     clickAnswer('Ja')
     const excerpt = openStep().querySelector('.field-check__excerpt')
-    expect(excerpt?.textContent).toBe(tospaltet)
+    expect(excerpt?.textContent).toBe(
+      'Patients (N = 284) with major depressive disorder (DSM-IV) were randomly assigned ' +
+        'to double-blind treatment with fluoxetine (N = 92), sertraline, (N = 96), or ' +
+        'paroxetine (N = 96) for a total of 26 to 32 weeks.',
+    )
+    // Ett avsnitt: utdraget er én sammenhengende tekstblokk i kilden.
+    expect(excerpt?.querySelectorAll('.field-check__excerpt-paragraph')).toHaveLength(1)
   })
 
-  // Markupen alene holder ikke: HTML slår blanktegn sammen med mindre stilarket
-  // sier noe annet, og jsdom gjengir ingen stil. Regelen prøves derfor der den
-  // faktisk bor.
-  it('holder utdraget preformatert i stilarket', () => {
+  // Grensen mellom to uavhengige layoutblokker er derimot en opplysning, og den
+  // samme grensen den ordrette kontrollen ikke lar et sitat krysse. Den vises
+  // som et avsnittsskille, ikke som et mellomrom.
+  it('viser en blokkgrense i utdraget som et avsnittsskille', async () => {
+    renderExtractionControl({
+      field_groundings: TEST_FIELD_GROUNDINGS.map((grounding) =>
+        grounding['check_field'] === 'intervention_arm'
+          ? {
+              ...grounding,
+              source_excerpt:
+                'J Clin Psychiatry 61:11, November 2000\n\nPatients (N = 284) were randomised.',
+            }
+          : grounding,
+      ),
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    const avsnitt = openStep().querySelectorAll('.field-check__excerpt-paragraph')
+    expect([...avsnitt].map((node) => node.textContent)).toEqual([
+      'J Clin Psychiatry 61:11, November 2000',
+      'Patients (N = 284) were randomised.',
+    ])
+  })
+
+  // Markupen alene holder ikke: jsdom gjengir ingen stil, så regelen prøves der
+  // den faktisk bor. Den vannrette rullingen skal være borte — den var
+  // kompensasjonen for en representasjon med feil leserekkefølge.
+  it('bryter utdraget normalt i stilarket, uten vannrett rulling', () => {
     const css = readFileSync(resolve(import.meta.dirname, '../../index.css'), 'utf8')
     const regel = /\.field-check__excerpt\s*\{[^}]*\}/u.exec(css)?.[0] ?? ''
-    expect(regel).toMatch(/white-space:\s*pre;/u)
-    expect(regel).toMatch(/overflow-x:\s*auto;/u)
+    expect(regel).not.toMatch(/white-space:\s*pre;/u)
+    expect(regel).not.toMatch(/overflow-x:/u)
+    expect(regel).toMatch(/overflow-wrap:\s*anywhere;/u)
 
-    // Rullingen over er bare nåbar hvis ruten utdraget står i, kan krympe. Et
-    // rutenettelement er `min-width: auto` som standard, så uten dette vokser
-    // sporet til den lengste linja i utdraget, og steget over klipper resten.
+    // Ruten utdraget står i, skal fortsatt kunne krympe: et rutenettelement er
+    // `min-width: auto` som standard, og uten dette ville et langt ord uten
+    // mellomrom kunnet dra sporet bredere enn skjermen.
     const rute = /\.field-check__pane\s*\{[^}]*\}/u.exec(css)?.[0] ?? ''
     expect(rute).toMatch(/min-width:\s*0;/u)
   })

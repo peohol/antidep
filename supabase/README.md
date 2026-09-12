@@ -52,6 +52,12 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     `text_extraction_arguments` nøyaktig `-layout -enc UTF-8 -eol unix`. Oppskriften er den
     ene lagrede verdien som senere blir kjørt, og et fritt felt ville latt en
     skriverettighet bli kodekjøring hos den som etterprøver
+  - 003g leserekkefølgen: `text_extraction_transform` sier hvilken etterbehandling teksten
+    ble laget med, og oppskriften nye kildeversjoner registreres med, er `pdftotext`
+    `-bbox-layout -enc UTF-8 -eol unix` med `antidep-reading-order@1`. `-layout` gjenskapte
+    den fysiske plasseringen og la tekst fra to spalter på samme tekstlinje; listen har
+    fortsatt den gamle oppskriften som en av to rader, slik at radene som bærer den, kan
+    etterprøves slik de faktisk ble laget
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at

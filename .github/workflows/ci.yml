@@ -22,6 +22,12 @@ jobs:
           cache: npm
       - name: Installer avhengigheter
         run: npm ci
+      # Leserekkefølgen fra en tospaltet PDF er prøvd mot det **ekte** verktøyet
+      # (src/agents/reading-order.test.ts). En prøve mot en håndskrevet
+      # XML-fil kunne vært grønn mens kjeden var rød, fordi regelen gjelder
+      # Popplers faktiske utdata. Testpakken krever derfor poppler.
+      - name: Installer poppler-utils (pdftotext)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Lint
         run: npm run lint
       - name: Formatkontroll

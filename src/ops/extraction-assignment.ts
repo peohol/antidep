@@ -253,13 +253,13 @@ async function storeDocument(document: LoadedDocument, directory: string): Promi
  * Returnerer `null` når raden beskriver nøyaktig det samme og trygt kan
  * gjenbrukes, ellers én setning som sier hva som er forskjellig.
  *
- * Fire ting sammenlignes, og verktøyversjonen er med vilje ikke én av dem.
+ * Fem ting sammenlignes, og verktøyversjonen er med vilje ikke én av dem.
  * Fasiten er fingeravtrykket av teksten, og den er allerede lik: gir en nyere
  * poppler byte for byte den samme teksten, er teksten den samme, og en
  * avvisning på versjonsnummeret ville stengt en riktig kjøring uten vei videre —
  * en ny rad er umulig, siden `source_versions_source_content_key` avviser den.
- * Verktøyet og argumentene er derimot det oppskriften faktisk *kjører*, og
- * begge er derfor med. At den lukkede listen (migrasjon 003f) i praksis gjør
+ * Verktøyet, argumentene og etterbehandlingen er derimot det oppskriften faktisk
+ * *kjører*, og alle tre er derfor med. At den lukkede listen (migrasjon 003f) i praksis gjør
  * dem like uansett, er ikke en grunn til å la være å se etter: gjenbruken skal
  * ikke hvile på at en annen regel holder.
  */
@@ -285,6 +285,12 @@ function reuseDifference(
     return (
       `hentet ut med andre argumenter («${existing.text_extraction_arguments ?? 'ingen'}» mot ` +
       `«${recipe.arguments}»)`
+    )
+  }
+  if (existing.text_extraction_transform !== recipe.transform) {
+    return (
+      `etterbehandlet på en annen måte («${existing.text_extraction_transform ?? 'ingen'}» mot ` +
+      `«${recipe.transform ?? 'ingen'}»)`
     )
   }
   if (existing.representation !== representation) {

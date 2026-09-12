@@ -1397,7 +1397,10 @@ PR G  db: add publication events and gate                                   (#15
       feat: extract from a local full-text PDF, end to end                 (#70)  merget   migrasjon 003e, 007i
       feat: gjør kildekontrollen mulig uten artikkelen ved siden av         (#73)  merget   ingen migrasjon
       fix: keep a two-column source excerpt readable in the control session (#75)  merget   ingen migrasjon
-      feat: gi et kildeomfattende fravær et kontrollledd som kan bære det   (#78)  åpen     migrasjon 005ad, 005ae
+      feat: gi et kildeomfattende fravær et kontrollledd som kan bære det   (#78)  merget   migrasjon 005ad, 005ae
+      fix: la kontrollraden si hvor representasjonen faktisk kom fra        (#80)  merget   ingen migrasjon
+      fix: la fraværsgjennomlesningen etterlate et spor                    (#81)  merget   ingen migrasjon
+      fix: gjør PDF-tekstuttrekkingen kolonnebevisst                       (#86)  åpen     migrasjon 003g
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1499,7 +1502,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2147 pgTAP-assertions over 66 testfiler.
+Databaselaget teller nå 2154 pgTAP-assertions over 66 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1667,18 +1670,18 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de syttitre migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de syttifire migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
    007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab,
-   005ac, 003e, 007i, 003f, 005ad og 005ae — i
+   005ac, 003e, 007i, 003f, 005ad, 005ae og 003g — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle syttitre ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle syttifire ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den

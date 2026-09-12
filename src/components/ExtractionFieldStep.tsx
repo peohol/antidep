@@ -39,6 +39,7 @@ import { ControlChoice } from './ControlWizard'
 import { CONTROL_ANSWER_OPTIONS, type ControlAnswer } from '../lib/control-session'
 import type { FieldInterpretation, FieldStatementKind } from '../lib/extraction-statements'
 import type { EvidenceFieldGrounding } from '../agents/verification-input'
+import { readableExcerptParagraphs } from '../lib/readable-excerpt.ts'
 
 /**
  * Hva høyresiden heter, og hva kontrolløren blir spurt om.
@@ -119,7 +120,16 @@ export function ExtractionFieldStep({
       <div className="field-check__panes">
         <div className="field-check__pane">
           <h4 className="field-check__pane-heading">Ordrett tekst</h4>
-          <blockquote className="field-check__excerpt">{grounding.sourceExcerpt}</blockquote>
+          {/* Utdraget som lesbar tekst: ett avsnitt per uavhengig tekstblokk,
+              med linjeombrekkingen fra PDF-en slått sammen til mellomrom. Ingen
+              ord er endret — bare blanktegn (`readable-excerpt.ts`). */}
+          <blockquote className="field-check__excerpt">
+            {readableExcerptParagraphs(grounding.sourceExcerpt).map((paragraph, index) => (
+              <p key={index} className="field-check__excerpt-paragraph">
+                {paragraph}
+              </p>
+            ))}
+          </blockquote>
           <p className="field-check__locator">{grounding.sourceLocator}</p>
         </div>
 
