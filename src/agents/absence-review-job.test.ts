@@ -145,7 +145,10 @@ describe('writeAbsenceReviewJob', () => {
     await expect(
       writeAbsenceReviewJob({
         ...job(rot),
-        gitPaths: { workTree: () => '/et/arbeidstre', ignores: () => false },
+        gitPaths: {
+          workTree: () => ({ kind: 'inside', root: '/et/arbeidstre' }),
+          ignores: () => false,
+        },
       }),
     ).rejects.toThrow(/ikke være ignorert|uten å være ignorert/)
     expect(existsSync(join(rot, ITEM.evidenceItemId))).toBe(false)

@@ -681,6 +681,17 @@ være ignorert, gir ingen kjøremappe i det hele tatt (`git-paths.ts`). En katal
 utenfor et arbeidstre — `mkdtemp` under tmp, som kjedeprøven og Routinene bruker
 — er greit; der finnes ingen historikk å havne i.
 
+**«Utenfor» må være fastslått, ikke antatt.** Det er den ene konklusjonen som
+slipper en bane gjennom uten en ignore-regel, og den kan ikke hvile på at git
+ikke svarte: `git rev-parse --show-toplevel` avslutter med 128 både for «not a
+git repository», som betyr utenfor, og for «dubious ownership», «invalid gitfile
+format» og en rettighetsfeil, som ikke betyr noe om hvor banen ligger — og
+mangler git i PATH, kommer det ingen exit-kode. Kontrollen krever derfor et
+filsystemfaktum: ingen forelder har en `.git`. Svarer ikke git, og finnes det en
+`.git` over banen, er utfallet «ikke fastslått», og da skrives ingenting. Ellers
+kunne fullteksten blitt skrevet i et arbeidstre fordi git på *denne* maskinen
+ikke kunne svare, og commitet fra en maskin der den kan.
+
 Svaret er ett av tre per felt, og den midterste er ikke en høflighetsform:
 
 | Svar | Betydning | Virkning |

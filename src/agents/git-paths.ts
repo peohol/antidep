@@ -24,30 +24,38 @@
 // avvist nettopp den plasseringen resten av pipelinen bruker. Spør om filen.
 //
 // ----------------------------------------------------------------------------
-// Utenfor et arbeidstre er det ene tilfellet uten en ignore-regel
+// «Utenfor et arbeidstre» må være fastslått, ikke antatt
 //
-//   utenfor et arbeidstre            Tillatt. Det finnes ingen historikk å havne
-//                                    i. Det er plasseringen kjedeprøven og
-//                                    Routinene bruker (`mkdtemp` under tmp).
-//   i et arbeidstre, ignorert        Tillatt.
-//   i et arbeidstre, ikke ignorert   Avvist, og ingenting skrives.
-//   git svarer ikke om en bane
-//   i et arbeidstre                  Avvist. Å skrive fordi kontrollen ikke lot
-//                                    seg utføre, er den motsatte avveiningen av
-//                                    den kontrollen finnes for.
+// Det ene tilfellet som slipper gjennom uten en ignore-regel, er at banen ligger
+// utenfor et arbeidstre: der finnes ingen historikk å havne i. Det gjør nettopp
+// den avgjørelsen til den farligste i modulen, og den kan ikke hvile på at git
+// ikke svarte.
 //
-// Det første slipper gjennom fordi risikoen der ikke finnes, ikke fordi den er
-// mindre.
+// `git rev-parse --show-toplevel` avslutter nemlig med **128 for alt**: både for
+// «not a git repository», som betyr utenfor, og for «detected dubious ownership»,
+// «invalid gitfile format» og en rettighetsfeil, som ikke betyr noe om hvor banen
+// ligger. Og mangler `git` i PATH, kommer det ingen exit-kode i det hele tatt.
+// Første utgave gjorde alle disse til «utenfor», og det var en fail-open
+// sikkerhetsfeil funnet i teknisk review: fullteksten kunne bli skrevet i et
+// arbeidstre fordi git på *denne* maskinen ikke kunne svare, og så commitet fra
+// en maskin der den kan.
 //
-// Feilen er ikke hypotetisk: kommandoen som sto dokumentert for den
-// kildeomfattende fraværskontrollen, skrev spørsmålet til `fravaer` i repoets
-// rot — en katalog ingen regel ignorerte, og derfra er veien inn i historikken
-// ett `git add -A`.
+// Utfallet er derfor tredelt, og «utenfor» krever et **filsystemfaktum** og ikke
+// bare en feilmelding: at ingen forelder har en `.git`. Det er uavhengig av
+// locale, av konfigurasjon og av om git finnes.
+//
+//   inside    git svarte med en rot. Banen må være ignorert.
+//   outside   git svarte ikke, OG ingen forelder har en `.git`. Tillatt.
+//   unknown   git svarte ikke, men en forelder HAR en `.git` — eller oppslaget
+//             lot seg ikke utføre. Avvist.
+//
+// Et bart repo har ingen `.git` og blir dermed `outside`. Det er riktig nok: uten
+// et arbeidstre finnes det ingen `git add` som kan ta filen med seg.
 // ============================================================================
 
 import { execFileSync } from 'node:child_process'
 import { statSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 /** Om banen er en katalog som finnes. En bane som ikke finnes, er `false`. */
 function isExistingDirectory(path: string): boolean {
@@ -81,24 +89,24 @@ export function gitIgnores(path: string, workTree?: string): boolean {
   }
 }
 
+/** Hvor banen ligger i forhold til et git-arbeidstre. */
+export type WorkTreeVerdict =
+  | { readonly kind: 'inside'; readonly root: string }
+  | { readonly kind: 'outside' }
+  | { readonly kind: 'unknown'; readonly reason: string }
+
 /**
- * Roten av arbeidstreet banen hører til, eller `null` når den ikke hører til et.
+ * Roten git oppgir for banen, eller `null` når git ikke svarte.
  *
- * Slås opp fra den nærmeste forelderen som er en **katalog som finnes**:
+ * `null` sier **ingenting** om hvor banen ligger — se hodekommentaren. Bruk
+ * `workTreeVerdict` for det spørsmålet; denne er bare git-kallet.
+ *
+ * Oppslaget gjøres fra den nærmeste forelderen som er en **katalog som finnes**:
  * `git -C` krever nettopp det, og banen vi spør om er som regel en fil — enten
  * en som ikke er opprettet ennå, eller en som ligger der fra en tidligere
- * kjøring. Et `null` dekker også at git ikke finnes på maskinen; da er det
- * heller ingen som kan commite derfra.
- *
- * **Kravet om at det er en katalog, ikke bare at den finnes, er et reviewfunn —
- * og det var en omvei rundt hele kontrollen.** Første utgave stanset så snart
- * banen fantes, og for en fil ble `probe` da filen selv. `git -C <fil>`
- * avslutter med 128 og «Not a directory», `catch` gjorde det til `null`, og
- * `assertNotCommittable` leste det som «utenfor et arbeidstre». En
- * `fravaer/<id>/prompt.txt` som alt lå der — altså nøyaktig tilfellet
- * kommandoene er ment å kunne kjøres om igjen i, og nøyaktig filen den gamle
- * dokumenterte kommandoen etterlot — ble dermed skrevet over med fullteksten
- * uten at kontrollen slo til.
+ * kjøring. Kravet om at det er en katalog, og ikke bare at den finnes, er et
+ * reviewfunn: for en fil ble `git -C <fil>` kalt, som gir «Not a directory», og
+ * en `prompt.txt` som alt lå der — altså omkjøringstilfellet — slapp gjennom.
  */
 export function gitWorkTreeRoot(path: string): string | null {
   let probe = resolve(path)
@@ -120,6 +128,63 @@ export function gitWorkTreeRoot(path: string): string | null {
   }
 }
 
+/**
+ * Den nærmeste forelderen som har en `.git`, eller hvorfor vi ikke vet.
+ *
+ * Et filsystemfaktum, og det er hele poenget: det gjelder uavhengig av locale,
+ * av git-konfigurasjon og av om git i det hele tatt er installert. En katalog vi
+ * ikke får lese, gir `unknown` framfor «ingen `.git` her» — ellers ville en
+ * rettighetsfeil blitt lest som et bevis for at banen er trygg.
+ */
+function nearestDotGit(path: string): { found: string | null } | { unknown: string } {
+  let probe = resolve(path)
+  for (;;) {
+    try {
+      statSync(join(probe, '.git'))
+      return { found: probe }
+    } catch (cause) {
+      const code = (cause as { code?: string }).code
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        return {
+          unknown:
+            `kunne ikke lese ${join(probe, '.git')} (${code ?? 'ukjent feil'}), så det er ikke ` +
+            'fastslått at banen ligger utenfor et arbeidstre',
+        }
+      }
+    }
+    const parent = dirname(probe)
+    if (parent === probe) {
+      return { found: null }
+    }
+    probe = parent
+  }
+}
+
+/**
+ * Hvor banen ligger, med «utenfor» som en fastslått konklusjon og ikke en
+ * antakelse. Se hodekommentaren for hvorfor de tre utfallene er forskjellige.
+ */
+export function workTreeVerdict(path: string): WorkTreeVerdict {
+  const root = gitWorkTreeRoot(path)
+  if (root !== null) {
+    return { kind: 'inside', root }
+  }
+  const dotGit = nearestDotGit(path)
+  if ('unknown' in dotGit) {
+    return { kind: 'unknown', reason: dotGit.unknown }
+  }
+  if (dotGit.found !== null) {
+    return {
+      kind: 'unknown',
+      reason:
+        `git kunne ikke oppgi arbeidstreet for banen, men ${join(dotGit.found, '.git')} finnes. ` +
+        'Banen kan dermed ligge i et arbeidstre som en annen maskin, eller et annet oppsett, ' +
+        'kan commite fra',
+    }
+  }
+  return { kind: 'outside' }
+}
+
 /** Skrivingen ble avvist før noe ble skrevet. */
 export class CommittablePathRefused extends Error {
   constructor(message: string) {
@@ -130,7 +195,7 @@ export class CommittablePathRefused extends Error {
 
 /** Byttes ut i test. Standard er de ekte git-oppslagene. */
 export interface GitPathPorts {
-  readonly workTree?: (path: string) => string | null
+  readonly workTree?: (path: string) => WorkTreeVerdict
   readonly ignores?: (path: string, workTree?: string) => boolean
 }
 
@@ -141,16 +206,24 @@ export interface GitPathPorts {
  * denne filen ikke får ligge der, og ikke bare at en regel slo til.
  */
 export function assertNotCommittable(path: string, what: string, ports: GitPathPorts = {}): void {
-  const workTree = (ports.workTree ?? gitWorkTreeRoot)(path)
-  if (workTree === null) {
+  const verdict = (ports.workTree ?? workTreeVerdict)(path)
+  if (verdict.kind === 'outside') {
     return
   }
+  if (verdict.kind === 'unknown') {
+    throw new CommittablePathRefused(
+      `Det er ikke fastslått at ${path} ligger utenfor et git-arbeidstre: ${verdict.reason}. ` +
+        `${what}, og filen skrives bare til en bane som ikke kan bli med i en commit. Velg en ` +
+        'katalog som er ignorert, eller en som sikkert ligger utenfor et arbeidstre. Ingenting ' +
+        'er skrevet.',
+    )
+  }
   const ignores = ports.ignores ?? gitIgnores
-  if (ignores(resolve(path), workTree)) {
+  if (ignores(resolve(path), verdict.root)) {
     return
   }
   throw new CommittablePathRefused(
-    `${path} ligger i git-arbeidstreet ${workTree} uten å være ignorert, og ${what}. ` +
+    `${path} ligger i git-arbeidstreet ${verdict.root} uten å være ignorert, og ${what}. ` +
       'Filen skrives bare til en bane som ikke kan bli med i en commit. Velg en katalog ' +
       'utenfor arbeidstreet, eller en som er ignorert. Ingenting er skrevet.',
   )

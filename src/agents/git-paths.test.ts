@@ -10,6 +10,7 @@ import {
   CommittablePathRefused,
   gitIgnores,
   gitWorkTreeRoot,
+  workTreeVerdict,
 } from './git-paths.ts'
 
 // ============================================================================
@@ -96,6 +97,48 @@ describe('gitWorkTreeRoot', () => {
   })
 })
 
+// ----------------------------------------------------------------------------
+// «Utenfor et arbeidstre» må være fastslått, ikke antatt
+//
+// Reviewfunn, merge-blokkerende, og en fail-open sikkerhetsfeil.
+// `git rev-parse --show-toplevel` avslutter med 128 for ALT: «not a git
+// repository», som betyr utenfor, og «invalid gitfile format», «dubious
+// ownership» eller en rettighetsfeil, som ikke betyr noe om hvor banen ligger.
+// Mangler git i PATH, kommer det ingen exit-kode. Første utgave gjorde alle til
+// «utenfor», og da kunne fullteksten skrives i et arbeidstre fordi git på DENNE
+// maskinen ikke kunne svare — og commites fra en maskin der den kan.
+// ----------------------------------------------------------------------------
+describe('workTreeVerdict', () => {
+  it('sier «inside» med roten for en bane i repoet', () => {
+    expect(workTreeVerdict('src/agents/git-paths.ts')).toEqual({
+      kind: 'inside',
+      root: resolve('.'),
+    })
+  })
+
+  it('sier «outside» bare når ingen forelder har en .git', () => {
+    expect(workTreeVerdict(join(midlertidigKatalog(), 'prompt.txt'))).toEqual({ kind: 'outside' })
+  })
+
+  it('sier «unknown» når git ikke kan svare, men en .git finnes over banen', () => {
+    // Det ekte tilfellet, uten å etterligne noe: en `.git` som er en tom fil gir
+    // «fatal: invalid gitfile format» og exit 128 — samme kode som «utenfor».
+    // Katalogen kan likevel godt være et arbeidstre et annet oppsett kan commite
+    // fra, så svaret skal ikke være «outside».
+    const rot = midlertidigKatalog()
+    writeFileSync(join(rot, '.git'), '', 'utf8')
+    mkdirSync(join(rot, 'fravaer', '9ba56fb4'), { recursive: true })
+    const fil = join(rot, 'fravaer', '9ba56fb4', 'prompt.txt')
+
+    expect(gitWorkTreeRoot(fil)).toBe(null)
+    const verdict = workTreeVerdict(fil)
+    expect(verdict.kind).toBe('unknown')
+    expect(() => assertNotCommittable(fil, 'kildeteksten står i den')).toThrow(
+      CommittablePathRefused,
+    )
+  })
+})
+
 describe('assertNotCommittable', () => {
   const hva = 'spørsmålet inneholder hele representasjonen av kilden'
 
@@ -145,22 +188,31 @@ describe('assertNotCommittable', () => {
     ).not.toThrow()
   })
 
-  it('avviser når git ikke kan svare om en bane som ligger i et arbeidstre', () => {
+  it('avviser når ignore-oppslaget ikke kan svare om en bane i et arbeidstre', () => {
     // Fail-closed. Samme avveining som i `agent-env-file.ts`: å skrive fordi
     // kontrollen ikke lot seg utføre, er den motsatte avveiningen av den
     // kontrollen finnes for.
     expect(() =>
       assertNotCommittable('hvor-som-helst/prompt.txt', hva, {
-        workTree: () => '/et/arbeidstre',
+        workTree: () => ({ kind: 'inside', root: '/et/arbeidstre' }),
         ignores: () => false,
       }),
     ).toThrow(CommittablePathRefused)
   })
 
+  it('avviser et «unknown», og sier hvorfor det ikke er fastslått', () => {
+    expect(() =>
+      assertNotCommittable('hvor-som-helst/prompt.txt', hva, {
+        workTree: () => ({ kind: 'unknown', reason: 'git finnes ikke i PATH' }),
+        ignores: () => true,
+      }),
+    ).toThrow(/ikke fastslått[\s\S]*git finnes ikke i PATH/)
+  })
+
   it('sier i avvisningen hva banen bærer, og at ingenting er skrevet', () => {
     expect(() =>
       assertNotCommittable('fravaer/x/prompt.txt', hva, {
-        workTree: () => '/et/arbeidstre',
+        workTree: () => ({ kind: 'inside', root: '/et/arbeidstre' }),
         ignores: () => false,
       }),
     ).toThrow(new RegExp(`${hva}[\\s\\S]*Ingenting er skrevet`))

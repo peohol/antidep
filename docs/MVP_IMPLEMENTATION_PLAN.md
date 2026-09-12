@@ -7601,6 +7601,23 @@ plasseringen resten av pipelinen bruker. En bane utenfor et arbeidstre slipper
 gjennom, fordi det ikke finnes noen historikk å havne i. Oppslaget er det samme
 som miljøfilskriveren bruker, og ligger nå felles.
 
+To reviewfunn på nettopp denne kontrollen, begge reelle og begge rettet:
+
+1. **Omkjøringen slapp gjennom.** Arbeidstre-oppslaget stanset så snart banen
+   fantes, og for en fil ble `git -C` kalt med filen selv som katalog — «Not a
+   directory», som ble lest som «utenfor et arbeidstre». Omkjøring er det normale
+   tilfellet, så en `prompt.txt` som alt lå der på en uignorert bane, ble skrevet
+   over med fullteksten uten at kontrollen slo til. Oppslaget går nå opp til
+   nærmeste forelder som er en **katalog som finnes**.
+2. **«Utenfor» var antatt og ikke fastslått, og det gjorde kontrollen
+   fail-open.** `git rev-parse --show-toplevel` avslutter med 128 for alt — både
+   «not a git repository», som betyr utenfor, og «dubious ownership», «invalid
+   gitfile format» og en rettighetsfeil, som ikke betyr noe om hvor banen ligger
+   — og mangler git i PATH, kommer det ingen exit-kode. Alle ble til «utenfor».
+   Utfallet er nå tredelt, og «utenfor» krever et filsystemfaktum: ingen forelder
+   har en `.git`. Svarer ikke git, og finnes det en `.git` over banen, skrives
+   ingenting.
+
 **Gjennomlesningen kunne forsvinne ut av proveniensen.** To ting, begge funnet på
 den ekte kjøringen av `9570760c`:
 
