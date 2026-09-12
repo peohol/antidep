@@ -81,12 +81,33 @@ select ok(
 -- ===========================================================================
 create temporary table fixture (name text primary key, id uuid) on commit drop;
 insert into fixture (name, id)
-select 'editor', id from provenance.actors where actor_key = 'human:peder-holman';
-insert into fixture (name, id)
 select 'sertralin', id from catalog.drugs where canonical_name = 'sertralin';
 insert into fixture (name, id)
 select 'weight', id from catalog.clinical_concepts where canonical_label = 'vektendring';
 grant select on fixture to anon;
+
+-- Kalleren er filens egen: den registrerte redaktøren har ingen brukerkonto i en
+-- lokal stack eller i CI (migrasjon 005b), og en jwt-claim bygget av den ville
+-- vært tom. Rollene er de to kallene trenger: `editor` for fjerningen, og
+-- `reviewer` for den menneskelige kontrollen i del 4.
+insert into auth.users (id, email) values
+  ('67000000-0000-4000-8000-0000000000a0', 'fjerning-670-a@test.invalid');
+
+insert into provenance.actors
+  (id, actor_type, actor_key, display_name, description, auth_user_id)
+values
+  ('ac670000-0000-4000-8000-0000000000a0', 'human', 'human:fjerning-670-a', 'Kaller A',
+   'Redaktør og reviewer, for 670.', '67000000-0000-4000-8000-0000000000a0');
+
+insert into fixture (name, id) values ('editor', 'ac670000-0000-4000-8000-0000000000a0');
+
+insert into workflow.user_roles
+  (user_id, role_code, scope_id, valid_from, granted_by_actor_id, grant_reason)
+values
+  ('67000000-0000-4000-8000-0000000000a0', 'editor', null, now() - interval '1 year',
+   'ac670000-0000-4000-8000-0000000000a0', 'Gyldig editor-tildeling for kaller A i 670.'),
+  ('67000000-0000-4000-8000-0000000000a0', 'reviewer', null, now() - interval '1 year',
+   'ac670000-0000-4000-8000-0000000000a0', 'Gyldig reviewer-tildeling for kaller A i 670.');
 
 insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
 values ('67000000-0000-4000-8000-000000000001', 'journal_article', 'Testkilde for 670',
@@ -204,9 +225,7 @@ values ('67000000-0000-4000-8000-000000000032', (select id from fixture where na
 -- Ingenting skal slettes av noen av dem, og det kontrolleres etterpå.
 -- ===========================================================================
 select set_config('request.jwt.claims',
-                  format('{"sub":"%s"}', (select u.id from auth.users u
-                                          join provenance.actors a on a.auth_user_id = u.id
-                                          where a.actor_key = 'human:peder-holman')), true);
+                  '{"sub":"67000000-0000-4000-8000-0000000000a0"}', true);
 
 select throws_ok(
   format(
@@ -303,9 +322,7 @@ insert into fixture (name, id) select 'engangs', pg_temp.extract('Engangsartefak
 reset role;
 
 select set_config('request.jwt.claims',
-                  format('{"sub":"%s"}', (select u.id from auth.users u
-                                          join provenance.actors a on a.auth_user_id = u.id
-                                          where a.actor_key = 'human:peder-holman')), true);
+                  '{"sub":"67000000-0000-4000-8000-0000000000a0"}', true);
 
 create temporary table utfall (label text primary key, value jsonb) on commit drop;
 insert into utfall (label, value)
