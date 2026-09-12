@@ -46,8 +46,17 @@
 // ============================================================================
 
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+
+/** Om banen er en katalog som finnes. En bane som ikke finnes, er `false`. */
+function isExistingDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
 
 /**
  * Sier om git faktisk ignorerer banen.
@@ -75,14 +84,25 @@ export function gitIgnores(path: string, workTree?: string): boolean {
 /**
  * Roten av arbeidstreet banen hører til, eller `null` når den ikke hører til et.
  *
- * Slås opp fra den nærmeste forelderen som faktisk finnes: kjøremappa er som
- * regel ikke opprettet ennå når kontrollen gjøres, og `git -C` krever en katalog
- * som finnes. Et `null` dekker også at git ikke finnes på maskinen — da er det
+ * Slås opp fra den nærmeste forelderen som er en **katalog som finnes**:
+ * `git -C` krever nettopp det, og banen vi spør om er som regel en fil — enten
+ * en som ikke er opprettet ennå, eller en som ligger der fra en tidligere
+ * kjøring. Et `null` dekker også at git ikke finnes på maskinen; da er det
  * heller ingen som kan commite derfra.
+ *
+ * **Kravet om at det er en katalog, ikke bare at den finnes, er et reviewfunn —
+ * og det var en omvei rundt hele kontrollen.** Første utgave stanset så snart
+ * banen fantes, og for en fil ble `probe` da filen selv. `git -C <fil>`
+ * avslutter med 128 og «Not a directory», `catch` gjorde det til `null`, og
+ * `assertNotCommittable` leste det som «utenfor et arbeidstre». En
+ * `fravaer/<id>/prompt.txt` som alt lå der — altså nøyaktig tilfellet
+ * kommandoene er ment å kunne kjøres om igjen i, og nøyaktig filen den gamle
+ * dokumenterte kommandoen etterlot — ble dermed skrevet over med fullteksten
+ * uten at kontrollen slo til.
  */
 export function gitWorkTreeRoot(path: string): string | null {
   let probe = resolve(path)
-  while (!existsSync(probe)) {
+  while (!isExistingDirectory(probe)) {
     const parent = dirname(probe)
     if (parent === probe) {
       return null

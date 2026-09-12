@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
@@ -28,6 +29,8 @@ import {
 // ============================================================================
 
 const opprettede: string[] = []
+/** Baner prøvene legger i selve arbeidstreet, og som må ryddes bort igjen. */
+const iRepoet: string[] = []
 
 function midlertidigKatalog(): string {
   const katalog = mkdtempSync(join(tmpdir(), 'antidep-git-'))
@@ -36,7 +39,7 @@ function midlertidigKatalog(): string {
 }
 
 afterEach(() => {
-  for (const katalog of opprettede.splice(0)) {
+  for (const katalog of [...opprettede.splice(0), ...iRepoet.splice(0)]) {
     execFileSync('rm', ['-rf', katalog])
   }
 })
@@ -79,6 +82,15 @@ describe('gitWorkTreeRoot', () => {
     expect(gitWorkTreeRoot('fravaer/9ba56fb4/prompt.txt')).toBe(resolve('.'))
   })
 
+  // Reviewfunn, og det var en omvei rundt hele kontrollen. Første utgave stanset
+  // så snart banen fantes, og for en fil ble oppslaget da gjort med filen som
+  // `git -C`-katalog: exit 128, «Not a directory», som `catch` gjorde til `null`
+  // — altså «utenfor et arbeidstre». En fil som alt lå der, slapp dermed
+  // gjennom.
+  it('finner roten for en fil som alt finnes, og ikke bare for en som mangler', () => {
+    expect(gitWorkTreeRoot('package.json')).toBe(resolve('.'))
+  })
+
   it('svarer null utenfor et arbeidstre', () => {
     expect(gitWorkTreeRoot(midlertidigKatalog())).toBe(null)
   })
@@ -96,6 +108,24 @@ describe('assertNotCommittable', () => {
     expect(() => assertNotCommittable('fravaer/x/prompt.txt', hva)).toThrow(
       /ikke være ignorert|uten å være ignorert/,
     )
+  })
+
+  // Omkjøringstilfellet, som er det normale: kommandoene er ment å kunne kjøres
+  // om igjen, og da ligger `prompt.txt` der fra før. Prøven skriver filen i
+  // arbeidstreet på en bane ingen regel ignorerer — nøyaktig den den gamle
+  // dokumenterte kommandoen etterlot — og krever at kontrollen slår til
+  // likevel. Uten at `gitWorkTreeRoot` krever en KATALOG, ble filen skrevet over
+  // med fullteksten uten et pip.
+  it('avviser en kjøremappe som alt bærer en prompt fra en tidligere kjøring', () => {
+    const mappe = join(resolve('.'), `fravaer-prove-${randomBytes(4).toString('hex')}`)
+    iRepoet.push(mappe)
+    const fil = join(mappe, '9ba56fb4-fbb9-414b-899b-7296683f274d', 'prompt.txt')
+    mkdirSync(dirname(fil), { recursive: true })
+    writeFileSync(fil, 'en prompt fra en tidligere kjøring\n', 'utf8')
+
+    expect(gitIgnores(fil, resolve('.'))).toBe(false)
+    expect(gitWorkTreeRoot(fil)).toBe(resolve('.'))
+    expect(() => assertNotCommittable(fil, hva)).toThrow(CommittablePathRefused)
   })
 
   it('tillater kjøremappa under assignments, som er sporet men ignorerer alt under seg', () => {
