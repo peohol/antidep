@@ -433,6 +433,93 @@ describe('Kontrolløkten — feltkontrollen', () => {
     ])
   })
 
+  // Den ene teksten som ikke skal flyte. En kildeversjon som bærer verktøyets
+  // utdata ordrett — `-layout`, uten etterbehandling — har fortsatt papirets
+  // plassering i seg, og da ligger venstre og høyre spalte på den samme
+  // tekstlinjen. Slås avstanden mellom dem sammen til ett mellomrom, leser to
+  // uavhengige spalter som én flytende setning, og kontrolløren ser en setning
+  // som ikke står i artikkelen. Avstanden er det eneste synlige varselet, og
+  // skal bli stående.
+  it('viser et utdrag fra den gamle oppskriften med plasseringen i behold', async () => {
+    const tospaltet = 'Background: The effects of extended selec-        is also a major cause of'
+    renderExtractionControl({
+      source_version: {
+        source_version_id: TEST_EXTRACTION_IDS.sourceVersion,
+        retrieved_at: '2026-09-01T09:00:00Z',
+        retrieved_from: 'https://eksempel.invalid/testkilde-a',
+        external_version: null,
+        content_hash: `sha256:${'a'.repeat(64)}`,
+        representation: 'full_text',
+        has_storage_reference: false,
+        document: {
+          sha256: `sha256:${'5'.repeat(64)}`,
+          byte_size: 1234,
+          media_type: 'application/pdf',
+          text_extraction: {
+            tool: 'pdftotext',
+            tool_version: 'pdftotext 24.02.0',
+            arguments: '-layout -enc UTF-8 -eol unix',
+            transform: null,
+          },
+        },
+      },
+      field_groundings: TEST_FIELD_GROUNDINGS.map((grounding) =>
+        grounding['check_field'] === 'intervention_arm'
+          ? { ...grounding, source_excerpt: tospaltet }
+          : grounding,
+      ),
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    const steg = openStep()
+    const excerpt = steg.querySelector('.field-check__excerpt')
+    // Ordrett, med avstanden mellom spaltene i behold.
+    expect(excerpt?.textContent).toBe(tospaltet)
+    expect(excerpt?.classList.contains('field-check__excerpt--as-placed')).toBe(true)
+    expect(excerpt?.querySelectorAll('.field-check__excerpt-paragraph')).toHaveLength(0)
+    // Og kontrolløren får vite hvorfor teksten ser slik ut, i tekst og ikke
+    // bare som en form.
+    expect(steg.querySelector('.field-check__excerpt-warning')?.textContent).toContain(
+      'to forskjellige spalter',
+    )
+  })
+
+  // Den samme regelen sett fra den andre siden: en tekst Antidep har bygget
+  // leserekkefølgen av, flyter, og får ingen advarsel.
+  it('viser ingen advarsel for et utdrag fra den nye representasjonen', async () => {
+    renderExtractionControl({
+      source_version: {
+        source_version_id: TEST_EXTRACTION_IDS.sourceVersion,
+        retrieved_at: '2026-09-01T09:00:00Z',
+        retrieved_from: 'https://eksempel.invalid/testkilde-a',
+        external_version: null,
+        content_hash: `sha256:${'a'.repeat(64)}`,
+        representation: 'full_text',
+        has_storage_reference: false,
+        document: {
+          sha256: `sha256:${'5'.repeat(64)}`,
+          byte_size: 1234,
+          media_type: 'application/pdf',
+          text_extraction: {
+            tool: 'pdftotext',
+            tool_version: 'pdftotext 24.02.0',
+            arguments: '-bbox-layout -enc UTF-8 -eol unix',
+            transform: 'antidep-reading-order@2',
+          },
+        },
+      },
+    })
+    await screen.findByText('Har du tilgang til fullteksten?')
+    clickAnswer('Ja')
+    const steg = openStep()
+    expect(steg.querySelector('.field-check__excerpt-warning')).toBeNull()
+    expect(
+      steg
+        .querySelector('.field-check__excerpt')
+        ?.classList.contains('field-check__excerpt--as-placed'),
+    ).toBe(false)
+  })
+
   // Markupen alene holder ikke: jsdom gjengir ingen stil, så regelen prøves der
   // den faktisk bor. Den vannrette rullingen skal være borte — den var
   // kompensasjonen for en representasjon med feil leserekkefølge.
@@ -442,6 +529,12 @@ describe('Kontrolløkten — feltkontrollen', () => {
     expect(regel).not.toMatch(/white-space:\s*pre;/u)
     expect(regel).not.toMatch(/overflow-x:/u)
     expect(regel).toMatch(/overflow-wrap:\s*anywhere;/u)
+
+    // Unntaket har sin egen regel, og den skal beholde plasseringen. Rullingen
+    // der er avgrenset til utdraget, slik at siden ikke ruller vannrett.
+    const somPlassert = /\.field-check__excerpt--as-placed\s*\{[^}]*\}/u.exec(css)?.[0] ?? ''
+    expect(somPlassert).toMatch(/white-space:\s*pre;/u)
+    expect(somPlassert).toMatch(/overflow-x:\s*auto;/u)
 
     // Ruten utdraget står i, skal fortsatt kunne krympe: et rutenettelement er
     // `min-width: auto` som standard, og uten dette ville et langt ord uten

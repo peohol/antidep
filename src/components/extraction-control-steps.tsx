@@ -51,6 +51,7 @@ import {
   sourceWideAbsenceFields,
 } from '../lib/extraction-statements'
 import { extractionCommitStepId, fieldStepId, sourceAccessStepId } from '../lib/control-steps'
+import { excerptKeepsLayout } from '../lib/readable-excerpt'
 import type { ExtractionReviewItem } from '../lib/extraction-review'
 import type { VerificationOutcome } from '../types/api'
 
@@ -361,6 +362,7 @@ export function buildExtractionSteps({
           answer={entry?.answer ?? null}
           grounding={grounding}
           interpretation={interpretation}
+          keepsLayout={excerptKeepsLayout(dossier.sourceVersion?.document ?? null)}
           note={entry?.note ?? ''}
           onAnswer={(answer) => handlers.onFieldAnswer(evidenceItemId, field, answer)}
           onNote={(note) => handlers.onFieldNote(evidenceItemId, field, note)}

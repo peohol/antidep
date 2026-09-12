@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { readableExcerptParagraphs } from './readable-excerpt'
+import { excerptKeepsLayout, readableExcerptParagraphs } from './readable-excerpt'
 
 describe('readableExcerptParagraphs', () => {
   it('slår linjeombrekkingen fra PDF-en sammen til mellomrom', () => {
@@ -35,9 +35,11 @@ describe('readableExcerptParagraphs', () => {
     ])
   })
 
-  it('fjerner kolonneavstanden fra et utdrag hentet ut med den gamle oppskriften', () => {
-    // Historiske kildeversjoner bærer fortsatt `-layout`-teksten, og utdragene
-    // fra dem skal være lesbare uten at noen ord forsvinner.
+  it('slår også sammen en kolonneavstand, og er derfor ikke veien for en `-layout`-tekst', () => {
+    // Dette er nettopp grunnen til at `excerptKeepsLayout` finnes: veggen av
+    // mellomrom mellom to spalter forsvinner her, og da leser to uavhengige
+    // spalter som én setning. Et utdrag fra en representasjon som fortsatt
+    // bærer papirets plassering, skal derfor ikke gjennom denne funksjonen.
     expect(
       readableExcerptParagraphs(
         'Background: The effects of extended selec-        is also a major cause of',
@@ -56,5 +58,27 @@ describe('readableExcerptParagraphs', () => {
 
   it('gir ingen avsnitt for et utdrag uten innhold', () => {
     expect(readableExcerptParagraphs('   \n\n  ')).toEqual([])
+  })
+})
+
+describe('excerptKeepsLayout', () => {
+  const recipe = (transform: string | null) => ({ textExtraction: { transform } })
+
+  it('lar en tekst som er verktøyets utdata ordrett, stå som den står', () => {
+    // `-layout` uten etterbehandling: venstre og høyre spalte ligger på den
+    // samme tekstlinjen, og avstanden mellom dem er det eneste synlige
+    // varselet om at ordene ikke hører sammen.
+    expect(excerptKeepsLayout(recipe(null))).toBe(true)
+  })
+
+  it('lar en tekst Antidep har bygget leserekkefølgen av, flyte', () => {
+    expect(excerptKeepsLayout(recipe('antidep-reading-order@2'))).toBe(false)
+    expect(excerptKeepsLayout(recipe('antidep-reading-order@1'))).toBe(false)
+  })
+
+  it('lar en representasjon som ikke er utledet av et dokument, flyte', () => {
+    // Teksten som lå på adressen — et sammendrag, for eksempel — har ingen
+    // spalter å veve sammen.
+    expect(excerptKeepsLayout(null)).toBe(false)
   })
 })

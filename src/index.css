@@ -1382,6 +1382,31 @@ header nav a {
   margin-bottom: 0;
 }
 
+/* Den ene teksten som ikke skal flyte: en representasjon som er verktøyets
+   utdata ordrett, bærer fortsatt papirets plassering, og da ligger to spalter
+   på den samme tekstlinjen. Mellomrommet mellom dem er det eneste synlige
+   varselet om at ordene ikke hører sammen, og skal bli stående — også når
+   prisen er vannrett rulling. Rullingen er avgrenset til utdraget selv, slik at
+   siden ikke ruller vannrett. */
+.field-check__excerpt--as-placed {
+  white-space: pre;
+  overflow-x: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8125rem;
+  overflow-wrap: normal;
+}
+
+/* Varselet står over utdraget, ikke under, fordi det avgjør hvordan teksten
+   skal leses. Bærer sin egen tekst og ikke bare en farge. */
+.field-check__excerpt-warning {
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-inline-start: 3px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
 .field-check__locator {
   margin: 0 0 0.5rem;
   color: var(--color-text-muted);

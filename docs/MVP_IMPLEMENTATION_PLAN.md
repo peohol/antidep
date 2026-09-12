@@ -7827,6 +7827,16 @@ det ville måttet skille orddeling fra ekte bindestrek, og «fluoxetine- treated
 viser at den ikke kan gjøres trygg. Prisen er et par synlige bindestreker;
 alternativet er et ord som ikke står i dokumentet.
 
+**Én tekst skal likevel ikke flyte.** Alt over hviler på at leserekkefølgen i
+teksten *er* logisk. En kildeversjon som bærer verktøyets utdata ordrett —
+`-layout`, uten etterbehandling — er ikke det: der ligger venstre og høyre
+spalte på den samme tekstlinjen, atskilt av en vegg mellomrom. Slås veggen
+sammen til ett mellomrom, leser to uavhengige spalter som én flytende setning,
+og kontrolløren ser en setning som ikke står i artikkelen. Veggen er det eneste
+synlige varselet, og blir stående: et slikt utdrag vises som det står, med en
+setning over det som sier hvorfor. Grensen leses av oppskriften i raden
+(`excerptKeepsLayout`), ikke av en gjetning om hva som står i teksten.
+
 #### Produksjonsdataene er ryddet, og to funn ble ikke fjernet
 
 Køen i `/extraction-review` hadde seks evidensfunn. Den maskinelle kontrollen før
