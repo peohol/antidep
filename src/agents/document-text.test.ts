@@ -38,7 +38,19 @@ import type { DocumentLookup } from './source-document.ts'
 import { bboxLayoutDocument, syntheticPdf } from './test-support.ts'
 
 /** Migrasjonen som holder den samme listen på den andre siden av grensen. */
-const MIGRASJON = 'supabase/migrations/20260918090000_reading_order_representation.sql'
+/**
+ * Migrasjonene som til sammen setter dagens oppskriftskontrakt.
+ *
+ * 003g innførte kolonnen og den første utgaven; 003h er fremovermigrasjonen som
+ * hever den til `@2`. Kontrakten leses som summen av de to, fordi det er summen
+ * en database faktisk ender med — både en fersk og den som allerede har kjørt
+ * 003g. Én fil ville vært en påstand om hvor kontrakten bor, og den flytter seg
+ * med hver fremovermigrasjon.
+ */
+const MIGRASJONER = [
+  'supabase/migrations/20260918090000_reading_order_representation.sql',
+  'supabase/migrations/20260920090000_reading_order_v2_and_discard_lock.sql',
+]
 
 const LINJER = ['Mean weight change was 0.8 kg after 8 weeks.']
 const PDF = syntheticPdf(LINJER)
@@ -220,7 +232,9 @@ describe('de to sidene av grensen', () => {
     // Listen er en sikkerhetsgrense som håndheves to steder, og de to stedene
     // kan ikke dele en konstant på tvers av databasegrensen. Det som kan deles,
     // er kravet om at de staver den likt.
-    const migrasjon = await readFile(MIGRASJON, 'utf8')
+    const migrasjon = (
+      await Promise.all(MIGRASJONER.map(async (sti) => readFile(sti, 'utf8')))
+    ).join('\n')
     expect(migrasjon).toContain(`text_extraction_tool = '${PDF_TEXT_TOOL}'`)
     expect(migrasjon).toContain(`text_extraction_arguments = '${PDF_TEXT_ARGUMENTS}'`)
     expect(migrasjon).toContain(`text_extraction_transform = '${PDF_TEXT_TRANSFORM}'`)

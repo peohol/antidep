@@ -1670,18 +1670,18 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de syttiseks migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de syttisju migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
    007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab,
-   005ac, 003e, 007i, 003f, 005ad, 005ae, 003g, 008i og 005af — i
+   005ac, 003e, 007i, 003f, 005ad, 005ae, 003g, 008i, 005af og 003h — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle syttiseks ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle syttisju ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -7796,6 +7796,31 @@ kontrollgrunnlaget. Dokumentbindingen som jsonb har fått **én** definisjon
 (`knowledge.source_version_document_binding(uuid)`), lest av både oppdraget og
 kontrollgrunnlaget: to kopier av formen var to steder å legge til et felt.
 
+#### Rettelsen ligger i en fremovermigrasjon, ikke i 003g
+
+Celledelingen og låsen kom **etter** at 003g og 005af var kjørt mot det driftede
+prosjektet og registrert i `supabase_migrations.schema_migrations`. Supabase
+kjører aldri en registrert versjon på nytt (§74.32), så en rettelse inne i de to
+filene ville aldri nådd den driftede databasen: en fersk database bygget av
+repoet ville stått med én kontrakt og det driftede prosjektet med en annen —
+migrasjonsdrift i en sikkerhetskritisk proveniens- og skrivevei.
+
+De to filene er derfor satt tilbake til nøyaktig det som ble kjørt, og alt som
+kom etter, ligger i **migrasjon 003h**
+(`20260920090000_reading_order_v2_and_discard_lock.sql`). Begge veiene ender i
+den samme tilstanden:
+
+| Vei | Kjeden |
+|---|---|
+| Fersk database | 003g (`@1`) → 005af (uten lås) → 003h (`@2`, med lås) |
+| Driftet prosjekt | 003g og 005af registrert → 003h (`@2`, med lås) |
+
+Setningene tåler begge: `drop`/`add` på kontrollen, `create or replace` på de to
+funksjonene, som begge har uendret signatur. Oppgraderingsveien er prøvd der den
+faktisk gjelder — hele pgTAP-suiten kjørt mot det driftede prosjektet med 003h
+inline, uten avvik mot utgangspunktet — og den ferske kjeden kjøres av CI.
+
+
 **Den lukkede oppskriftslisten har nå tre rader, og de to nederste er ikke en
 overgangsordning.** Hver dokumentutledet kildeversjon som allerede står i basen,
 er registrert med `-layout` og uten etterbehandling, eller med den første
@@ -7972,7 +7997,8 @@ av en PDF.
 | `npm run test` | grønn |
 | `npm run build` | grønn |
 | pgTAP, 67 filer | kjørt mot det hostede prosjektet i en transaksjon som rulles tilbake, uten avvik mot utgangspunktet |
-| Migrasjonene | 003g og 005af deployet; endringene fra rettelsene av celledelingen og låsen er deployet for 005af og **gjenstår for 003g** |
+| Migrasjonene | 003g, 008i og 005af deployet og registrert; 003h, som bærer rettelsene, **gjenstår å deploye** |
+| Oppgraderingsveien | hele pgTAP-suiten kjørt mot det driftede prosjektet med 003h inline, uten avvik mot utgangspunktet |
 | Kjeden mot produksjon | modell-ledd, registrering og maskinell kontroll kjørt med hver sin identitet, på `@1` |
 | Regresjonsprøven for tabellraden | kontrollert begge veier: den feiler uten celledelingen og består med den |
 

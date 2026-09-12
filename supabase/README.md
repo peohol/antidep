@@ -68,6 +68,12 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     redaktøridentitet og en begrunnelse, den feiler lukket på hver rad som er menneskelig
     kontrollert eller bærer en påstand, og den skriver en auditrad med hele
     kontrollgrunnlaget. Dette er ikke en redaksjonell funksjon
+  - 003h leserekkefølgens andre utgave, `antidep-reading-order@2`, som deler en tabellrad
+    Poppler har lagt i én blokk: listen over hva som kan lagres får en tredje rad, skriveveien
+    registrerer bare `@2`, og fjerningsveien fra 005af låser de tre tabellene før den
+    kontrollerer. En fremovermigrasjon framfor en redigering av 003g og 005af, fordi de to
+    allerede er kjørt og registrert — Supabase kjører aldri en registrert versjon på nytt, så
+    en redigering ville gitt en fersk database én kontrakt og det driftede prosjektet en annen
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at

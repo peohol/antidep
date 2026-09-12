@@ -224,29 +224,6 @@ begin
   end if;
 
   -- ------------------------------------------------------------------------
-  -- Låsen. Den tas før kontrollene, ikke som en følge av slettingen, og det er
-  -- rekkefølgen som gjør at kontrollen under faktisk feiler lukket: en
-  -- menneskelig kildekontroll commitet etter at kontrollen har lest tabellen,
-  -- men før slettingen hadde låst den, ville blitt lest som fraværende og så
-  -- slettet av kallet — og øyeblikksbildet ville ikke hatt den. Tilstanden
-  -- kontrollene leser, skal være den samme tilstanden slettingen møter.
-  --
-  -- ACCESS EXCLUSIVE er den samme låsen ALTER TABLE trenger nedenfor, tatt i
-  -- den samme rekkefølgen, slik at slettingen ikke må oppgradere en lås
-  -- underveis. En egen LOCK-setning framfor å flytte ALTER-setningene hit:
-  -- ALTER TABLE krever i tillegg at køen av utsatte triggerhendelser er tom,
-  -- og det er et annet krav enn å låse.
-  --
-  -- De tre øvrige kontrollene — påstandslenke, reviewbeslutning og claim-sitat
-  -- — trenger ingen egen lås: de tabellene peker på knowledge.evidence_items
-  -- med `on delete restrict`, så en rad commitet underveis stopper slettingen
-  -- framfor å forsvinne med den.
-  -- ------------------------------------------------------------------------
-  lock table workflow.evidence_verifications in access exclusive mode;
-  lock table knowledge.evidence_field_groundings in access exclusive mode;
-  lock table knowledge.evidence_items in access exclusive mode;
-
-  -- ------------------------------------------------------------------------
   -- Kontrollene. Alle kjøres før noe slettes, og én rad som feiler stopper
   -- hele kallet: en delvis reset ville etterlatt en tilstand ingen bestemte.
   -- ------------------------------------------------------------------------
@@ -394,7 +371,7 @@ end;
 $$;
 
 comment on function knowledge.discard_unpublished_extraction_artifacts(uuid[], text) is
-  'Fjerner et eksplisitt oppgitt sett upubliserte evidensfunn med sine forankringer og maskinelle kontroller, i én transaksjon, og skriver en auditrad per funn med hele kontrollgrunnlaget som old_revision_or_snapshot (migrasjon 005af, issue #84). Finnes fordi pipelinen fortsatt bygges: fulltekstfunn registrert med den forrige oppskriften hviler på en representasjon der tekst fra to spalter lå på samme tekstlinje, og å la dem stå i kontrollkøen ville invitert en kliniker til å gjøre den faglige kildekontrollen på et grunnlag som ikke holder (migrasjon 003g). Dette er IKKE en redaksjonell funksjon: EXECUTE er revokert fra PUBLIC og gitt til ingen klientrolle, så den er nåbar bare for den som allerede har eiertilgang til databasen — og den innskrenker dermed en operasjon eieren ellers kunne gjort uten spor, framfor å utvide noen rettighet. Krever i tillegg en autorisert redaktøridentitet (knowledge.assert_editor_authorized(uuid), kalt uten begrep) og en begrunnelse. Feiler lukket, og uten å slette noe, dersom ett av funnene er menneskelig kildekontrollert, bærer en påstandslenke, har en registrert reviewbeslutning eller er sitert i en claim-verifikasjon; en id som ikke finnes, en dublett, en tom liste og en liste over 50 avvises på samme måte. Kilder, originaldokumenter, kildeversjoner, agentkjøringer og auditrader røres ikke: en kildeversjon er et øyeblikksbilde med verdi uavhengig av hvilke funn som ble laget av den. Append-only-triggerne på de tre tabellene skrus av og på inne i transaksjonen, også når noe går galt, slik at vernet aldri står av utenfor dette kallet. De tre tabellene låses i ACCESS EXCLUSIVE før kontrollene kjører, ikke først ved slettingen: uten det ville en menneskelig kildekontroll commitet mellom kontrollen og slettingen blitt lest som fraværende og så slettet, altså det motsatte av å feile lukket. De tre øvrige kontrollene trenger ingen egen lås: påstandslenker, reviewbeslutninger og claim-sitater peker på knowledge.evidence_items med on delete restrict, så en rad commitet underveis stopper slettingen framfor å forsvinne med den. SECURITY DEFINER fordi knowledge, workflow, provenance og audit har RLS med default deny, og fordi ALTER TABLE ... DISABLE TRIGGER krever eierskap; tomt search_path.';
+  'Fjerner et eksplisitt oppgitt sett upubliserte evidensfunn med sine forankringer og maskinelle kontroller, i én transaksjon, og skriver en auditrad per funn med hele kontrollgrunnlaget som old_revision_or_snapshot (migrasjon 005af, issue #84). Finnes fordi pipelinen fortsatt bygges: fulltekstfunn registrert med den forrige oppskriften hviler på en representasjon der tekst fra to spalter lå på samme tekstlinje, og å la dem stå i kontrollkøen ville invitert en kliniker til å gjøre den faglige kildekontrollen på et grunnlag som ikke holder (migrasjon 003g). Dette er IKKE en redaksjonell funksjon: EXECUTE er revokert fra PUBLIC og gitt til ingen klientrolle, så den er nåbar bare for den som allerede har eiertilgang til databasen — og den innskrenker dermed en operasjon eieren ellers kunne gjort uten spor, framfor å utvide noen rettighet. Krever i tillegg en autorisert redaktøridentitet (knowledge.assert_editor_authorized(uuid), kalt uten begrep) og en begrunnelse. Feiler lukket, og uten å slette noe, dersom ett av funnene er menneskelig kildekontrollert, bærer en påstandslenke, har en registrert reviewbeslutning eller er sitert i en claim-verifikasjon; en id som ikke finnes, en dublett, en tom liste og en liste over 50 avvises på samme måte. Kilder, originaldokumenter, kildeversjoner, agentkjøringer og auditrader røres ikke: en kildeversjon er et øyeblikksbilde med verdi uavhengig av hvilke funn som ble laget av den. Append-only-triggerne på de tre tabellene skrus av og på inne i transaksjonen, også når noe går galt, slik at vernet aldri står av utenfor dette kallet. SECURITY DEFINER fordi knowledge, workflow, provenance og audit har RLS med default deny, og fordi ALTER TABLE ... DISABLE TRIGGER krever eierskap; tomt search_path.';
 
 revoke execute on function knowledge.discard_unpublished_extraction_artifacts(uuid[], text) from public;
 
