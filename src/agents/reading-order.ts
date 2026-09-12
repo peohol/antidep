@@ -74,6 +74,12 @@
 // det hele tatt. En slik blokk har ingen leserekkefølge å plassere, og holdes
 // utenfor.
 //
+// Det må være **flertallet** av ordparene, ikke ett av dem. Et hevet tegn inne i
+// brødtekst — et sitatmerke, en fotnote — kan dekke nabo-ordet sitt mindre enn
+// halvparten, og med en ett-par-regel ville hele avsnittet blitt utelatt for det
+// ene tegnets skyld. Målt på denne kodebasens egne artikler svikter hvert par i
+// en skjev blokk og ingen i en vannrett.
+//
 // Det er det eneste signalet, og avgrensningen er tilsiktet. Utelatelse er den
 // dyre siden å ta feil på: en setning som forsvinner ut av representasjonen, kan
 // få den kildeomfattende fraværskontrollen til å konkludere at en opplysning
@@ -358,7 +364,34 @@ function verticalOverlapRatio(a: Rect, b: Rect): number {
   return Math.max(0, Math.min(a.yMax, b.yMax) - Math.max(a.yMin, b.yMin)) / shortest
 }
 
+/**
+ * Står blokken vannrett?
+ *
+ * Signalet er ordparene på hver linje: to nabo-ord i vannrett tekst dekker
+ * hverandre nesten helt i høyden, to ord på en skrå linje gjør det ikke i det
+ * hele tatt. Men det holder ikke at **ett** par svikter — det må være flertallet.
+ *
+ * Forskjellen er hele forskjellen på å utelate et vannmerke og å utelate et
+ * avsnitt. Et hevet tegn inne i vanlig brødtekst — et sitatmerke, en fotnote —
+ * har en egen liten avgrensning som kan dekke nabo-ordet sitt mindre enn
+ * halvparten, og med en ett-par-regel ville hele avsnittet blitt borte for det
+ * ene tegnets skyld. Det er den dyre siden å ta feil på: en setning som
+ * forsvinner ut av representasjonen, kan få den kildeomfattende
+ * fraværskontrollen til å konkludere at en opplysning ikke står noe sted.
+ *
+ * Flertallskravet skiller de to tilfellene med stor margin, og det er målt:
+ * i denne kodebasens egne artikler svikter **hvert** par i en skjev blokk
+ * (vannmerket, de roterte aksetitlene — alle med overlapp 0), og **ingen** par i
+ * en vannrett blokk. Et enkelt hevet tegn blant titalls ord kommer aldri i
+ * nærheten av flertall.
+ *
+ * En blokk uten ordpar i det hele tatt — bare enkeltordslinjer — har ingen
+ * geometri å dømme etter, og regnes som vannrett. Den kan ikke lage en falsk
+ * setning uansett, fordi hver blokk er hardt avgrenset.
+ */
 function isHorizontalBlock(block: PdfBlock): boolean {
+  let pairs = 0
+  let offBaseline = 0
   for (const line of block.lines) {
     for (let index = 1; index < line.words.length; index += 1) {
       const previous = line.words[index - 1]
@@ -366,12 +399,13 @@ function isHorizontalBlock(block: PdfBlock): boolean {
       if (previous === undefined || current === undefined) {
         continue
       }
+      pairs += 1
       if (verticalOverlapRatio(previous, current) < MIN_WORD_BASELINE_OVERLAP) {
-        return false
+        offBaseline += 1
       }
     }
   }
-  return true
+  return offBaseline * 2 <= pairs
 }
 
 // ----------------------------------------------------------------------------

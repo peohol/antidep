@@ -403,3 +403,141 @@ describe('en tabellrad Poppler har lagt i én blokk', () => {
     ).toBe(true)
   })
 })
+
+describe('et hevet tegn inne i brødtekst', () => {
+  // Posisjonsdata skrevet ut for hånd, fordi prøven handler om én koordinat:
+  // hvor høyt et enkelt ord står i forhold til nabo-ordene sine. Verken
+  // `syntheticLayoutPdf` eller `bboxLayoutDocument` gir den kontrollen, og et
+  // hevet tegn er nettopp det som skal prøves.
+  interface FiksturOrd {
+    readonly text: string
+    readonly yMin: number
+  }
+  type FiksturLinje = readonly FiksturOrd[]
+  type FiksturBlokk = readonly FiksturLinje[]
+
+  const bbox = (blocks: readonly FiksturBlokk[]): string => {
+    const rows = [
+      '<!DOCTYPE html>',
+      '<html xmlns="http://www.w3.org/1999/xhtml">',
+      '<head><title>fikstur</title></head>',
+      '<body>',
+      '<doc>',
+      '  <page width="612.000000" height="792.000000">',
+    ]
+    let top = 142
+    for (const lines of blocks) {
+      const blockTop = top
+      rows.push('    <flow>')
+      const at = rows.length
+      rows.push('')
+      for (const words of lines) {
+        let x = 56
+        rows.push(
+          `        <line xMin="56.000000" yMin="${top.toFixed(6)}" ` +
+            `xMax="520.000000" yMax="${(top + 8.2).toFixed(6)}">`,
+        )
+        for (const word of words) {
+          const width = Math.max(4, word.text.length * 5)
+          // Et hevet tegn har sin egen, mindre avgrensning: 5,4 punkter mot 8,2
+          // for brødteksten, og `yMin` oppgir hvor høyt det står.
+          const height = word.yMin === 0 ? 8.2 : 5.4
+          const wordTop = top + word.yMin
+          rows.push(
+            `          <word xMin="${x.toFixed(6)}" yMin="${wordTop.toFixed(6)}" ` +
+              `xMax="${(x + width).toFixed(6)}" yMax="${(wordTop + height).toFixed(6)}">` +
+              `${word.text}</word>`,
+          )
+          x += width + 3
+        }
+        rows.push('        </line>')
+        top += 12
+      }
+      rows[at] =
+        `      <block xMin="56.000000" yMin="${blockTop.toFixed(6)}" ` +
+        `xMax="520.000000" yMax="${top.toFixed(6)}">`
+      rows.push('      </block>', '    </flow>')
+      top += 12
+    }
+    rows.push('  </page>', '</doc>', '</body>', '</html>', '')
+    return rows.join('\n')
+  }
+
+  /** Et ord på linjens egen grunnlinje. */
+  const body = (text: string): FiksturOrd => ({ text, yMin: 0 })
+  /** Hevet så høyt at avgrensningen bommer helt på nabo-ordenes. */
+  const raised = (text: string): FiksturOrd => ({ text, yMin: -12 })
+
+  it('tar ikke hele avsnittet med seg', () => {
+    // Ett hevet sitatmerke blant tolv ord. Med en regel der ett ordpar avgjør,
+    // ville hele avsnittet blitt utelatt av representasjonen — og en setning som
+    // forsvinner, kan få den kildeomfattende fraværskontrollen til å konkludere
+    // at en opplysning ikke står noe sted.
+    const resultat = reconstructReadingOrder(
+      bbox([
+        [
+          [
+            ...['Mean', 'weight', 'increase', 'was'].map(body),
+            raised('12'),
+            ...['greater', 'with', 'paroxetine', 'than', 'with', 'the', 'others.'].map(body),
+          ],
+        ],
+      ]),
+    )
+    expect(resultat.status).toBe('ok')
+    if (resultat.status !== 'ok') {
+      return
+    }
+    expect(resultat.report.skewedWordCount).toBe(0)
+    expect(resultat.report.wordCount).toBe(12)
+    expect(verbatimOccursIn(searchProjections(resultat.text), 'Mean weight increase was')).toBe(
+      true,
+    )
+    expect(verbatimOccursIn(searchProjections(resultat.text), 'greater with paroxetine than')).toBe(
+      true,
+    )
+  })
+
+  it('holder fortsatt en blokk der hvert ord ligger på sin egen høyde, utenfor', () => {
+    // En skrå linje: hvert ord et hakk lenger ned, så hvert ordpar svikter. Det
+    // er formen et vannmerke har, og den skal fortsatt holdes utenfor. Den står
+    // som sin egen blokk ved siden av et vanlig avsnitt, slik at siden ikke
+    // avvises på at mer enn en fjerdedel av ordene er skjeve.
+    const resultat = reconstructReadingOrder(
+      bbox([
+        [
+          [
+            'Patients',
+            'were',
+            'randomly',
+            'assigned',
+            'to',
+            'double-blind',
+            'treatment',
+            'for',
+            'six',
+            'months',
+            'in',
+            'total.',
+          ].map(body),
+        ],
+        [
+          [
+            { text: 'One', yMin: -12 },
+            { text: 'personal', yMin: 0 },
+            { text: 'copy', yMin: 12 },
+            { text: 'only', yMin: 24 },
+          ],
+        ],
+      ]),
+    )
+    expect(resultat.status).toBe('ok')
+    if (resultat.status !== 'ok') {
+      return
+    }
+    // Den skjeve blokken holdes utenfor, og det er rapportert. Avsnittet står.
+    expect(resultat.report.skewedWordCount).toBe(4)
+    expect(resultat.report.wordCount).toBe(12)
+    expect(verbatimOccursIn(searchProjections(resultat.text), 'One personal copy only')).toBe(false)
+  })
+})

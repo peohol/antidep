@@ -7731,7 +7731,12 @@ denne kodebasens egne artikler er 55 punkter; grensen er 144.
 … One personal copy may be printed» — er ikke artikkelens tekst, og det ligger
 midt i spaltemargen. Uten at det holdes utenfor, ville det gjort
 spalteinndelingen ubestemmelig og tatt hele siden med seg. Signalet er
-geometrisk og ett: **ordene på en linje står ikke på samme grunnlinje.**
+geometrisk og ett: **ordene på en linje står ikke på samme grunnlinje** — og det
+må gjelde **flertallet** av ordparene i blokken, ikke ett av dem. Et hevet tegn
+inne i brødtekst, et sitatmerke eller en fotnote, har en egen liten avgrensning
+som kan dekke nabo-ordet sitt mindre enn halvparten, og med en ett-par-regel
+ville hele avsnittet blitt utelatt for det ene tegnets skyld. Margin er målt:
+i artiklene her svikter *hvert* par i en skjev blokk og *ingen* i en vannrett.
 Avgrensningen til det ene signalet er tilsiktet — bredere geometriske regler
 («linjer som ligger oppå hverandre») traff også ekte tekst, fordi Poppler legger
 cellene i en tabellrad som egne linjer i den samme blokken. Utelatelse er den
