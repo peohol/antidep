@@ -1502,7 +1502,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2184 pgTAP-assertions over 67 testfiler.
+Databaselaget teller nå 2187 pgTAP-assertions over 67 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -7684,11 +7684,11 @@ column ends here.» — en setning som ikke står i dokumentet i det hele tatt.
 ```text
 text_extraction_tool       pdftotext
 text_extraction_arguments  -bbox-layout -enc UTF-8 -eol unix
-text_extraction_transform  antidep-reading-order@1
+text_extraction_transform  antidep-reading-order@2
 ```
 
 `-bbox-layout` gir ikke tekst, men **koordinater**: hvert ord med sin
-avgrensning, gruppert i linjer og blokker. `antidep-reading-order@1`
+avgrensning, gruppert i linjer og blokker. `antidep-reading-order@2`
 (`src/agents/reading-order.ts`) er Antideps eget, rene ledd som gjør dem om til
 logisk leserekkefølge. Det **flytter blokker** og skriver ikke ett eneste tegn:
 ingen orddeling settes sammen, ingen tegnsetting legges til, ingen ord fjernes.
@@ -7753,6 +7753,25 @@ En blokk er Popplers egen avgjørelse om at teksten henger sammen — et avsnitt
 Innenfor den skal en setning over to linjer fortsatt kunne siteres. Mellom to
 blokker er det motsatte tilfellet.
 
+**Men Popplers blokk er ikke alltid ett avsnitt.** For noen tabellrader legger
+den radetiketten og verdicellene som egne linjer på den *samme grunnlinjen*
+inne i én blokk. Da skilte bare et linjeskift «17-Item HAM-D score,» fra tallet
+i nabocellen — altså det myke skillet — og den ordrette kontrollen ville godtatt
+et sitat som gikk fra etiketten og inn i en fremmed celle. Det er den samme
+feilen som spaltene, ett nivå lenger ned, og den sto i den ekte artikkelens
+tabell 1.
+
+En blokk deles derfor i cellene sine før rekkefølgen avgjøres, på det samme
+geometriske signalet som resten av modulen: **to linjer på den samme
+grunnlinjen, atskilt av et tomrom, er to celler**, og hver av dem blir sin egen
+blokk med det harde skillet rundt seg. Grunnlinjekravet er det som skiller en
+rad fra en stabling — to linjer som ikke overlapper i høyden, står over
+hverandre — og tomromskravet det som skiller to celler fra én synlig tekstlinje
+Poppler delte. En blokk der ingen rad har mer enn én linje, altså all vanlig
+brødtekst, røres ikke, og teksten blir tegn for tegn den samme. Prøvd på de to
+ekte artiklene: Versiani-teksten er byte for byte uendret, og Fava-teksten
+endres bare i tabell 1 — med det samme ordtallet, 3911, før og etter.
+
 `normalize()` i `extraction-checks.ts` gjør derfor **ikke** et opphold med en
 blank linje eller et sideskift om til et mellomrom, men til en grense et ordrett
 søk ikke kan krysse. Uten den kunne den samme feilen oppstått på nytt mellom en
@@ -7772,21 +7791,27 @@ kontrollgrunnlaget. Dokumentbindingen som jsonb har fått **én** definisjon
 (`knowledge.source_version_document_binding(uuid)`), lest av både oppdraget og
 kontrollgrunnlaget: to kopier av formen var to steder å legge til et felt.
 
-**Den lukkede oppskriftslisten har nå to rader, og den nederste er ikke en
+**Den lukkede oppskriftslisten har nå tre rader, og de to nederste er ikke en
 overgangsordning.** Hver dokumentutledet kildeversjon som allerede står i basen,
-er registrert med `-layout` og uten etterbehandling. De radene **skrives ikke
-om**: en rad som ble laget på én måte, skal ikke i ettertid påstå at den ble
-laget på en annen (ANTIDEP_CONSTITUTION.md §14). Etterprøvingen av dem skal
-gjenta det som faktisk ble gjort, og derfor må den gamle oppskriften fortsatt
-kunne kjøres.
+er registrert med `-layout` og uten etterbehandling, eller med den første
+utgaven av etterbehandlingen. De radene **skrives ikke om**: en rad som ble
+laget på én måte, skal ikke i ettertid påstå at den ble laget på en annen
+(ANTIDEP_CONSTITUTION.md §14).
 
 De to grensene er forskjellige grenser, og det er forskjellen som lar
 historikken bestå:
 
-| Grense | Spørsmål | Svar |
-|---|---|---|
-| CHECK på tabellen | Hva kan **lagres**? | Begge oppskriftene |
-| `api.create_source_version_from_document(...)` | Hva kan **registreres nå**? | Bare den nye |
+| Oppskrift | Kan lagres | Kan registreres nå | Kan kjøres |
+|---|---|---|---|
+| `-bbox-layout` + `antidep-reading-order@2` | ja | **ja** | ja |
+| `-bbox-layout` + `antidep-reading-order@1` | ja | nei | **nei** |
+| `-layout`, uten etterbehandling | ja | nei | ja |
+
+`@1` er den ene raden som kan lagres uten å kunne kjøres, og grunnen er at den
+ikke delte en tabellrad Poppler hadde lagt i én blokk. De kildeversjonene som
+bærer den, skal få stå og si hva de faktisk ble laget med — men den skal ikke
+kunne kjøres igjen og gi en tekst noen bygger videre på. Kolonnen «kan kjøres»
+håndheves i `src/agents/document-binding.ts`, de to andre i databasen.
 
 #### Kontrollflaten viser teksten, ikke papiret
 
@@ -7856,7 +7881,17 @@ databasen, kan skru av en trigger og slette hva som helst uten et spor.
 Append-only-triggerne skrus av og på inne i transaksjonen, også når noe går galt,
 slik at vernet aldri står av utenfor dette kallet.
 
-#### Fava 2000 og Versiani 2005 er kjørt på nytt
+**Kontrollene kjører bak låsen, ikke foran den.** De tre tabellene låses i
+`ACCESS EXCLUSIVE` før den første kontrollen leser noe. Uten den rekkefølgen
+kunne en menneskelig kildekontroll som ble commitet etter at kontrollen leste
+tabellen, men før slettingen låste den, blitt lest som fraværende og så slettet
+av kallet — og øyeblikksbildet ville ikke hatt den. Det er det motsatte av å
+feile lukket. De tre øvrige kontrollene trenger ingen egen lås: påstandslenker,
+reviewbeslutninger og claim-sitater peker på funnet med `on delete restrict`, så
+en rad som blir commitet underveis, stopper slettingen framfor å forsvinne med
+den.
+
+#### Fava 2000 og Versiani 2005 er kjørt på nytt, på `@1`
 
 Begge originaldokumentene var tilgjengelige i økten, og hele kjeden er kjørt fra
 dokument til registrert kontroll — med de gamle kildeversjonene stående som
@@ -7885,6 +7920,32 @@ ville latt Antidep påstå at kilden ikke oppgir noe den faktisk oppgir.**
 Køen viser nå fire funn: de to nye fulltekstfunnene, og de to
 sammendragsutledede som ikke kunne fjernes.
 
+#### Ett steg gjenstår, og de to fulltekstfunnene skal ikke kildekontrolleres før det
+
+Kjøringen over ble gjort før celledelingen fantes, og de to kildeversjonene
+`1d84891a` og `f0811561` bærer derfor `antidep-reading-order@1`. For Versiani er
+det uten betydning for teksten: `@2` gir byte for byte den samme teksten, så
+raden er fortsatt nøyaktig reproduserbar. For Fava er den ikke det — tabell 1
+kom ut med radetiketten og verdicellene skilt av et linjeskift framfor av en
+blank linje, og det er nettopp den formen den ordrette kontrollen ikke skal
+kunne krysse.
+
+Å rette det i produksjonsbasen krever to ting, i denne rekkefølgen:
+
+1. **Skjemaendringen fra denne PR-en må deployes** — den tre-radede
+   oppskriftslisten og skriveveien som godtar `@2`. Uten den kan ingen `@2`-rad
+   registreres.
+2. **Begge dokumentene kjøres på nytt** mot `@2`: ny kildeversjon per dokument
+   med de gamle radene stående, de to `@1`-funnene fjernet gjennom den guardede
+   veien, og ekstraksjon, maskinell kontroll og kildeomfattende fraværskontroll
+   kjørt om.
+
+Inntil steg 2 er gjort, **skal den menneskelige kildekontrollen av `59f7c235` og
+`a861f89f` ikke gjøres**. Det er den samme regelen issue #84 satte, av den samme
+grunnen: en faglig kontroll skal ikke gjøres på et grunnlag som ikke holder.
+De to sammendragsutledede funnene er ikke berørt — de er utledet av tekst, ikke
+av en PDF.
+
 #### Hva som ble kjørt
 
 | Kontroll | Utfall |
@@ -7896,8 +7957,9 @@ sammendragsutledede som ikke kunne fjernes.
 | `npm run test` | grønn |
 | `npm run build` | grønn |
 | pgTAP, 67 filer | kjørt mot det hostede prosjektet i en transaksjon som rulles tilbake, uten avvik mot utgangspunktet |
-| Migrasjonene | deployet med `./scripts/deploy-migrations.sh`, 76 av 76 registrert |
-| Kjeden mot produksjon | modell-ledd, registrering og maskinell kontroll kjørt med hver sin identitet |
+| Migrasjonene | 003g og 005af deployet; endringene fra rettelsene av celledelingen og låsen er deployet for 005af og **gjenstår for 003g** |
+| Kjeden mot produksjon | modell-ledd, registrering og maskinell kontroll kjørt med hver sin identitet, på `@1` |
+| Regresjonsprøven for tabellraden | kontrollert begge veier: den feiler uten celledelingen og består med den |
 
 `npm run db:reset`, `npm run db:test`, `npm run db:test:lock` og
 `npm run db:test:chain` krever en lokal Supabase-stack, og den krever Docker,

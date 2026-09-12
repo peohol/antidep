@@ -37,7 +37,7 @@ import {
   type TextExtractionRecipe,
 } from './document-text.ts'
 import { reconstructReadingOrder } from './reading-order.ts'
-import { syntheticLayoutPdf, type SyntheticTextBlock } from './test-support.ts'
+import { bboxLayoutDocument, syntheticLayoutPdf, type SyntheticTextBlock } from './test-support.ts'
 
 /** Oppskriften Antidep registrerer nye kildeversjoner med. */
 const OPPSKRIFT: TextExtractionRecipe = {
@@ -331,5 +331,75 @@ describe('rekonstruksjonen av noe som ikke er posisjonsdata', () => {
     const resultat = reconstructReadingOrder('Bare vanlig tekst, ingen koordinater.\n')
     expect(resultat.status).toBe('rejected')
     expect(resultat.status === 'rejected' ? resultat.message : '').toContain('-bbox-layout')
+  })
+})
+
+describe('en tabellrad Poppler har lagt i én blokk', () => {
+  // Formen er hentet fra en ekte artikkel: Poppler la radetiketten og de tre
+  // verdicellene som fire `line`-elementer på den samme grunnlinjen inne i én
+  // blokk, mens de øvrige radene ble egne blokker per spalte. Ordene her er
+  // oppdiktede — det er geometrien som er lånt, ikke teksten.
+  //
+  // Prøvene går rett på rekonstruksjonen framfor gjennom en PDF, fordi Popplers
+  // egen blokkgruppering ikke lar seg styre: en syntetisk tabell blir én blokk
+  // per celle, og da er ikke fiksturen den formen feilen oppstår i. At formen
+  // *er* verktøyets, er prøvd av resten av filen, som kjører det ekte verktøyet.
+  const MED_RAD = bboxLayoutDocument([
+    ['Symptom score at baseline,', ['Row label continues here,', '19.4', '20.6', '20.0'], 'mean'],
+  ])
+
+  it('gir hver celle sin egen blokk, slik at etikett og verdi ikke blir én tegnstrøm', () => {
+    const resultat = reconstructReadingOrder(MED_RAD)
+    expect(resultat.status).toBe('ok')
+    if (resultat.status !== 'ok') {
+      return
+    }
+    // Det avgjørende: sitatet som krysser fra etiketten og inn i nabocellen,
+    // finnes ikke i representasjonen. Med et linjeskift mellom dem ville den
+    // ordrette kontrollen godtatt det, fordi et linjeskift er det myke skillet.
+    expect(
+      verbatimOccursIn(searchProjections(resultat.text), 'Row label continues here, 19.4'),
+    ).toBe(false)
+    expect(verbatimOccursIn(searchProjections(resultat.text), '19.4 20.6')).toBe(false)
+    // Og cellene står der, hver for seg og i rekkefølge fra venstre.
+    for (const celle of ['Row label continues here,', '19.4', '20.6', '20.0']) {
+      expect(verbatimOccursIn(searchProjections(resultat.text), celle)).toBe(true)
+    }
+    expect(resultat.text.indexOf('19.4')).toBeLessThan(resultat.text.indexOf('20.6'))
+    expect(resultat.text.indexOf('20.6')).toBeLessThan(resultat.text.indexOf('20.0'))
+    expect(resultat.report.wordCount).toBe(12)
+  })
+
+  it('lar de gjennomgående linjene i den samme blokken bli stående som avsnitt', () => {
+    const resultat = reconstructReadingOrder(MED_RAD)
+    expect(resultat.status === 'ok' ? resultat.text : '').toContain('Symptom score at baseline,')
+    // Linjen over raden og linjen under den er to stablinger, ikke celler, og
+    // deles derfor ikke opp videre.
+    expect(
+      verbatimOccursIn(
+        searchProjections(resultat.status === 'ok' ? resultat.text : ''),
+        'Symptom score at baseline,',
+      ),
+    ).toBe(true)
+  })
+
+  it('rører ikke en blokk der ingen rad har mer enn én linje', () => {
+    // Vanlig brødtekst skal komme ut tegn for tegn som før: en setning over to
+    // linjer i det samme avsnittet skal fortsatt kunne siteres.
+    const brødtekst = bboxLayoutDocument([
+      ['Patients with major depressive disorder', 'were randomly assigned to treatment.'],
+    ])
+    const resultat = reconstructReadingOrder(brødtekst)
+    expect(resultat.status).toBe('ok')
+    if (resultat.status !== 'ok') {
+      return
+    }
+    expect(resultat.report.blockCount).toBe(1)
+    expect(
+      verbatimOccursIn(
+        searchProjections(resultat.text),
+        'major depressive disorder were randomly assigned to treatment.',
+      ),
+    ).toBe(true)
   })
 })

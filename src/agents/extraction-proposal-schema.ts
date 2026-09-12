@@ -352,7 +352,7 @@ export function buildExtractionProposalSchema(): Schema {
               transform: {
                 type: ['string', 'null'],
                 description:
-                  'Antideps egen etterbehandling av verktøyets utdata, med versjon — i dag antidep-reading-order@1, som bygger den logiske leserekkefølgen av posisjonsdataene fra -bbox-layout. null betyr at teksten er verktøyets utdata ordrett, som er tilstanden til hver kildeversjon registrert før migrasjon 003g.',
+                  'Antideps egen etterbehandling av verktøyets utdata, med versjon — i dag antidep-reading-order@2, som bygger den logiske leserekkefølgen av posisjonsdataene fra -bbox-layout. null betyr at teksten er verktøyets utdata ordrett, som er tilstanden til hver kildeversjon registrert før migrasjon 003g.',
               },
             },
           },

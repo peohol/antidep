@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(43);
+select plan(45);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -149,7 +149,7 @@ select throws_ok(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640',
       (select value from fixture where name = 'pdf'), 'Mean weight change 1.0%.',
       'full_text', 'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
-      'antidep-reading-order@1')
+      'antidep-reading-order@2')
   $$,
   '42501', null,
   'en innlogget bruker uten editor-rolle får ikke registrere en dokumentutledet kildeversjon'
@@ -173,7 +173,7 @@ select 'version', api.create_source_version_from_document(
   'Mean weight change 1.0%.',
   'full_text',
   'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
-  'antidep-reading-order@1'
+  'antidep-reading-order@2'
 )::text;
 
 reset role;
@@ -216,7 +216,7 @@ select is(
           || ' | ' || sv.text_extraction_transform
    from knowledge.source_versions sv
    where sv.id = (select value from fixture where name = 'version')::uuid),
-  'pdftotext | pdftotext 24.02.0 | -bbox-layout -enc UTF-8 -eol unix | antidep-reading-order@1',
+  'pdftotext | pdftotext 24.02.0 | -bbox-layout -enc UTF-8 -eol unix | antidep-reading-order@2',
   'hele oppskriften er bevart ordrett — verktøy, versjon, argumenter og etterbehandling — slik at teksten kan reproduseres'
 );
 select is(
@@ -280,7 +280,7 @@ select throws_ok(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-ikke-pdf',
       (select value from fixture where name = 'ikke_pdf'), 'noe tekst',
       'full_text', 'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
-      'antidep-reading-order@1')
+      'antidep-reading-order@2')
   $$,
   '22023', 'Originaldokumentet er ikke en PDF.',
   'et dokument som ikke er en PDF, avvises på sin egen signatur'
@@ -290,7 +290,7 @@ select throws_ok(
     select api.create_source_version_from_document(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-tom',
       '', 'noe tekst', 'full_text', 'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
-      'antidep-reading-order@1')
+      'antidep-reading-order@2')
   $$,
   '22023', 'Originaldokumentet mangler, og da kan ingen dokumentbundet kildeversjon registreres.',
   'et manglende dokument avvises'
@@ -301,7 +301,7 @@ select throws_ok(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-uten-type',
       (select value from fixture where name = 'annen_pdf'), 'noe tekst',
       '  ', 'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
-      'antidep-reading-order@1')
+      'antidep-reading-order@2')
   $$,
   '22023', 'Representasjonstypen mangler.',
   'en dokumentutledet versjon uten representasjonstype avvises — det er den tilstanden veien finnes for å unngå'
@@ -313,7 +313,7 @@ select throws_ok(
       (select value from fixture where name = 'annen_pdf'),
       '%PDF-1.4' || chr(10) || 'dokumentet en gang til',
       'full_text', 'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
-      'antidep-reading-order@1')
+      'antidep-reading-order@2')
   $$,
   '22023', 'Den uttrukne teksten er selv en PDF, og er dermed ikke tekst noen kan lese et ordrett utdrag ut av.',
   'dokumentet sendt inn som «tekst» avvises'
@@ -324,7 +324,7 @@ select throws_ok(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-igjen',
       (select value from fixture where name = 'annen_pdf'), 'Mean weight change 1.0%.',
       'abstract', 'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
-      'antidep-reading-order@1')
+      'antidep-reading-order@2')
   $$,
   '23505', 'Nøyaktig samme innhold er allerede registrert som en kildeversjon for denne kilden.',
   'den samme teksten kan ikke registreres på nytt under en annen representasjonstype'
@@ -359,7 +359,7 @@ select throws_ok(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-sh',
       (select value from fixture where name = 'annen_pdf'), 'noe tekst',
       'full_text', 'sh', 'GNU bash 5.2', '-c "cat /etc/passwd"',
-      'antidep-reading-order@1')
+      'antidep-reading-order@2')
   $$,
   '22023', 'Oppskriften er ikke den Antidep registrerer nye kildeversjoner med.',
   'et annet verktøy avvises: et navn som blir kjørt, skal ikke kunne skrives fritt'
@@ -369,7 +369,7 @@ select throws_ok(
     select api.create_source_version_from_document(
       '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-argumenter',
       (select value from fixture where name = 'annen_pdf'), 'noe tekst',
-      'full_text', 'pdftotext', 'pdftotext 24.02.0', '-raw', 'antidep-reading-order@1')
+      'full_text', 'pdftotext', 'pdftotext 24.02.0', '-raw', 'antidep-reading-order@2')
   $$,
   '22023', 'Oppskriften er ikke den Antidep registrerer nye kildeversjoner med.',
   'andre argumenter avvises: de er like mye en del av det som kjøres som verktøyet'
@@ -386,7 +386,7 @@ select 'annen_versjon', api.create_source_version_from_document(
   (select value from fixture where name = 'annen_pdf'),
   'En annen tekst fra en nyere poppler.',
   'full_text', 'pdftotext', 'pdftotext 25.01.0', '-bbox-layout -enc UTF-8 -eol unix',
-  'antidep-reading-order@1'
+  'antidep-reading-order@2'
 )::text;
 
 reset role;
@@ -400,7 +400,7 @@ select is(
 );
 
 -- ===========================================================================
--- Del 7c — Listen har to rader, og de to grensene er forskjellige (003g)
+-- Del 7c — Listen har tre rader, og de to grensene er forskjellige (003g)
 --
 -- Tabellen svarer på hva som kan **lagres**, og må godta oppskriften hver
 -- dokumentutledet rad fra før 003g bærer: de radene skrives ikke om, og
@@ -408,6 +408,12 @@ select is(
 -- svarer på hva som kan **registreres nå**, og godtar bare den nye: en ny rad
 -- med den gamle oppskriften ville vært en ny rad med en kjent
 -- evidensintegritetsfeil i seg — tekst fra to spalter på samme tekstlinje.
+--
+-- Det gjelder også den første utgaven av etterbehandlingen, antidep-reading-
+-- order@1: den delte ikke en tabellrad Poppler hadde lagt i én blokk, og lot
+-- dermed et sitat gå fra en radetikett og inn i en fremmed celle. Den kan
+-- lagres, av den samme grunnen som den gamle — men den kan ikke registreres på
+-- nytt, og den er ute av den kjørbare listen i src/agents/document-binding.ts.
 -- ===========================================================================
 select set_config('request.jwt.claims',
                   '{"sub":"64000000-0000-4000-8000-00000000000b"}', true);
@@ -422,6 +428,17 @@ select throws_ok(
   $$,
   '22023', 'Oppskriften er ikke den Antidep registrerer nye kildeversjoner med.',
   'den gamle oppskriften kan ikke registreres på nytt, selv om den fortsatt er lovlig lagret'
+);
+select throws_ok(
+  $$
+    select api.create_source_version_from_document(
+      '50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-forste-utgave',
+      (select value from fixture where name = 'annen_pdf'), 'noe tekst',
+      'full_text', 'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
+      'antidep-reading-order@1')
+  $$,
+  '22023', 'Oppskriften er ikke den Antidep registrerer nye kildeversjoner med.',
+  'den første utgaven av etterbehandlingen kan ikke registreres på nytt: den delte ikke en tabellrad Poppler hadde lagt i én blokk'
 );
 select throws_ok(
   $$
@@ -455,6 +472,23 @@ select lives_ok(
   $$,
   'den historiske oppskriften er fortsatt lovlig lagret: historiske rader skrives ikke om'
 );
+-- Den første utgaven av etterbehandlingen, på samme vis: lovlig lagret, slik at
+-- de kildeversjonene som bærer den, får stå og si hva de faktisk ble laget med.
+select lives_ok(
+  $$
+    insert into knowledge.source_versions
+      (source_id, retrieved_at, retrieved_from, content_hash, representation,
+       document_sha256, document_byte_size, document_media_type,
+       text_extraction_tool, text_extraction_tool_version, text_extraction_arguments,
+       text_extraction_transform, retrieved_by_actor_id)
+    values ('50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-utgave-1',
+            'sha256:' || repeat('b', 64), 'full_text',
+            'sha256:' || repeat('6', 64), 1234, 'application/pdf',
+            'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
+            'antidep-reading-order@1', 'ac640000-0000-4000-8000-00000000000b')
+  $$,
+  'den første utgaven av etterbehandlingen er fortsatt lovlig lagret: historiske rader skrives ikke om'
+);
 select throws_ok(
   $$
     insert into knowledge.source_versions
@@ -466,7 +500,7 @@ select throws_ok(
             'sha256:' || repeat('4', 64), 'full_text',
             'sha256:' || repeat('3', 64), 1234, 'application/pdf',
             'pdftotext', 'pdftotext 24.02.0', '-layout -enc UTF-8 -eol unix',
-            'antidep-reading-order@1', 'ac640000-0000-4000-8000-00000000000b')
+            'antidep-reading-order@2', 'ac640000-0000-4000-8000-00000000000b')
   $$,
   '23514', null,
   'en oppskrift satt sammen av to rader i listen avvises: argumentene og etterbehandlingen hører sammen'
@@ -478,7 +512,7 @@ select throws_ok(
        text_extraction_transform, retrieved_by_actor_id)
     values ('50640000-0000-4000-8000-000000000001', now(), 'https://eksempel.invalid/640-etterbehandling-alene',
             'sha256:' || repeat('2', 64), 'full_text',
-            'antidep-reading-order@1', 'ac640000-0000-4000-8000-00000000000b')
+            'antidep-reading-order@2', 'ac640000-0000-4000-8000-00000000000b')
   $$,
   '23514', null,
   'en etterbehandling uten et verktøy avvises: den beskriver hva som ble gjort med utdataene fra en prosess som ikke fant sted'
@@ -591,7 +625,7 @@ select is(
   (select v.text_extraction_transform
    from api.editor_source_versions v
    where v.source_version_id = (select value from fixture where name = 'version')::uuid),
-  'antidep-reading-order@1',
+  'antidep-reading-order@2',
   'editoren ser også etterbehandlingen, som er den siste delen av oppskriften'
 );
 reset role;

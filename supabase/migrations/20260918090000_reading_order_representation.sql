@@ -29,7 +29,7 @@
 --
 --   text_extraction_tool       = 'pdftotext'
 --   text_extraction_arguments  = '-bbox-layout -enc UTF-8 -eol unix'
---   text_extraction_transform  = 'antidep-reading-order@1'
+--   text_extraction_transform  = 'antidep-reading-order@2'
 --
 -- `-bbox-layout` gir ikke tekst, men **posisjonsdata**: hvert ord med sine
 -- koordinater, gruppert i linjer og blokker. Antideps eget deterministiske ledd
@@ -97,7 +97,7 @@ alter table knowledge.source_versions
   add column text_extraction_transform text;
 
 comment on column knowledge.source_versions.text_extraction_transform is
-  'Antideps egen etterbehandling av verktøyets utdata, med versjon — i dag antidep-reading-order@1, som bygger den logiske leserekkefølgen av posisjonsdataene fra pdftotext -bbox-layout (migrasjon 003g, src/agents/reading-order.ts). NULL betyr at teksten er verktøyets utdata ordrett; det er tilstanden til hver dokumentutledet kildeversjon registrert før 003g, og den skal bestå. Kolonnen er en del av oppskriften og dermed av proveniensen: uten den kan ingen tredjepart komme fram til den samme teksten, og content_hash ville vært et fingeravtrykk av noe bare Antidep kunne lage.';
+  'Antideps egen etterbehandling av verktøyets utdata, med versjon — i dag antidep-reading-order@2, som bygger den logiske leserekkefølgen av posisjonsdataene fra pdftotext -bbox-layout (migrasjon 003g, src/agents/reading-order.ts). NULL betyr at teksten er verktøyets utdata ordrett; det er tilstanden til hver dokumentutledet kildeversjon registrert før 003g, og den skal bestå. Kolonnen er en del av oppskriften og dermed av proveniensen: uten den kan ingen tredjepart komme fram til den samme teksten, og content_hash ville vært et fingeravtrykk av noe bare Antidep kunne lage.';
 
 -- ----------------------------------------------------------------------------
 -- 1b. Kommentarene som navngir en signatur som har endret seg
@@ -148,6 +148,15 @@ alter table knowledge.source_versions
         and (
           -- Oppskriften nye kildeversjoner registreres med (003g).
           (text_extraction_arguments = '-bbox-layout -enc UTF-8 -eol unix'
+            and text_extraction_transform = 'antidep-reading-order@2')
+          -- Den samme oppskriften med den første utgaven av etterbehandlingen.
+          -- Den kan lagres, men ikke kjøres og ikke registreres på nytt: den
+          -- delte ikke en tabellrad Poppler hadde lagt i én blokk, og lot et
+          -- sitat gå fra en radetikett og inn i en fremmed celle. Raden står
+          -- her fordi de kildeversjonene som bærer den, ikke skal skrives om
+          -- for å se ut som om de ble laget med noe annet enn det de ble laget
+          -- med.
+          or (text_extraction_arguments = '-bbox-layout -enc UTF-8 -eol unix'
             and text_extraction_transform = 'antidep-reading-order@1')
           -- Oppskriften radene fra før 003g bærer. Den skal fortsatt kunne
           -- kjøres, slik at de radene kan etterprøves slik de faktisk ble laget.
@@ -159,7 +168,7 @@ alter table knowledge.source_versions
 
 comment on constraint source_versions_text_extraction_recipe_allowlist_check
   on knowledge.source_versions is
-  'Oppskriften er lukket, og listen har to rader (migrasjon 003g, utvider 003f): pdftotext med «-bbox-layout -enc UTF-8 -eol unix» og etterbehandlingen antidep-reading-order@1, som er den nye kildeversjoner registreres med, og pdftotext med «-layout -enc UTF-8 -eol unix» uten etterbehandling, som er den hver rad fra før 003g bærer. Den andre står der fordi historiske rader ikke skrives om: etterprøvingen av dem skal gjenta det som faktisk ble gjort. At den kan lagres, betyr ikke at den kan registreres på nytt — api.create_source_version_from_document(...) godtar bare den første. Alle tre verdiene blir en prosess ved ekstraksjon og etterprøving, og et fritt felt ville latt en skriverettighet bli kodekjøring hos den som kontrollerer. text_extraction_tool_version er med vilje utenfor listen: den er en opplysning som forklarer et avvik, ikke noe som kjøres, og fasiten er fingeravtrykket av teksten.';
+  'Oppskriften er lukket, og listen har tre rader (migrasjon 003g, utvider 003f): pdftotext med «-bbox-layout -enc UTF-8 -eol unix» og etterbehandlingen antidep-reading-order@2, som er den nye kildeversjoner registreres med; den samme med antidep-reading-order@1, som kan lagres men verken kjøres eller registreres på nytt; og pdftotext med «-layout -enc UTF-8 -eol unix» uten etterbehandling, som er den hver rad fra før 003g bærer. De to siste står der fordi historiske rader ikke skrives om: en rad skal si hva som faktisk ble gjort, også når det som ble gjort, ikke er det vi ville gjort i dag. At en oppskrift kan lagres, betyr verken at den kan registreres på nytt — api.create_source_version_from_document(...) godtar bare den første — eller at den kan kjøres: @1 er ute av den kjørbare listen i src/agents/document-binding.ts, fordi den ikke delte en tabellrad Poppler hadde lagt i én blokk og dermed lot et sitat gå fra en radetikett og inn i en fremmed celle. Alle tre verdiene blir en prosess ved ekstraksjon og etterprøving, og et fritt felt ville latt en skriverettighet bli kodekjøring hos den som kontrollerer. text_extraction_tool_version er med vilje utenfor listen: den er en opplysning som forklarer et avvik, ikke noe som kjøres, og fasiten er fingeravtrykket av teksten.';
 
 -- ----------------------------------------------------------------------------
 -- 4. Den nye kolonnen er en del av øyeblikksbildet, og fryses med det
@@ -521,12 +530,12 @@ begin
   -- rad med den ville vært en ny rad med en kjent evidensintegritetsfeil i seg.
   if p_text_extraction_tool is distinct from 'pdftotext'
     or p_text_extraction_arguments is distinct from '-bbox-layout -enc UTF-8 -eol unix'
-    or p_text_extraction_transform is distinct from 'antidep-reading-order@1'
+    or p_text_extraction_transform is distinct from 'antidep-reading-order@2'
   then
     raise exception using
       errcode = 'invalid_parameter_value',
       message = 'Oppskriften er ikke den Antidep registrerer nye kildeversjoner med.',
-      hint = 'Tillatt er nøyaktig verktøyet pdftotext med argumentene -bbox-layout -enc UTF-8 -eol unix og etterbehandlingen antidep-reading-order@1. Oppskriften kjøres på nytt ved hver etterprøving, og listen over hva som kan kjøres, er derfor lukket. Den forrige oppskriften (-layout, uten etterbehandling) la tekst fra to spalter på samme linje og kan ikke brukes til nye rader. Versjonen av verktøyet er fri: den er en opplysning, ikke noe som kjøres.';
+      hint = 'Tillatt er nøyaktig verktøyet pdftotext med argumentene -bbox-layout -enc UTF-8 -eol unix og etterbehandlingen antidep-reading-order@2. Oppskriften kjøres på nytt ved hver etterprøving, og listen over hva som kan kjøres, er derfor lukket. Den forrige oppskriften (-layout, uten etterbehandling) la tekst fra to spalter på samme linje og kan ikke brukes til nye rader. Versjonen av verktøyet er fri: den er en opplysning, ikke noe som kjøres.';
   end if;
 
   return knowledge.record_source_version(
@@ -552,7 +561,7 @@ $$;
 comment on function api.create_source_version_from_document(
   uuid, timestamptz, text, text, text, text, text, text, text, text, text, text
 ) is
-  'Den kontrollerte skriveveien for å registrere en kildeversjon som er utledet av et originaldokument, i dag en PDF (migrasjon 003e, 003g, ANTIDEP_CONSTITUTION.md §11, EVIDENCE_PIPELINE.md §13, §14). Kontrollerer at kalleren har en registrert, aktiv aktør og en gyldig editor-rolle (knowledge.assert_editor_authorized(uuid), kalt uten begrep), dekoder p_document_base64, krever at bytene er en PDF, beregner sha256 og størrelsen av dem, og setter inn raden gjennom knowledge.record_source_version(uuid, timestamptz, text, text, text, text, text, uuid, text, bigint, text, text, text, text, text) med content_hash beregnet av p_extracted_text. Verken fingeravtrykket, størrelsen eller mediatypen er parametre: alle tre avleses av dokumentet selv, slik at ingen av dem er en påstand kalleren skriver om seg selv. Dokumentet lagres ikke — bytene brukes til å beregne fingeravtrykket og forsvinner med transaksjonen. p_representation er påkrevd her (til forskjell fra tekstveien), fordi en dokumentutledet representasjon som ikke sier hva den er, er den ene tilstanden denne veien finnes for å unngå. Oppskriften — verktøy, versjon, argumenter og etterbehandling — er kontrakten utad: kjør den på dokumentet med document_sha256, og sha256 av resultatet skal være content_hash. Fra migrasjon 003g godtar denne veien nøyaktig én oppskrift: pdftotext med -bbox-layout -enc UTF-8 -eol unix og etterbehandlingen antidep-reading-order@1, som bygger den logiske leserekkefølgen av posisjonsdataene (src/agents/reading-order.ts). Den forrige oppskriften (-layout, uten etterbehandling) la tekst fra to spalter på samme tekstlinje og er derfor ikke lenger registrerbar, men er fortsatt lovlig lagret og kjørbar, slik at radene som bærer den, kan etterprøves slik de faktisk ble laget (source_versions_text_extraction_recipe_allowlist_check). Verdiene blir kjørt ved hver etterprøving, og et fritt felt ville latt en skriverettighet bli kodekjøring hos den som kontrollerer; p_text_extraction_tool_version er fri, fordi den er en opplysning og ikke noe som kjøres. Auditraden skrives av triggeren på tabellen, i samme transaksjon. SECURITY DEFINER fordi knowledge.source_versions, workflow.user_roles og provenance.actors har RLS med default deny for authenticated; tomt search_path, og kalleren valideres på funksjonens eget kall (§50).';
+  'Den kontrollerte skriveveien for å registrere en kildeversjon som er utledet av et originaldokument, i dag en PDF (migrasjon 003e, 003g, ANTIDEP_CONSTITUTION.md §11, EVIDENCE_PIPELINE.md §13, §14). Kontrollerer at kalleren har en registrert, aktiv aktør og en gyldig editor-rolle (knowledge.assert_editor_authorized(uuid), kalt uten begrep), dekoder p_document_base64, krever at bytene er en PDF, beregner sha256 og størrelsen av dem, og setter inn raden gjennom knowledge.record_source_version(uuid, timestamptz, text, text, text, text, text, uuid, text, bigint, text, text, text, text, text) med content_hash beregnet av p_extracted_text. Verken fingeravtrykket, størrelsen eller mediatypen er parametre: alle tre avleses av dokumentet selv, slik at ingen av dem er en påstand kalleren skriver om seg selv. Dokumentet lagres ikke — bytene brukes til å beregne fingeravtrykket og forsvinner med transaksjonen. p_representation er påkrevd her (til forskjell fra tekstveien), fordi en dokumentutledet representasjon som ikke sier hva den er, er den ene tilstanden denne veien finnes for å unngå. Oppskriften — verktøy, versjon, argumenter og etterbehandling — er kontrakten utad: kjør den på dokumentet med document_sha256, og sha256 av resultatet skal være content_hash. Fra migrasjon 003g godtar denne veien nøyaktig én oppskrift: pdftotext med -bbox-layout -enc UTF-8 -eol unix og etterbehandlingen antidep-reading-order@2, som bygger den logiske leserekkefølgen av posisjonsdataene (src/agents/reading-order.ts). Den forrige oppskriften (-layout, uten etterbehandling) la tekst fra to spalter på samme tekstlinje og er derfor ikke lenger registrerbar, men er fortsatt lovlig lagret og kjørbar, slik at radene som bærer den, kan etterprøves slik de faktisk ble laget (source_versions_text_extraction_recipe_allowlist_check). Verdiene blir kjørt ved hver etterprøving, og et fritt felt ville latt en skriverettighet bli kodekjøring hos den som kontrollerer; p_text_extraction_tool_version er fri, fordi den er en opplysning og ikke noe som kjøres. Auditraden skrives av triggeren på tabellen, i samme transaksjon. SECURITY DEFINER fordi knowledge.source_versions, workflow.user_roles og provenance.actors har RLS med default deny for authenticated; tomt search_path, og kalleren valideres på funksjonens eget kall (§50).';
 
 revoke execute on function api.create_source_version_from_document(
   uuid, timestamptz, text, text, text, text, text, text, text, text, text, text

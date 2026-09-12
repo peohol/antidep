@@ -114,7 +114,7 @@ export interface RepresentationBinding {
  * da én sammenhengende tegnstrøm: en klinisk opplysning kunne tilskrives feil
  * arm eller feil studie (issue #84).
  *
- * `antidep-reading-order@1` er Antideps eget, deterministiske ledd som gjør
+ * `antidep-reading-order@2` er Antideps eget, deterministiske ledd som gjør
  * posisjonsdataene om til **logisk leserekkefølge** — spalte for spalte, ovenfra
  * og ned, med full sidebredde håndtert av den samme regelen, og med en avvisning
  * framfor en gjetning når rekkefølgen ikke er gitt av oppsettet
@@ -131,7 +131,7 @@ export interface RepresentationBinding {
  */
 export const PDF_TEXT_TOOL = 'pdftotext'
 export const PDF_TEXT_ARGUMENTS = '-bbox-layout -enc UTF-8 -eol unix'
-export const PDF_TEXT_TRANSFORM = 'antidep-reading-order@1'
+export const PDF_TEXT_TRANSFORM = 'antidep-reading-order@2'
 
 /** En oppskrift uten versjonen: nøyaktig det som blir kjørt. */
 export interface AllowedRecipe {
@@ -154,6 +154,14 @@ export interface AllowedRecipe {
  * skrives (`api.create_source_version_from_document`), ikke her: denne listen
  * svarer på hva som kan *kjøres*, som er et annet spørsmål enn hva som kan
  * *lagres*.
+ *
+ * `antidep-reading-order@1` står med vilje ikke her. Den rakk aldri å bli
+ * sluppet: den delte ikke en tabellrad Poppler hadde lagt i én blokk, og lot
+ * dermed et sitat gå fra en radetikett og inn i en fremmed celle
+ * (`reading-order.ts`). Databasen godtar den fortsatt som en *lagret* verdi, så
+ * de radene som bærer den, ikke må skrives om for å se ut som noe annet enn det
+ * de er — men den skal ikke kunne kjøres igjen, og et kall som ber om den,
+ * avvises her framfor å gi en tekst ingen skal bygge videre på.
  */
 export const ALLOWED_PDF_RECIPES: readonly AllowedRecipe[] = [
   { tool: PDF_TEXT_TOOL, arguments: PDF_TEXT_ARGUMENTS, transform: PDF_TEXT_TRANSFORM },

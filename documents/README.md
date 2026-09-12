@@ -31,7 +31,7 @@ pdftotext -bbox-layout -enc UTF-8 -eol unix artikkel.pdf -   # posisjonsdata
 
 Posisjonsdataene er ikke tekst: de er hvert ord med sine koordinater. Siste ledd
 i oppskriften er Antideps egen, deterministiske rekonstruksjon av **logisk
-leserekkefølge** — `antidep-reading-order@1`, som ligger i
+leserekkefølge** — `antidep-reading-order@2`, som ligger i
 `src/agents/reading-order.ts` og er den samme koden kjeden selv bruker. sha256 av
 teksten den gir, skal være `content_hash`.
 
@@ -49,7 +49,7 @@ node -e '
         tool: "pdftotext",
         toolVersion: "les av pdftotext -v",
         arguments: "-bbox-layout -enc UTF-8 -eol unix",
-        transform: "antidep-reading-order@1",
+        transform: "antidep-reading-order@2",
       },
     })
     console.log(r.status === "ok" ? r.extracted.contentHash : r.message)

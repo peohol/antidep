@@ -158,7 +158,7 @@ describe('checkExtraction — den lykkede stien', () => {
             tool: 'pdftotext',
             toolVersion: 'pdftotext 24.02.0',
             arguments: '-bbox-layout -enc UTF-8 -eol unix',
-            transform: 'antidep-reading-order@1',
+            transform: 'antidep-reading-order@2',
           },
         },
       }),

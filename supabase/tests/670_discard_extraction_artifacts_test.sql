@@ -19,7 +19,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(30);
+select plan(31);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten og stengslene
@@ -311,6 +311,26 @@ select throws_ok(
     (select id from fixture where name = 'ren')),
   '23001', null,
   'et menneskelig kildekontrollert funn fjernes ikke: kontrollen er en faglig handling med en ansvarlig bak'
+);
+
+-- Kontrollen over leser tabellen bak låsen, ikke foran den, og rekkefølgen er
+-- selve kravet: en menneskelig kildekontroll commitet etter lesningen, men før
+-- slettingen hadde låst, ville blitt lest som fraværende og så slettet — og
+-- øyeblikksbildet ville ikke hatt den. Rekkefølgen kontrolleres i kilden fordi
+-- den ikke kan observeres fra én økt: en lås tatt i en undertransaksjon
+-- slippes når undertransaksjonen rulles tilbake, og en avvisning er nettopp
+-- det.
+select ok(
+  (select position('lock table workflow.evidence_verifications in access exclusive mode'
+                   in p.prosrc) > 0
+      and position('lock table workflow.evidence_verifications in access exclusive mode'
+                   in p.prosrc)
+        < position('a.actor_type = ''human''' in p.prosrc)
+   from pg_proc p
+   join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'knowledge'
+     and p.proname = 'discard_unpublished_extraction_artifacts'),
+  'kontrolltabellen låses før kontrollen av menneskelig kildekontroll leser den, slik at kallet feiler lukket også når en kontroll registreres samtidig'
 );
 
 -- ===========================================================================

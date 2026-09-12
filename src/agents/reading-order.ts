@@ -106,6 +106,22 @@
 // blanktegnnormaliseringen aldri igjen kan gjøre to uavhengige layoutblokker til
 // én sammenhengende tekstsekvens.
 //
+// ----------------------------------------------------------------------------
+// Popplers blokk er ikke alltid ett avsnitt
+//
+// Det myke skillet inne i en blokk hviler på at blokken *er* et avsnitt. For
+// noen tabellrader er den ikke det: Poppler legger radetiketten og cellene i
+// raden som egne linjer på samme grunnlinje i den samme blokken, og da skiller
+// bare et linjeskift «17-Item HAM-D score,» fra tallet i nabocellen. Det er den
+// samme feilen som spaltene, ett nivå lenger ned — og den ordrette kontrollen
+// ville godtatt et sitat som gikk fra etiketten og inn i en fremmed celle.
+//
+// Derfor deles en blokk i cellene sine før rekkefølgen avgjøres, på det samme
+// geometriske signalet: to linjer på den samme grunnlinjen, atskilt av et
+// tomrom, er to celler, og hver av dem blir sin egen blokk med det harde
+// skillet rundt seg. En blokk der ingen rad har mer enn én linje — all vanlig
+// brødtekst — røres ikke, og teksten blir tegn for tegn den samme.
+//
 // Utrygg inndata: utdataene fra verktøyet er data, aldri instruksjoner
 // (CLAUDE.md). De leses som koordinater og tekst, og ingenting annet.
 // ============================================================================
@@ -119,7 +135,7 @@
  * for rekkefølge, endres teksten — og da skal navnet få et nytt tall, ikke den
  * samme verdien et nytt innhold.
  */
-export const READING_ORDER_TRANSFORM = 'antidep-reading-order@1'
+export const READING_ORDER_TRANSFORM = 'antidep-reading-order@2'
 
 // ----------------------------------------------------------------------------
 // Terskler
@@ -389,6 +405,115 @@ function verticalSpan(block: PdfBlock): Span {
   return { min: block.yMin, max: block.yMax }
 }
 
+/** Én blokk av et sett linjer, med omrisset og ordtallet regnet ut på nytt. */
+function blockOfLines(lines: readonly PdfLine[]): PdfBlock {
+  return {
+    xMin: lines.reduce((least, line) => Math.min(least, line.xMin), Number.POSITIVE_INFINITY),
+    yMin: lines.reduce((least, line) => Math.min(least, line.yMin), Number.POSITIVE_INFINITY),
+    xMax: lines.reduce((most, line) => Math.max(most, line.xMax), Number.NEGATIVE_INFINITY),
+    yMax: lines.reduce((most, line) => Math.max(most, line.yMax), Number.NEGATIVE_INFINITY),
+    lines,
+    wordCount: lines.reduce((total, line) => total + line.words.length, 0),
+  }
+}
+
+/**
+ * Linjene i blokken gruppert i grunnlinjerader, øverste rad først.
+ *
+ * En rad er de linjene som står på den samme grunnlinjen som den første av dem.
+ * Overlappet måles mot den første linjen i raden, ikke mot hvilken som helst av
+ * dem: en kjede av små overlapp kunne ellers dratt en hel spalte inn i én rad.
+ */
+function baselineRows(lines: readonly PdfLine[]): readonly (readonly PdfLine[])[] {
+  const sorted = [...lines].sort((a, b) => a.yMin - b.yMin || a.xMin - b.xMin)
+  const rows: PdfLine[][] = []
+  for (const line of sorted) {
+    const current = rows.at(-1)
+    const anchor = current?.[0]
+    if (
+      current === undefined ||
+      anchor === undefined ||
+      verticalOverlapRatio(anchor, line) < MIN_WORD_BASELINE_OVERLAP
+    ) {
+      rows.push([line])
+      continue
+    }
+    current.push(line)
+  }
+  return rows
+}
+
+/** Raden delt i celler på tomrommene mellom linjene, fra venstre. */
+function rowCells(row: readonly PdfLine[]): readonly (readonly PdfLine[])[] {
+  const sorted = [...row].sort((a, b) => a.xMin - b.xMin)
+  const cells: PdfLine[][] = []
+  let reach = Number.NEGATIVE_INFINITY
+  for (const line of sorted) {
+    const current = cells.at(-1)
+    if (current === undefined || line.xMin - reach >= MIN_COLUMN_GAP) {
+      cells.push([line])
+    } else {
+      current.push(line)
+    }
+    reach = Math.max(reach, line.xMax)
+  }
+  return cells
+}
+
+/**
+ * Blokken delt i cellene sine, eller blokken selv.
+ *
+ * Poppler legger noen tabellrader i én blokk: radetiketten og cellene i raden
+ * blir egne `line`-elementer på samme grunnlinje inne i den samme blokken. Står
+ * de igjen som linjer, skiller bare et linjeskift dem — og linjeskiftet er det
+ * *myke* skillet, det et ordrett søk får krysse fordi en setning skal kunne gå
+ * over to linjer (`extraction-checks.ts`). Da blir «17-Item HAM-D score,» og
+ * tallet i nabocellen én sammenhengende tegnstrøm, og en klinisk verdi kan
+ * siteres som om den hørte til etiketten ved siden av. Det er den samme feilen
+ * modulen finnes for å hindre, bare ett nivå under spaltene: Popplers blokk er
+ * ikke alltid ett avsnitt.
+ *
+ * Signalet er geometrisk, som resten av modulen: **to linjer på den samme
+ * grunnlinjen, atskilt av et tomrom**. To linjer som ikke overlapper i høyden,
+ * står over hverandre og er en vanlig stabling — et avsnitt skal ikke deles i
+ * to fordi en kort sistelinje ikke rører linjen over. To linjer som rører
+ * hverandre vannrett, er én synlig tekstlinje Poppler delte, og hører sammen.
+ *
+ * Radene med bare én linje blir derfor liggende igjen i sin egen blokk, mens
+ * hver celle i en rad med flere blir en blokk med det harde skillet rundt seg.
+ * En blokk der ingen rad har mer enn én linje — altså all vanlig brødtekst —
+ * røres ikke, og teksten blir tegn for tegn den samme. Ingen tekst flyttes, og
+ * intet ord endres: bare skillet mellom dem blir det det er.
+ */
+function splitIntoCells(block: PdfBlock): readonly PdfBlock[] {
+  const rows = baselineRows(block.lines)
+  const cellRows = rows.map(rowCells)
+  if (cellRows.every((cells) => cells.length === 1)) {
+    return [block]
+  }
+
+  const parts: PdfBlock[] = []
+  let stacked: PdfLine[] = []
+  for (const cells of cellRows) {
+    const only = cells.length === 1 ? cells[0] : undefined
+    if (only !== undefined) {
+      stacked.push(...only)
+      continue
+    }
+    if (stacked.length > 0) {
+      parts.push(blockOfLines(stacked))
+      stacked = []
+    }
+    for (const cell of cells) {
+      parts.push(blockOfLines(cell))
+    }
+  }
+  if (stacked.length > 0) {
+    parts.push(blockOfLines(stacked))
+  }
+  return parts
+}
+
 /**
  * Blokkene i leserekkefølge, eller `null` når rekkefølgen ikke er bestemt.
  *
@@ -510,7 +635,7 @@ export function reconstructReadingOrder(bboxXml: string): ReadingOrderResult {
       }
     }
 
-    const ordered = orderRegion(horizontal)
+    const ordered = orderRegion(horizontal.flatMap(splitIntoCells))
     if (ordered === null) {
       return {
         status: 'rejected',

@@ -430,7 +430,7 @@ describe('runExtractionVerification — avgrensning', () => {
  * av dem.
  *
  * Dokumentveien gir ikke den samme teksten som adressen: verktøyet svarer med
- * koordinater, og `antidep-reading-order@1` bygger en tekst med ett avsnitt per
+ * koordinater, og `antidep-reading-order@2` bygger en tekst med ett avsnitt per
  * blokk og et sideskift etter siden (`reading-order.ts`). En dobbel som svarte
  * med adressens tekst, ville prøvd noe ingen kjøring gjør.
  */
@@ -456,7 +456,7 @@ async function documentBoundItem(
           tool: 'pdftotext',
           toolVersion: 'pdftotext 24.02.0',
           arguments: '-bbox-layout -enc UTF-8 -eol unix',
-          transform: 'antidep-reading-order@1',
+          transform: 'antidep-reading-order@2',
         },
       },
     },

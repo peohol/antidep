@@ -41,7 +41,7 @@ const PDF = syntheticPdf(LINJER)
  * Teksten oppskriften faktisk gir av denne PDF-en.
  *
  * Linjene i én spalte blir én blokk, skilt fra neste side med et sideskift —
- * formen `antidep-reading-order@1` gir (`reading-order.ts`). Prøvene under
+ * formen `antidep-reading-order@2` gir (`reading-order.ts`). Prøvene under
  * kjører det ekte verktøyet framfor en dobbel: oppskriften er en prosess, og en
  * dobbel som svarte med ren tekst ville prøvd noe annet enn det kommandoen gjør.
  */

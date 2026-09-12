@@ -555,6 +555,16 @@ export function syntheticPdf(lines: readonly string[]): Uint8Array {
 }
 
 /**
+ * En linje i en fikstur: én gjennomgående tekstlinje, eller cellene i en rad.
+ *
+ * En rad — flere strenger — legges som flere `line`-elementer på den *samme*
+ * grunnlinjen inne i den samme blokken, atskilt av et tomrom. Det er formen
+ * Poppler gir noen tabellrader, og den formen er grunnen til at
+ * `reading-order.ts` deler en blokk i celler.
+ */
+export type SyntheticBboxLine = string | readonly string[]
+
+/**
  * Posisjonsdata på formen `pdftotext -bbox-layout` gir dem, bygget av blokker.
  *
  * Finnes for at et ledd som bare trenger *en* tekst ut av et dokument, skal
@@ -564,7 +574,7 @@ export function syntheticPdf(lines: readonly string[]): Uint8Array {
  * langs linjen. Formen er den rekonstruksjonen leser, og at den *er* Popplers
  * form, er prøvd mot det ekte verktøyet i `reading-order.test.ts`.
  */
-export function bboxLayoutDocument(blocks: readonly (readonly string[])[]): string {
+export function bboxLayoutDocument(blocks: readonly (readonly SyntheticBboxLine[])[]): string {
   const rows: string[] = [
     '<!DOCTYPE html>',
     '<html xmlns="http://www.w3.org/1999/xhtml">',
@@ -573,36 +583,63 @@ export function bboxLayoutDocument(blocks: readonly (readonly string[])[]): stri
     '<doc>',
     '  <page width="612.000000" height="792.000000">',
   ]
+  // Tomrommet mellom to celler i en rad. Bredere enn spaltemargen
+  // rekonstruksjonen krever, slik at fiksturen er en rad og ikke en tvil.
+  const CELL_GAP = 20
+
+  const escape = (word: string): string =>
+    word.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+
+  const wordWidth = (word: string): number => Math.max(4, word.length * 5)
+
+  /** Én `line` med ordene fordelt fra `startX`, og hvor den endte. */
+  const emitLine = (text: string, startX: number, top: number, fullWidth: boolean): number => {
+    const words = text.split(' ')
+    const span = words.reduce((total, word) => total + wordWidth(word) + 3, -3)
+    const lineEnd = fullWidth ? 300 : startX + span
+    rows.push(
+      `        <line xMin="${startX.toFixed(6)}" yMin="${top.toFixed(6)}" ` +
+        `xMax="${lineEnd.toFixed(6)}" yMax="${(top + 10).toFixed(6)}">`,
+    )
+    let x = startX
+    for (const word of words) {
+      const width = wordWidth(word)
+      rows.push(
+        `          <word xMin="${x.toFixed(6)}" yMin="${top.toFixed(6)}" ` +
+          `xMax="${(x + width).toFixed(6)}" yMax="${(top + 10).toFixed(6)}">` +
+          `${escape(word)}</word>`,
+      )
+      x += width + 3
+    }
+    rows.push('        </line>')
+    return lineEnd
+  }
+
   let top = 60
   for (const lines of blocks) {
     const blockTop = top
     const blockBottom = top + lines.length * 14
+    // Omrisset av en blokk med bare gjennomgående linjer er det samme som før,
+    // slik at fiksturene som fantes, ikke endrer fingeravtrykk av en utvidelse.
+    let blockRight = 300
     rows.push('    <flow>')
-    rows.push(
-      `      <block xMin="56.000000" yMin="${blockTop.toFixed(6)}" ` +
-        `xMax="300.000000" yMax="${blockBottom.toFixed(6)}">`,
-    )
+    const blockIndex = rows.length
+    rows.push('')
     for (const line of lines) {
-      const lineTop = top
-      const lineBottom = top + 10
-      rows.push(
-        `        <line xMin="56.000000" yMin="${lineTop.toFixed(6)}" ` +
-          `xMax="300.000000" yMax="${lineBottom.toFixed(6)}">`,
-      )
-      let x = 56
-      for (const word of line.split(' ')) {
-        const width = Math.max(4, word.length * 5)
-        rows.push(
-          `          <word xMin="${x.toFixed(6)}" yMin="${lineTop.toFixed(6)}" ` +
-            `xMax="${(x + width).toFixed(6)}" yMax="${lineBottom.toFixed(6)}">` +
-            `${word.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}` +
-            '</word>',
-        )
-        x += width + 3
+      if (typeof line === 'string') {
+        emitLine(line, 56, top, true)
+      } else {
+        let x = 56
+        for (const cell of line) {
+          x = emitLine(cell, x, top, false) + CELL_GAP
+        }
+        blockRight = Math.max(blockRight, x - CELL_GAP)
       }
-      rows.push('        </line>')
       top += 14
     }
+    rows[blockIndex] =
+      `      <block xMin="56.000000" yMin="${blockTop.toFixed(6)}" ` +
+      `xMax="${blockRight.toFixed(6)}" yMax="${blockBottom.toFixed(6)}">`
     rows.push('      </block>')
     rows.push('    </flow>')
     top += 14

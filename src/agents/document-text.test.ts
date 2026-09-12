@@ -146,6 +146,20 @@ describe('den lukkede oppskriften', () => {
     expect(resultat.status === 'ok' ? resultat.extracted.text : '').toBe(`${LINJER.join('\n')}\n`)
   })
 
+  it('kjører ikke den første utgaven av etterbehandlingen, selv om den er lovlig lagret', () => {
+    // @1 delte ikke en tabellrad Poppler hadde lagt i én blokk, og lot dermed et
+    // sitat gå fra en radetikett og inn i en fremmed celle (`reading-order.ts`).
+    // Databasen godtar den fortsatt som en lagret verdi, slik at de radene som
+    // bærer den, ikke må skrives om for å se ut som noe annet enn det de er —
+    // men den skal ikke kunne kjøres igjen og gi en tekst noen bygger videre på.
+    const grunn = disallowedRecipeReason({
+      ...OPPSKRIFT,
+      transform: 'antidep-reading-order@1',
+    })
+    expect(grunn).not.toBeNull()
+    expect(grunn).toContain(PDF_TEXT_TRANSFORM)
+  })
+
   it('avviser en oppskrift satt sammen av to rader i listen', () => {
     // Argumentene og etterbehandlingen hører sammen: posisjonsdata uten
     // rekonstruksjonen er ikke tekst, og tekst med en rekonstruksjon som ikke

@@ -54,10 +54,12 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     skriverettighet bli kodekjøring hos den som etterprøver
   - 003g leserekkefølgen: `text_extraction_transform` sier hvilken etterbehandling teksten
     ble laget med, og oppskriften nye kildeversjoner registreres med, er `pdftotext`
-    `-bbox-layout -enc UTF-8 -eol unix` med `antidep-reading-order@1`. `-layout` gjenskapte
+    `-bbox-layout -enc UTF-8 -eol unix` med `antidep-reading-order@2`. `-layout` gjenskapte
     den fysiske plasseringen og la tekst fra to spalter på samme tekstlinje; listen har
-    fortsatt den gamle oppskriften som en av to rader, slik at radene som bærer den, kan
-    etterprøves slik de faktisk ble laget
+    tre rader, slik at radene som bærer en eldre oppskrift, ikke må skrives om for å se ut
+    som noe annet enn det de er. `antidep-reading-order@1` er den ene raden som kan lagres
+    uten å kunne kjøres: den delte ikke en tabellrad Poppler hadde lagt i én blokk, og er
+    derfor ute av den kjørbare listen i `src/agents/document-binding.ts`
   - 008i `extraction_artifact_discarded` lagt til `audit.event_operation`, alene i sin egen
     migrasjon av samme grunn som 008a og 008b
   - 005af `knowledge.discard_unpublished_extraction_artifacts(...)`: den ene, sterkt

@@ -98,7 +98,7 @@ values
    'sha256:' || repeat('a', 64), 'full_text',
    'sha256:' || repeat('b', 64), 481253, 'application/pdf',
    'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
-   'antidep-reading-order@1',
+   'antidep-reading-order@2',
    'ac650000-0000-4000-8000-00000000000b');
 
 insert into knowledge.source_versions
@@ -181,7 +181,7 @@ select is(
       'arguments', '-bbox-layout -enc UTF-8 -eol unix',
       -- Etterbehandlingen er en del av oppskriften: uten den kommer ingen
       -- tredjepart fram til den samme teksten (migrasjon 003g).
-      'transform', 'antidep-reading-order@1'
+      'transform', 'antidep-reading-order@2'
     )
   ),
   'dokumentbindingen følger raden, med hele oppskriften'

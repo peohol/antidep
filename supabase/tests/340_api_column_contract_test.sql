@@ -487,7 +487,7 @@ with inserted as (
           'full_text', (select id from fixture where name = 'extraction'),
           'sha256:' || repeat('b', 64), 481253, 'application/pdf',
           'pdftotext', 'pdftotext 24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
-          'antidep-reading-order@1')
+          'antidep-reading-order@2')
   returning id
 )
 insert into fixture (name, id) select 'rich_version', id from inserted;
