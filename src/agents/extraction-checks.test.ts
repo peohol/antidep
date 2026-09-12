@@ -2384,6 +2384,83 @@ describe('checkExtraction — den kildeomfattende fraværskontrollen', () => {
   })
 
   // ------------------------------------------------------------------------
+  // Funn ved å kjøre leddet mot produksjon: et søketreff slettet svaret
+  //
+  // Søket traff tre fragmenter fra en tospaltet PDF — «-10 classification of
+  // men» — og gjennomlesningen hadde funnet en hel setning med et faktisk antall
+  // i. Begrunnelsen kontrolløren fikk, gjenga bare støyen: `continue` kom før
+  // svaret i det hele tatt ble lest. Dekningen skal fortsatt være blokkert av
+  // treffet; det er rapporteringen som manglet.
+  // ------------------------------------------------------------------------
+
+  it('gjengir hva gjennomlesningen svarte, også når søket alt har blokkert feltet', () => {
+    const report = check(
+      { extraction: UTEN_KI },
+      FIXTURE_SOURCE_TEXT,
+      true,
+      lest({ extraction: UTEN_KI }, { confidence_interval: 'present' }),
+    )
+    // Dekningen er uendret: et søketreff kan ikke overstyres.
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.findings).toMatch(/Søket gjennom hele representasjonen fant noe som ligner/)
+    // …men svaret står der nå, med utdraget og begrunnelsen sin.
+    expect(report.findings).toMatch(/svarte «present» på «confidence_interval»/)
+    expect(report.findings).toMatch(/Et søketreff kan ikke overstyres av en gjennomlesning/)
+    expect(report.findings).toMatch(/n = 284 patients completed the trial/)
+    expect(report.findings).toMatch(/Leste gjennom hele representasjonen etter confidence_interval/)
+  })
+
+  // EVIDENCE_PIPELINE.md §3.7: hvert prosessledd skal kunne spores til identitet
+  // og tidspunkt. En gjennomlesning som svarte `present` eller `uncertain`, endte
+  // som et avsnitt i verifikasjonsradens begrunnelse uten at noe navnga hvem som
+  // skrev det — proveniensen ble bare satt når dekningen ble gitt.
+  it('bevarer proveniensen for gjennomlesningen også når den ikke ga dekning', () => {
+    const report = check(
+      { extraction: UTEN_KI },
+      UTEN_INTERVALL,
+      true,
+      lest({ extraction: UTEN_KI }, { confidence_interval: 'uncertain' }),
+    )
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.sourceWideAbsence).toMatchObject({
+      provider: 'test',
+      model: 'gjennomlesning',
+      answeredAt: '2026-09-11T09:00:00Z',
+      requestDigest: `sha256:${'a'.repeat(64)}`,
+      answerDigest: `sha256:${'b'.repeat(64)}`,
+      // Blokka leses alene av en tredjepart, og skal ikke kunne forveksles med
+      // et bevis for at gaten åpnet.
+      covered: false,
+    })
+    // Fiksturen fører også tidspunktet som ikke rapportert, og hvert felt
+    // gjennomlesningen svarte på, skal stå der — også det som konkluderte.
+    expect(report.sourceWideAbsence?.fields).toEqual([
+      {
+        checkField: 'timepoint',
+        status: 'not_reported',
+        verdict: 'absent',
+        quote: null,
+        rationale: 'Leste gjennom hele representasjonen etter timepoint.',
+      },
+      {
+        checkField: 'confidence_interval',
+        status: 'not_reported',
+        verdict: 'uncertain',
+        quote: null,
+        rationale: 'Leste gjennom hele representasjonen etter confidence_interval.',
+      },
+    ])
+  })
+
+  // Motstykket: uten en gjennomlesning er det ingen identitet å føre, og blokka
+  // skal da ikke finnes i det hele tatt.
+  it('fører ingen proveniens når ingen gjennomlesning foreligger', () => {
+    const report = check({ extraction: UTEN_KI }, UTEN_INTERVALL, true, null)
+    expect(report.checkedFields).not.toContain('source_wide_absence')
+    expect(report.sourceWideAbsence).toBeUndefined()
+  })
+
+  // ------------------------------------------------------------------------
   // Når begge leddene konkluderer
   // ------------------------------------------------------------------------
 
@@ -2836,6 +2913,7 @@ describe('checkExtraction — den kildeomfattende fraværskontrollen', () => {
       requestDigest: `sha256:${'a'.repeat(64)}`,
       answerDigest: `sha256:${'b'.repeat(64)}`,
       answeredAt: '2026-09-11T09:00:00Z',
+      covered: true,
       // Fiksturen fører også tidspunktet som ikke rapportert, og begge feltene
       // dekningen hviler på skal stå der — ikke bare det ene prøven handler om.
       fields: [

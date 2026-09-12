@@ -62,7 +62,6 @@
 // Navnet er ikke et argument for at det er trygt; kontrollen er.
 // ============================================================================
 
-import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
   closeSync,
@@ -76,27 +75,16 @@ import {
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
+// Oppslaget er det samme som kildetekstleddet gjør, og ligger derfor felles
+// (`git-paths.ts`). Regelen her er likevel strengere: en hemmelighet skrives
+// bare til en ignorert fil, også utenfor et arbeidstre.
+import { gitIgnores } from './git-paths.ts'
+
 /** Skrivingen ble avvist før noe ble skrevet. */
 export class EnvFileRefused extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'EnvFileRefused'
-  }
-}
-
-/**
- * Sier om git faktisk ignorerer filen.
- *
- * Feiler lukket: enhver annen utgang enn «ja, ignorert» er `false`.
- * `git check-ignore` avslutter med 0 for en ignorert bane, 1 for en som ikke
- * er det, og 128 når den ikke kan svare i det hele tatt.
- */
-export function gitIgnores(file: string): boolean {
-  try {
-    execFileSync('git', ['check-ignore', '--quiet', '--', file], { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
   }
 }
 

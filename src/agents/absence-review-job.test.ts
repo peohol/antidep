@@ -11,7 +11,7 @@
 // funnet er like gyldig uten den.
 // ============================================================================
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -134,6 +134,21 @@ describe('writeAbsenceReviewJob', () => {
     expect(andre.wroteTemplate).toBe(false)
     const outcome = await readAbsenceReviewOutcome(job(rot))
     expect(outcome.kind).toBe('reviewed')
+  })
+
+  // `prompt.txt` er en ordrett kopi av fullteksten, og Antidep har ikke rett til
+  // å redistribuere den (EVIDENCE_PIPELINE.md §14). Katalogen velges på
+  // kommandolinjen, og den dokumenterte kommandoen pekte på en katalog i repoets
+  // rot som ingen ignore-regel dekket. Avvisningen kommer FØR mappa opprettes.
+  it('nekter å skrive kildeteksten til en bane git kan ta med i en commit', async () => {
+    const rot = katalog()
+    await expect(
+      writeAbsenceReviewJob({
+        ...job(rot),
+        gitPaths: { workTree: () => '/et/arbeidstre', ignores: () => false },
+      }),
+    ).rejects.toThrow(/ikke være ignorert|uten å være ignorert/)
+    expect(existsSync(join(rot, ITEM.evidenceItemId))).toBe(false)
   })
 })
 
