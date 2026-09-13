@@ -410,6 +410,29 @@ export function isUniqueViolation(cause: unknown): boolean {
 }
 
 /**
+ * Om avvisningen **beviser** at databasen ikke skrev noe.
+ *
+ * PostgREST kjører ett RPC-kall i én transaksjon. Svarer den med en SQLSTATE,
+ * har funksjonen reist et unntak, og transaksjonen er rullet tilbake: ingenting
+ * ble skrevet. Det er det eneste sikre beviset en kjøring har for det.
+ *
+ * Alt annet er **uavklart**, ikke «ingenting skjedd»: en forbindelse som ryker
+ * etter at serveren har committet, en tidsavbrudd, et svar som ikke har den
+ * formen kontrakten lover. Et ledd som behandlet dem som en avvisning, ville
+ * rapportert «ingenting registrert» om en rad som finnes — og invitert til en
+ * ny kjøring som lager den en gang til, der skriveveien ikke er idempotent.
+ *
+ * SQLSTATE er fem tegn, store bokstaver og siffer. PostgRESTs egne koder
+ * (`PGRST202` og slektningene) er lengre, og faller derfor utenfor. De betyr
+ * også at ingenting ble skrevet, men de betyr i tillegg at *ingen* kjøring i
+ * køen kan lykkes, og da er det riktig at kjøringen stopper framfor å føre
+ * hvert forslag som overhoppet.
+ */
+export function isDatabaseRejection(cause: unknown): boolean {
+  return cause instanceof AgentApiError && cause.code !== null && /^[0-9A-Z]{5}$/.test(cause.code)
+}
+
+/**
  * Evidensfunnet dublettavvisningen navngir, eller `null`.
  *
  * Formen er `evidence_item_id=<uuid>` og settes av

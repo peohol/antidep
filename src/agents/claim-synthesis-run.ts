@@ -30,9 +30,25 @@
 // grunnlaget ikke har nådd kontrollnivået sitt. Hvert forslag er sin egen
 // registrering i sin egen transaksjon, og rapporten sier hva som skjedde med
 // hvert enkelt — inkludert databasens egen setning om hva som stoppet det.
+//
+// ----------------------------------------------------------------------------
+// «Overhoppet» er en påstand om at ingenting ble skrevet, og krever bevis
+//
+// Bare en avvisning som bærer en SQLSTATE beviser det: PostgREST kjører kallet
+// i én transaksjon, og et unntak fra funksjonen ruller den tilbake
+// (`isDatabaseRejection`). Alt annet er **uavklart** — en forbindelse som ryker
+// etter at serveren har committet, et svar som ikke har den formen kontrakten
+// lover — og der kan raden finnes.
+//
+// Skriveveien er med vilje ikke idempotent (`syntheses/README.md`): kjøres den
+// samme filen om igjen uten `claim_id`, blir det en ny påstand. En uavklart
+// registrering ført som «overhoppet» ville derfor invitert til nøyaktig den
+// dubletten. Den stopper i stedet kjøringen, som lukkes som `failed` med en
+// beskjed om at utfallet er ukjent og må kontrolleres før noe kjøres om igjen.
 // ============================================================================
 
 import type { Uuid } from '../types/api.ts'
+import { isDatabaseRejection } from './agent-api.ts'
 import type { AgentRunPremises, ClaimSynthesisApi } from './agent-api.ts'
 import type { ClaimSynthesisProposal } from './claim-synthesis-proposal.ts'
 import { asOptionalUuid, asText, asUuid, fieldsOf, raw } from './strict-fields.ts'
@@ -180,6 +196,11 @@ export async function runClaimSynthesis(options: SynthesisRunOptions): Promise<S
       // Registreringen ligger i sin egen innkapsling: en avvist syntese — et
       // evidensfunn som ikke har nådd kontrollnivået sitt, en verdi basen ikke
       // tar imot — er det ene forslagets problem, ikke køens.
+      //
+      // Bare en avvisning databasen selv har uttalt, med sin egen SQLSTATE,
+      // regnes som det. Se hodekommentaren: alt annet er uavklart, og et
+      // uavklart utfall ført som «overhoppet» ville vært en påstand om at
+      // ingenting ble skrevet.
       try {
         const registered = parseClaimSynthesisResult(
           await api.registerSynthesis({
@@ -203,6 +224,20 @@ export async function runClaimSynthesis(options: SynthesisRunOptions): Promise<S
         })
       } catch (cause) {
         const reason = cause instanceof Error ? cause.message : String(cause)
+
+        if (!isDatabaseRejection(cause)) {
+          // Utfallet er ukjent. Kjøringen skal ikke fortsette som om raden ikke
+          // finnes, og den skal ikke lukkes som `succeeded`: den ytre fangsten
+          // under lukker den som `failed` og lar årsaken nå kalleren.
+          throw new Error(
+            `${label}: registreringen kan ha blitt skrevet, men utfallet er ukjent. ` +
+              'Kontroller i /review om revisjonen finnes FØR du kjører filen om igjen — ' +
+              'skriveveien er ikke idempotent, og en ny kjøring uten claim_id ville laget ' +
+              `en ny påstand. Årsak: ${reason}`,
+            { cause },
+          )
+        }
+
         log(`— ingen påstand registrert. ${reason}`)
         results.push({
           label,

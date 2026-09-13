@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import type { AgentRunPremises, ClaimSynthesisApi, RegisterClaimSynthesisArgs } from './agent-api'
+import {
+  AgentApiError,
+  type AgentRunPremises,
+  type ClaimSynthesisApi,
+  type RegisterClaimSynthesisArgs,
+} from './agent-api'
 import {
   CLAIM_SYNTHESIS_PROPOSAL_VERSION,
   parseClaimSynthesisProposal,
@@ -188,9 +193,15 @@ describe('runClaimSynthesis', () => {
       registerSynthesis: () => {
         calls += 1
         if (calls === 1) {
+          // En SQLSTATE fra databasen: funksjonen reiste et unntak, og
+          // transaksjonen er rullet tilbake. Da — og bare da — er «ingenting
+          // registrert» en påstand kjøringen kan stå for.
           return Promise.reject(
-            new Error(
+            new AgentApiError(
+              'api.register_claim_synthesis',
               'Evidensfunn med åpent verifikasjonsfunn: 66666666-6666-4666-8666-666666666666.',
+              '23001',
+              null,
             ),
           )
         }
@@ -214,26 +225,67 @@ describe('runClaimSynthesis', () => {
     expect(report.runStatus).toBe('succeeded')
   })
 
-  it('lukker kjøringen som failed når noe uventet skjer', async () => {
+  // --------------------------------------------------------------------------
+  // Et uavklart utfall er ikke det samme som «ingenting registrert»
+  //
+  // Skriveveien er ikke idempotent. En registrering som kan ha blitt skrevet,
+  // ført som overhoppet, ville invitert til en ny kjøring som lager påstanden en
+  // gang til (funnet i teknisk review).
+  // --------------------------------------------------------------------------
+  it('stopper kjøringen når forbindelsen ryker: raden kan finnes', async () => {
     const api = fakeApi({
-      completeRun: () => Promise.resolve(),
-      registerSynthesis: () => Promise.resolve(svar()),
+      registerSynthesis: () => Promise.reject(new Error('fetch failed')),
     })
-    const brutt: ClaimSynthesisApi = {
-      ...api,
-      registerSynthesis: () => Promise.resolve({ ikke: 'en syntese' }),
-    }
-    const samler = { ...api, ...brutt } as FakeApi
 
-    const report = await runClaimSynthesis({
-      api: samler,
-      premises: PREMISSER,
-      proposals: kø(forslag()),
+    await expect(
+      runClaimSynthesis({ api, premises: PREMISSER, proposals: kø(forslag(), forslag()) }),
+    ).rejects.toThrow(/utfallet er ukjent/)
+
+    // Ingen av de to forslagene er ført som overhoppet, og det andre er ikke
+    // forsøkt: køen skal ikke gå videre på et ukjent utfall.
+    expect(api.registered).toHaveLength(0)
+    expect(api.completions[0]?.status).toBe('failed')
+    expect(api.completions[0]?.failureReason).toMatch(/FØR du kjører filen om igjen/)
+  })
+
+  it('stopper kjøringen når svaret ikke har formen: skrivingen kan ha gått gjennom', async () => {
+    // parseClaimSynthesisResult kjører ETTER at serveren har committet. Et svar
+    // uten revisjons-ID betyr derfor ikke at ingenting ble skrevet.
+    const api = fakeApi({
+      registerSynthesis: () => Promise.resolve({ ikke: 'en syntese' }),
     })
-    // Et svar som ikke har formen, er det ene forslagets problem: kjøringen
-    // fører det som avvist framfor å velte køen.
-    expect(report.results[0]?.decision).toBe('skipped')
-    expect(report.results[0]?.reason).toMatch(/ugyldig/)
+
+    await expect(
+      runClaimSynthesis({ api, premises: PREMISSER, proposals: kø(forslag()) }),
+    ).rejects.toThrow(/utfallet er ukjent/)
+
+    expect(api.completions[0]?.status).toBe('failed')
+  })
+
+  it('en avvisning uten SQLSTATE regnes ikke som bevis for at ingenting ble skrevet', async () => {
+    // PostgRESTs egne koder er ikke SQLSTATE, og en AgentApiError uten kode i
+    // det hele tatt er en transportfeil kledd i api-formen.
+    const api = fakeApi({
+      registerSynthesis: () =>
+        Promise.reject(
+          new AgentApiError('api.register_claim_synthesis', 'gateway timeout', null, null),
+        ),
+    })
+
+    await expect(
+      runClaimSynthesis({ api, premises: PREMISSER, proposals: kø(forslag()) }),
+    ).rejects.toThrow(/utfallet er ukjent/)
+  })
+
+  it('lar den opprinnelige årsaken nå kalleren selv om lukkingen også feiler', async () => {
+    const api = fakeApi({
+      registerSynthesis: () => Promise.reject(new Error('fetch failed')),
+      completeRun: () => Promise.reject(new Error('kunne ikke lukke kjøringen')),
+    })
+
+    await expect(
+      runClaimSynthesis({ api, premises: PREMISSER, proposals: kø(forslag()) }),
+    ).rejects.toThrow(/utfallet er ukjent/)
   })
 })
 

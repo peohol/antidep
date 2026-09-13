@@ -8314,7 +8314,7 @@ indirekthet i evidensvurderingen, ikke bortforklart.
 | `npm run format:check` | grønn |
 | `./scripts/verify-counts.sh` | grønn |
 | `npm run typecheck` | grønn |
-| `npm run test` | grønn, 2153 prøver over 95 filer |
+| `npm run test` | grønn, 2156 prøver over 95 filer |
 | `npm run build` | grønn |
 | `supabase/tests/690_…` | 47 assertions, kjørt mot det hostede prosjektet, grønn |
 | pgTAP, 69 filer | kjørt mot det hostede prosjektet i en transaksjon som rulles tilbake, med og uten de nye migrasjonene. Fire filer som feilet før, passerer nå — 690 og de tre påstandsfilene, som manglet en påstandsrad å prøve mot. Ingen nye avvik |
@@ -8341,6 +8341,23 @@ reviewer med egen konto, som prøve 610 gjør.
 
 Etter rettelsen er begge CI-jobbene grønne, medregnet hele pgTAP-suiten på en
 fersk lokal stack.
+
+#### En rettelse etter teknisk review
+
+Kjøringen fanget **hver** feil fra registreringen og førte forslaget som
+overhoppet. `parseClaimSynthesisResult` kjører etter at serveren har committet,
+så et svar uten den formen kontrakten lover — eller en forbindelse som ryker
+etter commit — havnet i den samme fangsten. Kjøringen ble da lukket som
+`succeeded` med forslaget ført som «ingen påstand registrert», og kjøreren ba om
+en ny kjøring. Skriveveien er med vilje ikke idempotent, så den nye kjøringen
+ville laget påstanden en gang til.
+
+«Overhoppet» er en påstand om at ingenting ble skrevet, og krever bevis. Det
+eneste beviset en kjøring har, er en SQLSTATE: PostgREST kjører kallet i én
+transaksjon, og et unntak fra funksjonen ruller den tilbake. `isDatabaseRejection`
+er den grensen. Alt annet stopper nå kjøringen, som lukkes som `failed` med en
+beskjed om at raden kan finnes og må kontrolleres i `/review` før noe kjøres om
+igjen.
 
 Nettleserprøven er kjørt med innloggingen **stubbet** og Data API-et erstattet av
 en lokal stubb som serverer nøyaktig de svarene produksjon gir. Grunnen er at

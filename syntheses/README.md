@@ -127,6 +127,14 @@ en **ny revisjon** av en påstand som står der fra før. Kjøringen skriver ut
 påstands-ID-en og revisjonsnummeret den registrerte, slik at det er lesbart hva
 som faktisk skjedde.
 
+Av samme grunn skiller kjøringen mellom en **avvisning** og et **uavklart
+utfall**. Et forslag føres som avvist bare når databasen selv har sagt nei med
+sin egen SQLSTATE — da er transaksjonen rullet tilbake, og ingenting er skrevet.
+Ryker forbindelsen, eller kommer det et svar som ikke har formen kontrakten
+lover, stopper kjøringen i stedet og lukkes som `failed`: raden kan finnes, og
+en ny kjøring ville laget påstanden en gang til. Kontroller `/review` før du
+kjører om igjen.
+
 ## 6. Språk og presisjon
 
 `statement`, `scope`, `qualifiers` og `uncertainty_summary` er klinikerens tekst
