@@ -9,7 +9,12 @@ import { clampText, runClaimVerification, type RetrieveLike } from './claim-veri
 import type { ClaimEvidenceLink, ClaimRevisionInput } from './claim-verification-input'
 import { sourceVersionContentHash } from './content-hash'
 import { parseVerifierArguments } from './cli-arguments'
-import { FIXTURE_SOURCE_TEXT, claimEvidenceLinkFixture, claimRevisionFixture } from './test-support'
+import {
+  bboxLayoutDocument,
+  FIXTURE_SOURCE_TEXT,
+  claimEvidenceLinkFixture,
+  claimRevisionFixture,
+} from './test-support'
 
 const PREMISSER: AgentRunPremises = {
   provider: 'antidep',
@@ -139,6 +144,25 @@ function toLinkPayload(link: ClaimEvidenceLink): Record<string, unknown> {
               retrieved_from: version.retrievedFrom,
               external_version: version.externalVersion,
               content_hash: version.contentHash,
+              representation: version.representation,
+              // Dokumentbindingen er med fordi den avgjør HVORDAN kontrollen
+              // kan skaffe teksten: en dokumentbundet versjon hentes aldri over
+              // nett (`source-binding.ts`). Uten den i nyttelasten ville prøvene
+              // her aldri kunnet treffe den veien.
+              document:
+                version.document === null
+                  ? null
+                  : {
+                      sha256: version.document.sha256,
+                      byte_size: version.document.byteSize,
+                      media_type: version.document.mediaType,
+                      text_extraction: {
+                        tool: version.document.textExtraction.tool,
+                        tool_version: version.document.textExtraction.toolVersion,
+                        arguments: version.document.textExtraction.arguments,
+                        transform: version.document.textExtraction.transform,
+                      },
+                    },
               has_storage_reference: version.hasStorageReference,
             },
       extraction: {
@@ -545,5 +569,111 @@ describe('parseVerifierArguments', () => {
     // kalleren ikke ba om.
     expect(() => parse(['--registrer-alt'])).toThrow(/Ukjent valg/)
     expect(() => parse(['--evidence-item', 'abc'])).toThrow(/Ukjent valg/)
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Dokumentbundne kildeversjoner
+//
+// En kildeversjon utledet av en fulltekst-PDF hentes aldri over nett: teksten
+// trekkes ut av originaldokumentet med den registrerte oppskriften, og må hashe
+// til den registrerte `content_hash` (`source-binding.ts`, migrasjon 003e).
+// Claim-kontrollen leser det samme grunnlaget som ekstraksjonskontrollen, og må
+// derfor følge den samme regelen — ellers ville leddet som skal kontrollere
+// påstanden mot kilden, vært det ene som aldri fikk se den.
+// ----------------------------------------------------------------------------
+
+const DOKUMENTLINJER = FIXTURE_SOURCE_TEXT.split('\n').map((line) => line.trim())
+const DOKUMENTTEKST = `${DOKUMENTLINJER.join('\n')}\n\f`
+
+async function documentBoundRevision(): Promise<ClaimRevisionInput> {
+  const revision = claimRevisionFixture()
+  const link = revision.links[0] as ClaimEvidenceLink
+  const version = link.evidenceItem.sourceVersion as NonNullable<
+    ClaimEvidenceLink['evidenceItem']['sourceVersion']
+  >
+  return {
+    ...revision,
+    links: [
+      {
+        ...link,
+        evidenceItem: {
+          ...link.evidenceItem,
+          sourceVersion: {
+            ...version,
+            contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
+            document: {
+              sha256: `sha256:${'d'.repeat(64)}`,
+              byteSize: 481253,
+              mediaType: 'application/pdf',
+              textExtraction: {
+                tool: 'pdftotext',
+                toolVersion: 'pdftotext 24.02.0',
+                arguments: '-bbox-layout -enc UTF-8 -eol unix',
+                transform: 'antidep-reading-order@2',
+              },
+            },
+          },
+        },
+      },
+    ],
+  }
+}
+
+describe('runClaimVerification — dokumentbundne kildeversjoner', () => {
+  it('registrerer ingen kontroll når originaldokumentet ikke ligger i katalogen', async () => {
+    const api = fakeApi([await documentBoundRevision()])
+    const report = await runClaimVerification({
+      api,
+      premises: PREMISSER,
+      // Katalogen finnes alltid; den er bare tom der dokumentet ikke ligger.
+      documents: () =>
+        Promise.resolve({
+          status: 'error',
+          message: 'Originaldokumentet ligger ikke i dokumentkatalogen (ANTIDEP_DOCUMENT_DIR).',
+        }),
+      // Nettveien er med for å vise at den ikke brukes: en dokumentbundet
+      // versjon henter aldri adressen i stedet.
+      retrieve: retrieveFixture(),
+    })
+
+    expect(report.revisions[0]?.decision).toBe('skipped')
+    expect(report.revisions[0]?.reason ?? '').toMatch(/dokument/i)
+    expect(api.registered).toHaveLength(0)
+  })
+
+  it('kontrollerer revisjonen når dokumentet ligger der, uten å røre adressen', async () => {
+    const api = fakeApi([await documentBoundRevision()])
+    let retrievals = 0
+    const report = await runClaimVerification({
+      api,
+      premises: PREMISSER,
+      documents: () =>
+        Promise.resolve({
+          status: 'ok',
+          document: {
+            path: '/lager/d.pdf',
+            bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+            digest: `sha256:${'d'.repeat(64)}`,
+            byteSize: 481253,
+            mediaType: 'application/pdf',
+          },
+        }),
+      runTool: () =>
+        Promise.resolve({
+          status: 'ran',
+          exitCode: 0,
+          stdout: bboxLayoutDocument([DOKUMENTLINJER]),
+          stderr: '',
+        }),
+      retrieve: async (url) => {
+        retrievals += 1
+        return retrieveFixture()(url)
+      },
+    })
+
+    expect(report.revisions[0]?.decision).toBe('registered')
+    expect(api.registered).toHaveLength(1)
+    expect(retrievals).toBe(0)
   })
 })

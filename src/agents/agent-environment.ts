@@ -76,6 +76,19 @@ export const EVIDENCE_EXTRACTION_CREDENTIAL: AgentCredentialVariables = {
   secret: 'ANTIDEP_EXTRACTION_AGENT_SECRET',
 }
 
+/**
+ * Synteseagenten (migrasjon 005ak).
+ *
+ * Eget par, som for hvert annet ledd: identiteten autentiseres for *rollen* sin,
+ * og en syntesenøkkel kan verken ekstrahere, kontrollere en ekstraksjon eller
+ * kontrollere den påstanden den selv formulerte (migrasjon 005e,
+ * EVIDENCE_PIPELINE.md §61).
+ */
+export const CLAIM_SYNTHESIS_CREDENTIAL: AgentCredentialVariables = {
+  identityKey: 'ANTIDEP_SYNTHESIS_AGENT_IDENTITY_KEY',
+  secret: 'ANTIDEP_SYNTHESIS_AGENT_SECRET',
+}
+
 export interface AgentConfig {
   readonly url: string
   readonly publishableKey: string

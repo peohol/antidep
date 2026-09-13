@@ -12,6 +12,7 @@
 //   api.claim_verification_input         grunnlaget claim-kontrollen gjøres mot (005k)
 //   api.register_claim_verification      registrerer resultatet av den (005k)
 //   api.register_agent_extraction        registrerer én forankret ekstraksjon (005v)
+//   api.register_claim_synthesis         registrerer én påstandsrevisjon med grunnlag (005aj)
 //
 // De to første er felles for alle agentledd. De fire neste kommer i par, ett par
 // per verifikatorrolle: grunnlaget leses, resultatet registreres. Paret er
@@ -47,6 +48,11 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 import type { Database } from '../types/database.ts'
 import type { ProposedExtraction, ProposedGrounding } from './extraction-proposal.ts'
+import type {
+  ProposedAssessment,
+  ProposedClaimRevision,
+  ProposedEvidenceLink,
+} from './claim-synthesis-proposal.ts'
 import type { Uuid } from '../types/api.ts'
 import type { AgentCredential } from './agent-credential.ts'
 
@@ -176,6 +182,34 @@ export type AgentDatabase = {
         }
         Returns: Uuid
       }
+      register_claim_synthesis: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_run_id: Uuid
+          p_topic_concept_id: Uuid
+          p_subject_drug_id: Uuid
+          p_statement: string
+          p_scope: string
+          p_comparator_kind: string
+          p_uncertainty_summary: string
+          p_evidence_links: readonly Record<string, string>[]
+          p_assessment: Record<string, string | null>
+          p_claim_id?: Uuid | null
+          p_population_id?: Uuid | null
+          p_timeframe_min?: string | null
+          p_timeframe_max?: string | null
+          p_comparator_drug_id?: Uuid | null
+          p_direction?: string | null
+          p_magnitude_measure?: string | null
+          p_magnitude_value?: string | null
+          p_magnitude_unit?: string | null
+          p_qualifiers?: string | null
+        }
+        // jsonb. Formen er dokumentert i migrasjon 005aj og leses av
+        // `parseClaimSynthesisResult`, som avviser et svar som ikke har den.
+        Returns: unknown
+      }
     }
   }
 }
@@ -304,6 +338,26 @@ export interface EvidenceExtractionApi extends AgentRunApi {
   registerExtraction(args: RegisterAgentExtractionArgs): Promise<Uuid>
 }
 
+/**
+ * Én foreslått påstandsrevisjon, slik `api.register_claim_synthesis` tar imot
+ * den.
+ *
+ * Formen er databasens, ikke kjørerens: parameterlisten er kontrakten migrasjon
+ * 005aj dokumenterer. Kunnskapstypen, aktøren, revisjonsnummeret og
+ * vurderingstidspunktet står ikke her, fordi de ikke er kallerens å oppgi.
+ */
+export interface RegisterClaimSynthesisArgs {
+  readonly agentRunId: Uuid
+  readonly claim: ProposedClaimRevision
+  readonly evidenceLinks: readonly ProposedEvidenceLink[]
+  readonly assessment: ProposedAssessment
+}
+
+/** Kallet synteseagenten gjør, som én grenseflate. */
+export interface ClaimSynthesisApi extends AgentRunApi {
+  registerSynthesis(args: RegisterClaimSynthesisArgs): Promise<unknown>
+}
+
 /** Kallene claim-verifikatoren gjør, som én grenseflate. */
 export interface ClaimVerificationApi extends AgentRunApi {
   readInput(agentRunId: Uuid, claimRevisionId: Uuid | null): Promise<unknown>
@@ -314,6 +368,7 @@ export interface ClaimVerificationApi extends AgentRunApi {
 export const EVIDENCE_EXTRACTION_ROLE = 'evidence_extraction'
 export const EXTRACTION_VERIFICATION_ROLE = 'extraction_verification'
 export const CITATION_SUPPORT_VERIFICATION_ROLE = 'citation_support_verification'
+export const CLAIM_SYNTHESIS_ROLE = 'claim_synthesis'
 
 /**
  * En avvisning fra `api`, med databasens egen SQLSTATE bevart.
@@ -594,6 +649,72 @@ export function createEvidenceExtractionApi(
       })
       if (error !== null) {
         fail('api.register_agent_extraction', error)
+      }
+      return data
+    },
+  }
+}
+
+/**
+ * Synteseagentens port mot en faktisk Supabase-klient.
+ *
+ * Ett kall, og ingen leseflate: leddet leser det registrerte evidensgrunnlaget
+ * gjennom den redaksjonelle lesemodellen eller gjennom et menneske, ikke gjennom
+ * en agentflate det selv kan skrive til. Oversettelsen til databasens
+ * parameternavn skjer her, som for de øvrige leddene.
+ */
+export function createClaimSynthesisApi(
+  client: AgentClient,
+  credential: AgentCredential,
+): ClaimSynthesisApi {
+  const identity = identityOf(credential)
+
+  return {
+    ...createAgentRunApi(client, identity, CLAIM_SYNTHESIS_ROLE),
+
+    async registerSynthesis(args) {
+      const c = args.claim
+      const a = args.assessment
+      const { data, error } = await client.rpc('register_claim_synthesis', {
+        ...identity,
+        p_agent_run_id: args.agentRunId,
+        p_claim_id: c.claimId,
+        p_topic_concept_id: c.topicConceptId,
+        p_subject_drug_id: c.subjectDrugId,
+        p_statement: c.statement,
+        p_scope: c.scope,
+        p_population_id: c.populationId,
+        p_timeframe_min: c.timeframeMin,
+        p_timeframe_max: c.timeframeMax,
+        p_comparator_kind: c.comparatorKind,
+        p_comparator_drug_id: c.comparatorDrugId,
+        p_direction: c.direction,
+        p_magnitude_measure: c.magnitudeMeasure,
+        p_magnitude_value: c.magnitudeValue,
+        p_magnitude_unit: c.magnitudeUnit,
+        p_qualifiers: c.qualifiers,
+        p_uncertainty_summary: c.uncertaintySummary,
+        p_evidence_links: args.evidenceLinks.map((link) => ({
+          evidence_item_id: link.evidenceItemId,
+          relationship_type: link.relationshipType,
+          directness: link.directness,
+          relevance_note: link.relevanceNote,
+        })),
+        p_assessment: {
+          framework: a.framework,
+          certainty_level: a.certaintyLevel,
+          risk_of_bias: a.riskOfBias,
+          inconsistency: a.inconsistency,
+          indirectness: a.indirectness,
+          imprecision: a.imprecision,
+          publication_bias: a.publicationBias,
+          other_considerations: a.otherConsiderations,
+          rationale: a.rationale,
+          evidence_gap: a.evidenceGap,
+        },
+      })
+      if (error !== null) {
+        fail('api.register_claim_synthesis', error)
       }
       return data
     },

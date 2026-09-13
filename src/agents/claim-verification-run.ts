@@ -5,7 +5,8 @@
 //
 //   api.begin_agent_run             premissene registreres
 //   api.claim_verification_input    grunnlaget hentes (005k)
-//   retrieveRepresentation          hver kildeversjon hentes på nytt, over nett
+//   resolveRepresentation           hver kildeversjon skaffes på nytt: hentet fra
+//                                   adressen, eller trukket ut av originaldokumentet
 //   checkClaim                      kontrollen gjøres, deterministisk
 //   api.register_claim_verification resultatet registreres (005k)
 //   api.complete_agent_run          kjøringen lukkes
@@ -29,17 +30,30 @@
 // grunnen står i kjøringens `output_manifest`, som er proveniensen for
 // KI-operasjoner (DATABASE_ARCHITECTURE.md §33).
 //
-// Fire tilfeller gir ingen rad:
+// Tre tilfeller gir ingen rad:
 //
 //   1. En lenkes evidensfunn har ingen registrert kildeversjon, eller
 //      kildeversjonen har ingen content_hash. Da finnes det ikke noe
 //      etterprøvbart grunnlag å vise til (§74.32).
-//   2. Kilden lot seg ikke hente. En kontroll som ikke fikk se kilden, er ingen
-//      kontroll (ANTIDEP_CONSTITUTION.md §11).
-//   3. Svaret er ikke ren UTF-8, så fingeravtrykket kan ikke sammenlignes byte
-//      for byte med det registrerte.
-//   4. Fingeravtrykket stemmer ikke. Da har verifikatoren sett *en* utgave, men
+//   2. Representasjonen lot seg ikke skaffe: kilden svarte ikke, svaret var ikke
+//      ren UTF-8, originaldokumentet lå ikke i dokumentkatalogen, eller
+//      oppskriften lot seg ikke kjøre. En kontroll som ikke fikk se kilden, er
+//      ingen kontroll (ANTIDEP_CONSTITUTION.md §11).
+//   3. Fingeravtrykket stemmer ikke. Da har verifikatoren sett *en* utgave, men
 //      ikke den ekstraksjonen ble gjort fra.
+//
+// ----------------------------------------------------------------------------
+// Hvordan teksten skaffes, avgjøres av den registrerte raden
+//
+// En kildeversjon utledet av en fulltekst-PDF hentes **aldri** over nett: den
+// trekkes ut av originaldokumentet med den registrerte oppskriften, og teksten
+// må hashe til den registrerte `content_hash` (`source-binding.ts`, migrasjon
+// 003e). Det er den samme regelen ekstraksjonskontrollen følger, og den samme
+// modulen — de to leddene skal se nøyaktig den samme teksten.
+//
+// Uten dokumentet konkluderer kontrollen ikke. Den henter ikke `retrieved_from`
+// i stedet: for en dokumentbundet versjon er den adressen artikkelens
+// landingsside, ikke teksten ekstraksjonen ble gjort fra.
 // ============================================================================
 
 import type { Uuid } from '../types/api.ts'
@@ -50,8 +64,9 @@ import type {
 } from './agent-api.ts'
 import { checkClaim, type ClaimCheckReport, type CheckedLink } from './claim-checks.ts'
 import { parseClaimVerificationInput, type ClaimRevisionInput } from './claim-verification-input.ts'
-import type { RetrieveLike, RetrieveOptions } from './source-retrieval.ts'
-import { retrieveRepresentation } from './source-retrieval.ts'
+import type { TextExtractionRecipe } from './document-binding.ts'
+import { resolveRepresentation, type ResolvePorts } from './source-binding.ts'
+import type { RetrieveLike } from './source-retrieval.ts'
 
 /**
  * `workflow.verification_source_access`. Den eneste verdien denne kjøreren
@@ -63,6 +78,19 @@ const SOURCE_ACCESS = 'verifiable_representation'
 
 /** Lengdegrensen `workflow.claim_verifications` og kontrollradene håndhever. */
 const MAX_TEXT = 4000
+
+/**
+ * Representasjonen for én kildeversjon, med oppskriften som faktisk gjenskapte
+ * den når det ikke var radens egen (`source-binding.ts`).
+ *
+ * Delt på tvers av lenker som peker på den samme kildeversjonen: to evidensfunn
+ * fra samme kilde er vanlig, og to forsøk på å skaffe den samme teksten ville
+ * vært to sjanser til å få forskjellig svar.
+ */
+interface Resolved {
+  readonly text: string
+  readonly reproducedWith: TextExtractionRecipe | null
+}
 
 export type RevisionDecision = 'registered' | 'previewed' | 'skipped'
 
@@ -86,7 +114,7 @@ export interface RunReport {
 
 export type { RetrieveLike }
 
-export interface RunOptions {
+export interface RunOptions extends ResolvePorts {
   readonly api: ClaimVerificationApi
   readonly premises: AgentRunPremises
   /** Én bestemt påstandsrevisjon, eller `null` for hele arbeidskøen. */
@@ -95,8 +123,6 @@ export interface RunOptions {
   readonly dryRun?: boolean
   /** Hvor mange revisjoner kjøringen tar i ett. `null` for alle. */
   readonly limit?: number | null
-  readonly retrieve?: RetrieveLike
-  readonly retrieveOptions?: RetrieveOptions
   readonly log?: (line: string) => void
 }
 
@@ -131,8 +157,8 @@ function summarize(revision: ClaimRevisionInput): string {
  */
 async function collectLinks(
   revision: ClaimRevisionInput,
-  retrieve: RetrieveLike,
-  cache: Map<string, string>,
+  ports: ResolvePorts,
+  cache: Map<string, Resolved>,
 ): Promise<
   | { readonly kind: 'ready'; readonly links: readonly CheckedLink[] }
   | { readonly kind: 'skip'; readonly reason: string }
@@ -170,36 +196,31 @@ async function collectLinks(
 
     const cached = cache.get(version.sourceVersionId)
     if (cached !== undefined) {
-      links.push({ link, sourceText: cached })
+      links.push({ link, sourceText: cached.text, reproducedWith: cached.reproducedWith })
       continue
     }
 
-    const retrieved = await retrieve(version.retrievedFrom)
-    if (retrieved.status === 'error') {
-      return { kind: 'skip', reason: retrieved.message }
+    // Hvordan representasjonen skaffes, avgjøres av den registrerte raden og
+    // ikke av kjøringen (`source-binding.ts`). Fingeravtrykket kontrolleres
+    // begge veier, så en tekst som ikke er den registrerte, blir aldri grunnlag.
+    const resolved = await resolveRepresentation(
+      {
+        retrievedFrom: version.retrievedFrom,
+        contentHash: version.contentHash,
+        document: version.document,
+      },
+      ports,
+    )
+    if (resolved.status === 'error') {
+      return { kind: 'skip', reason: resolved.message }
     }
 
-    const representation = retrieved.representation
-    if (!representation.bytesAreUtf8) {
-      return {
-        kind: 'skip',
-        reason:
-          `Svaret fra ${version.retrievedFrom} er ikke ren UTF-8, så fingeravtrykket kan ikke ` +
-          'sammenlignes byte for byte med den registrerte kildeversjonen.',
-      }
+    const entry: Resolved = {
+      text: resolved.text,
+      reproducedWith: resolved.reproducedWith ?? null,
     }
-    if (representation.contentHash !== version.contentHash) {
-      return {
-        kind: 'skip',
-        reason:
-          `Kilden har endret seg: ${version.retrievedFrom} gir nå ${representation.contentHash}, ` +
-          `mens kildeversjonen er registrert med ${version.contentHash}. Kontrollen ville ` +
-          'gjeldt en annen utgave enn ekstraksjonen ble gjort fra.',
-      }
-    }
-
-    cache.set(version.sourceVersionId, representation.content)
-    links.push({ link, sourceText: representation.content })
+    cache.set(version.sourceVersionId, entry)
+    links.push({ link, sourceText: entry.text, reproducedWith: entry.reproducedWith })
   }
 
   return { kind: 'ready', links }
@@ -216,14 +237,14 @@ async function collectLinks(
  */
 async function evaluateRevision(
   revision: ClaimRevisionInput,
-  retrieve: RetrieveLike,
-  cache: Map<string, string>,
+  ports: ResolvePorts,
+  cache: Map<string, Resolved>,
 ): Promise<
   | { readonly kind: 'skip'; readonly reason: string }
   | { readonly kind: 'checked'; readonly report: ClaimCheckReport }
 > {
   try {
-    const collected = await collectLinks(revision, retrieve, cache)
+    const collected = await collectLinks(revision, ports, cache)
     if (collected.kind === 'skip') {
       return collected
     }
@@ -277,8 +298,12 @@ export async function runClaimVerification(options: RunOptions): Promise<RunRepo
     limit = null,
     log = () => {},
   } = options
-  const retrieve: RetrieveLike =
-    options.retrieve ?? ((url) => retrieveRepresentation(url, options.retrieveOptions ?? {}))
+  const ports: ResolvePorts = {
+    ...(options.retrieve === undefined ? {} : { retrieve: options.retrieve }),
+    ...(options.retrieveOptions === undefined ? {} : { retrieveOptions: options.retrieveOptions }),
+    ...(options.documents === undefined ? {} : { documents: options.documents }),
+    ...(options.runTool === undefined ? {} : { runTool: options.runTool }),
+  }
 
   const inputManifest: Record<string, unknown> = {
     mode: claimRevisionId === null ? 'queue' : 'single',
@@ -292,7 +317,7 @@ export async function runClaimVerification(options: RunOptions): Promise<RunRepo
   log(`Agentkjøring åpnet: ${agentRunId}`)
 
   const results: RevisionResult[] = []
-  const cache = new Map<string, string>()
+  const cache = new Map<string, Resolved>()
 
   try {
     const input = parseClaimVerificationInput(await api.readInput(agentRunId, claimRevisionId))
@@ -303,7 +328,7 @@ export async function runClaimVerification(options: RunOptions): Promise<RunRepo
     )
 
     for (const revision of queue) {
-      const evaluation = await evaluateRevision(revision, retrieve, cache)
+      const evaluation = await evaluateRevision(revision, ports, cache)
 
       if (evaluation.kind === 'skip') {
         log(`— ${summarize(revision)}: ingen kontroll registrert. ${evaluation.reason}`)

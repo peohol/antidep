@@ -27,6 +27,7 @@
     "agent:verify-claims": "node --env-file-if-exists=.env.agent.local src/agents/verify-claims-cli.ts",
     "agent:extract-evidence": "node --env-file-if-exists=.env.agent.local src/agents/extract-evidence-cli.ts",
     "agent:reextract-evidence": "node --env-file-if-exists=.env.agent.local src/agents/reextract-evidence-cli.ts",
+    "agent:synthesise-claims": "node --env-file-if-exists=.env.agent.local src/agents/synthesise-claims-cli.ts",
     "agent:propose-extraction": "node src/agents/propose-extraction-cli.ts",
     "agent:draft-extraction": "node src/agents/draft-extraction-cli.ts",
     "editor:assignment": "node --env-file-if-exists=.env.editor.local src/ops/extraction-assignment-cli.ts"

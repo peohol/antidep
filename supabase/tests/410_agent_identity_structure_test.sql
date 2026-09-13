@@ -106,18 +106,28 @@ select throws_ok(
 -- Identitetens rolle er aktørens rolle, ikke en verdi den kan velge selv. En
 -- identitet som kunne oppgi en annen rolle enn aktøren har, ville vært nettopp
 -- den selvtildelte rettigheten hele modellen skal hindre.
--- Synteseaktøren er valgt fordi den ennå ikke har en registrert identitet:
--- agent_identities_actor_key ville ellers felt forsøket på unikhet før
--- rollekravet fikk si noe, og testen ville prøvd en annen regel enn den sier.
+--
+-- Prøven trenger en agentaktør UTEN registrert identitet: agent_identities_actor_key
+-- ville ellers felt forsøket på unikhet før rollekravet fikk si noe, og testen ville
+-- prøvd en annen regel enn den sier. Aktøren lages derfor her, framfor å velge en av
+-- de seedede som tilfeldigvis ikke har en identitet ennå. Den forutsetningen holdt til
+-- migrasjon 005ak ga synteseagenten sin.
+insert into provenance.actors (actor_type, actor_key, display_name, description, agent_role)
+values (
+  'agent', 'agent:rolleprove-410', 'Prøveaktør for 410',
+  'Agentaktør uten registrert identitet, laget av prøven i 410 for å kunne treffe rollekravet framfor unikhetsregelen.',
+  'adversarial_review'
+);
+
 select throws_ok(
   $$
     insert into provenance.agent_identities
       (actor_id, agent_role, identity_key,
        registered_by_actor_id, registered_by_actor_type, registration_reason)
     select e.id, 'evidence_extraction', 'agent-identity:feil-rolle',
-           h.id, 'human', 'Prøver å gi synteseagenten ekstraksjonsrollen.'
+           h.id, 'human', 'Prøver å gi en motprøvingsaktør ekstraksjonsrollen.'
     from provenance.actors e, provenance.actors h
-    where e.actor_key = 'agent:claim-synthesis'
+    where e.actor_key = 'agent:rolleprove-410'
       and h.actor_key = 'human:peder-holman'
   $$,
   '23503', null,

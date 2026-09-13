@@ -89,6 +89,23 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     veien ikke rører, så en innsetting der trengte ikke røre noen låst tabell og
     kunne commite i vinduet mellom «vakten leste ingen» og slettingen. Funnet i
     teknisk review; prøvd av `scripts/db-lock-test.sh`, prøve 6 og 7
+  - 008k `claim_revision_created` lagt til `audit.event_operation`, alene i sin egen
+    migrasjon av samme grunn som 008a, 008b, 008i og 008j
+  - 004a `agent_run_id` og `agent_run_role` på `knowledge.claim_revisions`, med de samme
+    to sammensatte fremmednøklene mot `provenance.agent_runs` som evidensfunnet har, og
+    auditskriveren over nye påstandsrevisjoner. Rollen er en generert konstant, som på de
+    tre øvrige tabellene som peker på en agentkjøring: en kaller kan ikke oppgi den, og
+    ikke oppgi den feil
+  - 005aj `api.register_claim_synthesis(...)`: den kontrollerte skriveveien for at
+    synteseagenten registrerer én påstandsrevisjon med hele grunnlaget sitt — identiteten,
+    revisjonen, evidenslenkene og evidensvurderingen, i én transaksjon. Kunnskapstypen er
+    hardkodet `evidence_synthesis`, og
+    `workflow.assert_evidence_usable_for_synthesis(uuid[])` leser evidenshalvdelen av
+    publiseringsgaten _før_ påstanden lages, med gatens egne funksjoner. Uten den ville en
+    syntese bygget på et ukontrollert eller tilbaketrukket funn blitt en revisjon som aldri
+    kan publiseres, og som må erstattes i sin helhet når funnet rettes
+  - 005ak den tekniske identiteten `agent-identity:claim-synthesis-01`, inert til
+    legitimasjon utstedes
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at
@@ -636,6 +653,11 @@ npm run db:start
 ./scripts/issue-agent-credential.sh --management-api --write-env \
   --identity agent-identity:evidence-extraction-01 \
   --env-prefix ANTIDEP_EXTRACTION_AGENT
+
+# Synteseagenten (migrasjon 005ak).
+./scripts/issue-agent-credential.sh --management-api --write-env \
+  --identity agent-identity:claim-synthesis-01 \
+  --env-prefix ANTIDEP_SYNTHESIS_AGENT
 ```
 
 `--write-env` håndhever tre ting framfor å love dem, alle funn fra teknisk review:
@@ -651,7 +673,7 @@ npm run db:start
 
 Logikken ligger i `src/agents/agent-env-file.ts` med tester, ikke i skallet.
 
-**Begge identitetene er aktivert i det hostede prosjektet** — ekstraksjonsverifikatoren 6. september 2026, claim-verifikatoren 8. september 2026. `secret_issued_by_actor_id` peker
+**Identitetene er aktivert i det hostede prosjektet** — ekstraksjonsverifikatoren 6. september 2026, claim-verifikatoren 8. september 2026, synteseagenten 13. september 2026. `secret_issued_by_actor_id` peker
 på `human:peder-holman` på begge, og utstedelsene står i auditloggen som
 `agent_identity_credential_issued`. Legitimasjonene ble utstedt med `--write-env` og finnes
 bare i miljøet de ble utstedt i. Skal en annen maskin — for eksempel en GitHub
@@ -676,10 +698,17 @@ ANTIDEP_AGENT_SECRET=
 
 ANTIDEP_CLAIM_AGENT_IDENTITY_KEY=agent-identity:citation-support-verification-01
 ANTIDEP_CLAIM_AGENT_SECRET=
+
+ANTIDEP_EXTRACTION_AGENT_IDENTITY_KEY=agent-identity:evidence-extraction-01
+ANTIDEP_EXTRACTION_AGENT_SECRET=
+
+ANTIDEP_SYNTHESIS_AGENT_IDENTITY_KEY=agent-identity:claim-synthesis-01
+ANTIDEP_SYNTHESIS_AGENT_SECRET=
 ```
 
 Lokalt legges de i `.env.agent.local`, som er gitignorert og leses av
-`npm run agent:verify-extraction` og `npm run agent:verify-claims`.
+`npm run agent:verify-extraction`, `npm run agent:verify-claims`,
+`npm run agent:reextract-evidence` og `npm run agent:synthesise-claims`.
 
 I CI er det bare hemmelighetene som legges inn som krypterte secrets (GitHub: Settings →
 Secrets and variables → Actions). **Identitetsnøkkelen er ikke en hemmelighet.** Den står i

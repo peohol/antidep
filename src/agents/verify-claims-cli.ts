@@ -15,6 +15,17 @@
 // en eneste rad — kjøringen registreres likevel, og lukkes som `aborted`, slik at
 // også en tørrkjøring er sporbar (§74.31).
 //
+// ----------------------------------------------------------------------------
+// Originaldokumentene
+//
+// Er en lenkes kildeversjon utledet av en fulltekst-PDF, skaffes teksten av
+// dokumentet med den registrerte oppskriften — aldri over nett
+// (`source-binding.ts`, migrasjon 003e). Dokumentet slås opp på fingeravtrykket
+// sitt i katalogen `ANTIDEP_DOCUMENT_DIR` peker på, som er `documents/` i
+// repoet om ingenting er satt. Ligger det ikke der, konkluderer kontrollen ikke,
+// og revisjonen hoppes over med den grunnen. Kjøringen må derfor gjøres fra en
+// maskin som har en lovlig kopi av artikkelen.
+//
 // Filen importeres aldri av appen og havner derfor ikke i klientbunten.
 // ============================================================================
 
@@ -24,6 +35,7 @@ import { redact } from './agent-credential.ts'
 import { parseVerifierArguments } from './cli-arguments.ts'
 import { runClaimVerification } from './claim-verification-run.ts'
 import { CLAIM_VERIFICATION_PREMISES } from './pipeline-version.ts'
+import { documentsFromEnv } from './source-document.ts'
 
 const USAGE = `Bruk:
   npm run agent:verify-claims -- [valg]
@@ -53,6 +65,12 @@ async function main(): Promise<number> {
       claimRevisionId: options.targetId,
       dryRun: options.dryRun,
       limit: options.limit,
+      // Originaldokumentene, slått opp på fingeravtrykk i den lokale katalogen
+      // `ANTIDEP_DOCUMENT_DIR` peker på. En kildeversjon utledet av en
+      // fulltekst-PDF hentes aldri over nett, og uten dokumentet konkluderer
+      // kontrollen ikke (`source-binding.ts`). Katalogen finnes alltid; den er
+      // bare tom der dokumentet ikke ligger.
+      documents: documentsFromEnv(process.env),
       log: (line) => {
         console.log(line)
       },

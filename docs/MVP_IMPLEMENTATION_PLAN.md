@@ -1400,7 +1400,8 @@ PR G  db: add publication events and gate                                   (#15
       feat: gi et kildeomfattende fravær et kontrollledd som kan bære det   (#78)  merget   migrasjon 005ad, 005ae
       fix: la kontrollraden si hvor representasjonen faktisk kom fra        (#80)  merget   ingen migrasjon
       fix: la fraværsgjennomlesningen etterlate et spor                    (#81)  merget   ingen migrasjon
-      fix: gjør PDF-tekstuttrekkingen kolonnebevisst                       (#86)  åpen     migrasjon 003g
+      fix: gjør PDF-tekstuttrekkingen kolonnebevisst                       (#86)  merget   migrasjon 003g
+      feat: gi påstandsdannelsen en operativ skrivevei                      (#89)  åpen     migrasjon 008k, 004a, 005aj, 005ak
 ```
 
 Avviket fra §68 er bevisst: én migrasjon per PR gir mindre og mer reviewbare enheter,
@@ -1502,7 +1503,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2225 pgTAP-assertions over 68 testfiler.
+Databaselaget teller nå 2272 pgTAP-assertions over 69 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1675,13 +1676,14 @@ Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
    007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab,
-   005ac, 003e, 007i, 003f, 005ad, 005ae, 003g, 008i, 005af, 003h, 008j, 005ah og 005ai — i
+   005ac, 003e, 007i, 003f, 005ad, 005ae, 003g, 008i, 005af, 003h, 008j, 005ah, 005ai, 008k,
+   004a, 005aj og 005ak — i
    filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
    11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle åtti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle åttifire ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -8149,6 +8151,210 @@ flaten viser dem som lesbar tekst.
 `paroksetin` skal registreres i katalogen. Begge artiklene sammenligner mot dem,
 men bare `sertralin` og `mirtazapin` finnes, og et funn kan derfor ikke føre dem
 som komparator.
+
+
+### 74.47 Påstandsdannelsen har fått en operativ skrivevei, og den første reelle revisjonen står i køen
+
+Kjeden §15 beskriver, har hatt ett ledd uten en vei inn. Kilden, kildeversjonen,
+evidensfunnet, forankringen, den maskinelle kontrollen, den menneskelige
+kildekontrollen, claim-verifikasjonen, reviewbeslutningen og publiseringen har
+alle hver sin kontrollerte skrivevei i `api`. **Påstanden hadde ingen.** De
+påstandene som har stått i basen, ble lagt inn av migrasjon 004 selv, og er
+fjernet igjen (migrasjon 005ah) fordi grunnlaget under dem ikke lot seg
+kontrollere.
+
+Uten en slik vei fantes det bare to måter å få en påstand inn på, og begge er
+utelukket: en migrasjon som skriver klinisk innhold, eller direkte SQL mot
+produksjonsbasen. Den første gjør faglig innhold til en kodeendring; den andre er
+nøyaktig det ANTIDEP_CONSTITUTION.md §15 sier at en kvalifisert redaktør ikke
+skal trenge, og etterlater ingen proveniens.
+
+#### Det Peders kildekontroll faktisk sa
+
+Begge de to fulltekstutledede evidensfunnene er kontrollert av et menneske i
+`/extraction-review`. De to kontrollene konkluderte forskjellig, og forskjellen
+avgjør hva som kunne bygges:
+
+| Funn | Artikkel | Gjeldende kontroll | Dekning | Kan bære en påstand |
+|---|---|---|---|---|
+| `b77975c5` | Versiani 2005, mirtazapin | `verified`, originalkilden, 9 av 9 delkontroller bekreftet | 11 av 11 påkrevde felter | **ja** |
+| `833a0ea1` | Fava 2000, sertralin | `needs_correction`, originalkilden, 1 avvik av 10 | 0 av 13 — et avvik nullstiller dekningen | **nei** |
+
+Avviket på Fava-funnet er kontrollørens eget, og det er en oversettelsesfeil i
+den norske teksten: raden fører populasjonen som «alvorlig depressiv lidelse
+(MDD)», og «alvorlig» betegner depresjonens dybde. «Major depressive disorder»
+er ikke en alvorlighetsgrad, og skal på norsk være «depressiv lidelse».
+
+Det er en liten rettelse, og den er likevel blokkerende — med vilje.
+`knowledge.evidence_items` er append-only, så en rettet oversettelse er et
+**nytt** evidensfunn, ikke en endring av det gamle. Et nytt funn krever at
+utdragene prøves ordrett mot representasjonen på nytt, og representasjonen er
+utledet av originaldokumentet. **Uten PDF-en kan rettelsen ikke gjøres.**
+
+#### Hvorfor sertralinpåstanden ikke ble laget likevel
+
+Den kunne vært laget: ingenting hindrer en revisjon i å peke på et funn med et
+åpent avvik — før denne leveransen. Den ville bare aldri kunnet publiseres
+(publiseringsgatens G5), og når funnet rettes, blir rettelsen et nytt funn med en
+ny id. Evidensvurderingen forsegler evidenssettet til revisjonen
+(`knowledge.reject_evidence_link_after_assessment`), så revisjonen kan ikke bytte
+grunnlag i ettertid — den må erstattes i sin helhet.
+
+Resultatet ville vært nøyaktig det artefaktet migrasjon 005ah måtte bygges for å
+rydde bort. Denne leveransen lar derfor **databasen** si nei, framfor at en
+kjøring husker det:
+`workflow.assert_evidence_usable_for_synthesis(uuid[])` leser evidenshalvdelen av
+publiseringsgaten — G4, G5, G5b, G5c, G6 og G7 — med gatens egne funksjoner,
+**før** påstanden lages. Den er ikke en ny regel, og ikke en andre formulering av
+en gammel; det som er nytt, er når den svarer. EVIDENCE_PIPELINE.md §26 og §27 er
+hjemmelen: «Claim-agenten skal bruke **verifiserte** EvidenceItem», og «bare
+evidens som har nådd nødvendig kontrollnivå skal kunne brukes til publiserbar
+syntese».
+
+Kjørt mot de to funnene i produksjon svarer den slik:
+
+```text
+b77975c5  godtatt
+833a0ea1  avvist — «Evidensfunn med åpent verifikasjonsfunn: 833a0ea1….»
+          hint: «Den siste registrerte ekstraksjonskontrollen konkluderer ikke
+          med verified … Rett ekstraksjonen i et nytt evidensfunn og få det
+          kontrollert på nytt; en tidligere bekreftelse opphever ikke et senere
+          avvik.»
+```
+
+#### Skriveveien
+
+`api.register_claim_synthesis(...)` (migrasjon 005aj) registrerer **én**
+påstandsrevisjon med hele grunnlaget sitt i **én** transaksjon:
+påstandsidentiteten eller en ny revisjon av en som finnes, revisjonen,
+evidenslenkene og evidensvurderingen. Alt eller ingenting, fordi en halvferdig
+syntese ikke er en tilstand som kan rettes opp: vurderingen forsegler settet, så
+en revisjon uten den kan aldri få resten av grunnlaget sitt.
+
+Fire ting er bevisst **ikke** kallerens:
+
+| Verdi | Hvem setter den, og hvorfor |
+|---|---|
+| Kunnskapstypen | Hardkodet `evidence_synthesis`. Et deterministisk faktum avgjøres mot en autoritativ kilde; en klinisk anbefaling skal ikke ha en KI-kjøring som opphav (§12, §17) |
+| Aktøren | Kjøringens egen, hentet av databasen ut av legitimasjonen — ikke en parameter |
+| Revisjonsnummeret og videreføringen | Databasen teller selv, slik at historikken ikke kan få et hull eller en sirkel |
+| Vurderingstidspunktet | Databasens, som `verified_at` på kontrollene |
+
+Migrasjon 004a gir revisjonen `agent_run_id` og `agent_run_role`, med de samme to
+sammensatte fremmednøklene mot `provenance.agent_runs` som evidensfunnet har
+(005x). Rollen er en **generert konstant**, som på de tre øvrige tabellene som
+peker på en kjøring: en kaller kan ikke oppgi den, og dermed ikke oppgi den feil.
+Migrasjon 008k og 004a lukker samtidig et hull i auditloggen — en påstandsrevisjon
+etterlot ingen auditrad, fordi ingen skrivevei laget en. Triggeren ligger på
+tabellen og ikke i skriveveien, slik at en senere skrivevei ikke kan lage klinisk
+innhold uten spor.
+
+Identiteten `agent-identity:claim-synthesis-01` (005ak) har rollen
+`claim_synthesis` og ingen annen. Den kan verken ekstrahere, kontrollere en
+ekstraksjon, kontrollere sin egen påstand eller registrere en faglig beslutning.
+Generering og verifikasjon er dermed atskilte operasjoner i tre identiteter med
+hver sin rolle (§10, §11).
+
+#### Modell-leddet er utenfor, som på ekstraksjonssiden
+
+`npm run agent:synthesise-claims` leser en forslagsfil fra `syntheses/`
+(gitignorert), kontrollerer formen strengt og registrerer. Modellen som formulerte
+påstanden, kjører ikke inne i Antidep — et modell-ledd med skrivevei til
+kunnskapsbasen ville vært ett ledd der §10 krever to. Kjøringens premisser
+beskriver derfor **registreringen**, og erklæringen om hvilken modell som laget
+utkastet, føres i `input_manifest`, nøyaktig som på ekstraksjonssiden (§74.41).
+
+#### Claim-verifikatoren ser nå det samme grunnlaget som ekstraksjonskontrollen
+
+Claim-verifikatoren hentet kildeversjonen over nett og krevde at fingeravtrykket
+stemte. Det er riktig for en MEDLINE-post og ubrukelig for en fulltekstartikkel:
+en dokumentbundet kildeversjon har ingen tekst på `retrieved_from` — der ligger
+artikkelens landingsside. Begge de to funnene i produksjon er dokumentbundne, så
+leddet som skal kontrollere påstanden mot kilden, var det ene som aldri kunne få
+se den.
+
+`claim-verification-run.ts` bruker nå `resolveRepresentation` — den samme modulen
+ekstraksjonskontrollen bruker (`source-binding.ts`). Den registrerte raden
+avgjør hvordan teksten skaffes: en dokumentbundet versjon trekkes ut av
+originaldokumentet med den registrerte oppskriften, og teksten må hashe til den
+registrerte `content_hash`. Uten dokumentet konkluderer kontrollen ikke, og den
+henter aldri adressen i stedet. Bærer raden en oppskrift som er avløst, sier
+begrunnelsen hvilken oppskrift som faktisk gjenskapte teksten (§74.46).
+
+#### Hva som ble kjørt mot produksjon
+
+| Ledd | Utfall |
+|---|---|
+| Migrasjonene 008k, 004a, 005aj og 005ak | deployet og registrert; 84 av 84 filer står i prosjektet |
+| Legitimasjon til `agent-identity:claim-synthesis-01` | utstedt med `--management-api --write-env`, verdien vist ingen steder |
+| Kontrollnivåkontrollen mot de to funnene | `b77975c5` godtatt, `833a0ea1` avvist med databasens egen setning |
+| `npm run agent:synthesise-claims` | kjøring `a84e856a`, 1 revisjon registrert, 0 avvist |
+| Påstand `cfd99886`, revisjon `24aefcd7` | nummer 1, 1 evidenslenke (`supports`/`indirect`), GRADE svært lav sikkerhet |
+| Auditraden | én `claim_revision_created` på `knowledge.claim_revisions`, med kjøringen som sporingsnøkkel |
+| Reviewkøen | viser revisjonen, formulert av `agent:claim-synthesis` |
+| Publiseringsgaten | blokkert på G8: «har ingen registrert claim-verifikasjon» |
+
+Påstanden tallfester **ikke** størrelsen. Kilden oppgir 0,8 kg med standardavvik
+2,7 kg for mirtazapinarmen, men knytter ingen av antallene sine uttrykkelig til
+gjennomsnittet — `sample_size_availability` står som `not_extractable` — og
+oppgir intet konfidensintervall for vektendringen. Tallene blir stående der de er
+belagt: på evidensfunnet og i usikkerhetsteksten. En påstand som var mer presis
+enn evidensen under den, ville brutt §4 og §6.
+
+Evidenslenken er ført som `supports`/`indirect`. Studien inkluderte alvorlig
+deprimerte voksne mellom 18 og 65 år; påstandens populasjon er voksne med
+depressiv lidelse uten øvre aldersgrense. Avviket er registrert som alvorlig
+indirekthet i evidensvurderingen, ikke bortforklart.
+
+#### Kontrollene
+
+| Kontroll | Utfall |
+|---|---|
+| `npm run lint` | grønn |
+| `npm run format:check` | grønn |
+| `./scripts/verify-counts.sh` | grønn |
+| `npm run typecheck` | grønn |
+| `npm run test` | grønn, 2153 prøver over 95 filer |
+| `npm run build` | grønn |
+| `supabase/tests/690_…` | 47 assertions, kjørt mot det hostede prosjektet, grønn |
+| pgTAP, 69 filer | kjørt mot det hostede prosjektet i en transaksjon som rulles tilbake, med og uten de nye migrasjonene. Fire filer som feilet før, passerer nå — 690 og de tre påstandsfilene, som manglet en påstandsrad å prøve mot. Ingen nye avvik |
+| Nettleser, 1280 px og 390 px | `/review` og `/review/24aefcd7…` gjengitt mot **det faktiske svaret fra produksjon**, ingen vannrett rulling, ingen konsollfeil fra appen |
+
+`npm run db:reset`, `npm run db:test`, `npm run db:test:lock` og
+`npm run db:test:chain` krever en lokal Supabase-stack, som krever Docker, som
+ikke finnes i agentmiljøet. De kjøres i CI-jobben «Migrasjoner og databasetester
+på lokal Supabase-stack», som er den som avgjør.
+
+Nettleserprøven er kjørt med innloggingen **stubbet** og Data API-et erstattet av
+en lokal stubb som serverer nøyaktig de svarene produksjon gir. Grunnen er at
+sesjonen tilhører Peder: å logge inn som ham ville vært å handle på hans vegne,
+og det skal ikke gjøres for å ta et skjermbilde.
+
+#### Hva som gjenstår
+
+**1. Peder gjør den faglige vurderingen av `24aefcd7` i `/review`.** Den guidede
+økten er prøvd hele veien: kildetilgang, evidenslenkens rolle, de sju
+kontrollpunktene i DATABASE_ARCHITECTURE.md §30, lagring av påstandskontrollen,
+publiseringsbeslutningen og publiseringen. Ekstraksjonssteget står som «ferdig fra
+før», fordi kildekontrollen allerede er gjort.
+
+**2. Den maskinelle claim-verifikasjonen er ikke kjørt, og kunne ikke kjøres
+herfra.** Den krever originaldokumentet, som er opphavsrettslig beskyttet og ikke
+ligger i agentmiljøet. Kjøreren er bygget for det og vil si nøyaktig det hvis den
+kjøres uten dokumentet; kjørt fra en maskin som har PDF-en, går den gjennom.
+Claim-verifikatorens legitimasjon er **ikke** rullert for anledningen: en ny
+utstedelse ugyldiggjør den gamle, og kjøringen ville uansett stoppet på det
+manglende dokumentet.
+
+Gaten er ikke svekket for å komme utenom. Peders egen kontroll i `/review` er en
+claim-verifikasjon i seg selv og lukker G8 og G9 når den registreres — den
+maskinelle er et ekstra falsifikasjonsledd, ikke et vilkår flaten venter på.
+
+**3. Sertralinfunnet må ekstraheres om før det kan bære en påstand.** Rettelsen er
+Peders egen: den norske populasjonsteksten skal si «depressiv lidelse», ikke
+«alvorlig depressiv lidelse». Veien er `npm run agent:reextract-evidence` fra en
+maskin som har Fava-PDF-en, og deretter en ny kildekontroll i
+`/extraction-review`. Det gamle funnet består urørt som historisk objekt.
 
 ---
 
