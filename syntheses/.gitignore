@@ -1,0 +1,7 @@
+# Syntesforslag er lokal inndata, ikke faglig innhold. De skal ikke commites:
+# et forslag er en påstand om hva Antidep mener evidensen viser, og den
+# påstanden skal ende som en rad i basen med proveniens — ikke som en fil i
+# repoet.
+#
+# Dokumentasjonen er unntaket.
+*.json

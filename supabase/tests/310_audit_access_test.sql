@@ -239,10 +239,14 @@ select results_eq(
   $$values ('agent_identity_registered', 'provenance', 'agent_identities',
             'human:peder-holman', 'agent-identity:citation-support-verification-01'),
            ('agent_identity_registered', 'provenance', 'agent_identities',
+            'human:peder-holman', 'agent-identity:claim-synthesis-01'),
+           ('agent_identity_registered', 'provenance', 'agent_identities',
+            'human:peder-holman', 'agent-identity:evidence-assessment-01'),
+           ('agent_identity_registered', 'provenance', 'agent_identities',
             'human:peder-holman', 'agent-identity:evidence-extraction-01'),
            ('agent_identity_registered', 'provenance', 'agent_identities',
             'human:peder-holman', 'agent-identity:extraction-verification-01')$$,
-  'auditloggen inneholder nøyaktig registreringen av de tre agentidentitetene, alle attribuert til et menneske'
+  'auditloggen inneholder nøyaktig registreringen av de fem agentidentitetene, alle attribuert til et menneske'
 );
 
 select * from finish();

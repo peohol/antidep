@@ -168,6 +168,11 @@ select e.id, e.created_by_actor_id,
        'Prøve i 530: fullstendig kontrollert ekstraksjon.', now()
 from knowledge.evidence_items e where e.id = '53000000-0000-4000-8000-000000000011';
 
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap). Ansvarsgrensen mellom
+-- påstandsdannelse og evidensvurdering er en teknisk grense
+-- (EVIDENCE_PIPELINE.md §61).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
@@ -175,7 +180,7 @@ insert into knowledge.evidence_assessments
 values ('53000000-0000-4000-8000-000000000031', 'evidence_synthesis', 'grade', 'low',
         'serious', 'not_assessable', 'not_serious', 'serious', 'not_assessable',
         'Prøve i 530: lav sikkerhet, og det er hele poenget: lav sikkerhet er ikke det samme som ingen evidens.',
-        now(), (select id from fixture where name = 'synthesis'));
+        now(), (select id from provenance.actors where actor_key = 'agent:evidence-assessment'));
 
 create temporary table digest (label text primary key, value text) on commit drop;
 insert into digest values

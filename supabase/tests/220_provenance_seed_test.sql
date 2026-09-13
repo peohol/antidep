@@ -57,17 +57,18 @@ select results_eq(
   $$,
   $$values ('agent:citation-support-verification', 'agent', 'citation_support_verification', 'Antidep claim-verifikator'),
            ('agent:claim-synthesis', 'agent', 'claim_synthesis', 'Antidep synteseagent'),
+           ('agent:evidence-assessment', 'agent', 'evidence_assessment', 'Antidep evidensvurderingsagent'),
            ('agent:evidence-extraction', 'agent', 'evidence_extraction', 'Antidep ekstraksjonsagent'),
            ('agent:extraction-verification', 'agent', 'extraction_verification', 'Antidep ekstraksjonsverifikator'),
            ('human:peder-holman', 'human', null, 'Peder Holman')$$,
-  'aktørregisteret inneholder de fire KI-rollene fra migrasjon 003, 004, 005f og 005i, og den navngitte redaktøren fra 005a'
+  'aktørregisteret inneholder de fem KI-rollene fra migrasjon 003, 004, 005f, 005i og 005an, og den navngitte redaktøren fra 005a'
 );
 
 -- ---------------------------------------------------------------------------
--- De tekniske agentidentitetene (migrasjon 005f, 005i og 005w)
+-- De tekniske agentidentitetene (migrasjon 005f, 005i, 005w, 005ak og 005an)
 --
--- Tre påstander som hver for seg er det migrasjonene faktisk lover, og som
--- hver for seg ville vært en sikkerhetsendring om de sluttet å holde. Listen er
+-- Fem påstander som hver for seg er det migrasjonene faktisk lover, og som hver
+-- for seg ville vært en sikkerhetsendring om de sluttet å holde. Listen er
 -- uttømmende: en identitet ingen har bestemt seg for, kan ikke gli inn
 -- ubemerket.
 -- ---------------------------------------------------------------------------
@@ -88,11 +89,15 @@ select results_eq(
   $$,
   $$values ('agent-identity:citation-support-verification-01', 'agent:citation-support-verification',
             'citation_support_verification', 'human:peder-holman', 'human', true, 0, true),
+           ('agent-identity:claim-synthesis-01', 'agent:claim-synthesis',
+            'claim_synthesis', 'human:peder-holman', 'human', true, 0, true),
+           ('agent-identity:evidence-assessment-01', 'agent:evidence-assessment',
+            'evidence_assessment', 'human:peder-holman', 'human', true, 0, true),
            ('agent-identity:evidence-extraction-01', 'agent:evidence-extraction',
             'evidence_extraction', 'human:peder-holman', 'human', true, 0, true),
            ('agent-identity:extraction-verification-01', 'agent:extraction-verification',
             'extraction_verification', 'human:peder-holman', 'human', true, 0, true)$$,
-  'identitetsregisteret inneholder nøyaktig de to verifikatorene og ekstraksjonsagenten, alle registrert av den navngitte redaktøren og alle uten utstedt legitimasjon'
+  'identitetsregisteret inneholder nøyaktig de to verifikatorene, ekstraksjonsagenten, synteseagenten og evidensvurderingsagenten, alle registrert av den navngitte redaktøren og alle uten utstedt legitimasjon'
 );
 
 -- Identiteten er inert etter migrasjonen, og det skal den være til legitimasjonen
@@ -291,14 +296,17 @@ select is_empty(
       join provenance.actors a on a.id = l.created_by_actor_id
       where a.actor_key <> 'agent:claim-synthesis'
       union all
+      -- Evidensvurderingen er et eget ledd etter migrasjon 005am, med sin egen
+      -- aktør. Radene fra migrasjon 004 ble laget av synteserollen og er fortsatt
+      -- attribuert dit; historikken skrives ikke om.
       select 'knowledge.evidence_assessments', count(*)
       from knowledge.evidence_assessments ea
       join provenance.actors a on a.id = ea.created_by_actor_id
-      where a.actor_key <> 'agent:claim-synthesis'
+      where a.actor_key not in ('agent:claim-synthesis', 'agent:evidence-assessment')
     ) t
     where t.wrong_rows > 0
   $$,
-  'påstandslaget er i sin helhet attribuert til synteserollen som produserte det i migrasjon 004'
+  'påstandslaget er i sin helhet attribuert til de rollene som faktisk produserte det'
 );
 
 -- Redaktøren har ikke forfattet noe, og det er en forutsetning og ikke en

@@ -500,7 +500,16 @@ export function parseExtractionDraft(value: unknown, subject: string): Extractio
   return draft
 }
 
-function parseGeneratedBy(parent: Fields, value: unknown): GeneratedBy {
+/**
+ * Leser erklæringen om hvem som laget utkastet.
+ *
+ * Eksportert fordi den er den samme erklæringen for hvert modell-ledd: både
+ * ekstraksjonsforslaget og syntesforslaget (`claim-synthesis-proposal.ts`) er
+ * laget utenfor Antidep og bærer den samme opplysningen om hvilken modell,
+ * hvilken promptmal og hvilket tidspunkt. To parsere ville vært to steder å
+ * glemme den samme kalenderkontrollen.
+ */
+export function parseGeneratedBy(parent: Fields, value: unknown): GeneratedBy {
   const fields = nestedFields(parent, value, 'generated_by')
   const draftedAt = asText(fields, 'drafted_at')
   if (!isCalendarTimestamp(draftedAt)) {

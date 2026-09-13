@@ -315,6 +315,11 @@ select throws_like(
   'gaten avviser en evidenssyntese uten eksplisitt sikkerhetsvurdering (ANTIDEP_CONSTITUTION.md §6)'
 );
 
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap). Ansvarsgrensen mellom
+-- påstandsdannelse og evidensvurdering er en teknisk grense
+-- (EVIDENCE_PIPELINE.md §61).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
@@ -322,7 +327,7 @@ insert into knowledge.evidence_assessments
 select r.id, r.knowledge_type, 'grade', 'low',
        'serious', 'not_assessable', 'serious', 'serious', 'not_assessable',
        'Ett funn fra én studie; domenene vurdert enkeltvis.',
-       now() - interval '15 days', r.created_by_actor_id
+       now() - interval '15 days', (select id from provenance.actors where actor_key = 'agent:evidence-assessment')
 from knowledge.claim_revisions r
 where r.id = (select id from fixture where name = 'rev');
 
@@ -980,13 +985,18 @@ select r.id, r.created_by_actor_id, v.id, 'verified', 'original_source',
 from knowledge.claim_revisions r, fixture v
 where r.id = (select id from fixture where name = 'rec_rev') and v.name = 'verifier';
 
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap). Ansvarsgrensen mellom
+-- påstandsdannelse og evidensvurdering er en teknisk grense
+-- (EVIDENCE_PIPELINE.md §61).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
    rationale, assessed_at, created_by_actor_id)
 select r.id, r.knowledge_type, 'grade', 'low',
        'serious', 'not_assessable', 'serious', 'serious', 'not_assessable',
-       'Grunnlaget for anbefalingen er tynt.', now() - interval '15 days', r.created_by_actor_id
+       'Grunnlaget for anbefalingen er tynt.', now() - interval '15 days', (select id from provenance.actors where actor_key = 'agent:evidence-assessment')
 from knowledge.claim_revisions r
 where r.id = (select id from fixture where name = 'rec_rev');
 

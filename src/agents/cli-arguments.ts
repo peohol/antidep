@@ -369,3 +369,67 @@ export function parseReextractionArguments(
   }
   return { directory, proposalPaths, mode, dryRun }
 }
+
+// ----------------------------------------------------------------------------
+// Leddene som registrerer et utkast fra en fil
+//
+// Påstandsdannelsen og evidensvurderingen tar de samme tre valgene, og er derfor
+// én parser: to nesten like ville vært to steder å glemme en grense. Samme form
+// som re-ekstraksjonen, uten arbeidsformen — et utkast har ingen
+// `extraction_method` å velge mellom, og hvem som laget det, står i filens egen
+// `generated_by`.
+// ----------------------------------------------------------------------------
+
+export interface DraftedProposalCliOptions {
+  readonly directory: string | null
+  readonly proposalPaths: readonly string[]
+  readonly dryRun: boolean
+}
+
+export function parseDraftedProposalArguments(
+  argv: readonly string[],
+): DraftedProposalCliOptions | 'help' {
+  let directory: string | null = null
+  const proposalPaths: string[] = []
+  let dryRun = false
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index]
+    if (flag === '--help' || flag === '-h') {
+      return 'help'
+    }
+    if (flag === '--dry-run') {
+      dryRun = true
+      continue
+    }
+    if (flag === '--directory' || flag === '--proposal') {
+      const value = argv[index + 1]
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error(`${flag} krever en sti.`)
+      }
+      if (flag === '--directory') {
+        if (directory !== null) {
+          throw new Error('--directory kan bare oppgis én gang.')
+        }
+        directory = value
+      } else {
+        proposalPaths.push(value)
+      }
+      index += 1
+      continue
+    }
+    throw new Error(`Ukjent valg: ${String(flag)}`)
+  }
+
+  if (directory === null && proposalPaths.length === 0) {
+    throw new Error('Oppgi enten --directory eller minst én --proposal.')
+  }
+  // De to sammen ville gjort rekkefølgen uklar, og rekkefølgen er en del av
+  // sporet: kjøringen i provenance.agent_runs skal kunne leses tilbake mot
+  // filene den kom fra.
+  if (directory !== null && proposalPaths.length > 0) {
+    throw new Error('Oppgi enten --directory eller --proposal, ikke begge.')
+  }
+
+  return { directory, proposalPaths, dryRun }
+}

@@ -1,0 +1,31 @@
+-- ============================================================================
+-- Migrasjon 008k — audit.event_operation får verdien claim_revision_created
+--
+-- Auditvokabularet dekker hver skrivevei som lager et kanonisk kunnskapsobjekt:
+-- kilden (008a), evidensfunnet (008b), kildeversjonen, forankringen,
+-- verifikasjonene og reviewbeslutningene. Påstandssiden har hatt et hull: det
+-- fantes ingen skrivevei som laget en påstandsrevisjon, og derfor heller ingen
+-- operasjon å føre. Radene fra migrasjon 004 ble lagt inn av migrasjonen selv.
+--
+-- Migrasjon 005aj gir synteseagenten skriveveien. Da blir hullet reelt: en
+-- klinisk påstand ville blitt til uten en auditrad som sier hvem som formulerte
+-- den, når, og med hvilket innhold (ANTIDEP_CONSTITUTION.md §14,
+-- DATABASE_ARCHITECTURE.md §35). Denne migrasjonen lukker det.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor denne ene setningen er sin egen migrasjon
+--
+-- Samme grunn som i 008a, 008b, 008i og 008j: `ALTER TYPE ... ADD VALUE` kan
+-- ikke brukes i samme transaksjon som verdien den legger til, og
+-- migrasjonsløperen sender hver fil som én transaksjon.
+-- `20260923091000_claim_revision_agent_provenance.sql` bygger om CASE-uttrykkene
+-- i audit.events sine genererte kolonner og events_snapshot_shape_check for å
+-- dekke verdien, og kan derfor ikke også innføre den.
+--
+-- Migrasjonen gjør ingenting annet. Fram til neste migrasjon har kjørt, kan
+-- audit.events ikke motta en rad med denne operasjonen: object_schema og
+-- object_table ville gitt NULL og feilet på sin egen NOT NULL, og
+-- events_snapshot_shape_check ville truffet ELSE false.
+-- ============================================================================
+
+alter type audit.event_operation add value 'claim_revision_created';

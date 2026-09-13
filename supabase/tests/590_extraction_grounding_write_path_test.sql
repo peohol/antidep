@@ -448,6 +448,11 @@ select '59000000-0000-4000-8000-000000000041', '59000000-0000-4000-8000-00000000
        (select id from registered where name = 'grounded'), 'supports', 'direct',
        'Lenke i 590.', (select id from provenance.actors where actor_key = 'agent:claim-synthesis');
 
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap). Ansvarsgrensen mellom
+-- påstandsdannelse og evidensvurdering er en teknisk grense
+-- (EVIDENCE_PIPELINE.md §61).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
@@ -455,7 +460,7 @@ insert into knowledge.evidence_assessments
 select '59000000-0000-4000-8000-000000000031', 'evidence_synthesis', 'grade', 'low',
        'serious', 'not_assessable', 'not_serious', 'serious', 'not_assessable',
        'Prøve i 590: lav sikkerhet, som er noe annet enn ingen vurderbar evidens.',
-       now(), (select id from provenance.actors where actor_key = 'agent:claim-synthesis');
+       now(), (select id from provenance.actors where actor_key = 'agent:evidence-assessment');
 
 -- Avtrykkene leveres av flaten, ikke regnes ut av klienten: de to
 -- avtrykksfunksjonene er ikke kjørbare for authenticated.

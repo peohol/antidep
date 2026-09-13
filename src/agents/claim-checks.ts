@@ -88,6 +88,7 @@ import {
   verbatimQuotes,
 } from './extraction-checks.ts'
 import type { ClaimEvidenceLink, ClaimRevisionInput } from './claim-verification-input.ts'
+import type { TextExtractionRecipe } from './document-binding.ts'
 
 /** `workflow.verification_check_result`. */
 export type CheckResult = 'ok' | 'deviation' | 'not_assessable'
@@ -127,8 +128,21 @@ export interface ClaimCheckReport {
 /** Én lenke med den representasjonen kontrollen faktisk fikk se. */
 export interface CheckedLink {
   readonly link: ClaimEvidenceLink
-  /** Representasjonen, hentet på nytt og med reprodusert fingeravtrykk. */
+  /** Representasjonen, skaffet på nytt og med reprodusert fingeravtrykk. */
   readonly sourceText: string
+  /**
+   * Oppskriften som gjenskapte teksten, når det **ikke** var den kildeversjonen
+   * selv bærer.
+   *
+   * `null` eller utelatt i det normale tilfellet. Er den satt, er den
+   * registrerte oppskriften avløst, og dagens kom fram til nøyaktig det
+   * registrerte fingeravtrykket (`source-binding.ts`). Kontrollen fører det i
+   * begrunnelsen, slik at et menneske ser hvilken oppskrift som faktisk
+   * gjenskapte teksten — «gjenskapt med X, stemmer med fingeravtrykket
+   * registrert under Y» er en annen påstand enn «kjørt med den registrerte
+   * oppskriften», og de to skal ikke se like ut i ettertid.
+   */
+  readonly reproducedWith?: TextExtractionRecipe | null
 }
 
 export interface ClaimCheckContext {
@@ -630,6 +644,30 @@ function checkCitation(checked: CheckedLink, claimDirection: string | null): Cla
 }
 
 /**
+ * Sier hvilken oppskrift som gjenskapte teksten, når det ikke var radens egen.
+ *
+ * Tom streng i det normale tilfellet. En kontroll som gjenskapte teksten med en
+ * annen oppskrift enn den registrerte, skal si det der et menneske leser
+ * begrunnelsen — ikke bare i kjøringens manifest (§74.46).
+ */
+function reproductionNote(links: readonly CheckedLink[]): string {
+  const substituted = links
+    .map((checked) => checked.reproducedWith ?? null)
+    .filter((recipe): recipe is TextExtractionRecipe => recipe !== null)
+  if (substituted.length === 0) {
+    return ''
+  }
+  const recipe = substituted[0] as TextExtractionRecipe
+  return (
+    ` Minst én kildeversjon bærer en oppskrift som er avløst og ikke lenger kjørbar. Teksten er ` +
+    `gjenskapt med «${recipe.tool} ${recipe.arguments}»` +
+    (recipe.transform === null ? '' : ` og ${recipe.transform}`) +
+    ', som kom fram til nøyaktig det registrerte fingeravtrykket. Oppskriften raden bærer, er ' +
+    'ikke skrevet om.'
+  )
+}
+
+/**
  * Kontrollerer én påstandsrevisjon mot det registrerte evidensgrunnlaget.
  *
  * Ren funksjon: alt som rører omverdenen — hentingen av kildene, sammenligningen
@@ -676,18 +714,19 @@ export function checkClaim(context: ClaimCheckContext): ClaimCheckReport {
   const outcome: ClaimVerificationOutcome = anyDeviation ? 'needs_correction' : 'uncertain'
 
   const rationale =
-    outcome === 'needs_correction'
+    (outcome === 'needs_correction'
       ? 'Deterministisk kontroll av påstanden mot det registrerte evidensgrunnlaget: hver ' +
-        'evidenslenkes kildeversjon er hentet på nytt og fingeravtrykket reprodusert, og ' +
+        'evidenslenkes kildeversjon er skaffet på nytt og fingeravtrykket reprodusert, og ' +
         'påstandens strukturerte betydning er sammenlignet felt for felt med grunnlaget. ' +
         'Kontrollen fant minst ett avvik; se funnene.'
       : 'Kontrollen konkluderte ikke, og dette er ikke et avvik. Hver evidenslenkes ' +
-        'kildeversjon er hentet på nytt og fingeravtrykket reprodusert, og påstandens ' +
+        'kildeversjon er skaffet på nytt og fingeravtrykket reprodusert, og påstandens ' +
         'strukturerte betydning er sammenlignet felt for felt med grunnlaget uten at noe avvik ' +
         'ble funnet. En deterministisk kontroll kan ikke avgjøre om ordlyden er dekket, om ' +
         'vesentlige forbehold mangler, eller om det finnes urepresentert motstridende evidens — ' +
         'og fravær av registrert motstridende evidens er ikke fravær av slik evidens ' +
-        '(ANTIDEP_CONSTITUTION.md §11, §17). Utfallet er derfor uavklart, ikke bekreftet.'
+        '(ANTIDEP_CONSTITUTION.md §11, §17). Utfallet er derfor uavklart, ikke bekreftet.') +
+    reproductionNote(context.links)
 
   return { outcome, checks, citations, findings: findings.render(), rationale }
 }

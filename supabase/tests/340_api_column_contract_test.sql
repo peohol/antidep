@@ -698,6 +698,11 @@ where v.name = 'verifier'
 
 -- Bare den rike påstanden har en evidensvurdering: migrasjon 004 tillater den
 -- ikke på et deterministisk faktum, og publiseringsgaten G10 krever den ikke.
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap). Ansvarsgrensen mellom
+-- påstandsdannelse og evidensvurdering er en teknisk grense
+-- (EVIDENCE_PIPELINE.md §61).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
@@ -706,7 +711,7 @@ select r.id, r.knowledge_type, 'grade', 'low',
        'serious', 'not_assessable', 'serious', 'serious', 'not_assessable',
        'Ett funn; domenene vurdert enkeltvis.',
        'Ingen studier over tolv uker i testgrunnlaget.',
-       now() - interval '3 days', r.created_by_actor_id
+       now() - interval '3 days', (select id from provenance.actors where actor_key = 'agent:evidence-assessment')
 from knowledge.claim_revisions r
 where r.id = (select id from fixture where name = 'rich_rev');
 

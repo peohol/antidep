@@ -1,10 +1,15 @@
 -- ============================================================================
 -- Fiksturen prøve 5 i scripts/db-lock-test.sh kappes på
 --
--- Prøven trenger én påstandsrevisjon som publiseringsgatens G1 til G10 slipper
+-- Prøven trenger én påstandsrevisjon som publiseringsgatens G1 til G10b slipper
 -- gjennom, slik at det *eneste* som avgjør om den kan publiseres, er hvilken
 -- reviewbeslutning som er den gjeldende (G11, G12). Uten det ville gaten stoppet
 -- på et tidligere vilkår, og prøven ville ikke sagt noe om beslutningen.
+--
+-- Det er derfor evidensvurderingen under er attribuert til
+-- `agent:evidence-assessment` og ikke til synteseaktøren: G10b krever at den som
+-- gjorde vurderingen, hadde mandat til det (migrasjon 005ap), og fiksturen skal
+-- komme forbi det vilkåret uten å svekke det.
 --
 -- Fiksturen er egen og har faste id-er: ingen annen påstand, ingen annen kilde
 -- og ingen annen kontroll rører den, og gjentatte kjøringer gjenbruker den
@@ -194,6 +199,9 @@ join knowledge.claim_evidence_links l on l.claim_revision_id = parent.claim_revi
 -- ----------------------------------------------------------------------------
 -- G10: evidensvurderingen finnes.
 -- ----------------------------------------------------------------------------
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
@@ -203,7 +211,7 @@ select '7b000000-0000-4000-8000-000000000005', 'evidence_synthesis', 'grade', 'l
        'Samtidighetsprøve: lav sikkerhet, registrert bare for at gaten skal ha en vurdering å lese.',
        now(), a.id
 from provenance.actors a
-where a.actor_key = 'agent:claim-synthesis'
+where a.actor_key = 'agent:evidence-assessment'
   and not exists (
     select 1 from knowledge.evidence_assessments ea
     where ea.claim_revision_id = '7b000000-0000-4000-8000-000000000005'

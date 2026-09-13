@@ -320,6 +320,11 @@ select parent.id, l.claim_revision_id, l.id, l.evidence_item_id, 'original_sourc
 from parent
 join knowledge.claim_evidence_links l on l.claim_revision_id = parent.claim_revision_id;
 
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap). Ansvarsgrensen mellom
+-- påstandsdannelse og evidensvurdering er en teknisk grense
+-- (EVIDENCE_PIPELINE.md §61).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
@@ -327,7 +332,7 @@ insert into knowledge.evidence_assessments
 select v.revision, 'evidence_synthesis', 'grade', 'low',
        'serious', 'not_assessable', 'not_serious', 'serious', 'not_assessable',
        'Prøve i 610: lav sikkerhet, registrert bare for at gaten skal ha en vurdering å lese.',
-       now(), (select id from fixture where name = 'synthesis')
+       now(), (select id from provenance.actors where actor_key = 'agent:evidence-assessment')
 from (values
   ('61000000-0000-4000-8000-000000000041'::uuid),
   ('61000000-0000-4000-8000-000000000042'::uuid)
