@@ -64,9 +64,9 @@ select results_eq(
 );
 
 -- ---------------------------------------------------------------------------
--- De tekniske agentidentitetene (migrasjon 005f, 005i og 005w)
+-- De tekniske agentidentitetene (migrasjon 005f, 005i, 005w og 005ak)
 --
--- Tre påstander som hver for seg er det migrasjonene faktisk lover, og som
+-- Fire påstander som hver for seg er det migrasjonene faktisk lover, og som
 -- hver for seg ville vært en sikkerhetsendring om de sluttet å holde. Listen er
 -- uttømmende: en identitet ingen har bestemt seg for, kan ikke gli inn
 -- ubemerket.
@@ -88,11 +88,13 @@ select results_eq(
   $$,
   $$values ('agent-identity:citation-support-verification-01', 'agent:citation-support-verification',
             'citation_support_verification', 'human:peder-holman', 'human', true, 0, true),
+           ('agent-identity:claim-synthesis-01', 'agent:claim-synthesis',
+            'claim_synthesis', 'human:peder-holman', 'human', true, 0, true),
            ('agent-identity:evidence-extraction-01', 'agent:evidence-extraction',
             'evidence_extraction', 'human:peder-holman', 'human', true, 0, true),
            ('agent-identity:extraction-verification-01', 'agent:extraction-verification',
             'extraction_verification', 'human:peder-holman', 'human', true, 0, true)$$,
-  'identitetsregisteret inneholder nøyaktig de to verifikatorene og ekstraksjonsagenten, alle registrert av den navngitte redaktøren og alle uten utstedt legitimasjon'
+  'identitetsregisteret inneholder nøyaktig de to verifikatorene, ekstraksjonsagenten og synteseagenten, alle registrert av den navngitte redaktøren og alle uten utstedt legitimasjon'
 );
 
 -- Identiteten er inert etter migrasjonen, og det skal den være til legitimasjonen

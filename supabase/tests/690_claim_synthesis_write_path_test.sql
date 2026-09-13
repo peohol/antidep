@@ -109,6 +109,27 @@ insert into fixture (name, id) select 'verifier', id from provenance.actors wher
 insert into fixture (name, id) select 'synthesiser', id from provenance.actors where actor_key = 'agent:claim-synthesis';
 grant select on fixture to anon;
 
+-- En kvalifisert reviewer med sin egen brukerkonto. Tilbaketrekkingen i del 6
+-- er en faglig beslutning, og workflow.enforce_reviewer_qualification() krever
+-- at aktøren er knyttet til en konto med reviewer-rollen. Den navngitte
+-- redaktøren har ingen konto i en fersk database — den finnes bare i miljøer der
+-- kontoen er opprettet — så prøven lager sin egen, som i 610.
+insert into auth.users (id, instance_id, aud, role, email)
+values ('69000000-0000-4000-8000-0000000000a0', '00000000-0000-0000-0000-000000000000',
+        'authenticated', 'authenticated', 'reviewer690@example.test');
+
+insert into provenance.actors
+  (id, actor_key, actor_type, display_name, description, auth_user_id)
+values ('69000000-0000-4000-8000-0000000000a1', 'human:reviewer-690', 'human', 'Reviewer 690',
+        'Kvalifisert reviewer, for 690.', '69000000-0000-4000-8000-0000000000a0');
+
+insert into workflow.user_roles
+  (user_id, role_code, scope_id, valid_from, granted_by_actor_id, grant_reason)
+values ('69000000-0000-4000-8000-0000000000a0', 'reviewer', null, now() - interval '1 year',
+        (select id from fixture where name = 'editor'), 'Reviewer-tildeling for 690.');
+
+insert into fixture (name, id) values ('reviewer', '69000000-0000-4000-8000-0000000000a1');
+
 insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
 values
   ('69000000-0000-4000-8000-000000000001', 'journal_article', 'Testkilde for 690',
@@ -338,7 +359,7 @@ select
   i.id, e.created_by_actor_id, 'extraction_withdrawal',
   'extraction_withdrawn',
   'Trukket tilbake i fiksturen, for å prøve vilkåret om tilbaketrukket ekstraksjon.',
-  (select id from fixture where name = 'editor'), 'human', now()
+  (select id from fixture where name = 'reviewer'), 'human', now()
 from item i
 join knowledge.evidence_items e on e.id = i.id
 where i.label = 'withdrawn';

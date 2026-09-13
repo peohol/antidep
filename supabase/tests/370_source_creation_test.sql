@@ -39,9 +39,10 @@ select enum_has_labels(
     'evidence_verification_registered', 'source_version_registered',
     'claim_verification_registered', 'review_decision_registered',
     'evidence_field_grounding_recorded',
-    'extraction_artifact_discarded', 'claim_artifact_discarded'
+    'extraction_artifact_discarded', 'claim_artifact_discarded',
+    'claim_revision_created'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt og de to fjerningene av testartefakter'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt, de to fjerningene av testartefakter og opprettelsen av en påstandsrevisjon'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -147,10 +148,18 @@ select is_empty(
         -- på sitt eget kall (knowledge.assert_editor_authorized). Hvilke roller
         -- som faktisk har EXECUTE, kontrolleres i
         -- 650_build_extraction_assignment_test.sql.
-        'api.build_extraction_assignment(uuid,text[],text[],text[])'
+        'api.build_extraction_assignment(uuid,text[],text[],text[])',
+        -- Migrasjon 005aj. Synteseagentens skrivevei: én påstandsrevisjon med
+        -- identiteten, evidenslenkene og evidensvurderingen sin, i én
+        -- transaksjon. Som de øvrige agentendepunktene er den kjørbar for anon
+        -- og authenticated, fordi en agent ikke har en brukerkonto: kontrollen
+        -- er legitimasjonen og den eksplisitte rollen `claim_synthesis`, ikke
+        -- Data API-rollen. Hvilke roller som faktisk har EXECUTE, kontrolleres i
+        -- 690_claim_synthesis_write_path_test.sql.
+        'api.register_claim_synthesis(text,text,uuid,uuid,uuid,text,text,text,text,jsonb,jsonb,uuid,uuid,text,text,uuid,text,text,numeric,text,text)'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de atten kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de nitten kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$
