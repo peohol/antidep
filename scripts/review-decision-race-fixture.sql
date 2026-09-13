@@ -194,6 +194,9 @@ join knowledge.claim_evidence_links l on l.claim_revision_id = parent.claim_revi
 -- ----------------------------------------------------------------------------
 -- G10: evidensvurderingen finnes.
 -- ----------------------------------------------------------------------------
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
@@ -203,7 +206,7 @@ select '7b000000-0000-4000-8000-000000000005', 'evidence_synthesis', 'grade', 'l
        'Samtidighetsprøve: lav sikkerhet, registrert bare for at gaten skal ha en vurdering å lese.',
        now(), a.id
 from provenance.actors a
-where a.actor_key = 'agent:claim-synthesis'
+where a.actor_key = 'agent:evidence-assessment'
   and not exists (
     select 1 from knowledge.evidence_assessments ea
     where ea.claim_revision_id = '7b000000-0000-4000-8000-000000000005'

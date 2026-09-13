@@ -669,6 +669,9 @@ async function main(): Promise<void> {
              (select id from provenance.actors where actor_key = 'agent:claim-synthesis')
       from r returning id
     )
+    -- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+    -- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+    -- vurderingen, hadde mandat til det (migrasjon 005ap).
     insert into knowledge.evidence_assessments
       (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
        risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
@@ -676,7 +679,7 @@ async function main(): Promise<void> {
     select 'c0000000-0000-4000-8000-000000000041', 'evidence_synthesis', 'grade', 'low',
            'serious', 'not_assessable', 'not_serious', 'serious', 'not_assessable',
            'Kjedeprøve.', now(),
-           (select id from provenance.actors where actor_key = 'agent:claim-synthesis')
+           (select id from provenance.actors where actor_key = 'agent:evidence-assessment')
     from l
     returning claim_revision_id
     `,
