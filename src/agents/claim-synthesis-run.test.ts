@@ -16,7 +16,7 @@ import {
   runClaimSynthesis,
   type LabelledSynthesisProposal,
 } from './claim-synthesis-run'
-import { parseSynthesisArguments } from './cli-arguments'
+import { parseDraftedProposalArguments } from './cli-arguments'
 
 const PREMISSER: AgentRunPremises = {
   provider: 'antidep',
@@ -29,7 +29,6 @@ const PREMISSER: AgentRunPremises = {
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
 const CLAIM_ID = '22222222-2222-4222-8222-222222222222'
 const REVISION_ID = '33333333-3333-4333-8333-333333333333'
-const ASSESSMENT_ID = '44444444-4444-4444-8444-444444444444'
 const LINK_ID = '55555555-5555-4555-8555-555555555555'
 const ITEM_ID = '66666666-6666-4666-8666-666666666666'
 
@@ -40,7 +39,6 @@ function svar(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     revision_number: 1,
     supersedes_revision_id: null,
     evidence_links: [{ claim_evidence_link_id: LINK_ID, evidence_item_id: ITEM_ID }],
-    evidence_assessment_id: ASSESSMENT_ID,
     evidence_set_digest: `sha256-v1:${'a'.repeat(64)}`,
     ...overrides,
   }
@@ -123,18 +121,6 @@ function forslag(overrides: Record<string, unknown> = {}): ClaimSynthesisProposa
         relevance_note: 'Funnet rapporterer vektendring for behandlingsarmen påstanden gjelder.',
       },
     ],
-    assessment: {
-      framework: 'grade',
-      certainty_level: 'very_low',
-      risk_of_bias: 'serious',
-      inconsistency: 'not_assessable',
-      indirectness: 'serious',
-      imprecision: 'serious',
-      publication_bias: 'not_assessable',
-      other_considerations: null,
-      rationale: 'Ett evidensfunn fra én randomisert studie ligger til grunn.',
-      evidence_gap: 'Størrelsen er ikke tallfestet i grunnlaget.',
-    },
     ...overrides,
   })
 }
@@ -193,9 +179,10 @@ describe('runClaimSynthesis', () => {
       registerSynthesis: () => {
         calls += 1
         if (calls === 1) {
-          // En SQLSTATE fra databasen: funksjonen reiste et unntak, og
-          // transaksjonen er rullet tilbake. Da — og bare da — er «ingenting
-          // registrert» en påstand kjøringen kan stå for.
+          // En forslagsspesifikk SQLSTATE: vilkåret i forslaget holdt ikke,
+          // funksjonen reiste et unntak, og transaksjonen er rullet tilbake. Da
+          // — og bare da — er «ingenting registrert» en påstand kjøringen kan
+          // stå for.
           return Promise.reject(
             new AgentApiError(
               'api.register_claim_synthesis',
@@ -262,7 +249,7 @@ describe('runClaimSynthesis', () => {
     expect(api.completions[0]?.status).toBe('failed')
   })
 
-  it('en avvisning uten SQLSTATE regnes ikke som bevis for at ingenting ble skrevet', async () => {
+  it('en avvisning uten SQLSTATE regnes ikke som en avvisning av forslaget', async () => {
     // PostgRESTs egne koder er ikke SQLSTATE, og en AgentApiError uten kode i
     // det hele tatt er en transportfeil kledd i api-formen.
     const api = fakeApi({
@@ -275,6 +262,72 @@ describe('runClaimSynthesis', () => {
     await expect(
       runClaimSynthesis({ api, premises: PREMISSER, proposals: kø(forslag()) }),
     ).rejects.toThrow(/utfallet er ukjent/)
+  })
+
+  // --------------------------------------------------------------------------
+  // En driftsfeil er ikke et forslag som ikke holder mål
+  //
+  // Alle kodene under ruller transaksjonen tilbake, så «ingenting ble skrevet»
+  // er sant for dem — men de sier ingenting om forslaget, og de gjentar seg
+  // gjerne for det neste. Ført som overhoppet ville kjøringen lukket seg som
+  // `succeeded` med en rapport om at forslagene ikke holdt mål, mens det som
+  // sviktet var driften (funnet i teknisk review).
+  // --------------------------------------------------------------------------
+  it.each([
+    ['40P01', 'deadlock detected'],
+    ['40001', 'could not serialize access due to concurrent update'],
+    ['42501', 'permission denied for function register_claim_synthesis'],
+    ['XX000', 'internal error'],
+    ['53300', 'too many connections for role'],
+    ['23505', 'duplicate key value violates unique constraint'],
+  ])(
+    'velter kjøringen på SQLSTATE %s framfor å føre forslaget som overhoppet',
+    async (kode, melding) => {
+      const api = fakeApi({
+        registerSynthesis: () =>
+          Promise.reject(new AgentApiError('api.register_claim_synthesis', melding, kode, null)),
+      })
+
+      await expect(
+        runClaimSynthesis({ api, premises: PREMISSER, proposals: kø(forslag(), forslag()) }),
+      ).rejects.toThrow(/utfallet er ukjent/)
+
+      // Det andre forslaget er ikke forsøkt, og kjøringen er ikke lukket som
+      // succeeded.
+      expect(api.completions[0]?.status).toBe('failed')
+    },
+  )
+
+  it.each([
+    ['22023', 'p_evidence_links må være en ikke-tom JSON-liste med evidenslenker.'],
+    ['P0002', 'Evidensfunn som ikke finnes: 66666666-6666-4666-8666-666666666666.'],
+    ['22P02', 'invalid input value for enum knowledge.comparator_kind'],
+    ['22007', 'invalid input syntax for type interval'],
+    ['23503', 'insert or update on table violates foreign key constraint'],
+    ['23514', 'new row violates check constraint'],
+  ])('fører forslaget som overhoppet på SQLSTATE %s og går videre', async (kode, melding) => {
+    let calls = 0
+    const api = fakeApi({
+      registerSynthesis: () => {
+        calls += 1
+        if (calls === 1) {
+          return Promise.reject(
+            new AgentApiError('api.register_claim_synthesis', melding, kode, null),
+          )
+        }
+        return Promise.resolve(svar({ revision_number: 2 }))
+      },
+    })
+
+    const report = await runClaimSynthesis({
+      api,
+      premises: PREMISSER,
+      proposals: kø(forslag(), forslag()),
+    })
+
+    expect(report.skipped).toBe(1)
+    expect(report.registered).toBe(1)
+    expect(report.runStatus).toBe('succeeded')
   })
 
   it('lar den opprinnelige årsaken nå kalleren selv om lukkingen også feiler', async () => {
@@ -319,9 +372,9 @@ describe('parseClaimSynthesisResult', () => {
   })
 })
 
-describe('parseSynthesisArguments', () => {
+describe('parseDraftedProposalArguments', () => {
   it('leser en katalog', () => {
-    expect(parseSynthesisArguments(['--directory', 'syntheses'])).toEqual({
+    expect(parseDraftedProposalArguments(['--directory', 'syntheses'])).toEqual({
       directory: 'syntheses',
       proposalPaths: [],
       dryRun: false,
@@ -330,7 +383,7 @@ describe('parseSynthesisArguments', () => {
 
   it('leser flere enkeltfiler og tørrkjøring', () => {
     expect(
-      parseSynthesisArguments(['--proposal', 'a.json', '--proposal', 'b.json', '--dry-run']),
+      parseDraftedProposalArguments(['--proposal', 'a.json', '--proposal', 'b.json', '--dry-run']),
     ).toEqual({
       directory: null,
       proposalPaths: ['a.json', 'b.json'],
@@ -339,25 +392,27 @@ describe('parseSynthesisArguments', () => {
   })
 
   it('krever at noe er oppgitt', () => {
-    expect(() => parseSynthesisArguments([])).toThrow(/--directory/)
+    expect(() => parseDraftedProposalArguments([])).toThrow(/--directory/)
   })
 
   it('avviser katalog og enkeltfil sammen: rekkefølgen ville vært uklar', () => {
     expect(() =>
-      parseSynthesisArguments(['--directory', 'syntheses', '--proposal', 'a.json']),
+      parseDraftedProposalArguments(['--directory', 'syntheses', '--proposal', 'a.json']),
     ).toThrow(/ikke begge/)
   })
 
   it('avviser et ukjent valg framfor å ignorere det', () => {
-    expect(() => parseSynthesisArguments(['--registrer-alt'])).toThrow(/Ukjent valg/)
+    expect(() => parseDraftedProposalArguments(['--registrer-alt'])).toThrow(/Ukjent valg/)
   })
 
   it('avviser et stiflagg uten verdi', () => {
-    expect(() => parseSynthesisArguments(['--proposal'])).toThrow(/krever en sti/)
-    expect(() => parseSynthesisArguments(['--directory', '--dry-run'])).toThrow(/krever en sti/)
+    expect(() => parseDraftedProposalArguments(['--proposal'])).toThrow(/krever en sti/)
+    expect(() => parseDraftedProposalArguments(['--directory', '--dry-run'])).toThrow(
+      /krever en sti/,
+    )
   })
 
   it('svarer help på --help', () => {
-    expect(parseSynthesisArguments(['--help'])).toBe('help')
+    expect(parseDraftedProposalArguments(['--help'])).toBe('help')
   })
 })

@@ -1,7 +1,11 @@
 # Syntesforslag
 
 Her ligger **syntesforslagene**: én foreslått påstandsrevisjon per fil, med
-evidensgrunnlaget den hviler på og evidensvurderingen som hører til.
+evidensgrunnlaget den hviler på.
+
+Evidensvurderingen hører **ikke** hjemme her. Den er et eget ledd med sin egen
+rolle og sin egen legitimasjon, og den kommer etter claim-verifikasjonen; se
+`assessments/README.md`.
 
 Filene er **lokale arbeidsfiler**. De er gitignorerte og skal ikke commites: et
 forslag er en påstand om hva Antidep mener evidensen viser, og den påstanden
@@ -14,13 +18,20 @@ registrert, menneskelig kildekontrollert evidens
   → modell-ledd (utenfor Antidep) leser grunnlaget og skriver denne filen
   → npm run agent:synthesise-claims   kontrollerer formen og registrerer
   → npm run agent:verify-claims       en SEPARAT kontroll, av en annen aktør
+  → npm run agent:assess-evidence     evidensvurderingen, av enda en aktør
   → /review                           den faglige vurderingen, av et menneske
 ```
 
-Registreringen gjør påstand, revisjon, evidenslenker og evidensvurdering i **én
-transaksjon** (`api.register_claim_synthesis`, migrasjon 005aj). Et halvferdig
-forslag er ikke en tilstand som kan rettes opp: evidensvurderingen forsegler
-evidenssettet, så en revisjon uten den kan aldri få resten av grunnlaget sitt.
+Registreringen gjør påstand, revisjon og evidenslenker i **én transaksjon**
+(`api.register_claim_synthesis`, migrasjon 005am). Lenkene hører sammen med
+revisjonen: evidensvurderingen forsegler evidenssettet, så en revisjon som fikk
+lenkene sine i flere omganger, kunne blitt stående uten resten av grunnlaget
+sitt.
+
+Evidensvurderingen er derimot et eget ledd, og kommer etter kontrollen
+(`MVP_IMPLEMENTATION_PLAN.md` §15, `EVIDENCE_PIPELINE.md` §61). En revisjon uten
+vurdering er derfor en normal og synlig mellomtilstand; publiseringsgatens G10
+stopper den til vurderingen finnes.
 
 ## 2. Hva skriveveien krever av evidensen
 
@@ -78,21 +89,12 @@ erstattes i sin helhet.
       "directness": "indirect",
       "relevance_note": "…"
     }
-  ],
-  "assessment": {
-    "framework": "grade",
-    "certainty_level": "very_low",
-    "risk_of_bias": "serious",
-    "inconsistency": "not_assessable",
-    "indirectness": "serious",
-    "imprecision": "serious",
-    "publication_bias": "not_assessable",
-    "other_considerations": null,
-    "rationale": "…",
-    "evidence_gap": "…"
-  }
+  ]
 }
 ```
+
+Kjøringen skriver ut `evidence_set_digest` for hver registrerte revisjon. Det er
+verdien vurderingsforslaget senere skal oppgi (`assessments/README.md`).
 
 `claim_id` er `null` for en ny påstand, og id-en til en eksisterende påstand når
 forslaget er en **ny revisjon** av den. Revisjonsnummeret og hva revisjonen
@@ -105,7 +107,7 @@ erstatter, settes av databasen.
 | `knowledge_type`                            | Skriveveien registrerer `evidence_synthesis` og ingenting annet. Et deterministisk faktum avgjøres mot en autoritativ kilde; en klinisk anbefaling skal ikke ha en KI-kjøring som opphav |
 | `created_by_actor_id`                       | Aktøren er kjøringens egen, hentet av databasen fra legitimasjonen                                                                                                                       |
 | `revision_number`, `supersedes_revision_id` | Databasen teller selv, slik at historikken ikke kan få et hull eller en sirkel                                                                                                           |
-| `assessed_at`                               | Tidspunktet for den faglige vurderingen eies av databasen, som på kontrollene                                                                                                            |
+| `assessment`                                | Evidensvurderingen er et eget ledd med sin egen rolle og sin egen legitimasjon, og registreres etter claim-verifikasjonen (`assessments/README.md`)                                      |
 
 Et ukjent felt avvises framfor å bli ignorert: en skrivefeil i et feltnavn ville
 ellers blitt til en manglende verdi i en klinisk påstand.
@@ -127,13 +129,19 @@ en **ny revisjon** av en påstand som står der fra før. Kjøringen skriver ut
 påstands-ID-en og revisjonsnummeret den registrerte, slik at det er lesbart hva
 som faktisk skjedde.
 
-Av samme grunn skiller kjøringen mellom en **avvisning** og et **uavklart
-utfall**. Et forslag føres som avvist bare når databasen selv har sagt nei med
-sin egen SQLSTATE — da er transaksjonen rullet tilbake, og ingenting er skrevet.
-Ryker forbindelsen, eller kommer det et svar som ikke har formen kontrakten
-lover, stopper kjøringen i stedet og lukkes som `failed`: raden kan finnes, og
-en ny kjøring ville laget påstanden en gang til. Kontroller `/review` før du
-kjører om igjen.
+Av samme grunn skiller kjøringen mellom en **avvisning av forslaget** og alt
+annet. Et forslag føres som avvist bare når databasen sier nei med en kjent,
+forslagsspesifikk SQLSTATE — et vilkår som ikke holder, en verdi kolonnen ikke
+tar imot. Da er transaksjonen rullet tilbake, ingenting er skrevet, og det var
+forslaget det var noe i veien med.
+
+En vranglås, en serialiseringsfeil, en manglende rettighet eller en intern
+databasefeil ruller også transaksjonen tilbake, men sier ingenting om forslaget
+og gjentar seg gjerne for det neste; de velter kjøringen. Det samme gjør et
+uavklart utfall — en forbindelse som ryker, eller et svar som ikke har formen
+kontrakten lover: raden kan finnes, og en ny kjøring ville laget påstanden en
+gang til. Kjøringen lukkes da som `failed`. Kontroller `/review` før du kjører om
+igjen.
 
 ## 6. Språk og presisjon
 

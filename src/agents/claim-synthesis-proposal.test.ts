@@ -49,18 +49,6 @@ function proposal(overrides: Record<string, unknown> = {}): Record<string, unkno
         relevance_note: 'Funnet rapporterer vektendring for behandlingsarmen påstanden gjelder.',
       },
     ],
-    assessment: {
-      framework: 'grade',
-      certainty_level: 'very_low',
-      risk_of_bias: 'serious',
-      inconsistency: 'not_assessable',
-      indirectness: 'serious',
-      imprecision: 'serious',
-      publication_bias: 'not_assessable',
-      other_considerations: null,
-      rationale: 'Ett evidensfunn fra én randomisert studie ligger til grunn.',
-      evidence_gap: 'Størrelsen er ikke tallfestet i grunnlaget.',
-    },
     ...overrides,
   }
 }
@@ -70,21 +58,12 @@ function claimWith(overrides: Record<string, unknown>): Record<string, unknown> 
   return { ...base, claim: { ...(base['claim'] as Record<string, unknown>), ...overrides } }
 }
 
-function assessmentWith(overrides: Record<string, unknown>): Record<string, unknown> {
-  const base = proposal()
-  return {
-    ...base,
-    assessment: { ...(base['assessment'] as Record<string, unknown>), ...overrides },
-  }
-}
-
 describe('parseClaimSynthesisProposal', () => {
   it('leser et fullstendig forslag', () => {
     const parsed = parseClaimSynthesisProposal(proposal())
     expect(parsed.claim.statement).toMatch(/vektøkning/)
     expect(parsed.claim.claimId).toBeNull()
     expect(parsed.evidenceLinks).toHaveLength(1)
-    expect(parsed.assessment.certaintyLevel).toBe('very_low')
     expect(parsed.generatedBy.producer).toBe('model')
   })
 
@@ -201,54 +180,25 @@ describe('parseClaimSynthesisProposal', () => {
     )
   })
 
-  it('krever alle fem GRADE-domenene når en sikkerhetsgrad er satt', () => {
-    expect(() => parseClaimSynthesisProposal(assessmentWith({ imprecision: null }))).toThrow(
-      /minst ett GRADE-domene/,
-    )
-  })
-
-  it('avviser GRADE-domener sammen med «ingen vurderbar evidens»', () => {
-    expect(() =>
-      parseClaimSynthesisProposal(assessmentWith({ certainty_level: 'no_assessable_evidence' })),
-    ).toThrow(/no_assessable_evidence/)
-  })
-
-  it('krever at «ingen vurderbar evidens» sier hva som mangler', () => {
+  it('avviser en evidensvurdering i syntesforslaget: den er et eget ledd', () => {
     expect(() =>
       parseClaimSynthesisProposal(
-        assessmentWith({
-          certainty_level: 'no_assessable_evidence',
-          risk_of_bias: null,
-          inconsistency: null,
-          indirectness: null,
-          imprecision: null,
-          publication_bias: null,
-          evidence_gap: null,
+        proposal({
+          assessment: {
+            framework: 'grade',
+            certainty_level: 'very_low',
+            risk_of_bias: 'serious',
+            inconsistency: 'not_assessable',
+            indirectness: 'serious',
+            imprecision: 'serious',
+            publication_bias: 'not_assessable',
+            other_considerations: null,
+            rationale: 'Ett evidensfunn ligger til grunn.',
+            evidence_gap: null,
+          },
         }),
       ),
-    ).toThrow(/evidence_gap/)
-  })
-
-  it('godtar «ingen vurderbar evidens» når den sier hva som mangler', () => {
-    const parsed = parseClaimSynthesisProposal(
-      assessmentWith({
-        certainty_level: 'no_assessable_evidence',
-        risk_of_bias: null,
-        inconsistency: null,
-        indirectness: null,
-        imprecision: null,
-        publication_bias: null,
-        evidence_gap: 'Det finnes ingen registrert evidens for dette endepunktet.',
-      }),
-    )
-    expect(parsed.assessment.certaintyLevel).toBe('no_assessable_evidence')
-    expect(parsed.assessment.riskOfBias).toBeNull()
-  })
-
-  it('avviser et vurderingstidspunkt i filen: databasen eier det', () => {
-    expect(() =>
-      parseClaimSynthesisProposal(assessmentWith({ assessed_at: '2026-09-13T09:00:00Z' })),
-    ).toThrow(/eies av databasen/)
+    ).toThrow(/agent:assess-evidence/)
   })
 
   it('avviser et tidspunkt som ikke finnes i kalenderen', () => {

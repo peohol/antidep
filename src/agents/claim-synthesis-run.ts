@@ -2,7 +2,7 @@
 // Selve agentkjøringen: fra syntesforslag til registrert påstandsrevisjon
 //
 //   api.begin_agent_run            premissene registreres
-//   api.register_claim_synthesis   påstand, revisjon, lenker og vurdering (005aj)
+//   api.register_claim_synthesis   påstand, revisjon og evidenslenker (005am)
 //   api.complete_agent_run         kjøringen lukkes
 //
 // Alt som rører omverdenen er injisert (`api`, `log`), så hele orkestreringen
@@ -18,10 +18,13 @@
 // for hva kjøringen fikk inn (`pipeline-version.ts`, ANTIDEP_CONSTITUTION.md
 // §20).
 //
-// Den godkjenner ingenting. Revisjonen er et forslag: uten claim-verifikasjon,
-// uten reviewbeslutning og uten publiseringspeker. Neste ledd er en *separat*
-// kontrollfase med sin egen identitet (`npm run agent:verify-claims`), og
-// deretter et menneske i /review (ANTIDEP_CONSTITUTION.md §11, §12).
+// Den godkjenner ingenting, og den vurderer ingenting. Revisjonen er et forslag:
+// uten claim-verifikasjon, uten evidensvurdering, uten reviewbeslutning og uten
+// publiseringspeker. Neste ledd er en *separat* kontrollfase med sin egen
+// identitet (`npm run agent:verify-claims`), deretter evidensvurderingen som er
+// nok et eget ledd med sin egen identitet (`npm run agent:assess-evidence`), og
+// deretter et menneske i /review (ANTIDEP_CONSTITUTION.md §11, §12,
+// EVIDENCE_PIPELINE.md §61, MVP_IMPLEMENTATION_PLAN.md §15).
 //
 // ----------------------------------------------------------------------------
 // Hvorfor ett forslag som ikke holder mål, ikke stopper de andre
@@ -32,13 +35,17 @@
 // hvert enkelt — inkludert databasens egen setning om hva som stoppet det.
 //
 // ----------------------------------------------------------------------------
-// «Overhoppet» er en påstand om at ingenting ble skrevet, og krever bevis
+// «Overhoppet» er en påstand om at det var forslaget det var noe i veien med
 //
-// Bare en avvisning som bærer en SQLSTATE beviser det: PostgREST kjører kallet
-// i én transaksjon, og et unntak fra funksjonen ruller den tilbake
-// (`isDatabaseRejection`). Alt annet er **uavklart** — en forbindelse som ryker
-// etter at serveren har committet, et svar som ikke har den formen kontrakten
-// lover — og der kan raden finnes.
+// Bare en avvisning databasen svarer med en kjent, forslagsspesifikk SQLSTATE på,
+// regnes som det (`isProposalRejection`). En vranglås, en serialiseringsfeil, en
+// manglende rettighet eller en intern databasefeil ruller også transaksjonen
+// tilbake, men de sier ingenting om forslaget og gjentar seg gjerne for det
+// neste; ført som «overhoppet» ville de gitt en kjøring som lukkes som
+// `succeeded` med en rapport om at forslagene ikke holdt mål, mens det som
+// sviktet var driften. Alt annet er **uavklart** — en forbindelse som ryker etter
+// at serveren har committet, et svar som ikke har den formen kontrakten lover —
+// og der kan raden finnes.
 //
 // Skriveveien er med vilje ikke idempotent (`syntheses/README.md`): kjøres den
 // samme filen om igjen uten `claim_id`, blir det en ny påstand. En uavklart
@@ -48,24 +55,21 @@
 // ============================================================================
 
 import type { Uuid } from '../types/api.ts'
-import { isDatabaseRejection } from './agent-api.ts'
+import { isProposalRejection } from './agent-api.ts'
 import type { AgentRunPremises, ClaimSynthesisApi } from './agent-api.ts'
 import type { ClaimSynthesisProposal } from './claim-synthesis-proposal.ts'
+import type { LabelledProposal } from './drafted-proposal-files.ts'
 import { asOptionalUuid, asText, asUuid, fieldsOf, raw } from './strict-fields.ts'
 
-/** Ett forslag, med navnet det ble lest under, slik rapporten kan navngi det. */
-export interface LabelledSynthesisProposal {
-  readonly label: string
-  readonly proposal: ClaimSynthesisProposal
-}
+/** Ett syntesforslag, med navnet det ble lest under, slik rapporten kan navngi det. */
+export type LabelledSynthesisProposal = LabelledProposal<ClaimSynthesisProposal>
 
-/** Det databasen svarer med når en syntese er registrert (migrasjon 005aj). */
+/** Det databasen svarer med når en syntese er registrert (migrasjon 005am). */
 export interface ClaimSynthesisResult {
   readonly claimId: Uuid
   readonly claimRevisionId: Uuid
   readonly revisionNumber: number
   readonly supersedesRevisionId: Uuid | null
-  readonly evidenceAssessmentId: Uuid
   readonly evidenceSetDigest: string
   readonly evidenceLinkIds: readonly Uuid[]
 }
@@ -96,7 +100,6 @@ export function parseClaimSynthesisResult(value: unknown): ClaimSynthesisResult 
     claimRevisionId: asUuid(fields, 'claim_revision_id'),
     revisionNumber,
     supersedesRevisionId: asOptionalUuid(fields, 'supersedes_revision_id'),
-    evidenceAssessmentId: asUuid(fields, 'evidence_assessment_id'),
     evidenceSetDigest: asText(fields, 'evidence_set_digest'),
     evidenceLinkIds: links.map((link) => {
       const entry = fieldsOf(link, 'Svaret fra api.register_claim_synthesis', 'evidence_links[]')
@@ -197,17 +200,15 @@ export async function runClaimSynthesis(options: SynthesisRunOptions): Promise<S
       // evidensfunn som ikke har nådd kontrollnivået sitt, en verdi basen ikke
       // tar imot — er det ene forslagets problem, ikke køens.
       //
-      // Bare en avvisning databasen selv har uttalt, med sin egen SQLSTATE,
-      // regnes som det. Se hodekommentaren: alt annet er uavklart, og et
-      // uavklart utfall ført som «overhoppet» ville vært en påstand om at
-      // ingenting ble skrevet.
+      // Bare en avvisning databasen svarer med en kjent, forslagsspesifikk
+      // SQLSTATE på, regnes som det. Se hodekommentaren: en driftsfeil og et
+      // uavklart utfall skal begge velte kjøringen.
       try {
         const registered = parseClaimSynthesisResult(
           await api.registerSynthesis({
             agentRunId,
             claim: proposal.claim,
             evidenceLinks: proposal.evidenceLinks,
-            assessment: proposal.assessment,
           }),
         )
         log(
@@ -225,12 +226,13 @@ export async function runClaimSynthesis(options: SynthesisRunOptions): Promise<S
       } catch (cause) {
         const reason = cause instanceof Error ? cause.message : String(cause)
 
-        if (!isDatabaseRejection(cause)) {
-          // Utfallet er ukjent. Kjøringen skal ikke fortsette som om raden ikke
-          // finnes, og den skal ikke lukkes som `succeeded`: den ytre fangsten
-          // under lukker den som `failed` og lar årsaken nå kalleren.
+        if (!isProposalRejection(cause)) {
+          // Enten en driftsfeil, eller et ukjent utfall. Kjøringen skal ikke
+          // fortsette som om raden ikke finnes, og den skal ikke lukkes som
+          // `succeeded`: den ytre fangsten under lukker den som `failed` og lar
+          // årsaken nå kalleren.
           throw new Error(
-            `${label}: registreringen kan ha blitt skrevet, men utfallet er ukjent. ` +
+            `${label}: registreringen ble ikke bekreftet, og utfallet er ukjent. ` +
               'Kontroller i /review om revisjonen finnes FØR du kjører filen om igjen — ' +
               'skriveveien er ikke idempotent, og en ny kjøring uten claim_id ville laget ' +
               `en ny påstand. Årsak: ${reason}`,

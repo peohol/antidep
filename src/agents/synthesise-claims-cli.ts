@@ -7,8 +7,8 @@
 //
 // Ett eller flere eksternt produserte syntesforslag kontrolleres på form og
 // registreres gjennom `api.register_claim_synthesis`: påstandsidentiteten (eller
-// en ny revisjon av en som finnes), revisjonen, evidenslenkene og
-// evidensvurderingen, i én transaksjon per forslag.
+// en ny revisjon av en som finnes), revisjonen og evidenslenkene, i én
+// transaksjon per forslag.
 //
 // ----------------------------------------------------------------------------
 // Hvor den stopper, og hvorfor den stopper der
@@ -17,6 +17,11 @@
 // mot grunnlaget er et eget mandat med sin egen identitet og sin egen rolle —
 // `npm run agent:verify-claims` — og en kjøring som gjorde begge deler, ville
 // vært ett ledd der ANTIDEP_CONSTITUTION.md §10 og §11 krever to.
+//
+// Den graderer heller ikke sikkerheten i grunnlaget. Evidensvurderingen er nok
+// et eget ledd med sin egen rolle og sin egen identitet — `npm run
+// agent:assess-evidence` — og den kommer etter claim-verifikasjonen
+// (EVIDENCE_PIPELINE.md §61, MVP_IMPLEMENTATION_PLAN.md §15).
 //
 // Den godkjenner og publiserer ingenting. Revisjonen legger seg i /review, der
 // en kvalifisert redaktør tar stilling til den (§12, §15).
@@ -33,10 +38,11 @@
 import { createAgentClient, createClaimSynthesisApi } from './agent-api.ts'
 import { CLAIM_SYNTHESIS_CREDENTIAL, readAgentConfig } from './agent-environment.ts'
 import { redact } from './agent-credential.ts'
-import { parseSynthesisArguments, type SynthesisCliOptions } from './cli-arguments.ts'
+import { parseDraftedProposalArguments, type DraftedProposalCliOptions } from './cli-arguments.ts'
 import { CLAIM_SYNTHESIS_PREMISES } from './pipeline-version.ts'
 import { runClaimSynthesis, type LabelledSynthesisProposal } from './claim-synthesis-run.ts'
-import { readSynthesisDirectory, readSynthesisFile } from './synthesis-files.ts'
+import { parseClaimSynthesisProposal } from './claim-synthesis-proposal.ts'
+import { readDraftedProposalDirectory, readDraftedProposalFile } from './drafted-proposal-files.ts'
 
 const USAGE = `Bruk:
   npm run agent:synthesise-claims -- (--directory <katalog> | --proposal <fil>...) [valg]
@@ -47,14 +53,15 @@ Valg:
   --dry-run              Kontroller formen, men registrer ingenting.
   --help                 Vis denne teksten.
 
-Kjøringen registrerer forslag. Den kontrollerer dem ikke: claim-verifikasjonen
-er et eget ledd med sin egen identitet (npm run agent:verify-claims), og den
+Kjøringen registrerer forslag. Den kontrollerer dem ikke, og den graderer dem
+ikke: claim-verifikasjonen (npm run agent:verify-claims) og evidensvurderingen
+(npm run agent:assess-evidence) er egne ledd med hver sin identitet, og den
 faglige godkjenningen er et menneskes (/review).`
 
 async function main(): Promise<number> {
-  let options: SynthesisCliOptions
+  let options: DraftedProposalCliOptions
   try {
-    const parsed = parseSynthesisArguments(process.argv.slice(2))
+    const parsed = parseDraftedProposalArguments(process.argv.slice(2))
     if (parsed === 'help') {
       console.log(USAGE)
       return 0
@@ -75,8 +82,17 @@ async function main(): Promise<number> {
   try {
     const proposals: readonly LabelledSynthesisProposal[] =
       options.directory === null
-        ? await Promise.all(options.proposalPaths.map((path) => readSynthesisFile(path)))
-        : await readSynthesisDirectory(options.directory)
+        ? await Promise.all(
+            options.proposalPaths.map((path) =>
+              readDraftedProposalFile(path, parseClaimSynthesisProposal),
+            ),
+          )
+        : await readDraftedProposalDirectory(
+            options.directory,
+            parseClaimSynthesisProposal,
+            (directory) =>
+              `Fant ingen syntesforslag i ${directory}. Et syntesforslag er en .json-fil med formen beskrevet i syntheses/README.md.`,
+          )
 
     const report = await runClaimSynthesis({
       api,
@@ -99,8 +115,9 @@ async function main(): Promise<number> {
     if (report.registered > 0) {
       console.log(
         'Revisjonene er forslag. Neste ledd er claim-verifikasjonen ' +
-          '(npm run agent:verify-claims), som er en separat kontroll av en annen aktør, og ' +
-          'deretter den faglige vurderingen i /review.',
+          '(npm run agent:verify-claims), som er en separat kontroll av en annen aktør, ' +
+          'deretter evidensvurderingen (npm run agent:assess-evidence), og til slutt den ' +
+          'faglige vurderingen i /review.',
       )
     }
     return report.skipped > 0 ? 1 : 0

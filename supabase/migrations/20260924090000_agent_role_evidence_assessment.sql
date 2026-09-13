@@ -1,0 +1,45 @@
+-- ============================================================================
+-- Migrasjon 005al — provenance.agent_role får verdien evidence_assessment
+--
+-- EVIDENCE_PIPELINE.md §61 lister elleve agentroller. Vokabularet i
+-- `provenance.agent_role` har hittil hatt ti av dem, i nøyaktig den samme
+-- rekkefølgen, og manglet den ene: `EvidenceAssessor` — leddet som tar «samlet
+-- evidens» inn og gir `EvidenceAssessment` ut.
+--
+-- Hullet var ikke synlig så lenge ingen skrivevei laget en evidensvurdering.
+-- Migrasjon 005aj laget en, og la den i rollen `claim_synthesis`: den samme
+-- kjøringen som formulerte påstanden, registrerte også den endelige vurderingen
+-- av sikkerheten i grunnlaget for den. Det er et annet ansvar enn
+-- påstandsdannelsen, og §61 er uttrykkelig på at ansvarsgrensen samtidig skal
+-- være en teknisk grense: «hver rolle som faktisk skriver til kunnskapsbasen,
+-- har en egen aktør med en egen identitet og en egen legitimasjon … En rolle
+-- som bare er et navn i en prompt, er ingen grense.»
+--
+-- Denne migrasjonen innfører rollen. De tre neste gir den proveniens, skrivevei
+-- og identitet, og tar vurderingen ut av synteseveien.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor verdien legges inn etter adversarial_review
+--
+-- Enumet er §61 sin tabell, i tabellens egen rekkefølge. `EvidenceAssessor`
+-- står der mellom `AdversarialAgent` og `CitationVerifier`, og `after` setter
+-- verdien på den samme plassen framfor bakerst. Rekkefølgen i et enum er
+-- sorteringsrekkefølgen, og en liste over pipelineledd som sorterer i
+-- pipelinerekkefølge, er lettere å lese riktig enn en som sorterer etter når
+-- verdiene tilfeldigvis ble innført.
+--
+-- Merk at enumrekkefølgen er vokabularets, ikke kjøringens: *når* vurderingen
+-- registreres, avgjøres av migrasjon 005am, og der kommer den etter
+-- claim-verifikasjonen (MVP_IMPLEMENTATION_PLAN.md §15).
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor denne ene setningen er sin egen migrasjon
+--
+-- `ALTER TYPE ... ADD VALUE` kan ikke brukes i samme transaksjon som verdien
+-- den legger til, og migrasjonsløperen sender hver fil som én transaksjon
+-- (scripts/deploy-migrations.sh). Den genererte kolonnen i 005am' forgjenger —
+-- `20260924091000_evidence_assessment_provenance.sql` — evaluerer verdien ved
+-- ALTER TABLE og må derfor ligge i en senere fil.
+-- ============================================================================
+
+alter type provenance.agent_role add value 'evidence_assessment' after 'adversarial_review';

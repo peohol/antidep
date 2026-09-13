@@ -111,7 +111,7 @@ select throws_ok(
 -- ville ellers felt forsøket på unikhet før rollekravet fikk si noe, og testen ville
 -- prøvd en annen regel enn den sier. Aktøren lages derfor her, framfor å velge en av
 -- de seedede som tilfeldigvis ikke har en identitet ennå. Den forutsetningen holdt til
--- migrasjon 005ak ga synteseagenten sin.
+-- migrasjon 005ak ga synteseagenten sin, og 005an evidensvurderingsagenten sin.
 insert into provenance.actors (actor_type, actor_key, display_name, description, agent_role)
 values (
   'agent', 'agent:rolleprove-410', 'Prøveaktør for 410',

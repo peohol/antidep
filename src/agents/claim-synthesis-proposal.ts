@@ -23,7 +23,11 @@
 //   * **Revisjonsnummeret og hva revisjonen erstatter.** Begge følger av
 //     `claim_id`: databasen teller selv. En fil som kunne sette dem, kunne laget
 //     et hull eller en sirkel i historikken.
-//   * **Evidensvurderingens tidspunkt.** Databasen eier det, som på kontrollene.
+//   * **Evidensvurderingen.** Den hører ikke til dette forslaget i det hele
+//     tatt. Graderingen av sikkerheten i grunnlaget er et annet ansvar, med en
+//     egen rolle, en egen identitet og et eget senere ledd — etter
+//     kildestøtteverifikasjonen (`evidence-assessment-proposal.ts`, migrasjon
+//     005am, EVIDENCE_PIPELINE.md §61, MVP_IMPLEMENTATION_PLAN.md §15).
 //
 // ----------------------------------------------------------------------------
 // Hva kontrollen her er, og hva den ikke er
@@ -37,14 +41,12 @@
 // ============================================================================
 
 import {
-  CERTAINTY_LEVELS,
   CLAIM_DIRECTIONS,
   COMPARATOR_KINDS,
   EFFECT_MEASURES,
   ESTIMATE_UNITS,
   EVIDENCE_DIRECTNESS_VALUES,
   EVIDENCE_RELATIONSHIP_TYPES,
-  GRADE_DOMAIN_RATINGS,
   type Uuid,
 } from '../types/api.ts'
 import { parseGeneratedBy, type GeneratedBy } from './extraction-proposal.ts'
@@ -76,29 +78,12 @@ const PROPOSAL_SUBJECT = 'Syntesforslaget'
  */
 export const CLAIM_SYNTHESIS_PROPOSAL_VERSION = 'antidep/claim-synthesis-proposal@1'
 
-/** Metoden en evidensvurdering bruker (knowledge.assessment_framework). */
-export const ASSESSMENT_FRAMEWORKS = ['grade'] as const
-
 /** Én foreslått kobling mellom revisjonen og et registrert evidensfunn. */
 export interface ProposedEvidenceLink {
   readonly evidenceItemId: Uuid
   readonly relationshipType: string
   readonly directness: string
   readonly relevanceNote: string
-}
-
-/** Den foreslåtte evidensvurderingen (knowledge.evidence_assessments). */
-export interface ProposedAssessment {
-  readonly framework: string
-  readonly certaintyLevel: string
-  readonly riskOfBias: string | null
-  readonly inconsistency: string | null
-  readonly indirectness: string | null
-  readonly imprecision: string | null
-  readonly publicationBias: string | null
-  readonly otherConsiderations: string | null
-  readonly rationale: string
-  readonly evidenceGap: string | null
 }
 
 /** Selve påstandsrevisjonen, slik den foreslås formulert. */
@@ -130,13 +115,12 @@ export interface ProposedClaimRevision {
   readonly uncertaintySummary: string
 }
 
-/** Hele forslaget: kontraktsversjonen, opphavet, påstanden, grunnlaget og vurderingen. */
+/** Hele forslaget: kontraktsversjonen, opphavet, påstanden og evidensgrunnlaget. */
 export interface ClaimSynthesisProposal {
   readonly proposalVersion: typeof CLAIM_SYNTHESIS_PROPOSAL_VERSION
   readonly generatedBy: GeneratedBy
   readonly claim: ProposedClaimRevision
   readonly evidenceLinks: readonly ProposedEvidenceLink[]
-  readonly assessment: ProposedAssessment
 }
 
 function parseClaim(parent: Fields, value: unknown): ProposedClaimRevision {
@@ -214,67 +198,6 @@ function parseEvidenceLink(parent: Fields, value: unknown, index: number): Propo
   return link
 }
 
-function parseAssessment(parent: Fields, value: unknown): ProposedAssessment {
-  const fields = nestedFields(parent, value, 'assessment')
-  const assessment: ProposedAssessment = {
-    framework: asVocabulary(fields, 'framework', ASSESSMENT_FRAMEWORKS),
-    certaintyLevel: asVocabulary(fields, 'certainty_level', CERTAINTY_LEVELS),
-    riskOfBias: asOptionalVocabulary(fields, 'risk_of_bias', GRADE_DOMAIN_RATINGS),
-    inconsistency: asOptionalVocabulary(fields, 'inconsistency', GRADE_DOMAIN_RATINGS),
-    indirectness: asOptionalVocabulary(fields, 'indirectness', GRADE_DOMAIN_RATINGS),
-    imprecision: asOptionalVocabulary(fields, 'imprecision', GRADE_DOMAIN_RATINGS),
-    publicationBias: asOptionalVocabulary(fields, 'publication_bias', GRADE_DOMAIN_RATINGS),
-    otherConsiderations: asOptionalText(fields, 'other_considerations'),
-    rationale: asText(fields, 'rationale'),
-    evidenceGap: asOptionalText(fields, 'evidence_gap'),
-  }
-  rejectUnknown(fields, {
-    assessed_at:
-      'hører ikke hjemme i et forslag. Tidspunktet for den faglige vurderingen eies av databasen, som på kontrollene',
-  })
-
-  // De samme to reglene databasen håndhever (migrasjon 004), formulert i filens
-  // egne navn. «Ingen vurderbar evidens» er en egen systemtilstand og ikke en
-  // femte GRADE-grad: det finnes ikke noe å gradere ned fra, og tilstanden skal
-  // aldri stå tom (ANTIDEP_CONSTITUTION.md §6).
-  const domains = [
-    assessment.riskOfBias,
-    assessment.inconsistency,
-    assessment.indirectness,
-    assessment.imprecision,
-    assessment.publicationBias,
-  ]
-  const noAssessable = assessment.certaintyLevel === 'no_assessable_evidence'
-  if (noAssessable && domains.some((domain) => domain !== null)) {
-    problem(
-      fields.subject,
-      'assessment',
-      'oppgir GRADE-domener sammen med certainty_level «no_assessable_evidence». Tilstanden ' +
-        'betyr at grunnlaget ikke lar seg vurdere i det hele tatt, og da finnes det ikke noe å ' +
-        'gradere ned fra',
-    )
-  }
-  if (!noAssessable && domains.some((domain) => domain === null)) {
-    problem(
-      fields.subject,
-      'assessment',
-      'mangler minst ett GRADE-domene. En sikkerhetsgrad krever eksplisitt vurdering av alle ' +
-        'fem: risk_of_bias, inconsistency, indirectness, imprecision og publication_bias. Et ' +
-        'domene som ikke lar seg bedømme, er «not_assessable» — ikke tomt',
-    )
-  }
-  if (noAssessable && assessment.evidenceGap === null) {
-    problem(
-      fields.subject,
-      'assessment.evidence_gap',
-      'mangler. «Ingen vurderbar evidens» skal si hva som mangler, ellers er den ikke til å ' +
-        'skille fra at ingen har sett på spørsmålet',
-    )
-  }
-
-  return assessment
-}
-
 /**
  * Leser og kontrollerer ett syntesforslag.
  *
@@ -300,8 +223,10 @@ export function parseClaimSynthesisProposal(value: unknown): ClaimSynthesisPropo
   const links = asObjectList(fields, 'evidence_links').map((link, index) =>
     parseEvidenceLink(fields, link, index),
   )
-  const assessment = parseAssessment(fields, raw(fields, 'assessment'))
-  rejectUnknown(fields)
+  rejectUnknown(fields, {
+    assessment:
+      'hører ikke hjemme i et syntesforslag. Evidensvurderingen er et eget ledd med en egen rolle og en egen identitet, og registreres etter kildestøtteverifikasjonen (EVIDENCE_PIPELINE.md §61, MVP_IMPLEMENTATION_PLAN.md §15). Bruk npm run agent:assess-evidence',
+  })
 
   // Det samme funnet to ganger ville fått ett funn til å se ut som flere
   // uavhengige, og en vurdering til å hvile på en oppblåst evidensmengde.
@@ -325,6 +250,5 @@ export function parseClaimSynthesisProposal(value: unknown): ClaimSynthesisPropo
     generatedBy,
     claim,
     evidenceLinks: links,
-    assessment,
   }
 }

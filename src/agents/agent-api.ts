@@ -1,7 +1,7 @@
 // ============================================================================
 // Data API-flaten en agentkjører bruker
 //
-// Sju funksjoner, alle i `api`, alle kalt uten brukersesjon: en agent har ingen
+// Åtte funksjoner, alle i `api`, alle kalt uten brukersesjon: en agent har ingen
 // brukerkonto, så kalleren er `anon` i Data API-et og legitimasjonen — ikke
 // Data API-rollen — er kontrollen (migrasjon 005e sin hodekommentar).
 //
@@ -12,7 +12,8 @@
 //   api.claim_verification_input         grunnlaget claim-kontrollen gjøres mot (005k)
 //   api.register_claim_verification      registrerer resultatet av den (005k)
 //   api.register_agent_extraction        registrerer én forankret ekstraksjon (005v)
-//   api.register_claim_synthesis         registrerer én påstandsrevisjon med grunnlag (005aj)
+//   api.register_claim_synthesis         registrerer én påstandsrevisjon med grunnlag (005am)
+//   api.register_evidence_assessment     registrerer evidensvurderingen for én revisjon (005am)
 //
 // De to første er felles for alle agentledd. De fire neste kommer i par, ett par
 // per verifikatorrolle: grunnlaget leses, resultatet registreres. Paret er
@@ -48,11 +49,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 import type { Database } from '../types/database.ts'
 import type { ProposedExtraction, ProposedGrounding } from './extraction-proposal.ts'
-import type {
-  ProposedAssessment,
-  ProposedClaimRevision,
-  ProposedEvidenceLink,
-} from './claim-synthesis-proposal.ts'
+import type { ProposedClaimRevision, ProposedEvidenceLink } from './claim-synthesis-proposal.ts'
+import type { ProposedAssessment } from './evidence-assessment-proposal.ts'
 import type { Uuid } from '../types/api.ts'
 import type { AgentCredential } from './agent-credential.ts'
 
@@ -194,7 +192,6 @@ export type AgentDatabase = {
           p_comparator_kind: string
           p_uncertainty_summary: string
           p_evidence_links: readonly Record<string, string>[]
-          p_assessment: Record<string, string | null>
           p_claim_id?: Uuid | null
           p_population_id?: Uuid | null
           p_timeframe_min?: string | null
@@ -206,8 +203,30 @@ export type AgentDatabase = {
           p_magnitude_unit?: string | null
           p_qualifiers?: string | null
         }
-        // jsonb. Formen er dokumentert i migrasjon 005aj og leses av
+        // jsonb. Formen er dokumentert i migrasjon 005am og leses av
         // `parseClaimSynthesisResult`, som avviser et svar som ikke har den.
+        Returns: unknown
+      }
+      register_evidence_assessment: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_run_id: Uuid
+          p_claim_revision_id: Uuid
+          p_seen_evidence_set_digest: string
+          p_framework: string
+          p_certainty_level: string
+          p_rationale: string
+          p_risk_of_bias?: string | null
+          p_inconsistency?: string | null
+          p_indirectness?: string | null
+          p_imprecision?: string | null
+          p_publication_bias?: string | null
+          p_other_considerations?: string | null
+          p_evidence_gap?: string | null
+        }
+        // jsonb. Formen er dokumentert i migrasjon 005am og leses av
+        // `parseEvidenceAssessmentResult`, som avviser et svar som ikke har den.
         Returns: unknown
       }
     }
@@ -343,19 +362,40 @@ export interface EvidenceExtractionApi extends AgentRunApi {
  * den.
  *
  * Formen er databasens, ikke kjørerens: parameterlisten er kontrakten migrasjon
- * 005aj dokumenterer. Kunnskapstypen, aktøren, revisjonsnummeret og
- * vurderingstidspunktet står ikke her, fordi de ikke er kallerens å oppgi.
+ * 005am dokumenterer. Kunnskapstypen, aktøren og revisjonsnummeret står ikke
+ * her, fordi de ikke er kallerens å oppgi — og evidensvurderingen står ikke her
+ * fordi den er et annet ledd (`RegisterEvidenceAssessmentArgs`).
  */
 export interface RegisterClaimSynthesisArgs {
   readonly agentRunId: Uuid
   readonly claim: ProposedClaimRevision
   readonly evidenceLinks: readonly ProposedEvidenceLink[]
-  readonly assessment: ProposedAssessment
 }
 
 /** Kallet synteseagenten gjør, som én grenseflate. */
 export interface ClaimSynthesisApi extends AgentRunApi {
   registerSynthesis(args: RegisterClaimSynthesisArgs): Promise<unknown>
+}
+
+/**
+ * Én foreslått evidensvurdering, slik `api.register_evidence_assessment` tar
+ * imot den.
+ *
+ * `seenEvidenceSetDigest` er avtrykket av det evidenssettet utkastet ble laget
+ * mot. Databasen sammenligner det under en lås på revisjonsraden: en lenke som
+ * er kommet til underveis, avviser registreringen framfor å bli stilltiende
+ * forseglet av en gradering som aldri så den (migrasjon 005am).
+ */
+export interface RegisterEvidenceAssessmentArgs {
+  readonly agentRunId: Uuid
+  readonly claimRevisionId: Uuid
+  readonly seenEvidenceSetDigest: string
+  readonly assessment: ProposedAssessment
+}
+
+/** Kallet evidensvurderingsagenten gjør, som én grenseflate. */
+export interface EvidenceAssessmentApi extends AgentRunApi {
+  registerAssessment(args: RegisterEvidenceAssessmentArgs): Promise<unknown>
 }
 
 /** Kallene claim-verifikatoren gjør, som én grenseflate. */
@@ -369,6 +409,7 @@ export const EVIDENCE_EXTRACTION_ROLE = 'evidence_extraction'
 export const EXTRACTION_VERIFICATION_ROLE = 'extraction_verification'
 export const CITATION_SUPPORT_VERIFICATION_ROLE = 'citation_support_verification'
 export const CLAIM_SYNTHESIS_ROLE = 'claim_synthesis'
+export const EVIDENCE_ASSESSMENT_ROLE = 'evidence_assessment'
 
 /**
  * En avvisning fra `api`, med databasens egen SQLSTATE bevart.
@@ -410,26 +451,75 @@ export function isUniqueViolation(cause: unknown): boolean {
 }
 
 /**
- * Om avvisningen **beviser** at databasen ikke skrev noe.
+ * SQLSTATE-ene som betyr at **forslaget** ble avvist.
  *
- * PostgREST kjører ett RPC-kall i én transaksjon. Svarer den med en SQLSTATE,
- * har funksjonen reist et unntak, og transaksjonen er rullet tilbake: ingenting
- * ble skrevet. Det er det eneste sikre beviset en kjøring har for det.
+ * Lista er lukket og uttømmende, og det er hele poenget. Et ledd som skal kunne
+ * føre ett forslag som «overhoppet» og gå videre til det neste, påstår to ting
+ * på én gang: at ingenting ble skrevet, *og* at det var forslaget det var noe i
+ * veien med. Det første følger av at PostgREST kjører kallet i én transaksjon —
+ * et unntak fra funksjonen ruller den tilbake. Det andre gjør det ikke.
  *
- * Alt annet er **uavklart**, ikke «ingenting skjedd»: en forbindelse som ryker
- * etter at serveren har committet, en tidsavbrudd, et svar som ikke har den
- * formen kontrakten lover. Et ledd som behandlet dem som en avvisning, ville
- * rapportert «ingenting registrert» om en rad som finnes — og invitert til en
- * ny kjøring som lager den en gang til, der skriveveien ikke er idempotent.
+ * En vranglås (`40P01`), en serialiseringsfeil (`40001`), en manglende rettighet
+ * (`42501`), en ressursgrense (klasse 53) eller en intern databasefeil (`XX000`)
+ * ruller også transaksjonen tilbake — men de sier ingenting om forslaget, og de
+ * gjentar seg gjerne for det neste. Ført som «overhoppet» ville de blitt til en
+ * kjøring som lukkes som `succeeded` med en rapport som sa at forslagene ikke
+ * holdt mål, mens det som faktisk sviktet, var driften. De skal velte kjøringen.
  *
- * SQLSTATE er fem tegn, store bokstaver og siffer. PostgRESTs egne koder
- * (`PGRST202` og slektningene) er lengre, og faller derfor utenfor. De betyr
- * også at ingenting ble skrevet, men de betyr i tillegg at *ingen* kjøring i
- * køen kan lykkes, og da er det riktig at kjøringen stopper framfor å føre
- * hvert forslag som overhoppet.
+ * Kodene under er de databasen faktisk svarer med når det er forslaget som ikke
+ * holder: de tre skriveveien selv reiser, og de datafeilene en verdi fra filen
+ * kan utløse på vei inn i en kolonne.
+ *
+ * `23505` (unique_violation) står **ikke** her, med vilje. På ekstraksjonsveien
+ * betyr den «nøyaktig dette funnet er registrert fra før» og håndteres for seg
+ * (`isUniqueViolation`); på synteseveien ville den betydd at noen andre vant
+ * kappløpet om revisjonsnummeret, altså samtidighet — ikke et forslag som ikke
+ * holder.
+ *
+ * Nye koder legges til her når databasen viser at den faktisk svarer med dem for
+ * et forslagsspesifikt avslag. Å utelate en kode som burde stått her, gir en
+ * kjøring som feiler for høylytt; å ta inn en som ikke burde, gir en kjøring som
+ * tier om en driftsfeil. Bare den ene av de to feilene er trygg.
  */
-export function isDatabaseRejection(cause: unknown): boolean {
-  return cause instanceof AgentApiError && cause.code !== null && /^[0-9A-Z]{5}$/.test(cause.code)
+const PROPOSAL_REJECTION_CODES: ReadonlySet<string> = new Set([
+  // Reist av skriveveiene selv (migrasjon 005aj, 005am og gatefunksjonene de
+  // kaller): et vilkår i forslaget holder ikke.
+  '22023', // invalid_parameter_value
+  '23001', // restrict_violation
+  'P0002', // no_data_found
+  // Datafeil: en verdi fra filen som kolonnen ikke tar imot.
+  '22001', // string_data_right_truncation
+  '22003', // numeric_value_out_of_range
+  '22007', // invalid_datetime_format — et tidsrom som ikke er et interval
+  '22P02', // invalid_text_representation — en verdi utenfor et enum, eller en ugyldig uuid
+  // Brudd på en regel tabellen håndhever om raden forslaget ville blitt.
+  '23502', // not_null_violation
+  '23503', // foreign_key_violation
+  '23514', // check_violation
+])
+
+/**
+ * Om avvisningen betyr at **forslaget** ikke holdt mål — og dermed at
+ * ingenting ble skrevet, og at kjøringen trygt kan gå videre til det neste.
+ *
+ * Se `PROPOSAL_REJECTION_CODES` for hvilke koder som regnes som det, og hvorfor
+ * lista er lukket. Alt annet er enten en driftsfeil eller et **uavklart** utfall
+ * — en forbindelse som ryker etter at serveren har committet, et tidsavbrudd, et
+ * svar som ikke har den formen kontrakten lover — og begge deler skal stoppe
+ * kjøringen. Skriveveiene er med vilje ikke idempotente
+ * (`syntheses/README.md`), så et uavklart utfall ført som «overhoppet» ville
+ * invitert til en ny kjøring som lager raden en gang til.
+ *
+ * PostgRESTs egne koder (`PGRST202` og slektningene) faller utenfor av samme
+ * grunn: de betyr at ingenting ble skrevet, men også at *ingen* kjøring i køen
+ * kan lykkes.
+ */
+export function isProposalRejection(cause: unknown): boolean {
+  return (
+    cause instanceof AgentApiError &&
+    cause.code !== null &&
+    PROPOSAL_REJECTION_CODES.has(cause.code)
+  )
 }
 
 /**
@@ -685,6 +775,9 @@ export function createEvidenceExtractionApi(
  * gjennom den redaksjonelle lesemodellen eller gjennom et menneske, ikke gjennom
  * en agentflate det selv kan skrive til. Oversettelsen til databasens
  * parameternavn skjer her, som for de øvrige leddene.
+ *
+ * Porten har ingen evidensvurdering: den er et annet ledd med en egen rolle og
+ * en egen legitimasjon (`createEvidenceAssessmentApi`).
  */
 export function createClaimSynthesisApi(
   client: AgentClient,
@@ -697,7 +790,6 @@ export function createClaimSynthesisApi(
 
     async registerSynthesis(args) {
       const c = args.claim
-      const a = args.assessment
       const { data, error } = await client.rpc('register_claim_synthesis', {
         ...identity,
         p_agent_run_id: args.agentRunId,
@@ -723,21 +815,53 @@ export function createClaimSynthesisApi(
           directness: link.directness,
           relevance_note: link.relevanceNote,
         })),
-        p_assessment: {
-          framework: a.framework,
-          certainty_level: a.certaintyLevel,
-          risk_of_bias: a.riskOfBias,
-          inconsistency: a.inconsistency,
-          indirectness: a.indirectness,
-          imprecision: a.imprecision,
-          publication_bias: a.publicationBias,
-          other_considerations: a.otherConsiderations,
-          rationale: a.rationale,
-          evidence_gap: a.evidenceGap,
-        },
       })
       if (error !== null) {
         fail('api.register_claim_synthesis', error)
+      }
+      return data
+    },
+  }
+}
+
+/**
+ * Evidensvurderingsagentens port mot en faktisk Supabase-klient.
+ *
+ * Samme form som synteseporten, egen rolle og egen legitimasjon: en identitet i
+ * det ene leddet kan ikke utføre operasjonen i det andre. Det er nettopp det
+ * skillet EVIDENCE_PIPELINE.md §61 krever — «en rolle som bare er et navn i en
+ * prompt, er ingen grense» — og grunnen til at vurderingen ble tatt ut av
+ * synteseveien i migrasjon 005am.
+ */
+export function createEvidenceAssessmentApi(
+  client: AgentClient,
+  credential: AgentCredential,
+): EvidenceAssessmentApi {
+  const identity = identityOf(credential)
+
+  return {
+    ...createAgentRunApi(client, identity, EVIDENCE_ASSESSMENT_ROLE),
+
+    async registerAssessment(args) {
+      const a = args.assessment
+      const { data, error } = await client.rpc('register_evidence_assessment', {
+        ...identity,
+        p_agent_run_id: args.agentRunId,
+        p_claim_revision_id: args.claimRevisionId,
+        p_seen_evidence_set_digest: args.seenEvidenceSetDigest,
+        p_framework: a.framework,
+        p_certainty_level: a.certaintyLevel,
+        p_rationale: a.rationale,
+        p_risk_of_bias: a.riskOfBias,
+        p_inconsistency: a.inconsistency,
+        p_indirectness: a.indirectness,
+        p_imprecision: a.imprecision,
+        p_publication_bias: a.publicationBias,
+        p_other_considerations: a.otherConsiderations,
+        p_evidence_gap: a.evidenceGap,
+      })
+      if (error !== null) {
+        fail('api.register_evidence_assessment', error)
       }
       return data
     },

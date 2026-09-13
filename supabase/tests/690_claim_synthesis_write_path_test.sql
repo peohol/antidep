@@ -1,11 +1,14 @@
--- Migrasjon 005aj og 004a — synteseagentens skrivevei, og proveniensen på
+-- Migrasjon 005aj, 005am og 004a — synteseagentens skrivevei, og proveniensen på
 -- påstandsrevisjonen.
 --
 -- Filen dekker den ene veien en påstand kan bli til på: at den går gjennom
--- rollen claim_synthesis og ingen annen, at påstand, revisjon, evidenslenker og
--- evidensvurdering blir til i samme transaksjon eller ikke i det hele tatt, at
--- evidensen må ha nådd kontrollnivået EVIDENCE_PIPELINE.md §26 og §27 krever før
--- den kan bære en påstand, og at revisjonen etterlater en auditrad.
+-- rollen claim_synthesis og ingen annen, at påstand, revisjon og evidenslenker
+-- blir til i samme transaksjon eller ikke i det hele tatt, at evidensen må ha
+-- nådd kontrollnivået EVIDENCE_PIPELINE.md §26 og §27 krever før den kan bære en
+-- påstand, og at revisjonen etterlater en auditrad.
+--
+-- Evidensvurderingen hører IKKE til denne veien etter migrasjon 005am: den er et
+-- eget ledd med sin egen rolle og sin egen identitet, og prøves i 700.
 --
 -- Den bærende påstanden: hvert vilkår i
 -- workflow.assert_evidence_usable_for_synthesis(uuid[]) er prøvd ved å svekke
@@ -17,7 +20,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(47);
+select plan(45);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -59,6 +62,20 @@ select ok(
 select has_function(
   'workflow', 'assert_evidence_usable_for_synthesis',
   'workflow.assert_evidence_usable_for_synthesis() finnes'
+);
+
+-- Evidensvurderingen er ikke lenger en parameter på synteseveien (migrasjon
+-- 005am). Uten dette vilkåret ville en gjenoppstått overlast med p_assessment
+-- vært usynlig for prøvene, og graderingen kunnet skrives i synteserollen igjen.
+select is_empty(
+  $$
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'api' and p.proname = 'register_claim_synthesis'
+      and 'p_assessment' = any (p.proargnames)
+  $$,
+  'skriveveien har ingen evidensvurderings-parameter: graderingen er et eget ledd'
 );
 
 -- Kunnskapstypen er ikke en parameter kalleren kan velge (migrasjon 005aj).
@@ -394,18 +411,7 @@ begin
     p_direction => 'increase',
     p_qualifiers => 'Grunnlaget er armspesifikt og tillater ingen sammenligning med andre virkestoffer.',
     p_uncertainty_summary => 'Grunnlaget er ett evidensfunn fra én studie, uten tallverdi og uten konfidensintervall.',
-    p_evidence_links => p_links,
-    p_assessment => jsonb_build_object(
-      'framework', 'grade',
-      'certainty_level', 'very_low',
-      'risk_of_bias', 'serious',
-      'inconsistency', 'not_assessable',
-      'indirectness', 'not_serious',
-      'imprecision', 'not_assessable',
-      'publication_bias', 'not_assessable',
-      'rationale', 'Ett evidensfunn fra én randomisert studie ligger til grunn i fiksturen for 690.',
-      'evidence_gap', 'Størrelsen er ikke tallfestet i det registrerte grunnlaget.'
-    )
+    p_evidence_links => p_links
   );
 end;
 $$;
@@ -482,42 +488,10 @@ select is(
 );
 
 select is(
-  (select a.certainty_level::text from knowledge.evidence_assessments a
-   where a.claim_revision_id = (select (payload ->> 'claim_revision_id')::uuid from result where label = 'first')),
-  'very_low',
-  'evidensvurderingen er registrert i samme kall'
-);
-
-select is(
-  (select a.created_by_actor_id from knowledge.evidence_assessments a
-   where a.claim_revision_id = (select (payload ->> 'claim_revision_id')::uuid from result where label = 'first')),
-  (select id from fixture where name = 'synthesiser'),
-  'evidensvurderingen er attribuert til kjøringens egen aktør'
-);
-
-select is(
   (select payload ->> 'evidence_set_digest' from result where label = 'first'),
   (select knowledge.claim_evidence_set_digest(
      (select (payload ->> 'claim_revision_id')::uuid from result where label = 'first'))),
   'svaret bærer avtrykket av det evidenssettet revisjonen hviler på'
-);
-
--- Evidenssettet er forseglet av vurderingen: en lenke til kan ikke legges til.
-select throws_ok(
-  $$
-    insert into knowledge.claim_evidence_links (
-      claim_revision_id, evidence_item_id, relationship_type, directness,
-      relevance_note, created_by_actor_id
-    )
-    select
-      (select (payload ->> 'claim_revision_id')::uuid from result where label = 'first'),
-      (select id from item where label = 'unverified'),
-      'supports', 'direct', 'Forsøk på å utvide et forseglet evidenssett.',
-      (select id from fixture where name = 'synthesiser')
-  $$,
-  '23001',
-  null,
-  'evidenssettet er forseglet av evidensvurderingen skriveveien registrerte'
 );
 
 -- ===========================================================================
@@ -676,7 +650,7 @@ select throws_ok(
         (select id from fixture where name = 'drug'),
         'Påstand forsøkt registrert av ekstraksjonsagenten.',
         'Prøve i 690.', 'none', 'Prøve i 690.',
-        %L::jsonb, '{}'::jsonb)$$,
+        %L::jsonb)$$,
     (select secret from cred where label = 'extractor'),
     pg_temp.link('ok')::text
   ),
@@ -693,7 +667,7 @@ select throws_ok(
         (select id from fixture where name = 'drug'),
         'Påstand forsøkt registrert på en annen identitets kjøring.',
         'Prøve i 690.', 'none', 'Prøve i 690.',
-        %L::jsonb, '{}'::jsonb)$$,
+        %L::jsonb)$$,
     (select secret from cred where label = 'synthesiser'),
     pg_temp.link('ok')::text
   ),
@@ -708,8 +682,7 @@ create temporary table before_counts as
 select
   (select count(*) from knowledge.claims) as claims,
   (select count(*) from knowledge.claim_revisions) as revisions,
-  (select count(*) from knowledge.claim_evidence_links) as links,
-  (select count(*) from knowledge.evidence_assessments) as assessments;
+  (select count(*) from knowledge.claim_evidence_links) as links;
 
 do $$
 begin
@@ -735,11 +708,6 @@ select is(
   (select count(*) from knowledge.claim_evidence_links), (select links from before_counts),
   'en avvist syntese etterlater ingen evidenslenke'
 );
-select is(
-  (select count(*) from knowledge.evidence_assessments), (select assessments from before_counts),
-  'en avvist syntese etterlater ingen evidensvurdering'
-);
-
 -- ===========================================================================
 -- Del 10 — Revisjonen er et forslag, ikke noe godkjent
 -- ===========================================================================
@@ -757,6 +725,18 @@ select is(
    where cv.claim_revision_id = (select (payload ->> 'claim_revision_id')::uuid from result where label = 'second')),
   0::bigint,
   'skriveveien registrerer ingen claim-verifikasjon: generering og verifikasjon er atskilt'
+);
+
+-- Migrasjon 005am: graderingen av evidenssikkerheten er et annet ansvar, med en
+-- annen rolle og en annen identitet, og kommer etter kildestøtteverifikasjonen
+-- (EVIDENCE_PIPELINE.md §61, MVP_IMPLEMENTATION_PLAN.md §15).
+select is(
+  (select count(*) from knowledge.evidence_assessments a
+   where a.claim_revision_id in (
+     select (payload ->> 'claim_revision_id')::uuid from result
+   )),
+  0::bigint,
+  'skriveveien registrerer ingen evidensvurdering: graderingen er et eget ledd'
 );
 
 select is(

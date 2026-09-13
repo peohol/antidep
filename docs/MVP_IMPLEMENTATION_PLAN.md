@@ -1503,7 +1503,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2272 pgTAP-assertions over 69 testfiler.
+Databaselaget teller nå 2304 pgTAP-assertions over 70 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1671,19 +1671,16 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de åtti migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de åttiåtte migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
    007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab,
    005ac, 003e, 007i, 003f, 005ad, 005ae, 003g, 008i, 005af, 003h, 008j, 005ah, 005ai, 008k,
-   004a, 005aj og 005ak — i
-   filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6,
-   11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   004a, 005aj, 005ak, 005al, 004b, 005am og 005an — i
+   filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6, 11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle åttifire ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle åttiåtte ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -8155,6 +8152,12 @@ som komparator.
 
 ### 74.47 Påstandsdannelsen har fått en operativ skrivevei, og den første reelle revisjonen står i køen
 
+> **Merk:** To ting i dette avsnittet er rettet i **§74.48** etter teknisk review, i
+> den samme PR-en: evidensvurderingen er tatt ut av synteseveien og flyttet til sitt
+> eget ledd med sin egen rolle, og klassifiseringen av en avvist registrering er
+> snevret inn. Avsnittet her er beholdt som beskrivelsen av det leveransen bygget;
+> §74.48 er det som faktisk står i basen.
+
 Kjeden §15 beskriver, har hatt ett ledd uten en vei inn. Kilden, kildeversjonen,
 evidensfunnet, forankringen, den maskinelle kontrollen, den menneskelige
 kildekontrollen, claim-verifikasjonen, reviewbeslutningen og publiseringen har
@@ -8230,6 +8233,12 @@ påstandsidentiteten eller en ny revisjon av en som finnes, revisjonen,
 evidenslenkene og evidensvurderingen. Alt eller ingenting, fordi en halvferdig
 syntese ikke er en tilstand som kan rettes opp: vurderingen forsegler settet, så
 en revisjon uten den kan aldri få resten av grunnlaget sitt.
+
+> Evidensvurderingen er **ikke** lenger en del av dette kallet. Migrasjon 005am
+> flyttet den til `api.register_evidence_assessment(...)`, med sin egen rolle, sin
+> egen identitet og et krav om at kildestøtteverifikasjonen er gjort først (§74.48).
+> Argumentet over gjelder fortsatt evidenslenkene, som er det som må følge
+> revisjonen.
 
 Fire ting er bevisst **ikke** kallerens:
 
@@ -8354,10 +8363,13 @@ ville laget påstanden en gang til.
 
 «Overhoppet» er en påstand om at ingenting ble skrevet, og krever bevis. Det
 eneste beviset en kjøring har, er en SQLSTATE: PostgREST kjører kallet i én
-transaksjon, og et unntak fra funksjonen ruller den tilbake. `isDatabaseRejection`
-er den grensen. Alt annet stopper nå kjøringen, som lukkes som `failed` med en
-beskjed om at raden kan finnes og må kontrolleres i `/review` før noe kjøres om
-igjen.
+transaksjon, og et unntak fra funksjonen ruller den tilbake. Alt annet stopper nå
+kjøringen, som lukkes som `failed` med en beskjed om at raden kan finnes og må
+kontrolleres i `/review` før noe kjøres om igjen.
+
+> Grensen var for vid: **enhver** SQLSTATE ble lest som en avvisning av forslaget,
+> også en vranglås eller en manglende rettighet. Den er snevret inn til en lukket
+> liste i §74.48.
 
 Nettleserprøven er kjørt med innloggingen **stubbet** og Data API-et erstattet av
 en lokal stubb som serverer nøyaktig de svarene produksjon gir. Grunnen er at
@@ -8389,6 +8401,167 @@ Peders egen: den norske populasjonsteksten skal si «depressiv lidelse», ikke
 «alvorlig depressiv lidelse». Veien er `npm run agent:reextract-evidence` fra en
 maskin som har Fava-PDF-en, og deretter en ny kildekontroll i
 `/extraction-review`. Det gamle funnet består urørt som historisk objekt.
+
+### 74.48 Evidensvurderingen er tatt ut av synteseveien, og en avvisning må være forslagets
+
+Teknisk review av §74.47 fant to ting som måtte rettes før merge. Begge er rettet
+med **fremoverrettede** migrasjoner: de fire som allerede var kjørt, er ikke
+redigert, slik at en fersk CI-stack og produksjon får den samme historikken.
+
+#### 1. Ansvarsgrensen mellom påstand og gradering var bare et navn
+
+`EVIDENCE_PIPELINE.md` §61 skiller `ClaimAgent` — «verifiserte evidensfunn» inn,
+«`Claim`/`ClaimRevision`-forslag» ut — fra `EvidenceAssessor`, «samlet evidens»
+inn, «`EvidenceAssessment`» ut. Og den er uttrykkelig på hva skillet skal være:
+
+> Ansvarsgrensen skal samtidig være en teknisk grense: hver rolle som faktisk
+> skriver til kunnskapsbasen, har en egen aktør med en egen identitet og en egen
+> legitimasjon … En rolle som bare er et navn i en prompt, er ingen grense.
+
+Med 005aj skrev synteseagenten påstanden, evidenslenkene **og** den endelige
+GRADE-vurderingen i én transaksjon, med samme aktør og samme legitimasjon. Skillet
+var da nettopp et navn.
+
+**Rettelsen** er fire migrasjoner:
+
+| Migrasjon | Hva den gjør |
+|---|---|
+| 005al | `evidence_assessment` inn i `provenance.agent_role`, alene i sin egen fil — en ny enumverdi kan ikke brukes i transaksjonen som innfører den. Verdien står etter `adversarial_review`, som er `EvidenceAssessor` sin plass i §61 sin rolletabell |
+| 004b | `agent_run_id` og `agent_run_role` på `knowledge.evidence_assessments`, med de samme to sammensatte fremmednøklene mot `provenance.agent_runs` som revisjonen fikk i 004a. Vurderingen er nå sin egen handling, i sin egen kjøring, og må kunne spores som det |
+| 005am | `api.register_claim_synthesis(...)` slippes og lages på nytt **uten** `p_assessment`, og `api.register_evidence_assessment(...)` kommer til |
+| 005an | aktøren `agent:evidence-assessment` og identiteten `agent-identity:evidence-assessment-01`, inert til legitimasjon utstedes |
+
+Synteseveien måtte slippes og lages på nytt, ikke erstattes med
+`create or replace`: en parameter kan ikke fjernes den veien. En `or replace` med
+færre parametre ville laget en **andre** overlast ved siden av den gamle, og en
+kaller som fortsatt sendte `p_assessment`, ville truffet den gamle veien og
+skrevet vurderingen i synteserollen igjen. Prøve 690 kontrollerer nå eksplisitt at
+parameteren ikke finnes, og prøve 370 lister den nye signaturen.
+
+#### Rekkefølgen — og en motstrid mellom to styrende dokumenter
+
+`api.register_evidence_assessment(...)` krever at kildestøtteverifikasjonen er
+gjort **først**. `workflow.assert_claim_verified_before_assessment(uuid)` leser
+publiseringsgatens G8, G9, G9b og G9c med gatens egne funksjoner, slik
+`assert_evidence_usable_for_synthesis` leser G4 til G7 — samme grep, samme grunn:
+de to kan ikke bli uenige.
+
+Rekkefølgen er §15 sin: «claim-støtte verifiseres → EvidenceAssessment
+registreres». **`EVIDENCE_PIPELINE.md` nummererer fasene motsatt:**
+`EvidenceAssessment` er §34, citation-verifier er §39.
+
+Motstriden er reell, og er ikke avgjort i stillhet. Den strengeste lesningen er
+valgt, og den er også den faglig holdbare: GRADE-domenene **indirekthet**,
+**upresisjon** og **inkonsistens** er vurderinger av hvor godt evidensen treffer
+påstanden *slik den er formulert* — populasjon, komparator, tidsramme, retning og
+størrelse. Det er nøyaktig de sju punktene claim-verifikasjonen bedømmer
+(`DATABASE_ARCHITECTURE.md` §30). En sikkerhetsgradering gitt før noen hadde
+kontrollert at kilden faktisk støtter ordlyden, ville vært en gradering av et
+ukontrollert samsvar.
+
+Rekkefølgen innfører ingen blindvei: gaten krever allerede både kontrollen (G8,
+G9, G9b, G9c) og vurderingen (G10), hver for seg, og
+`knowledge.claim_evidence_set_digest(uuid)` dekker bare lenke-ID-ene — en vurdering
+registrert etterpå endrer ikke avtrykket og ugyldiggjør verken G9b eller G13.
+Skulle prosjektet ville følge `EVIDENCE_PIPELINE.md` sin fasenummerering i stedet,
+er det en faglig arkitekturbeslutning som hører hjemme i styringsdokumentene, og
+vilkåret kan da fjernes i én fremoverrettet migrasjon uten at noe annet må endres.
+**Ført som åpen dokumentmotstrid, ikke som teknisk gjeld.**
+
+#### Vurderingen forsegler settet, og må derfor si hvilket sett den så
+
+Forslaget oppgir `evidence_set_digest`. Databasen tar `FOR UPDATE` på
+revisjonsraden og sammenligner — den samme
+`workflow.assert_evidence_set_unchanged(uuid, text)` reviewerens egen godkjenning
+bruker (§74.36). Uten den kunne en lenke commitet i vinduet mellom lesningen og
+registreringen og blitt stilltiende forseglet av en gradering som aldri så den.
+
+Kontrollnivået på evidensen leses dessuten **på nytt** ved vurderingen, med den
+samme `assert_evidence_usable_for_synthesis`: et funn kan ha blitt trukket tilbake
+etter at påstanden ble laget. Prøve 700 beviser nettopp det ved å trekke tilbake
+ekstraksjonen etter en bekreftet kontroll.
+
+#### 2. En driftsfeil er ikke et forslag som ikke holder mål
+
+`isDatabaseRejection` leste **enhver** femtegns SQLSTATE som «forslaget ble
+avvist, ingenting ble skrevet, gå videre til neste». Det første og andre leddet
+stemmer for alle av dem; det tredje gjør det ikke. En vranglås (`40P01`), en
+serialiseringsfeil (`40001`), en manglende rettighet (`42501`) eller en intern
+databasefeil (`XX000`) sier ingenting om forslaget, og gjentar seg gjerne for det
+neste. Kjøringen ville lukket seg som `succeeded` med en rapport om at forslagene
+ikke holdt mål, mens det som sviktet, var driften.
+
+`isProposalRejection` er nå en **lukket** liste: de tre kodene skriveveiene selv
+reiser (`22023`, `23001`, `P0002`), og de datafeilene en verdi fra filen kan
+utløse på vei inn i en kolonne (`22001`, `22003`, `22007`, `22P02`, `23502`,
+`23503`, `23514`). `23505` står bevisst **utenfor**: på synteseveien ville den
+betydd at noen andre vant kappløpet om revisjonsnummeret, altså samtidighet.
+
+Å utelate en kode som burde stått der, gir en kjøring som feiler for høylytt; å ta
+inn en som ikke burde, gir en kjøring som tier om en driftsfeil. Bare den ene av
+de to feilene er trygg. Regresjonsprøver dekker begge retningene, for begge
+kjøringene.
+
+#### Den gamle revisjonen kunne ikke fjernes, og det er med vilje
+
+Revisjon `24aefcd7` og evidensvurderingen på den ble skrevet av den gamle veien.
+Prosjektets egen `knowledge.discard_unpublished_claim_artifacts(...)` **avviser**
+å fjerne den:
+
+```text
+Et evidensfunn under påstanden cfd99886… er menneskelig kildekontrollert,
+og påstanden fjernes ikke.
+HINT: Kontrollen dokumenterer hva en kontrollør faktisk fant. Å fjerne påstanden
+ville tatt lenken kontrollen gjaldt, med seg (§12, §14).
+```
+
+Vakten er ikke svekket for å komme utenom. Korreksjonsveien modellen selv har for
+et upublisert utkast, er en **ny revisjon** som viderefører den gamle: historikken
+består, ingenting overskrives. `c6b5dd39` er derfor revisjon **2** av den samme
+påstanden, laget gjennom den korrigerte pipelinen, og den peker på `24aefcd7` som
+den den erstatter. Revisjon 1 kan ikke godkjennes — gaten stopper den på G8 — så
+den bærer ingen klinisk risiko der den står.
+
+Reviewkøen filtrerer ikke bort en revisjon som er videreført, og publiseringsgaten
+har heller ikke noe vilkår om det. Begge deler er ført som teknisk gjeld i et eget
+issue; ingen av dem blokkerer denne leveransen.
+
+#### Hva som ble kjørt mot produksjon
+
+| Ledd | Utfall |
+|---|---|
+| Migrasjonene 005al, 004b, 005am og 005an | deployet og registrert; 88 av 88 filer står i prosjektet |
+| `knowledge.discard_unpublished_claim_artifacts` på `cfd99886` | avvist av vakten over; ingenting fjernet |
+| `npm run agent:synthesise-claims` | kjøring `5f5275ae`, 1 revisjon registrert, 0 avvist |
+| Påstand `cfd99886`, revisjon `c6b5dd39` | nummer 2, viderefører `24aefcd7`, 1 evidenslenke (`supports`/`indirect`), **ingen** evidensvurdering |
+| `workflow.assert_claim_verified_before_assessment('c6b5dd39…')` | avvist: «har ingen registrert claim-verifikasjon, og grunnlaget kan ikke graderes ennå» |
+| Publiseringsgaten på `c6b5dd39` | blokkert på G8, som før |
+
+#### Kontrollene
+
+| Kontroll | Utfall |
+|---|---|
+| `npm run lint` | grønn |
+| `npm run format:check` | grønn |
+| `./scripts/verify-counts.sh` | grønn |
+| `npm run typecheck` | grønn |
+| `npm run test` | grønn |
+| `npm run build` | grønn |
+| `supabase/tests/690_…` | 45 assertions, kjørt mot det hostede prosjektet, grønn |
+| `supabase/tests/700_…` | 34 assertions, kjørt mot det hostede prosjektet, grønn |
+| Nettleser, 1280 px og 390 px | `/review` og revisjonssiden gjengitt mot det faktiske svaret fra produksjon |
+
+#### Hva som gjenstår
+
+**1. Peder gjør kildestøttekontrollen av `c6b5dd39` i `/review`.** Den guidede
+økten er den samme som før. Kontrollen hans er en claim-verifikasjon i seg selv og
+lukker G8 og G9 når den registreres.
+
+**2. Evidensvurderingen registreres etterpå**, med
+`npm run agent:assess-evidence`. Den kan ikke registreres før punkt 1 er gjort —
+det er hele poenget med rettelsen.
+
+**3. Sertralinfunnet må fortsatt ekstraheres om**, uendret fra §74.47.
 
 ---
 

@@ -371,20 +371,24 @@ export function parseReextractionArguments(
 }
 
 // ----------------------------------------------------------------------------
-// Påstandsdannelsen
+// Leddene som registrerer et utkast fra en fil
 //
-// Samme form som re-ekstraksjonen, uten arbeidsformen: et syntesforslag har
-// ingen `extraction_method` å velge mellom, og hvem som laget utkastet, står i
-// filens egen `generated_by` (`claim-synthesis-proposal.ts`).
+// Påstandsdannelsen og evidensvurderingen tar de samme tre valgene, og er derfor
+// én parser: to nesten like ville vært to steder å glemme en grense. Samme form
+// som re-ekstraksjonen, uten arbeidsformen — et utkast har ingen
+// `extraction_method` å velge mellom, og hvem som laget det, står i filens egen
+// `generated_by`.
 // ----------------------------------------------------------------------------
 
-export interface SynthesisCliOptions {
+export interface DraftedProposalCliOptions {
   readonly directory: string | null
   readonly proposalPaths: readonly string[]
   readonly dryRun: boolean
 }
 
-export function parseSynthesisArguments(argv: readonly string[]): SynthesisCliOptions | 'help' {
+export function parseDraftedProposalArguments(
+  argv: readonly string[],
+): DraftedProposalCliOptions | 'help' {
   let directory: string | null = null
   const proposalPaths: string[] = []
   let dryRun = false

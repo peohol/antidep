@@ -99,8 +99,8 @@ select enum_has_labels(
   'provenance', 'agent_role',
   array['source_discovery', 'source_quality_assessment', 'evidence_extraction',
         'extraction_verification', 'claim_synthesis', 'adversarial_review',
-        'citation_support_verification', 'editorial_compression'],
-  'provenance.agent_role dekker de sju agentrollene i ANTIDEP_CONSTITUTION.md §10 og ekstraksjonsverifikatoren i EVIDENCE_PIPELINE.md §61'
+        'evidence_assessment', 'citation_support_verification', 'editorial_compression'],
+  'provenance.agent_role dekker de sju agentrollene i ANTIDEP_CONSTITUTION.md §10, ekstraksjonsverifikatoren og evidensvurderingsagenten i EVIDENCE_PIPELINE.md §61'
 );
 select enum_has_labels(
   'workflow', 'role_scope_type', array['clinical_concept'],

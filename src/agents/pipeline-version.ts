@@ -109,7 +109,7 @@ export const EVIDENCE_EXTRACTION_PREMISES: AgentRunPremises = {
 }
 
 /**
- * Påstandsdannelsens egne premisser (migrasjon 005aj, 005ak).
+ * Påstandsdannelsens egne premisser (migrasjon 005am, 005ak).
  *
  * Kjøringen som registrerer et syntesforslag, er *ikke* leddet som formulerte
  * påstanden — nøyaktig samme forhold som mellom ekstraksjonskjøringen og
@@ -127,5 +127,24 @@ export const CLAIM_SYNTHESIS_PREMISES: AgentRunPremises = {
   model: 'proposal-registered-synthesis',
   modelVersion: '1.0.0',
   promptTemplateVersion: 'claim-synthesis/proposal/1',
+  pipelineVersion: ANTIDEP_EVIDENCE_PIPELINE_VERSION,
+}
+
+/**
+ * Evidensvurderingens egne premisser (migrasjon 005am, 005an).
+ *
+ * Samme forhold som for de øvrige leddene: kjøringen som registrerer et
+ * vurderingsforslag, er ikke leddet som gjorde vurderingen. Den kontrollerer
+ * formen på forslaget og skriver raden, deterministisk, av Antideps egen kode.
+ *
+ * Erklæringen om hvilken modell som faktisk laget utkastet, føres i kjøringens
+ * `input_manifest` (`evidence-assessment-proposal.ts`, ANTIDEP_CONSTITUTION.md
+ * §20, EVIDENCE_PIPELINE.md §65).
+ */
+export const EVIDENCE_ASSESSMENT_PREMISES: AgentRunPremises = {
+  provider: 'antidep',
+  model: 'proposal-registered-assessment',
+  modelVersion: '1.0.0',
+  promptTemplateVersion: 'evidence-assessment/proposal/1',
   pipelineVersion: ANTIDEP_EVIDENCE_PIPELINE_VERSION,
 }

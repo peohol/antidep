@@ -149,17 +149,27 @@ select is_empty(
         -- som faktisk har EXECUTE, kontrolleres i
         -- 650_build_extraction_assignment_test.sql.
         'api.build_extraction_assignment(uuid,text[],text[],text[])',
-        -- Migrasjon 005aj. Synteseagentens skrivevei: én påstandsrevisjon med
-        -- identiteten, evidenslenkene og evidensvurderingen sin, i én
-        -- transaksjon. Som de øvrige agentendepunktene er den kjørbar for anon
-        -- og authenticated, fordi en agent ikke har en brukerkonto: kontrollen
-        -- er legitimasjonen og den eksplisitte rollen `claim_synthesis`, ikke
-        -- Data API-rollen. Hvilke roller som faktisk har EXECUTE, kontrolleres i
-        -- 690_claim_synthesis_write_path_test.sql.
-        'api.register_claim_synthesis(text,text,uuid,uuid,uuid,text,text,text,text,jsonb,jsonb,uuid,uuid,text,text,uuid,text,text,numeric,text,text)'
+        -- Migrasjon 005am. Synteseagentens skrivevei: én påstandsrevisjon med
+        -- identiteten og evidenslenkene sine, i én transaksjon. Som de øvrige
+        -- agentendepunktene er den kjørbar for anon og authenticated, fordi en
+        -- agent ikke har en brukerkonto: kontrollen er legitimasjonen og den
+        -- eksplisitte rollen `claim_synthesis`, ikke Data API-rollen. Signaturen
+        -- er uten `p_assessment`: evidensvurderingen er et eget ledd, og en
+        -- gjenoppstått overlast med den parameteren ville sluppet graderingen
+        -- tilbake i synteserollen. Hvilke roller som faktisk har EXECUTE,
+        -- kontrolleres i 690_claim_synthesis_write_path_test.sql.
+        'api.register_claim_synthesis(text,text,uuid,uuid,uuid,text,text,text,text,jsonb,uuid,uuid,text,text,uuid,text,text,numeric,text,text)',
+        -- Migrasjon 005am. Evidensvurderingsagentens skrivevei: én
+        -- GRADE-vurdering for én påstandsrevisjon, etter at
+        -- kildestøtteverifikasjonen har bekreftet påstanden. Egen rolle
+        -- (`evidence_assessment`) og egen identitet, fordi ansvarsgrensen i
+        -- EVIDENCE_PIPELINE.md §61 samtidig skal være en teknisk grense. Hvilke
+        -- roller som faktisk har EXECUTE, kontrolleres i
+        -- 700_evidence_assessment_write_path_test.sql.
+        'api.register_evidence_assessment(text,text,uuid,uuid,text,text,text,text,text,text,text,text,text,text,text)'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de nitten kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de tjue kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$

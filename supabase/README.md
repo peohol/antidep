@@ -97,15 +97,33 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     tre øvrige tabellene som peker på en agentkjøring: en kaller kan ikke oppgi den, og
     ikke oppgi den feil
   - 005aj `api.register_claim_synthesis(...)`: den kontrollerte skriveveien for at
-    synteseagenten registrerer én påstandsrevisjon med hele grunnlaget sitt — identiteten,
-    revisjonen, evidenslenkene og evidensvurderingen, i én transaksjon. Kunnskapstypen er
-    hardkodet `evidence_synthesis`, og
-    `workflow.assert_evidence_usable_for_synthesis(uuid[])` leser evidenshalvdelen av
-    publiseringsgaten _før_ påstanden lages, med gatens egne funksjoner. Uten den ville en
-    syntese bygget på et ukontrollert eller tilbaketrukket funn blitt en revisjon som aldri
-    kan publiseres, og som må erstattes i sin helhet når funnet rettes
+    synteseagenten registrerer én påstandsrevisjon med grunnlaget sitt — identiteten,
+    revisjonen og evidenslenkene, i én transaksjon. Kunnskapstypen er hardkodet
+    `evidence_synthesis`, og `workflow.assert_evidence_usable_for_synthesis(uuid[])` leser
+    evidenshalvdelen av publiseringsgaten _før_ påstanden lages, med gatens egne funksjoner.
+    Uten den ville en syntese bygget på et ukontrollert eller tilbaketrukket funn blitt en
+    revisjon som aldri kan publiseres, og som må erstattes i sin helhet når funnet rettes
   - 005ak den tekniske identiteten `agent-identity:claim-synthesis-01`, inert til
     legitimasjon utstedes
+  - 005al `evidence_assessment` lagt til `provenance.agent_role`, alene i sin egen
+    migrasjon: enumverdien kan ikke brukes i den transaksjonen som innfører den. Verdien
+    står etter `adversarial_review`, som er `EvidenceAssessor` sin plass i
+    `EVIDENCE_PIPELINE.md` §61 sin rolletabell
+  - 004b `agent_run_id` og `agent_run_role` på `knowledge.evidence_assessments`, med de
+    samme to sammensatte fremmednøklene som på `claim_revisions`. Vurderingen er nå sin egen
+    handling, av sin egen aktør, i sin egen kjøring, og må kunne spores som det
+  - 005am evidensvurderingen blir sitt eget ledd: `api.register_claim_synthesis(...)`
+    slippes og lages på nytt uten `p_assessment` — en parameter kan ikke fjernes med
+    `create or replace` — og `api.register_evidence_assessment(...)` kommer til.
+    `workflow.assert_claim_verified_before_assessment(uuid)` krever publiseringsgatens G8,
+    G9, G9b og G9c før grunnlaget kan graderes: vurderingen kommer **etter**
+    kildestøtteverifikasjonen (`MVP_IMPLEMENTATION_PLAN.md` §15). Fram til denne migrasjonen
+    skrev synteseveien både påstanden og den endelige GRADE-vurderingen i den samme
+    transaksjonen, med den samme aktøren og den samme legitimasjonen, og ansvarsgrensen
+    `EVIDENCE_PIPELINE.md` §61 krever mellom `ClaimAgent` og `EvidenceAssessor`, var da bare
+    et navn
+  - 005an aktøren `agent:evidence-assessment` og den tekniske identiteten
+    `agent-identity:evidence-assessment-01`, inert til legitimasjon utstedes
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at
@@ -658,6 +676,11 @@ npm run db:start
 ./scripts/issue-agent-credential.sh --management-api --write-env \
   --identity agent-identity:claim-synthesis-01 \
   --env-prefix ANTIDEP_SYNTHESIS_AGENT
+
+# Evidensvurderingsagenten (migrasjon 005an).
+./scripts/issue-agent-credential.sh --management-api --write-env \
+  --identity agent-identity:evidence-assessment-01 \
+  --env-prefix ANTIDEP_ASSESSMENT_AGENT
 ```
 
 `--write-env` håndhever tre ting framfor å love dem, alle funn fra teknisk review:
@@ -704,11 +727,15 @@ ANTIDEP_EXTRACTION_AGENT_SECRET=
 
 ANTIDEP_SYNTHESIS_AGENT_IDENTITY_KEY=agent-identity:claim-synthesis-01
 ANTIDEP_SYNTHESIS_AGENT_SECRET=
+
+ANTIDEP_ASSESSMENT_AGENT_IDENTITY_KEY=agent-identity:evidence-assessment-01
+ANTIDEP_ASSESSMENT_AGENT_SECRET=
 ```
 
 Lokalt legges de i `.env.agent.local`, som er gitignorert og leses av
 `npm run agent:verify-extraction`, `npm run agent:verify-claims`,
-`npm run agent:reextract-evidence` og `npm run agent:synthesise-claims`.
+`npm run agent:reextract-evidence`, `npm run agent:synthesise-claims` og
+`npm run agent:assess-evidence`.
 
 I CI er det bare hemmelighetene som legges inn som krypterte secrets (GitHub: Settings →
 Secrets and variables → Actions). **Identitetsnøkkelen er ikke en hemmelighet.** Den står i
