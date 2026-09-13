@@ -124,6 +124,10 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     et navn
   - 005an aktøren `agent:evidence-assessment` og den tekniske identiteten
     `agent-identity:evidence-assessment-01`, inert til legitimasjon utstedes
+  - 005ao kommentaren på synteseveien navngir vurderingsveien med signaturen sin
+    framfor med en ellipse. Prøve 280 krever at hver funksjonsreferanse på kallform
+    i en kommentar lar seg slå opp; `(...)` er ikke en parameterliste. Fremover-skrivende,
+    også når rettelsen er kosmetisk: 005am er kjørt i produksjon og redigeres ikke
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at
