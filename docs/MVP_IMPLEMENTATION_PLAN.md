@@ -8325,6 +8325,23 @@ indirekthet i evidensvurderingen, ikke bortforklart.
 ikke finnes i agentmiljøet. De kjøres i CI-jobben «Migrasjoner og databasetester
 på lokal Supabase-stack», som er den som avgjør.
 
+Og den avgjorde noe kjøringen herfra ikke kunne: fem uttømmende prøver beskriver
+**migrert tilstand**, og mot det hostede prosjektet feiler de uansett, fordi det
+har reell data. På en fersk stack fanget de nøyaktig det de er laget for:
+
+| Prøve | Hva den lister uttømmende | Hva som manglet |
+|---|---|---|
+| 220, 310, 350 | agentidentitetene og auditradene deres | den fjerde identiteten fra 005ak |
+| 300, 370 | `audit.event_operation`, ordnet | `claim_revision_created` |
+| 690 | — | tilbaketrekkingsfiksturen brukte den navngitte redaktøren som reviewer, og den aktøren har ingen brukerkonto i en fersk database |
+
+Listene er **utvidet**, ikke filtrert: en identitet ingen har bestemt seg for,
+skal fortsatt ikke kunne gli inn ubemerket. 690 lager nå sin egen kvalifiserte
+reviewer med egen konto, som prøve 610 gjør.
+
+Etter rettelsen er begge CI-jobbene grønne, medregnet hele pgTAP-suiten på en
+fersk lokal stack.
+
 Nettleserprøven er kjørt med innloggingen **stubbet** og Data API-et erstattet av
 en lokal stubb som serverer nøyaktig de svarene produksjon gir. Grunnen er at
 sesjonen tilhører Peder: å logge inn som ham ville vært å handle på hans vegne,
