@@ -128,6 +128,14 @@ Denne katalogen inneholder Antideps Supabase-utviklingsfundament, i tråd med
     framfor med en ellipse. Prøve 280 krever at hver funksjonsreferanse på kallform
     i en kommentar lar seg slå opp; `(...)` er ikke en parameterliste. Fremover-skrivende,
     også når rettelsen er kosmetisk: 005am er kjørt i produksjon og redigeres ikke
+  - 005ap `workflow.assessment_author_has_mandate(uuid, uuid, timestamptz)`, lest av
+    publiseringsgaten som **G10b**: den som gjorde evidensvurderingen, må ha hatt mandat
+    til det — en agent gjennom rollen `evidence_assessment` og ingen annen, et menneske
+    gjennom en gyldig `editor`-tildeling som dekker påstandens kliniske tema. Speilbildet
+    av G5c og G9c, men den lukker i tillegg et konkret hull: G10 kontrollerte bare at en
+    vurdering _fantes_, så en vurdering skrevet av synteseveien før 005am kunne båret en
+    publisering den dagen revisjonen fikk claim-verifikasjonen sin. Ingenting slettes;
+    gaten sier nei og sier hvorfor
 
   Nummereringen følger planlagt innhold i `docs/MVP_IMPLEMENTATION_PLAN.md` §18-§27, ikke
   filrekkefølge. Migrasjoner utenfor den planlagte rekken får en bokstav, slik at

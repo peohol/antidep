@@ -1503,7 +1503,7 @@ seks siste filene bærer de seks laveste bokstavnumrene». Det stemte ikke mot l
 006a og 007a har lavere bokstavnumre enn flere av dem — så den er erstattet med den påstanden
 listen faktisk bærer.)
 
-Databaselaget teller nå 2304 pgTAP-assertions over 70 testfiler.
+Databaselaget teller nå 2323 pgTAP-assertions over 71 testfiler.
 
 Tallene i dette avsnittet og i §74.5 kontrolleres maskinelt av
 `scripts/verify-counts.sh`, som kjører i CI. Bakgrunnen er §74.8: to ganger har et tall
@@ -1671,16 +1671,16 @@ ekstraksjonskontroll som konkluderer, og en `publisher`-tildeling. Se §74.36.
 Alle tre er avgjort, og avgjørelsene er nå offentlig kontrakt:
 
 1. **Enum kontra oppslagstabell — utsatt, og gjort billigere å utsette.** Det finnes
-   40 enum-typer, fordelt på de åttini migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
+   40 enum-typer, fordelt på de nitti migrasjonsfilene 001, 002, 003, 004, 005, 006, 006a,
    007, 008, 007a, 005a, 005b, 007b, 003a, 008a, 007c, 005c, 008b, 007d, 007e, 005d, 008c,
    005e, 005f, 008d, 005g, 008e, 007f, 005h, 006b, 008f, 005i, 005j, 005k, 006c, 005l, 008g,
    005m, 005n, 006d, 005o, 005p, 006e, 006f, 005q, 005r, 005s, 005t, 006g, 006h, 008h, 005u,
    007g, 003b, 005v, 005w, 003c, 005x, 005y, 005z, 005æ, 005ø, 005å, 006i, 007h, 003d, 005ab,
    005ac, 003e, 007i, 003f, 005ad, 005ae, 003g, 008i, 005af, 003h, 008j, 005ah, 005ai, 008k,
-   004a, 005aj, 005ak, 005al, 004b, 005am, 005an og 005ao — i
-   filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6, 11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
+   004a, 005aj, 005ak, 005al, 004b, 005am, 005an, 005ao og 005ap — i
+   filrekkefølge, ikke i nummerrekkefølge — med henholdsvis 1, 6, 11, 7, 10, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 og 0.
    Tallet er kontrollert mot kilden (`grep -cE '^create type ' supabase/migrations/*.sql`) og
-   mot databasen. Alle åttini ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
+   mot databasen. Alle nitti ledd er nå oppgitt eksplisitt framfor å la de siste hvile på
    restpåstanden i `scripts/verify-counts.sh`; det er den formen vakten kontrollerer
    strengest. Verken 005a, 005b, 007b eller 003a legger til enum-typer: den første
    registrerer én rad i et register som allerede finnes, den andre knytter og tildeler, den
@@ -8519,8 +8519,8 @@ Vakten er ikke svekket for å komme utenom. Korreksjonsveien modellen selv har f
 et upublisert utkast, er en **ny revisjon** som viderefører den gamle: historikken
 består, ingenting overskrives. `c6b5dd39` er derfor revisjon **2** av den samme
 påstanden, laget gjennom den korrigerte pipelinen, og den peker på `24aefcd7` som
-den den erstatter. Revisjon 1 kan ikke godkjennes — gaten stopper den på G8 — så
-den bærer ingen klinisk risiko der den står.
+den den erstatter. Revisjon 1 stoppet den gang på G8, og **det var ikke nok**: G8 er ikke en
+permanent sperre. Se §74.49.
 
 Reviewkøen filtrerer ikke bort en revisjon som er videreført, og publiseringsgaten
 har heller ikke noe vilkår om det. Begge deler er ført som teknisk gjeld i et eget
@@ -8562,6 +8562,106 @@ lukker G8 og G9 når den registreres.
 det er hele poenget med rettelsen.
 
 **3. Sertralinfunnet må fortsatt ekstraheres om**, uendret fra §74.47.
+
+### 74.49 Evidensvurderingens opphav er nå et publiseringsvilkår
+
+Teknisk review av §74.48 fant at korreksjonen ikke var ferdig. Rettelsen flyttet
+evidensvurderingen til sitt eget ledd og laget en ny revisjon gjennom den — men
+den gamle raden ble stående, og **den kunne fortsatt bære en publisering**.
+
+#### Hullet
+
+`24aefcd7` har en GRADE-vurdering laget av `agent:claim-synthesis` gjennom den
+gamle veien. Publiseringsgatens G10 kontrollerer bare at en vurdering *finnes*.
+Migrasjon 004b gjør ikke den gamle raden ugyldig: den får `agent_run_id = NULL`,
+og fremmednøklene er MATCH SIMPLE.
+
+At revisjonen stoppet på G8, var derfor en **midlertidig** sperre, ikke en varig.
+En reviewer kunne åpne den i `/review`, registrere kildestøttekontrollen som
+manglet — noe reviewflaten er laget for — og deretter godkjenne og publisere den.
+Den gamle vurderingen ville da tilfredsstilt G10, og den ordinære flaten ville
+endt med å publisere nøyaktig det artefaktet §74.48 ble laget for å erstatte.
+
+Issue #91 gjorde det verre, ikke bedre: reviewkøen viser fortsatt den videreførte
+revisjonen, og publiseringsgaten har ikke noe vilkår om videreføring i det hele
+tatt.
+
+#### Rettelsen: G10b
+
+`workflow.assessment_author_has_mandate(uuid, uuid, timestamptz)` er formet som
+`claim_verifier_has_mandate` og `evidence_verifier_has_mandate`, og leses av
+gaten som **G10b** — speilbildet av G5c og G9c:
+
+| Aktørtype | Mandat |
+|---|---|
+| agent | rollen `evidence_assessment`, og ingen annen |
+| menneske | gyldig `editor`-tildeling som dekker påstandens kliniske tema, med samme scope-regel som `knowledge.assert_editor_authorized(uuid)` |
+| alt annet | nei |
+
+Tidspunktet er radens eget `assessed_at`, ikke `now()`: en tildeling som senere
+avsluttes, opphever ikke en vurdering som var legitim da den ble gjort (§14).
+
+Den gamle raden faller på det første vilkåret — `agent:claim-synthesis` har
+rollen `claim_synthesis` — og revisjonen kan dermed ikke godkjennes eller
+publiseres gjennom noen ordinær vei. **Ingenting er slettet:** raden står med sin
+opprinnelige attribusjon, fordi den faktisk ble laget slik.
+
+#### Hvorfor vilkåret ikke også krever pekeren til kjøringen
+
+En rad med `agent_run_id` satt er allerede deklarativt bundet til en kjøring i
+rollen `evidence_assessment`, eid av nøyaktig den aktøren raden attribueres til
+(004b), og `api.register_evidence_assessment(...)` — den eneste veien en klient
+kan skrive en vurdering på — setter alltid pekeren. En vurdering med riktig rolle
+og tom peker kan derfor bare oppstå gjennom en migrasjon eller direkte SQL som
+eier av basen, og begge deler er utenfor den sanksjonerte arbeidsmåten (§15).
+
+Å gjøre pekeren til et publiseringsvilkår ville i tillegg krevd at hver
+prøvefikstur som bygger en publiserbar revisjon, åpner en ekte agentkjøring —
+uten å stenge noen vei som faktisk er åpen. Vilkåret er derfor på **mandatet**,
+som er der den kjente feilen sitter. Skal pekeren også kreves, er det én
+fremoverrettet migrasjon til.
+
+#### Elleve prøvefiksturer måtte si hvem som gjorde vurderingen
+
+250, 260, 290, 330, 340, 510, 520, 530, 570, 590 og 610 bygde alle en
+publiserbar revisjon med en evidensvurdering attribuert til synteseaktøren — den
+samme attribusjonen migrasjon 004 brukte. Under G10b er det ikke lenger en gyldig
+tilstand, og fiksturene attribuerer nå vurderingen til `agent:evidence-assessment`.
+Det er ikke en tilpasning av prøvene til koden: det er prøvene som slutter å
+beskrive en tilstand modellen ikke lenger godtar.
+
+#### Regresjonsprøven
+
+`supabase/tests/710_assessment_author_mandate_test.sql` starter fra **samme form
+som produksjon**: revisjon 1 med en gammel synteseagent-vurdering uten kjøring,
+revisjon 2 som viderefører den, og en gyldig kildestøtteverifikasjon på begge.
+Den beviser at revisjon 1 ikke kan godkjennes — heller ikke gjennom
+`api.register_publication_approval(...)`, som er veien reviewflaten faktisk
+bruker — og at revisjon 2 slipper gjennom de samme forutsetningene. En vakt som
+avviser alt, er ingen vakt.
+
+#### Hva som ble kjørt mot produksjon
+
+| Ledd | Utfall |
+|---|---|
+| Migrasjonene 005ao og 005ap | deployet og registrert; 90 av 90 filer står i prosjektet |
+| `workflow.assessment_author_has_mandate` på den gamle raden | `false` |
+| Publiseringsgaten på `24aefcd7` | avvist på G10b når G8 er dekket; ingen rad er rørt |
+
+#### En rettelse i tillegg
+
+Prøve 280 leser hver kommentar i de kanoniske schemaene og krever at hver
+funksjonsreferanse på kallform lar seg slå opp. 005am skrev
+`api.register_evidence_assessment(...)`, og ellipsen er ikke en parameterliste.
+Migrasjon 005ao skriver kommentaren om med signaturen. Vakten finnes fordi en
+kommentar som navngir en funksjon som ikke finnes, er en feil ingen oppdager —
+`catalog.drugs.updated_at` viste i fire migrasjoner til en funksjon som aldri har
+eksistert.
+
+Merk også at 004b sin hodekommentar sier at den gamle vurderingsraden «ryddes
+gjennom prosjektets egen discard-vei». **Det er ikke sant**, og retter seg ikke
+selv: discard-veien avviste fjerningen, og 004b er kjørt i produksjon og
+redigeres ikke. Korreksjonen står i hodekommentaren til 005ap og her.
 
 ---
 

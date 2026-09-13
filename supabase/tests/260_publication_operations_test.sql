@@ -217,13 +217,18 @@ from knowledge.claim_revisions r, fixture v
 where r.claim_id = (select id from fixture where name = 'claim')
   and r.revision_number in (1, 3) and v.name = 'reviewer';
 
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap). Ansvarsgrensen mellom
+-- påstandsdannelse og evidensvurdering er en teknisk grense
+-- (EVIDENCE_PIPELINE.md §61).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
    rationale, assessed_at, created_by_actor_id)
 select r.id, r.knowledge_type, 'grade', 'low',
        'serious', 'not_assessable', 'serious', 'serious', 'not_assessable',
-       'Domenene vurdert enkeltvis.', now(), r.created_by_actor_id
+       'Domenene vurdert enkeltvis.', now(), (select id from provenance.actors where actor_key = 'agent:evidence-assessment')
 from knowledge.claim_revisions r
 where r.claim_id = (select id from fixture where name = 'claim')
   and r.revision_number in (1, 3);

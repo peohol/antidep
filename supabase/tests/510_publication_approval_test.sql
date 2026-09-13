@@ -345,6 +345,11 @@ select e.id, e.created_by_actor_id,
        'Prøve i 510: fullstendig kontrollert ekstraksjon.', now()
 from knowledge.evidence_items e where e.id = '51000000-0000-4000-8000-000000000011';
 
+-- Vurderingen attribueres til evidensvurderingsaktøren, ikke til den som
+-- formulerte revisjonen: publiseringsgatens G10b krever at den som gjorde
+-- vurderingen, hadde mandat til det (migrasjon 005ap). Ansvarsgrensen mellom
+-- påstandsdannelse og evidensvurdering er en teknisk grense
+-- (EVIDENCE_PIPELINE.md §61).
 insert into knowledge.evidence_assessments
   (claim_revision_id, assessed_knowledge_type, framework, certainty_level,
    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
@@ -352,7 +357,7 @@ insert into knowledge.evidence_assessments
 select r.id, 'evidence_synthesis', 'grade', 'low',
        'serious', 'not_assessable', 'not_serious', 'serious', 'not_assessable',
        'Prøve i 510: lav sikkerhet er en vurdering, ikke et fravær av evidens.',
-       now(), (select id from fixture where name = 'synthesis')
+       now(), (select id from provenance.actors where actor_key = 'agent:evidence-assessment')
 from (values ('51000000-0000-4000-8000-000000000031'::uuid),
              ('51000000-0000-4000-8000-000000000032'::uuid),
              ('51000000-0000-4000-8000-000000000034'::uuid)) as r(id);
