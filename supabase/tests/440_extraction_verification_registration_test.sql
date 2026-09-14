@@ -13,6 +13,7 @@
 -- 23503 = foreign_key_violation, 23514 = check_violation,
 -- P0002 = no_data_found.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

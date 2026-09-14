@@ -15,6 +15,7 @@
 -- rulles tilbake med den. Ingen fiktiv godkjenning blir stående
 -- (ANTIDEP_CONSTITUTION.md §12).
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 
@@ -105,8 +106,8 @@ insert into fixture (name, id)
 select 'sertralin', id from catalog.drugs where canonical_name = 'sertralin';
 insert into fixture (name, id)
 select 'evidence_sertralin', e.id from knowledge.evidence_items e
-join knowledge.sources s on s.id = e.source_id
-where s.title like 'Fluoxetine versus sertraline%';
+join catalog.drugs d on d.id = e.intervention_drug_id
+where d.canonical_name = 'sertralin';
 
 -- Rolletildelingene må ha eksistert før beslutningene som viser til dem
 -- (workflow.enforce_reviewer_qualification()).

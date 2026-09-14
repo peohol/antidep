@@ -18,6 +18,7 @@
 -- SQLSTATE 23503 = foreign_key_violation, 22023 = invalid_parameter_value,
 -- 23001 = restrict_violation (fra append-only- og freeze-triggerne).
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

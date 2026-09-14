@@ -21,6 +21,7 @@
 --
 -- SQLSTATE 42501 = insufficient_privilege.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 
@@ -267,12 +268,12 @@ insert into fixture (name, id)
 select 'mirtazapin', id from catalog.drugs where canonical_name = 'mirtazapin';
 insert into fixture (name, id)
 select 'evidence_sertralin', e.id from knowledge.evidence_items e
-join knowledge.sources s on s.id = e.source_id
-where s.title like 'Fluoxetine versus sertraline%';
+join catalog.drugs d on d.id = e.intervention_drug_id
+where d.canonical_name = 'sertralin';
 insert into fixture (name, id)
 select 'evidence_mirtazapin', e.id from knowledge.evidence_items e
-join knowledge.sources s on s.id = e.source_id
-where s.title like 'Comparison of the effects of mirtazapine%';
+join catalog.drugs d on d.id = e.intervention_drug_id
+where d.canonical_name = 'mirtazapin';
 
 -- Rolletildelingene må ha eksistert før beslutningene som viser til dem
 -- (workflow.enforce_reviewer_qualification()).

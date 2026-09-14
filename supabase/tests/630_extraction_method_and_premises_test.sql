@@ -20,6 +20,7 @@
 --
 -- SQLSTATE 22023 = invalid_parameter_value.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

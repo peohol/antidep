@@ -19,6 +19,7 @@
 -- 23001 = restrict_violation, 23514 = check_violation, 42501 dekker også
 -- manglende tabellrettighet.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

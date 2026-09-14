@@ -20,6 +20,7 @@
 --
 -- SQLSTATE 23001 = restrict_violation.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

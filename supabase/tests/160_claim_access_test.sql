@@ -12,6 +12,7 @@
 -- (ANTIDEP_CONSTITUTION.md §11, §12). At ingen klientrolle kan nå dem er derfor
 -- et innholdskrav før det er et sikkerhetskrav.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

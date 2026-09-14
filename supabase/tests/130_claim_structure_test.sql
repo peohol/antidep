@@ -7,6 +7,7 @@
 -- 150_claim_immutability_test.sql, tilgang i 160_claim_access_test.sql og selve
 -- slicedataene i 170_claim_seed_test.sql.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

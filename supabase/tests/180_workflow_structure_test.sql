@@ -11,6 +11,7 @@
 -- provenance, tilsvarende dem 080_knowledge_structure_test.sql holder for
 -- knowledge. De må utvides, ikke omgås, av senere migrasjoner.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

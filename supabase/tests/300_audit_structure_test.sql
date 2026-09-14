@@ -10,6 +10,7 @@
 -- og fanger tabellen automatisk; konvensjonene i 030_conventions_test.sql
 -- likeså.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 
