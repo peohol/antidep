@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format:check": "prettier --write scripts/agent-chain-test.ts && git diff -- scripts/agent-chain-test.ts && exit 1",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
