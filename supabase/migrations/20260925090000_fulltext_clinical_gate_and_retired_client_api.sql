@@ -17,10 +17,13 @@ begin
     raise exception using errcode = '22023', message = 'Kliniske evidensfunn krever en eksplisitt fulltekstversjon.';
   end if;
 
-  select sv, s.source_status into v, v_status
+  select sv into v
   from knowledge.source_versions sv
-  join knowledge.sources s on s.id = sv.source_id
   where sv.id = p_source_version_id;
+
+  select s.source_status into v_status
+  from knowledge.sources s
+  where s.id = v.source_id;
 
   if not found then
     raise exception using errcode = 'P0002', message = 'Kildeversjonen finnes ikke.';
@@ -34,10 +37,10 @@ begin
   if v.representation is distinct from 'full_text'::knowledge.source_representation then
     raise exception using errcode = '23001', message = 'Abstract og begrensede representasjoner er bare til kildeoppdagelse; klinisk evidens krever fulltekst.';
   end if;
-  if v.document_sha256 is null or v.document_sha256 !~ '^[0-9a-f]{64}$'
+  if v.document_sha256 is null or v.document_sha256 !~ '^sha256:[0-9a-f]{64}$'
      or v.document_byte_size is null or v.document_byte_size <= 0
      or v.document_media_type is distinct from 'application/pdf'
-     or v.content_hash is null or v.content_hash !~ '^[0-9a-f]{64}$'
+     or v.content_hash is null or v.content_hash !~ '^sha256:[0-9a-f]{64}$'
      or nullif(btrim(v.text_extraction_tool), '') is null
      or nullif(btrim(v.text_extraction_tool_version), '') is null
      or nullif(btrim(v.text_extraction_arguments), '') is null then

@@ -14,6 +14,12 @@ comment on table audit.prototype_resets is 'Private immutable recovery snapshot 
 alter table audit.prototype_resets enable row level security;
 revoke all on audit.prototype_resets from public, anon, authenticated;
 
+create trigger prototype_resets_reject_mutation
+  before update or delete on audit.prototype_resets
+  for each row execute function knowledge.reject_append_only_mutation(
+    'Et reset-snapshot er et uforanderlig gjenopprettingsspor. En rettelse registreres som en ny hendelse; snapshotet endres eller slettes aldri.'
+  );
+
 lock table knowledge.publication_events, knowledge.claims, provenance.agent_runs,
   workflow.claim_verification_citations, workflow.claim_verifications,
   workflow.evidence_verifications, workflow.review_decisions,
