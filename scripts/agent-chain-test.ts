@@ -26,7 +26,10 @@ import { EXTRACTION_VERIFICATION_PREMISES } from '../src/agents/pipeline-version
 import { readProposalFile } from '../src/agents/proposal-files.ts'
 import { documentsIn } from '../src/agents/source-document.ts'
 import { syntheticPdf } from '../src/agents/test-support.ts'
-import { buildAssignmentFromCatalog, type EditorCatalogApi } from '../src/ops/extraction-assignment.ts'
+import {
+  buildAssignmentFromCatalog,
+  type EditorCatalogApi,
+} from '../src/ops/extraction-assignment.ts'
 
 interface Config {
   readonly dbUrl: string
@@ -326,7 +329,7 @@ async function main(): Promise<void> {
         estimate_availability: 'reported_value',
         ci_lower: '0.5',
         ci_upper: '1.5',
-        ci_level_percent: 95,
+        ci_level_percent: '95',
         confidence_interval_availability: 'reported_value',
         source_locator: 'Syntetisk fulltekst, resultater',
         source_quote: resultExcerpt,
@@ -412,7 +415,11 @@ async function main(): Promise<void> {
     )
 
     const closed = await closeDraftingJob({ runDirectory, assignmentPath, documents })
-    check('modellsvaret blir et kildeforankret forslag', closed.outcome === 'drafted', closed.reason ?? '')
+    check(
+      'modellsvaret blir et kildeforankret forslag',
+      closed.outcome === 'drafted',
+      closed.reason ?? '',
+    )
     if (closed.outcome !== 'drafted') return
 
     const proposal = (await readProposalFile(closed.proposalPath)).proposal
