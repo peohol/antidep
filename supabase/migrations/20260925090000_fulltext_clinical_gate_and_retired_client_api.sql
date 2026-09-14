@@ -29,7 +29,9 @@ begin
     raise exception using errcode = 'P0002', message = 'Kildeversjonen finnes ikke.';
   end if;
   if v.source_id <> p_source_id then
-    raise exception using errcode = '23000', message = 'Kildeversjonen tilhører ikke evidensfunnets kilde.';
+    -- Samme klasse som den sammensatte FK-en denne vakten dupliserer, slik at
+    -- eldre integritetskontroller fortsatt ser dette som en referansefeil.
+    raise exception using errcode = '23503', message = 'Kildeversjonen tilhører ikke evidensfunnets kilde.';
   end if;
   if v_status in ('retracted', 'withdrawn') then
     raise exception using errcode = '23001', message = 'En tilbaketrukket kilde kan ikke bære klinisk evidens.';

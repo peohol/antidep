@@ -92,34 +92,78 @@ select r.id, r.knowledge_type, 'grade', 'very_low', 'serious', 'not_assessable',
        pg_temp.assessment_actor_id()
 from knowledge.claim_revisions r;
 
--- Older invariant tests create additional rows directly. Give only those rows a
--- valid synthetic document version when they omit one; the production full-text
--- trigger still validates the result. Full-text failure modes are tested without
--- this helper in 720_antidep2_reset_test.sql.
+-- Legacy invariant tests below this include sometimes create their own sources
+-- and source versions. The helper only adapts such setup to the Antidep 2
+-- full-text invariant; it never disables or bypasses the production trigger.
+-- Dedicated negative full-text tests run without this helper in 720.
 create function pg_temp.bind_test_evidence_to_full_text() returns trigger language plpgsql as $$
-declare v_version uuid;
+declare
+  v_requested knowledge.source_versions;
+  v_version uuid;
 begin
-  if new.source_version_id is null then
-    select id into v_version from knowledge.source_versions
-    where source_id = new.source_id and representation = 'full_text'
-      and document_sha256 is not null order by created_at limit 1;
-    if v_version is null then
-      insert into knowledge.source_versions (
-        source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
-        representation, retrieved_by_actor_id, document_sha256, document_byte_size,
-        document_media_type, text_extraction_tool, text_extraction_tool_version,
-        text_extraction_arguments, text_extraction_transform
-      ) values (
-        new.source_id, now(), 'file:///syntetisk-testoppsett.pdf',
-        'sha256:' || encode(extensions.digest(new.source_id::text || clock_timestamp()::text, 'sha256'), 'hex'),
-        'private://syntetisk-testoppsett.pdf', 'full_text', coalesce(new.created_by_actor_id, pg_temp.extraction_actor_id()),
-        'sha256:' || encode(extensions.digest(new.source_id::text || 'document' || clock_timestamp()::text, 'sha256'), 'hex'),
-        1024, 'application/pdf', 'pdftotext', '24.02.0',
-        '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@1'
-      ) returning id into v_version;
+  if new.source_version_id is not null then
+    select sv.* into v_requested
+    from knowledge.source_versions sv
+    where sv.id = new.source_version_id;
+
+    -- Preserve genuinely invalid references and cross-source references so the
+    -- production constraints can reject them as intended.
+    if not found or v_requested.source_id <> new.source_id then
+      return new;
     end if;
-    new.source_version_id := v_version;
+
+    -- A complete document-bound full-text version already satisfies Antidep 2.
+    if v_requested.representation = 'full_text'::knowledge.source_representation
+       and v_requested.document_sha256 ~ '^sha256:[0-9a-f]{64}$'
+       and v_requested.document_byte_size > 0
+       and v_requested.document_media_type = 'application/pdf'
+       and v_requested.content_hash ~ '^sha256:[0-9a-f]{64}$'
+       and nullif(btrim(v_requested.text_extraction_tool), '') is not null
+       and nullif(btrim(v_requested.text_extraction_tool_version), '') is not null
+       and nullif(btrim(v_requested.text_extraction_arguments), '') is not null then
+      return new;
+    end if;
   end if;
+
+  select sv.id into v_version
+  from knowledge.source_versions sv
+  where sv.source_id = new.source_id
+    and sv.representation = 'full_text'::knowledge.source_representation
+    and sv.document_sha256 ~ '^sha256:[0-9a-f]{64}$'
+    and sv.document_byte_size > 0
+    and sv.document_media_type = 'application/pdf'
+    and sv.content_hash ~ '^sha256:[0-9a-f]{64}$'
+    and nullif(btrim(sv.text_extraction_tool), '') is not null
+    and nullif(btrim(sv.text_extraction_tool_version), '') is not null
+    and nullif(btrim(sv.text_extraction_arguments), '') is not null
+  order by sv.created_at, sv.id
+  limit 1;
+
+  if v_version is null then
+    insert into knowledge.source_versions (
+      source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
+      representation, retrieved_by_actor_id, document_sha256, document_byte_size,
+      document_media_type, text_extraction_tool, text_extraction_tool_version,
+      text_extraction_arguments, text_extraction_transform
+    ) values (
+      new.source_id,
+      now(),
+      'file:///syntetisk-testoppsett-' || new.source_id::text || '.pdf',
+      'sha256:' || encode(extensions.digest(convert_to(new.source_id::text || ':test-fulltext', 'UTF8'), 'sha256'), 'hex'),
+      'private://syntetisk-testoppsett/' || new.source_id::text || '/original.pdf',
+      'full_text',
+      coalesce(new.created_by_actor_id, pg_temp.extraction_actor_id()),
+      'sha256:' || encode(extensions.digest(convert_to(new.source_id::text || ':test-document', 'UTF8'), 'sha256'), 'hex'),
+      1024,
+      'application/pdf',
+      'pdftotext',
+      '24.02.0',
+      '-bbox-layout -enc UTF-8 -eol unix',
+      'antidep-reading-order@1'
+    ) returning id into v_version;
+  end if;
+
+  new.source_version_id := v_version;
   return new;
 end;
 $$;

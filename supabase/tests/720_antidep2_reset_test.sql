@@ -26,14 +26,14 @@ insert into knowledge.source_versions (
   text_extraction_tool, text_extraction_tool_version, text_extraction_arguments,
   text_extraction_transform, retrieved_by_actor_id
 )
-select '72000000-0000-4000-8000-000000000001', id, now(),
+select '72000000-0000-4000-8000-000000000001', s.id, now(),
        'file:///synthetic-antidep2-test.pdf', 'sha256:' || repeat('a', 64),
        'private://synthetic-antidep2-test.pdf', 'full_text',
        'sha256:' || repeat('b', 64), 1024, 'application/pdf',
        'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
        'antidep-reading-order@1',
        (select id from provenance.actors where actor_key = 'agent:evidence-extraction')
-from knowledge.sources order by id limit 1;
+from knowledge.sources s order by s.id limit 1;
 
 select lives_ok(
   $$select knowledge.assert_clinical_full_text(
@@ -63,15 +63,15 @@ select lives_ok(
 
 select throws_ok(
   $$select knowledge.assert_clinical_full_text('00000000-0000-0000-0000-000000000000', '72000000-0000-4000-8000-000000000001')$$,
-  '23000', 'Kildeversjonen tilhører ikke evidensfunnets kilde.',
+  '23503', 'Kildeversjonen tilhører ikke evidensfunnets kilde.',
   'a source/version mismatch is rejected precisely'
 );
 
 insert into knowledge.source_versions (id, source_id, retrieved_at, retrieved_from, content_hash, representation, retrieved_by_actor_id)
-select '72000000-0000-4000-8000-000000000002', id, now(), 'https://example.invalid/abstract',
+select '72000000-0000-4000-8000-000000000002', s.id, now(), 'https://example.invalid/abstract',
        'sha256:' || repeat('c', 64), 'abstract',
        (select id from provenance.actors where actor_key = 'agent:evidence-extraction')
-from knowledge.sources order by id limit 1;
+from knowledge.sources s order by s.id limit 1;
 select throws_ok(
   $$select knowledge.assert_clinical_full_text(
       (select source_id from knowledge.source_versions where id = '72000000-0000-4000-8000-000000000002'),
