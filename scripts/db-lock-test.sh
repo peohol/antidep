@@ -196,6 +196,10 @@ SQL
 }
 
 # ----------------------------------------------------------------------------
+# Build the explicit, idempotent, document-bound synthetic graph before any
+# lock probe. The reset intentionally leaves the active clinical tables empty.
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -f "$(dirname "$0")/review-decision-race-fixture.sql"
+
 # Prøve 1 — evidenssettet til en påstandsrevisjon (migrasjon 006f)
 #
 # Hver innsetting i knowledge.claim_evidence_links tar selv FOR UPDATE på
@@ -204,16 +208,9 @@ SQL
 # fått 23001 fra forseglingskontrollen som ligger *etter* låsen i den samme
 # triggeren. 55P03 betyr «måtte vente», 23001 betyr «slapp forbi».
 # ----------------------------------------------------------------------------
-revisjon=$(les "select r.id from knowledge.claim_revisions r
-                where r.id <> '$prove_revisjon' order by r.id limit 1")
-if [ -z "$revisjon" ]; then
-  printf 'Fant ingen påstandsrevisjon i databasen. Kjør migrasjonene først (npm run db:reset).\n' >&2
-  exit 1
-fi
+revisjon=$prove_revisjon
 avtrykk=$(les "select knowledge.claim_evidence_set_digest('$revisjon')")
-funn=$(les "select e.id from knowledge.evidence_items e
-             where e.source_id not in ('$prove_kilde', '$prove_kilde5')
-             order by e.id limit 1")
+funn='7b000000-0000-4000-8000-000000000003'
 forfatter=$(les "select r.created_by_actor_id from knowledge.claim_revisions r where r.id = '$revisjon'")
 
 printf 'Revisjon: %s\n' "$revisjon"
@@ -283,11 +280,14 @@ from provenance.actors a where a.actor_key = 'human:peder-holman'
 on conflict (id) do nothing;
 
 insert into knowledge.source_versions
-  (id, source_id, retrieved_at, retrieved_from, content_hash, representation,
-   retrieved_by_actor_id)
+  (id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference, representation,
+   retrieved_by_actor_id, document_sha256, document_byte_size, document_media_type,
+   text_extraction_tool, text_extraction_tool_version, text_extraction_arguments, text_extraction_transform)
 select '$prove_versjon', '$prove_kilde', now(),
-       'https://example.test/samtidighetsprove', 'sha256:' || repeat('7', 64),
-       'abstract', a.id
+       'file:///syntetisk-samtidighetsprove.pdf', 'sha256:' || repeat('7', 64),
+       'private://syntetisk-samtidighetsprove.pdf', 'full_text', a.id,
+       'sha256:' || repeat('8', 64), 1024, 'application/pdf', 'pdftotext', '24.02.0',
+       '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@1'
 from provenance.actors a where a.actor_key = 'human:peder-holman'
 on conflict (id) do nothing;
 
