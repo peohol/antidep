@@ -319,11 +319,15 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
             (select id from provenance.actors where actor_key = 'human:peder-holman'));
 
     insert into knowledge.source_versions
-      (id, source_id, retrieved_at, retrieved_from, content_hash, representation,
-       retrieved_by_actor_id)
-    values (${q(VERSION)}, ${q(SOURCE)}, now(), 'https://example.test/kjede',
-            knowledge.source_version_content_hash(${q(KILDETEKST)}), 'abstract',
-            (select id from provenance.actors where actor_key = 'human:peder-holman'));
+      (id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference, representation,
+       retrieved_by_actor_id, document_sha256, document_byte_size, document_media_type,
+       text_extraction_tool, text_extraction_tool_version, text_extraction_arguments, text_extraction_transform)
+    values (${q(VERSION)}, ${q(SOURCE)}, now(), 'file:///syntetisk-kjede-fulltekst.pdf',
+            knowledge.source_version_content_hash(${q(KILDETEKST)}),
+            'private://syntetisk-kjede-fulltekst.pdf', 'full_text',
+            (select id from provenance.actors where actor_key = 'human:peder-holman'),
+            'sha256:' || repeat('9', 64), 2048, 'application/pdf', 'pdftotext', '24.02.0',
+            '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@1');
 
     insert into auth.users (id, instance_id, aud, role, email)
     values (${q(REVIEWER_USER)}, '00000000-0000-0000-0000-000000000000',
@@ -405,7 +409,7 @@ async function main(): Promise<void> {
       drafted_at: '2026-09-15T08:00:00Z',
     },
     source_version_id: VERSION,
-    retrieved_from: 'https://example.test/kjede',
+    retrieved_from: 'file:///syntetisk-kjede-fulltekst.pdf',
     content_hash: contentHash,
     extraction: {
       design_code: 'randomized_controlled_trial',
@@ -430,7 +434,7 @@ async function main(): Promise<void> {
       reported_direction: 'increase',
       estimate_availability: 'not_reported',
       confidence_interval_availability: 'not_reported',
-      source_locator: 'Sammendrag',
+      source_locator: 'Syntetisk fulltekst, RESULTS',
     },
     field_groundings: [
       {
@@ -841,7 +845,7 @@ async function main(): Promise<void> {
       drafted_at: '2026-09-15T08:00:00Z',
     },
     source_version_id: VERSION,
-    retrieved_from: 'https://example.test/kjede',
+    retrieved_from: 'file:///syntetisk-kjede-fulltekst.pdf',
     content_hash: contentHash,
     extraction: {
       design_code: 'randomized_controlled_trial',
@@ -866,7 +870,7 @@ async function main(): Promise<void> {
       reported_direction: 'increase',
       estimate_availability: 'not_reported',
       confidence_interval_availability: 'not_reported',
-      source_locator: 'Sammendrag',
+      source_locator: 'Syntetisk fulltekst, RESULTS',
     },
     field_groundings: [
       {
@@ -1225,7 +1229,7 @@ async function main(): Promise<void> {
     assignment_version: 'antidep/extraction-assignment@2',
     source_id: SOURCE,
     source_version_id: VERSION,
-    retrieved_from: 'https://example.test/kjede',
+    retrieved_from: 'file:///syntetisk-kjede-fulltekst.pdf',
     content_hash: contentHash,
     drugs: [{ drug_id: drugId, label: 'sertralin' }],
     outcomes: [{ outcome_concept_id: outcomeId, label: 'vektendring' }],
@@ -1282,7 +1286,7 @@ async function main(): Promise<void> {
       reported_direction: 'increase',
       estimate_availability: 'not_reported',
       confidence_interval_availability: 'not_reported',
-      source_locator: 'Sammendrag',
+      source_locator: 'Syntetisk fulltekst, RESULTS',
     },
     field_groundings: [
       {
@@ -1498,7 +1502,7 @@ async function main(): Promise<void> {
         assignment_version: 'antidep/extraction-assignment@2',
         source_id: SOURCE,
         source_version_id: VERSION,
-        retrieved_from: 'https://example.test/kjede',
+        retrieved_from: 'file:///syntetisk-kjede-fulltekst.pdf',
         content_hash: contentHash,
         drugs: [{ drug_id: drugId, label: 'sertralin' }],
         outcomes: [{ outcome_concept_id: outcomeId, label: 'vektendring' }],
@@ -1588,7 +1592,7 @@ async function main(): Promise<void> {
         assignment_version: 'antidep/extraction-assignment@2',
         source_id: SOURCE,
         source_version_id: VERSION,
-        retrieved_from: 'https://example.test/kjede',
+        retrieved_from: 'file:///syntetisk-kjede-fulltekst.pdf',
         content_hash: contentHash,
         drugs: [{ drug_id: drugId, label: 'sertralin' }],
         // Et annet endepunkt enn det forslaget peker på.
@@ -1779,12 +1783,12 @@ async function main(): Promise<void> {
         rapport.assignment.outcomes.length === 1,
     )
     check(
-      'sammendraget og fullteksten står som to versjoner av den samme kilden',
+      'begge dokumentversjonene står som fulltekst av den samme syntetiske kilden',
       psql(
         config,
         `select string_agg(representation::text, ',' order by representation::text)
          from knowledge.source_versions where source_id = ${q(SOURCE)}`,
-      ) === 'abstract,full_text',
+      ) === 'full_text,full_text',
     )
 
     // Modell-leddet, kjørt mot dokumentet. Teksten hentes ut av PDF-en med den

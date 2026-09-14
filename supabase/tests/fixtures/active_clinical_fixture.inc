@@ -5,6 +5,9 @@ $$;
 create function pg_temp.synthesis_actor_id() returns uuid language sql stable as $$
   select id from provenance.actors where actor_key = 'agent:claim-synthesis'
 $$;
+create function pg_temp.assessment_actor_id() returns uuid language sql stable as $$
+  select id from provenance.actors where actor_key = 'agent:evidence-assessment'
+$$;
 
 insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
 values
@@ -86,7 +89,7 @@ select r.id, r.knowledge_type, 'grade', 'very_low', 'serious', 'not_assessable',
        'not_serious', 'not_assessable', 'not_assessable',
        'Syntetisk vurdering med alle nødvendige domener.',
        'Syntetisk testgrunnlag har med vilje begrenset dekning.', now(),
-       pg_temp.synthesis_actor_id()
+       pg_temp.assessment_actor_id()
 from knowledge.claim_revisions r;
 
 -- Older invariant tests create additional rows directly. Give only those rows a

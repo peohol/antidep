@@ -2,15 +2,26 @@
 begin;
 
 create table audit.prototype_resets (
-  reset_id text primary key,
+  id uuid primary key default gen_random_uuid(),
+  reset_id text unique not null,
   baseline_commit text not null,
   reason text not null,
   captured_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
   row_counts jsonb not null,
   snapshot jsonb not null,
   snapshot_sha256 text not null check (snapshot_sha256 ~ '^[0-9a-f]{64}$')
 );
 comment on table audit.prototype_resets is 'Private immutable recovery snapshot for the bounded Antidep 2 prototype reset; never clinical evidence.';
+comment on column audit.prototype_resets.id is 'Database-generated identity for one immutable reset snapshot.';
+comment on column audit.prototype_resets.reset_id is 'Stable operational identifier that makes the one-time reset scope explicit.';
+comment on column audit.prototype_resets.baseline_commit is 'Code baseline that authorized and defined the reset.';
+comment on column audit.prototype_resets.reason is 'Owner-authorized reason for taking prototype results out of active use.';
+comment on column audit.prototype_resets.captured_at is 'When the source rows were captured, before deletion in the same transaction.';
+comment on column audit.prototype_resets.created_at is 'Database-owned time when the immutable snapshot row was recorded.';
+comment on column audit.prototype_resets.row_counts is 'Exact before-count for every table in the bounded reset scope.';
+comment on column audit.prototype_resets.snapshot is 'Private recovery payload; never an active clinical evidence source.';
+comment on column audit.prototype_resets.snapshot_sha256 is 'SHA-256 fingerprint of the canonical JSON snapshot payload.';
 alter table audit.prototype_resets enable row level security;
 revoke all on audit.prototype_resets from public, anon, authenticated;
 

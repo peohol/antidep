@@ -14,13 +14,24 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(43);
+select plan(48);
 
 -- ---------------------------------------------------------------------------
 -- Tabellen og §35 sitt minimumsfeltsett
 -- ---------------------------------------------------------------------------
 select has_table('audit', 'events', 'audit.events finnes');
 select col_is_pk('audit', 'events', 'id', 'audit.events har id som primærnøkkel');
+select has_table('audit', 'prototype_resets', 'audit.prototype_resets finnes');
+select col_is_pk('audit', 'prototype_resets', 'id', 'reset-snapshotet har databasegenerert uuid som primærnøkkel');
+select col_type_is('audit', 'prototype_resets', 'reset_id', 'text', 'reset_id er en separat stabil operasjonsnøkkel');
+select col_type_is('audit', 'prototype_resets', 'created_at', 'timestamp with time zone', 'reset-snapshotet har databaseeid created_at');
+select is(
+  (select p.proname::text from pg_trigger t join pg_proc p on p.oid = t.tgfoid
+   where t.tgrelid = 'audit.prototype_resets'::regclass
+     and t.tgname = 'prototype_resets_reject_mutation' and not t.tgisinternal),
+  'reject_append_only_mutation',
+  'reset-snapshotet har append-only-trigger'
+);
 
 -- Uttømmende feltliste framfor enkeltoppslag: en kolonne som legges til uten at
 -- noen tar stilling til hva den betyr for loggen, skal synes her.

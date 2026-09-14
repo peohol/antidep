@@ -17,7 +17,7 @@ begin
     raise exception using errcode = '22023', message = 'Kliniske evidensfunn krever en eksplisitt fulltekstversjon.';
   end if;
 
-  select sv into v
+  select sv.* into v
   from knowledge.source_versions sv
   where sv.id = p_source_version_id;
 
