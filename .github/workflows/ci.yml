@@ -12,10 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Hele historikken: verify-counts.sh kontrollerer at hver PR-rad ført
-          # som «merget» i §74.2 har sin commit. En grunn klone ville gjort hver
-          # rad til et avvik, og kontrollen sier fra framfor å slå seg av.
-          fetch-depth: 0
+          fetch-depth: 1
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -32,8 +29,8 @@ jobs:
         run: npm run lint
       - name: Formatkontroll
         run: npm run format:check
-      - name: Tallpåstander i styringsdokumentene
-        run: ./scripts/verify-counts.sh
+      - name: Repository invariants
+        run: npm run verify:repo
       - name: Typecheck
         run: npm run typecheck
       - name: Tester

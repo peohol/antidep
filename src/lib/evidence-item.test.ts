@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { PublishedClaimEvidenceRow } from '../types/api'
 import {
   AVAILABILITY_PARTITION,
   describeEvidenceConfidenceInterval,
@@ -14,9 +15,83 @@ import {
   readSourceType,
   readStudyDesign,
 } from './evidence-item'
-import { evidenceRow } from '../app/test-support'
 import type { ClaimComparatorState } from './claim-effect'
 import { CLAIM_DIRECTIONS, REPORTED_DIRECTIONS, VALUE_AVAILABILITIES } from '../types/api'
+
+function evidenceRow(
+  overrides: Partial<PublishedClaimEvidenceRow> = {},
+): PublishedClaimEvidenceRow {
+  return {
+    claim_id: '11111111-1111-4111-8111-111111111111',
+    claim_revision_id: '22222222-2222-4222-8222-222222222222',
+    claim_evidence_link_id: '55555555-5555-4555-8555-111111111111',
+
+    relationship_type: 'supports',
+    directness: 'direct',
+    relevance_note: 'Testnotat: funnet måler samme endepunkt i samme populasjon.',
+
+    evidence_item_id: '66666666-6666-4666-8666-111111111111',
+    study_design: 'randomized_controlled_trial',
+
+    population_id: '77777777-7777-4777-8777-111111111111',
+    population_label: 'voksne med depresjon',
+    population_detail: 'Voksne 18–65 år i poliklinisk behandling.',
+    population_availability: 'reported_value',
+    sample_size: 240,
+    sample_size_availability: 'reported_value',
+
+    intervention_drug_id: '33333333-3333-4333-8333-333333333333',
+    intervention_drug_name: 'virkestoff a',
+    intervention_detail: null,
+    comparator_kind: 'placebo',
+    comparator_drug_id: null,
+    comparator_drug_name: null,
+    comparator_detail: null,
+
+    outcome_concept_id: '44444444-4444-4444-8444-444444444444',
+    outcome_label: 'vektendring',
+    outcome_detail: 'Endring i kroppsvekt fra baseline.',
+    timepoint_min: '56 days',
+    timepoint_max: '56 days',
+    timepoint_availability: 'reported_value',
+
+    reported_direction: 'increase',
+    effect_measure: 'mean_difference',
+    estimate: 1.7,
+    estimate_unit: 'kg',
+    estimate_availability: 'reported_value',
+    ci_lower: 0.9,
+    ci_upper: 2.5,
+    ci_level_percent: 95,
+    confidence_interval_availability: 'reported_value',
+
+    limitations_text: null,
+    source_locator: 'Tabell 2, side 114',
+
+    extraction_withdrawn: false,
+    extraction_withdrawn_at: null,
+    extraction_withdrawal_rationale: null,
+
+    source_version_id: null,
+    source_version_retrieved_at: null,
+    source_version_retrieved_from: null,
+    source_version_external_version: null,
+    source_version_content_hash: null,
+
+    source_id: '55555555-5555-4555-8555-555555555555',
+    source_type: 'journal_article',
+    source_title: 'Testkilde A: vektendring ved åtte uker',
+    source_authors_or_issuer: 'Testforfatter m.fl.',
+    source_publisher_or_journal: 'Testtidsskrift',
+    source_publication_date: '2019-03-01',
+    source_publication_date_precision: 'month',
+    source_status: 'active',
+    source_status_note: null,
+    source_dois: ['10.0000/test.a'],
+    source_pmids: null,
+    ...overrides,
+  }
+}
 
 // ============================================================================
 // Avledningen av ett evidensfunn.
