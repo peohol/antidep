@@ -25,8 +25,8 @@ insert into knowledge.source_versions (
   document_byte_size, document_media_type, text_extraction_tool,
   text_extraction_tool_version, text_extraction_arguments, text_extraction_transform
 ) values
-  ('f2000000-0000-4000-8000-000000000002', 'f2000000-0000-4000-8000-000000000001', now(), 'file:///syntetisk-a.pdf', 'synthetic-v1', 'sha256:' || repeat('1', 64), 'private://syntetisk-a.pdf', 'full_text', pg_temp.extraction_actor_id(), 'sha256:' || repeat('2', 64), 2048, 'application/pdf', 'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@1'),
-  ('f2000000-0000-4000-8000-000000000004', 'f2000000-0000-4000-8000-000000000003', now(), 'file:///syntetisk-b.pdf', 'synthetic-v1', 'sha256:' || repeat('3', 64), 'private://syntetisk-b.pdf', 'full_text', pg_temp.extraction_actor_id(), 'sha256:' || repeat('4', 64), 2048, 'application/pdf', 'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@1');
+  ('f2000000-0000-4000-8000-000000000002', 'f2000000-0000-4000-8000-000000000001', now(), 'file:///syntetisk-a.pdf', 'synthetic-v1', 'sha256:' || repeat('1', 64), 'private://syntetisk-a.pdf', 'full_text', pg_temp.extraction_actor_id(), 'sha256:' || repeat('2', 64), 2048, 'application/pdf', 'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'),
+  ('f2000000-0000-4000-8000-000000000004', 'f2000000-0000-4000-8000-000000000003', now(), 'file:///syntetisk-b.pdf', 'synthetic-v1', 'sha256:' || repeat('3', 64), 'private://syntetisk-b.pdf', 'full_text', pg_temp.extraction_actor_id(), 'sha256:' || repeat('4', 64), 2048, 'application/pdf', 'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2');
 
 insert into knowledge.evidence_items (
   id, source_id, source_version_id, design_code, population_id,
@@ -128,7 +128,7 @@ begin
     new.text_extraction_tool := coalesce(new.text_extraction_tool, 'pdftotext');
     new.text_extraction_tool_version := coalesce(new.text_extraction_tool_version, '24.02.0');
     new.text_extraction_arguments := coalesce(new.text_extraction_arguments, '-bbox-layout -enc UTF-8 -eol unix');
-    new.text_extraction_transform := coalesce(new.text_extraction_transform, 'antidep-reading-order@1');
+    new.text_extraction_transform := coalesce(new.text_extraction_transform, 'antidep-reading-order@2');
   end if;
   return new;
 end;
@@ -156,9 +156,10 @@ begin
     and sv.document_byte_size > 0
     and sv.document_media_type = 'application/pdf'
     and sv.content_hash ~ '^sha256:[0-9a-f]{64}$'
-    and nullif(btrim(sv.text_extraction_tool), '') is not null
+    and sv.text_extraction_tool = 'pdftotext'
     and nullif(btrim(sv.text_extraction_tool_version), '') is not null
-    and nullif(btrim(sv.text_extraction_arguments), '') is not null
+    and sv.text_extraction_arguments = '-bbox-layout -enc UTF-8 -eol unix'
+    and sv.text_extraction_transform = 'antidep-reading-order@2'
   order by sv.created_at, sv.id
   limit 1;
 
@@ -176,7 +177,7 @@ begin
       'full_text', coalesce(new.created_by_actor_id, pg_temp.extraction_actor_id()),
       'sha256:' || encode(extensions.digest(convert_to(new.source_id::text || ':test-document', 'UTF8'), 'sha256'), 'hex'),
       1024, 'application/pdf', 'pdftotext', '24.02.0',
-      '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@1'
+      '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
     ) returning id into v_version;
   end if;
 
