@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 # Test-only compatibility wrapper for the durable review-decision race probe.
-# Production keeps api.register_publication_approval revoked from authenticated;
-# the old helper is opened only while the race suite runs and is always revoked
-# again on exit. The race itself still exercises the database ordering/gating
-# rule, not the retired UI.
+# The retired publication RPC is opened only on an explicitly validated local
+# database, and a failed restoration must fail the test rather than be hidden.
 set -euo pipefail
+cd "$(dirname "$0")/.."
 
 DB_URL=""
-args=("$@")
-for ((i=0; i<${#args[@]}; i++)); do
-  if [ "${args[$i]}" = "--db-url" ] && [ $((i + 1)) -lt ${#args[@]} ]; then
-    DB_URL="${args[$((i + 1))]}"
-    break
-  fi
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --db-url)
+      if [ $# -lt 2 ] || [ -z "$2" ] || [ -n "$DB_URL" ]; then
+        printf 'Expected exactly one nonempty --db-url value.\n' >&2
+        exit 2
+      fi
+      DB_URL=$2
+      shift 2
+      ;;
+    *) printf 'Unknown argument.\n' >&2; exit 2 ;;
+  esac
 done
 
 if [ -z "$DB_URL" ]; then
@@ -24,24 +29,28 @@ if [ -z "$DB_URL" ]; then
   ')
 fi
 
-if [ -z "$DB_URL" ]; then
-  printf 'Fant ingen databaseadresse for samtidighetsprøven.\n' >&2
-  exit 1
-fi
+# Validate before installing cleanup or issuing any SQL, including REVOKE.
+node scripts/local-test-db.mjs "$DB_URL"
 
+restore_grant=false
 cleanup() {
-  psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
-    "revoke execute on function api.register_publication_approval(uuid,text,text,text) from authenticated" \
-    >/dev/null 2>&1 || true
+  local status=$?
+  trap - EXIT
+  if [ "$restore_grant" = true ]; then
+    if ! psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
+      "revoke execute on function api.register_publication_approval(uuid,text,text,text) from authenticated"; then
+      printf 'Failed to close the temporary publication RPC grant.\n' >&2
+      [ "$status" -ne 0 ] || status=1
+    fi
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-# Probe 4 in the durable legacy race script creates its own source version with
-# a now-retired reading-order recipe. Antidep 2 correctly refuses to create new
-# clinical evidence from that recipe. Pre-create the same fixed test identity
-# with the current safe recipe; the legacy script uses ON CONFLICT DO NOTHING
-# for these rows and therefore exercises the same race without weakening the
-# production full-text gate.
+# Probe 4 uses a fixed synthetic identity. Keep its current safe PDF recipe;
+# never weaken the production full-text gate to make a legacy test pass.
 psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
 insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
 select '7a000000-0000-4000-8000-000000000001', 'journal_article',
@@ -67,11 +76,15 @@ SQL
 
 if [ "$(psql "$DB_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c \
   "select text_extraction_transform from knowledge.source_versions where id = '7a000000-0000-4000-8000-000000000002'")" != "antidep-reading-order@2" ]; then
-  printf 'Samtidighetsfiksturen har ikke gjeldende sikker PDF-oppskrift.\n' >&2
+  printf 'The concurrency fixture does not use the current safe PDF recipe.\n' >&2
   exit 1
 fi
 
+# Set this before GRANT so an interrupted/ambiguous grant is also cleaned up.
+restore_grant=true
 psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
   "grant execute on function api.register_publication_approval(uuid,text,text,text) to authenticated"
 
-"$(dirname "$0")/db-lock-test.sh" "$@"
+# Forward the one resolved URI, never the original argument list or a second
+# auto-discovery result that could target a different database.
+bash scripts/db-lock-test.sh --db-url "$DB_URL"
