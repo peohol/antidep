@@ -31,6 +31,7 @@ describe('createModelClient', () => {
       provider: 'antidep',
       model: 'opptaksmodell',
       modelVersion: '1',
+      modelVersionDisclosure: 'exact',
     })
   })
 

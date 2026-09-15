@@ -8,7 +8,7 @@ Repoet inneholder Supabase-skjemaet, en testbar agentmotor og klinikerflaten. Kj
 
 Sluttkontrollen er bundet til nøyaktig den kandidaten som ble lest, og publiserer ingenting. Publiseringen er en egen handling med et annet mandat: et menneske med publisher-rolle tar i bruk nøyaktig det godkjente avtrykket, klinikerflaten viser den forseglede raden ordrett, og tilbaketrekking og rollback er nye, synlige hendelser som aldri sletter historikk.
 
-Det finnes ingen live semantisk modellruntime; utkastleddene kjøres av et opptak.
+Det semantiske agentarbeidet gjøres av KI-tjenester eieren allerede har tilgang til. Antidep bygger oppgaven, binder svaret til nøyaktig det grunnlaget oppgaven ble laget av, og registrerer resultatet gjennom de samme kontrollerte skriveveiene som før. Hele veien betjenes fra flaten `/agentarbeid`: last ned oppgaven, gi den til KI-tjenesten, last opp svaret. Ingen modellnøkkel og ingen betalt modell-API er nødvendig.
 
 Denne kodeleveransen har ikke i seg selv endret noen hosted database.
 
@@ -27,5 +27,13 @@ npm run verify:repo
 ```
 
 Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:chain`, `npm run db:stop`.
+
+## Agentarbeid
+
+Flaten `/agentarbeid` viser hvilke agentoppgaver som venter, hvilket ledd de gjelder, og hvilken KI-tjeneste leddet er tildelt. Tjenesten velges der, én gang per ledd, før oppgaven kan hentes ut. Oppgaven lastes ned som én fil som inneholder alt agenten trenger — rollen, reglene, grensene, den forventede svarstrukturen og hele den kontrollerte kildeteksten — og svaret lastes opp igjen som én JSON-fil.
+
+Oppgavefilen kan inneholde hele forskningsartikkelen. Den går rett fra flaten og inn i KI-tjenesten, og skal aldri commites, legges i en issue eller havne i en logg.
+
+Generator, kildestøttekontroll og evidensvurdering skal fortsatt være reelt separate. Hvilken KI-tjeneste et agentledd utføres av, velges på forhånd fra agentarbeidsflaten av den som har tilgangen, og ingen andre ledd kan bruke den samme. Valget inngår i oppgavens avtrykk, så et svar kan bekrefte identiteten sin men ikke bestemme den. Finnes ingen uavhengig modell, stopper kjeden framfor å registrere en kontroll som ikke er uavhengig.
 
 Se [roadmap](docs/ROADMAP.md), [evidenskjeden](docs/EVIDENCE_PIPELINE.md) og [styringsreglene](docs/ANTIDEP_CONSTITUTION.md).

@@ -89,7 +89,15 @@ export interface EvidenceAssessmentProposal {
   readonly assessment: ProposedAssessment
 }
 
-function parseAssessment(parent: Fields, value: unknown): ProposedAssessment {
+/**
+ * Leser og kontrollerer selve vurderingen.
+ *
+ * Eksportert fordi den eksterne agent-handoffen leser nøyaktig den samme
+ * vurderingen ut av et `svar.json` (`handoff-result.ts`). To parsere av den
+ * samme formen ville kunnet bli uenige om hva som godtas, og den ene ville da
+ * sluppet gjennom noe den andre stoppet.
+ */
+export function parseProposedAssessment(parent: Fields, value: unknown): ProposedAssessment {
   const fields = nestedFields(parent, value, 'assessment')
   const assessment: ProposedAssessment = {
     framework: asVocabulary(fields, 'framework', ASSESSMENT_FRAMEWORKS),
@@ -177,7 +185,7 @@ export function parseEvidenceAssessmentProposal(value: unknown): EvidenceAssessm
   const generatedBy = parseGeneratedBy(fields, raw(fields, 'generated_by'))
   const claimRevisionId = asUuid(fields, 'claim_revision_id')
   const evidenceSetDigest = asText(fields, 'evidence_set_digest')
-  const assessment = parseAssessment(fields, raw(fields, 'assessment'))
+  const assessment = parseProposedAssessment(fields, raw(fields, 'assessment'))
   rejectUnknown(fields)
 
   return {

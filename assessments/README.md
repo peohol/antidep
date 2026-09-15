@@ -10,7 +10,7 @@ Denne katalogen er et internt arbeidsområde for agentmotoren og testene. Forsla
 - Forskningsusikkerhet skal beskrives som forskningsusikkerhet. En teknisk mislykket kontroll eller manglende kildetilgang er ikke en lav evidensgrad.
 - Proveniens og rollegrenser bevares selv om den framtidige agentorkestreringen blir automatisert.
 
-`agent:assess-evidence` er et beholdt utviklings-/testgrensesnitt, ikke en oppgave som produktets faglige eier skal utføre manuelt.
+`agent:assess-evidence` er et beholdt utviklings- og prøvegrensesnitt. Produktflyten er den eksterne agent-handoffen: vurderingsoppgaven bygges av databasen med nøyaktig det evidenssettet revisjonen hviler på, en ekstern KI-agent gjør vurderingen, og svaret importeres fra agentflaten. Den modellen som laget innholdet, kan ikke også vurdere det — databasen avviser kombinasjonen.
 
 Den gamle menneskelige mikroreviewflaten er avviklet. Menneskelig fagansvar skal senere utøves som sluttkontroll av den ferdige, kandidatbundne klinikervisningen før eksplisitt publisering.
 

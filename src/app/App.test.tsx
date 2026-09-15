@@ -1,10 +1,12 @@
 import '@testing-library/jest-dom/vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './App'
+import type { AgentWorkGateway } from './agent-work-gateway'
 import type { CandidateGateway } from './candidate-gateway'
 import type { PublicationGateway } from './publication-gateway'
+import { parseAgentWorkQueue } from '../agents/agent-task'
 import { parseCandidateView } from '../lib/candidate-view'
 import { parsePublicationOutcome } from '../lib/published-claim'
 import {
@@ -490,5 +492,37 @@ describe('den publiserte klinikerflaten', () => {
         reason: 'Nye data gjør formuleringen misvisende.',
       })
     })
+  })
+
+  // Agentarbeidet er en egen flate med et eget mandat, og forsiden skal peke
+  // dit: uten lenken finnes siden bare for den som kjenner adressen.
+  it('viser agentarbeidet på sin egen adresse, og lenker dit fra forsiden', async () => {
+    const agentWork: AgentWorkGateway = {
+      listQueue: () => Promise.resolve(parseAgentWorkQueue([])),
+      assignRoleModel: () => Promise.reject(new Error('ingen oppgave')),
+      readTask: () => Promise.reject(new Error('ingen oppgave')),
+      importAnswer: () => Promise.reject(new Error('ingen oppgave')),
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <AppLayout />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('link', { name: 'Agentarbeid' })).toHaveAttribute(
+      'href',
+      '/agentarbeid',
+    )
+
+    cleanup()
+    render(
+      <MemoryRouter initialEntries={['/agentarbeid']}>
+        <AppLayout agentWork={agentWork} />
+      </MemoryRouter>,
+    )
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Oppgaver til KI-agentene' }),
+    ).toBeInTheDocument()
+    expect(await screen.findByText('Ingen agentoppgaver venter nå.')).toBeInTheDocument()
   })
 })

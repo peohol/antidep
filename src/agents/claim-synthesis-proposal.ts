@@ -123,12 +123,39 @@ export interface ClaimSynthesisProposal {
   readonly evidenceLinks: readonly ProposedEvidenceLink[]
 }
 
-function parseClaim(parent: Fields, value: unknown): ProposedClaimRevision {
+/**
+ * Avgrensningen påstanden skal gjelde, når kalleren allerede kjenner den.
+ *
+ * Den eksterne agent-handoffen leser avgrensningen av oppgaven og ikke av
+ * svaret: hvilket tema og hvilket virkestoff påstanden gjelder, er en faglig
+ * avgrensning en redaktør har gjort, på samme måte som katalogen i et
+ * ekstraksjonsoppdrag. En modell som kunne oppgitt dem, kunne oppgitt feil uten
+ * at noe i kjeden merket det.
+ */
+export interface ClaimBinding {
+  readonly claimId: Uuid | null
+  readonly topicConceptId: Uuid
+  readonly subjectDrugId: Uuid
+}
+
+/**
+ * Leser og kontrollerer selve påstandsrevisjonen.
+ *
+ * Eksportert fordi den eksterne agent-handoffen leser nøyaktig den samme
+ * formuleringen ut av et `svar.json` (`handoff-result.ts`). Forskjellen er hvor
+ * avgrensningen kommer fra: er `binding` oppgitt, hører de tre feltene ikke
+ * hjemme i svaret, og de avvises med en setning som sier hvorfor.
+ */
+export function parseProposedClaimRevision(
+  parent: Fields,
+  value: unknown,
+  binding: ClaimBinding | null = null,
+): ProposedClaimRevision {
   const fields = nestedFields(parent, value, 'claim')
   const claim: ProposedClaimRevision = {
-    claimId: asOptionalUuid(fields, 'claim_id'),
-    topicConceptId: asUuid(fields, 'topic_concept_id'),
-    subjectDrugId: asUuid(fields, 'subject_drug_id'),
+    claimId: binding === null ? asOptionalUuid(fields, 'claim_id') : binding.claimId,
+    topicConceptId: binding === null ? asUuid(fields, 'topic_concept_id') : binding.topicConceptId,
+    subjectDrugId: binding === null ? asUuid(fields, 'subject_drug_id') : binding.subjectDrugId,
     statement: asText(fields, 'statement'),
     scope: asText(fields, 'scope'),
     populationId: asOptionalUuid(fields, 'population_id'),
@@ -147,7 +174,19 @@ function parseClaim(parent: Fields, value: unknown): ProposedClaimRevision {
     // påstanden.
     uncertaintySummary: asText(fields, 'uncertainty_summary'),
   }
+  const bound: Record<string, string> =
+    binding === null
+      ? {}
+      : {
+          claim_id:
+            'hører ikke hjemme i et svar fra en ekstern agent. Hvilken påstandsidentitet revisjonen hører til, står i oppgaven',
+          topic_concept_id:
+            'hører ikke hjemme i et svar fra en ekstern agent. Hvilket tema påstanden gjelder, er en faglig avgrensning som står i oppgaven',
+          subject_drug_id:
+            'hører ikke hjemme i et svar fra en ekstern agent. Hvilket virkestoff påstanden gjelder, er en faglig avgrensning som står i oppgaven',
+        }
   rejectUnknown(fields, {
+    ...bound,
     knowledge_type:
       'hører ikke hjemme i et forslag. Skriveveien registrerer evidence_synthesis og ingenting annet; et deterministisk faktum avgjøres mot en autoritativ kilde, og en klinisk anbefaling skal ikke ha en KI-kjøring som opphav',
     revision_number:
@@ -173,7 +212,17 @@ function parseClaim(parent: Fields, value: unknown): ProposedClaimRevision {
   return claim
 }
 
-function parseEvidenceLink(parent: Fields, value: unknown, index: number): ProposedEvidenceLink {
+/**
+ * Leser og kontrollerer én evidenslenke.
+ *
+ * Eksportert av samme grunn som formuleringen over: den eksterne
+ * agent-handoffen leser nøyaktig de samme lenkene.
+ */
+export function parseProposedEvidenceLink(
+  parent: Fields,
+  value: unknown,
+  index: number,
+): ProposedEvidenceLink {
   const fields = nestedFields(parent, value, `evidence_links[${String(index)}]`)
   const link: ProposedEvidenceLink = {
     evidenceItemId: asUuid(fields, 'evidence_item_id'),
@@ -219,9 +268,9 @@ export function parseClaimSynthesisProposal(value: unknown): ClaimSynthesisPropo
   }
 
   const generatedBy = parseGeneratedBy(fields, raw(fields, 'generated_by'))
-  const claim = parseClaim(fields, raw(fields, 'claim'))
+  const claim = parseProposedClaimRevision(fields, raw(fields, 'claim'))
   const links = asObjectList(fields, 'evidence_links').map((link, index) =>
-    parseEvidenceLink(fields, link, index),
+    parseProposedEvidenceLink(fields, link, index),
   )
   rejectUnknown(fields, {
     assessment:

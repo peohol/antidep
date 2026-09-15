@@ -24,8 +24,22 @@ export const CANDIDATE_PATH = '/kandidater/:candidateId' as const
 export const PUBLISHED_PATH = '/publisert' as const
 export const PUBLISHED_CLAIM_PATH = '/publisert/:claimId' as const
 
+/**
+ * Agentarbeidet: oppgavene som venter på en ekstern KI-agent.
+ *
+ * Egen adresse og ikke en del av kandidatflaten: det er to forskjellige
+ * handlinger med hvert sitt mandat. Agentarbeid er redaktørens operative
+ * arbeid med å få utkastene laget; sluttkontrollen er en navngitt fagpersons
+ * vurdering av det ferdige produktet (ANTIDEP_CONSTITUTION.md regel 5).
+ */
+export const AGENT_WORK_PATH = '/agentarbeid' as const
+
 export function homePath(): string {
   return HOME_PATH
+}
+
+export function agentWorkPath(): string {
+  return AGENT_WORK_PATH
 }
 
 export function candidateQueuePath(): string {

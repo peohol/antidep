@@ -34,6 +34,7 @@ describe('parseModelAnswer — den lykkede stien', () => {
       provider: 'anthropic',
       model: 'claude-code',
       modelVersion: 'opus-5',
+      modelVersionDisclosure: 'exact',
     })
     expect(answer.answeredAt).toBe('2026-09-10T09:12:00Z')
     expect(JSON.parse(answer.completion)).toEqual({ extraction: {} })

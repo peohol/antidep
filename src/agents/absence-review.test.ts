@@ -202,7 +202,12 @@ describe('reviewerName', () => {
       reviewerName({
         kind: 'reviewed',
         evidenceItemId: SUBJECT.evidenceItemId,
-        identity: { provider: 'anthropic', model: 'claude', modelVersion: '1' },
+        identity: {
+          provider: 'anthropic',
+          model: 'claude',
+          modelVersion: '1',
+          modelVersionDisclosure: 'exact',
+        },
         promptTemplateVersion: ABSENCE_REVIEW_PROMPT_VERSION,
         requestDigest: `sha256:${'0'.repeat(64)}`,
         answeredAt: '2026-09-11T09:00:00Z',

@@ -2,9 +2,9 @@
 // Kjøremappa for den kildeomfattende fraværsgjennomlesningen
 //
 // Samme form og samme grunn som `drafting-job.ts`: selve gjennomlesningen gjøres
-// av en aktør Antidep ikke kaller — en Claude Code Routine, en modell i et
-// nettleservindu, en fagperson — og et ledd som leser utrygt eksternt innhold
-// skal ikke samtidig ha en skrivevei inn i basen (EVIDENCE_PIPELINE.md §63).
+// av en aktør Antidep ikke kaller — en KI-agent i et chatvindu, en teknisk
+// agent, en fagperson — og et ledd som leser utrygt eksternt innhold skal ikke
+// samtidig ha en skrivevei inn i basen (EVIDENCE_PIPELINE.md §63).
 //
 //   verifikatoren      henter representasjonen, bygger den versjonerte
 //   (--absence-prompts) forespørselen, og legger igjen prompt.txt, en tom

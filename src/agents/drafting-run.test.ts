@@ -102,7 +102,12 @@ function utkast(overrides: { extraction?: Record<string, unknown>; groundings?: 
 
 function modell(text: string): ModelClient {
   return {
-    identity: { provider: 'en-leverandør', model: 'en-modell', modelVersion: '2026-09-15' },
+    identity: {
+      provider: 'en-leverandør',
+      model: 'en-modell',
+      modelVersion: '2026-09-15',
+      modelVersionDisclosure: 'exact',
+    },
     complete: () => Promise.resolve({ text }),
   }
 }
@@ -207,7 +212,12 @@ describe('runExtractionDrafting — det den nekter å foreslå', () => {
     const report = await runExtractionDrafting({
       assignment: await oppdrag(),
       model: {
-        identity: { provider: 'p', model: 'm', modelVersion: '1' },
+        identity: {
+          provider: 'p',
+          model: 'm',
+          modelVersion: '1',
+          modelVersionDisclosure: 'exact',
+        },
         complete: () => {
           spurt = true
           return Promise.resolve({ text: '{}' })

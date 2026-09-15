@@ -36,23 +36,33 @@ export function sourceFence(contentHash: string): string {
 }
 
 /**
- * Kildeteksten mellom markørene, eller et kast dersom gjerdet ikke kan holde.
+ * En datablokk mellom markørene, eller et kast dersom gjerdet ikke kan holde.
+ *
+ * `tag` sier hva blokken er, og er en del av markøren. Den finnes fordi
+ * gjerdet brukes om mer enn kildeteksten: et evidensdossier som legges ved en
+ * synteseoppgave, er like mye utrygg inndata, og et markdown-gjerde av
+ * bakticks ville kunnet lukkes av innholdet selv (`agent-task-file.ts`).
  *
  * Rent uttrykk: den samme inndataen gir den samme teksten, hver gang. Det er
  * forutsetningen for at `modelRequestDigest` binder et svar til nøyaktig den
  * teksten forespørselen ble bygget av.
  */
-export function fencedSourceText(contentHash: string, representation: string): string {
-  const fence = sourceFence(contentHash)
-  const open = `<kildetekst nonce="${fence}">`
-  const close = `</kildetekst nonce="${fence}">`
+export function fencedDataBlock(digest: string, body: string, tag = 'kildetekst'): string {
+  const fence = sourceFence(digest)
+  const open = `<${tag} nonce="${fence}">`
+  const close = `</${tag} nonce="${fence}">`
 
-  if (representation.includes(open) || representation.includes(close)) {
+  if (body.includes(open) || body.includes(close)) {
     throw new Error(
-      `Representasjonen inneholder selv markøren «${fence}», som gjerdet rundt kildeteksten ` +
-        'bruker. Da kan gjerdet ikke holde, og ingen forespørsel bygges.',
+      `Innholdet inneholder selv markøren «${fence}», som gjerdet rundt ${tag} bruker. ` +
+        'Da kan gjerdet ikke holde, og ingen forespørsel bygges.',
     )
   }
 
-  return `${open}\n${representation}\n${close}`
+  return `${open}\n${body}\n${close}`
+}
+
+/** Kildeteksten mellom markørene. Formen er uendret; `fencedDataBlock` er den generelle. */
+export function fencedSourceText(contentHash: string, representation: string): string {
+  return fencedDataBlock(contentHash, representation, 'kildetekst')
 }

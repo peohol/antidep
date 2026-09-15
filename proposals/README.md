@@ -11,7 +11,7 @@ Denne katalogen inneholder bare lokale mellomartefakter for agentmotoren og test
 - En separat ekstraksjonsverifikator kontrollerer kildestøtten. Generator og kontrollør skal ikke være samme rolle.
 - Teknisk feil, manglende dokumenttilgang eller manglende kontroll kan aldri omdøpes til et verifisert funn.
 
-`agent:extract-evidence` og `agent:reextract-evidence` er interne utviklings-/testinnganger. De er ikke en manuell produktarbeidsflyt og erstatter ikke den kommende varige agentjobben.
+`agent:extract-evidence` og `agent:reextract-evidence` er interne utviklings- og prøveinnganger. Produktflyten er den eksterne agent-handoffen: oppgaven bygges av databasen, en ekstern KI-agent utfører den, og svaret importeres fra agentflaten gjennom den samme kontrollerte skriveveien.
 
 Det finnes ikke lenger en menneskelig mikroreview-rute for hvert evidensfelt. Den framtidige menneskelige oppgaven er sluttkontroll av en ferdig, kandidatbundet klinikervisning før eksplisitt publisering.
 
