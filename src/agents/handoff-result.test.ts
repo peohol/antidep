@@ -148,6 +148,54 @@ describe('synteseutkastet', () => {
     ).toMatch(/oppgaven/)
   })
 
+  // Evidenssettet er redaktørens avgrensning. Et utkast som utelot et funn —
+  // typisk det som MOTSIER påstanden — ville gitt en syntese som hvilte på et
+  // annet grunnlag enn det som finnes, uten at noe sa fra.
+  it('krever at hvert evidensfunn i oppgaven har en relasjon til påstanden', () => {
+    const payload = taskPayload('claim_synthesis')
+    const binding = payload['binding'] as Record<string, unknown>
+    const bindingInput = binding['input'] as Record<string, unknown>
+    const twoItems = parseAgentTask({
+      ...payload,
+      binding: {
+        ...binding,
+        input: {
+          ...bindingInput,
+          evidence: [
+            { evidence_item_id: TEST_EVIDENCE_ID, content_hash: `sha256:${'9'.repeat(64)}` },
+            { evidence_item_id: TEST_OTHER_EVIDENCE_ID, content_hash: `sha256:${'8'.repeat(64)}` },
+          ],
+        },
+      },
+    })
+
+    // Utkastet lenker bare til det ene.
+    expect(handoffResultProblem(twoItems, resultFor('claim_synthesis'))).toMatch(/mangler 1 av/)
+
+    const result = resultFor('claim_synthesis')
+    const first = (result['evidence_links'] as Record<string, unknown>[])[0]
+    expect(
+      handoffResultProblem(twoItems, {
+        ...result,
+        evidence_links: [
+          first,
+          { ...first, evidence_item_id: TEST_OTHER_EVIDENCE_ID, relationship_type: 'contradicts' },
+        ],
+      }),
+    ).toBeNull()
+  })
+
+  it('avviser en populasjon utenfor oppgavens avgrensning', () => {
+    const result = resultFor('claim_synthesis')
+    const claim = result['claim'] as Record<string, unknown>
+    expect(
+      handoffResultProblem(task('claim_synthesis'), {
+        ...result,
+        claim: { ...claim, population_id: '78000000-0000-4000-8000-0000000000ff' },
+      }),
+    ).toMatch(/populasjon/)
+  })
+
   it('avviser en påstand uten usikkerhetstekst', () => {
     const result = resultFor('claim_synthesis')
     const claim = { ...(result['claim'] as Record<string, unknown>) }

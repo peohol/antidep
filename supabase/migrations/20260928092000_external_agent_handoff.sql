@@ -934,6 +934,14 @@ begin
     );
   end if;
 
+  -- En oppbrukt oppgave kan ikke ta imot et svar, og skal derfor ikke kunne
+  -- hentes ut heller. Uten dette ville noen kunnet bruke en hel økt i en
+  -- KI-tjeneste på et svar importen uansett måtte avvise, og «venter på deg»
+  -- ville sett likt ut som «blir stående» (ANTIDEP_CONSTITUTION.md regel 4).
+  if p_job.state <> 'succeeded' and p_job.attempts >= p_job.max_attempts then
+    return 'Oppgaven har brukt opp forsøkene sine og blir stående. Arbeidet må legges inn som en ny oppgave for å kunne gjøres om igjen.';
+  end if;
+
   if p_job.agent_role = 'evidence_extraction' then
     v_source_version_id := workflow.manifest_uuid(v_manifest, 'source_version_id');
     if v_source_version_id is null then
@@ -1906,6 +1914,36 @@ begin
         errcode = 'invalid_parameter_value',
         message = 'Svaret lenker til et evidensfunn som ikke står i oppgaven.',
         hint = 'Hvilke funn en syntese kan bygge på, er en faglig avgrensning som ligger i oppgaven. En modell som fikk velge fritt, ville kunnet bygge påstanden på noe ingen hadde tatt stilling til.';
+    end if;
+
+    -- Og hele settet, ikke en delmengde av det. Et svar som utelot et funn som
+    -- MOTSIER påstanden, ville gitt en syntese som hvilte på et annet grunnlag
+    -- enn det redaktøren avgrenset — og uenigheten ville vært borte uten at noe
+    -- i kjeden sa fra (ANTIDEP_CONSTITUTION.md regel 4).
+    if exists (
+      select 1
+      from jsonb_array_elements(v_input -> 'evidence') as assigned(value)
+      where not exists (
+        select 1
+        from jsonb_array_elements(coalesce(v_result -> 'evidence_links', '[]'::jsonb)) as link(value)
+        where link.value ->> 'evidence_item_id' = assigned.value ->> 'evidence_item_id'
+      )
+    ) then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret dekker ikke alle evidensfunnene oppgaven avgrenset.',
+        hint = 'Hvert funn i oppgaven skal ha en relasjon til påstanden — også et funn som motsier den, som da føres som contradicts. Et utelatt funn ville gjort grunnlaget til et annet enn det som finnes.';
+    end if;
+
+    -- Populasjonen er redaktørens avgrensning, som katalogen i et
+    -- ekstraksjonsoppdrag. En id kopiert ut av dossieret ville passert
+    -- fremmednøkkelen og flyttet påstanden til en annen populasjon.
+    v_ids := coalesce(workflow.manifest_uuids(v_input, 'population_ids'), array[]::uuid[]);
+    v_id := workflow.manifest_uuid(v_claim, 'population_id');
+    if v_claim ->> 'population_id' is not null and (v_id is null or not (v_id = any (v_ids))) then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret oppgir en populasjon som ikke står blant populasjonene i oppgaven.';
     end if;
 
     v_outcome := knowledge.record_agent_claim_synthesis(

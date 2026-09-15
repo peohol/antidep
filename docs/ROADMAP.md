@@ -8,16 +8,22 @@ Antidep eier oppgavekontrakten, integritetskontrollene og lagringen. Oppgaven by
 
 Hele veien betjenes fra Antidep-flaten. Den som skal gjøre agentarbeidet, ser hva som venter, laster ned oppgaven, gir den til KI-tjenesten og laster opp svaret — uten å åpne repoet, redigere JSON, håndtere oppdragsfiler, kjøre terminalkommandoer, kjenne database-ID-er eller konfigurere en modell-API.
 
+## Det som fortsatt krever en terminal
+
+Agentarbeidet kan gjøres fra flaten. To ting rundt det kan ikke ennå, og de er begge ærlige mangler framfor noe som «kommer av seg selv»:
+
+- **Kildeinngangen.** Fullteksten registreres av `npm run editor:assignment -- --pdf …`, fordi tekstuttrekket må gjøres med den registrerte oppskriften — `pdftotext` med en låst argumentliste og Antideps leserekkefølge — og en nettleser kan ikke kjøre den. Kommandoen legger riktignok agentoppgaven i køen med det samme, så selve agentarbeidet er flatens; men den som bare har en PDF, kommer ikke i gang alene.
+- **De uavhengige kontrolleddene.** Ekstraksjonskontrollen og kildestøttekontrollen er Antideps egen deterministiske kode, og de kjøres i dag av kommandoer med hver sin agentlegitimasjon. Når et agentsvar er importert, går kjeden derfor ikke videre av seg selv. Flaten sier nettopp det framfor å love noe annet.
+
 ## Neste leveranse
 
-Neste sammenhengende leveranse er **kildeinngangen fra flaten**: å få en ny forskningsartikkel inn i Antidep uten en terminal.
+Neste sammenhengende leveranse er **resten av kjeden fra flaten**: å komme fra en PDF til en kandidat uten et terminalvindu, uten å slippe et eneste krav underveis.
 
-Alt agentarbeidet kan i dag gjøres fra flaten, men den *første* handlingen kan ikke: fullteksten registreres av `npm run editor:assignment -- --pdf …`, fordi tekstuttrekket må gjøres med den registrerte oppskriften — `pdftotext` med en låst argumentliste og Antideps leserekkefølge — og en nettleser kan ikke kjøre den. Kommandoen legger riktignok agentoppgaven i køen med det samme, så alt som følger etterpå er flatens; men den som bare har en PDF, kommer ikke i gang alene.
-
-Leveransen må løse tre ting samlet, og den skal ikke løses ved å slippe kravet til oppskriften:
+Den må løse fire ting samlet:
 
 - en kontrollert vei for å laste opp en PDF og registrere en kilde fra flaten, med den samme publikasjonsbindingen og den samme lesbarhetskontrollen som i dag,
-- et sted tekstuttrekket faktisk kjøres med den registrerte oppskriften, uten å innføre en ny ekstern tjeneste og uten en modellnøkkel, og
-- et enkelt sted å gjøre den redaksjonelle avgrensningen — hvilke virkestoff, hvilke endepunkt, hvilken populasjon et funn kan gjelde — som i dag er flagg på en kommandolinje.
+- et sted tekstuttrekket faktisk kjøres med den registrerte oppskriften, uten å innføre en ny ekstern tjeneste og uten en modellnøkkel,
+- et enkelt sted å gjøre den redaksjonelle avgrensningen — hvilke virkestoff, hvilke endepunkt, hvilken populasjon et funn kan gjelde — som i dag er flagg på en kommandolinje, og
+- en vei for at de deterministiske kontrolleddene kjøres når grunnlaget for dem finnes, med sin egen rolle og sin egen identitet som før, slik at et importert agentsvar faktisk fører kjeden videre.
 
 Først da går hele veien fra en artikkel til publisert klinikerinnhold uten et terminalvindu.

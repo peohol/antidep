@@ -75,13 +75,24 @@ interface ItemStatus {
   readonly message: string
 }
 
+/**
+ * Hva som faktisk skjedde, og hva som ikke skjedde.
+ *
+ * Setningen lover ikke at kjeden går videre av seg selv. De uavhengige
+ * kontrollene som følger, er Antideps egen deterministiske kode og kjøres ennå
+ * ikke herfra (docs/ROADMAP.md) — og en flate som sa noe annet, ville gjort en
+ * manglende kontroll til en utført (ANTIDEP_CONSTITUTION.md regel 4).
+ */
 function outcomeMessage(outcome: ImportOutcome): string {
   const what = describeOutcome(outcome.outcome)
   const model = outcome.model === null ? '' : ` Utført av ${describeModelIdentity(outcome.model)}.`
   if (outcome.alreadyImported) {
     return `Dette svaret var allerede registrert, og ingenting nytt ble skrevet.${what}${model}`
   }
-  return `Svaret er godtatt og registrert.${what}${model} Antidep fortsetter kjeden herfra.`
+  return (
+    `Svaret er godtatt og registrert.${what}${model} Det neste leddet er en uavhengig ` +
+    'kontroll, og den kjøres ennå ikke fra denne siden.'
+  )
 }
 
 /**

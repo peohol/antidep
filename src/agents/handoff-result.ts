@@ -129,25 +129,43 @@ function synthesisProblem(task: AgentTask, result: Record<string, unknown>): str
   }
 
   const fields = fieldsOf(result, RESULT_SUBJECT, 'utkastet')
-  parseProposedClaimRevision(fields, raw(fields, 'claim'), claimBinding)
+  const claim = parseProposedClaimRevision(fields, raw(fields, 'claim'), claimBinding)
   const links = asObjectList(fields, 'evidence_links').map((link, index) =>
     parseProposedEvidenceLink(fields, link, index),
   )
   rejectUnknown(fields)
 
-  if (links.length === 0) {
-    return 'Utkastet lenker ikke til noe evidensfunn. En påstand uten grunnlag er ikke en syntese.'
+  // Populasjonen er en faglig avgrensning redaktøren har gjort, på linje med
+  // katalogen i et ekstraksjonsoppdrag. En id kopiert ut av dossieret ville
+  // passert fremmednøkkelen og flyttet påstanden til en annen populasjon enn
+  // den oppgaven gjelder.
+  const populations = textList(binding, 'population_ids')
+  if (claim.populationId !== null && !populations.includes(claim.populationId)) {
+    return 'Utkastet oppgir en populasjon som ikke står blant populasjonene i oppgaven.'
   }
-  const allowed = new Set(evidenceIdsIn(binding))
+
+  // Hele evidenssettet, og ikke en delmengde av det. Et utkast som utelot et
+  // funn som MOTSIER påstanden, ville gitt en syntese som hvilte på et annet
+  // grunnlag enn det redaktøren avgrenset — og uenigheten ville vært borte uten
+  // at noe i kjeden sa fra (ANTIDEP_CONSTITUTION.md regel 4).
+  const assigned = evidenceIdsIn(binding)
   const seen = new Set<string>()
   for (const link of links) {
-    if (!allowed.has(link.evidenceItemId)) {
+    if (!assigned.includes(link.evidenceItemId)) {
       return 'Utkastet lenker til et evidensfunn som ikke står i oppgaven.'
     }
     if (seen.has(link.evidenceItemId)) {
       return 'Utkastet fører det samme evidensfunnet mer enn én gang.'
     }
     seen.add(link.evidenceItemId)
+  }
+  const missing = assigned.filter((id) => !seen.has(id))
+  if (missing.length > 0) {
+    return (
+      `Utkastet mangler ${String(missing.length)} av evidensfunnene oppgaven avgrenset. ` +
+      'Hvert funn skal ha en relasjon til påstanden — også et funn som motsier den, som da ' +
+      'føres som contradicts.'
+    )
   }
   return null
 }

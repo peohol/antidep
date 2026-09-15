@@ -18,7 +18,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(29);
+select plan(32);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -498,6 +498,111 @@ select throws_ok(
   '23001',
   null,
   'den samme eksterne modellen kan ikke gjøre arbeidet i to agentledd'
+);
+reset role;
+
+-- ===========================================================================
+-- Del 6b — Avgrensningen gjelder også syntesen
+-- ===========================================================================
+insert into res
+select 'synthesis_job2', jsonb_build_object('pipeline_job_id', j.id)
+from (
+  select (api.enqueue_agent_task('claim_synthesis', jsonb_build_object(
+    'topic_concept_id', (select id from ids where name = 'outcome'),
+    'subject_drug_id', (select id from ids where name = 'drug'),
+    -- Med vilje uten populasjoner: avgrensningen er redaktørens, og et svar som
+    -- oppgir en populasjon oppgaven ikke åpnet for, skal avvises.
+    'evidence_item_ids', jsonb_build_array('f2000000-0000-4000-8000-000000000011',
+                                           'f2000000-0000-4000-8000-000000000012')
+  )) ->> 'pipeline_job_id')::uuid as id
+) j;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"78000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+
+insert into res
+select 'synthesis_task2', api.agent_task_payload(
+  (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'synthesis_job2'));
+
+-- Et utkast som utelot det ene funnet — typisk det som motsier påstanden —
+-- ville gitt en syntese som hvilte på et annet grunnlag enn det redaktøren
+-- avgrenset (ANTIDEP_CONSTITUTION.md regel 4).
+select throws_ok(
+  format(
+    $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
+    (select payload ->> 'pipeline_job_id' from res where label = 'synthesis_job2'),
+    (select jsonb_build_object(
+       'answer_version', 'antidep/agent-answer@1',
+       'task_version', 'antidep/agent-task@1',
+       'role', 'claim_synthesis',
+       'job_key', t.payload ->> 'job_key',
+       'request_digest', t.payload ->> 'request_digest',
+       'output_schema_version', t.payload ->> 'output_schema_version',
+       'identity', jsonb_build_object('provider', 'anthropic', 'model', 'Claude Opus',
+                                      'model_version_disclosure', 'not_exposed'),
+       'result', jsonb_build_object(
+         'claim', jsonb_build_object('statement', 'x'),
+         'evidence_links', jsonb_build_array(jsonb_build_object(
+           'evidence_item_id', 'f2000000-0000-4000-8000-000000000011',
+           'relationship_type', 'supports', 'directness', 'direct',
+           'relevance_note', 'Syntetisk.'))))::text
+     from res t where t.label = 'synthesis_task2')
+  ),
+  '22023',
+  null,
+  'et synteseutkast som ikke dekker hele evidenssettet, avvises'
+);
+
+select throws_ok(
+  format(
+    $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
+    (select payload ->> 'pipeline_job_id' from res where label = 'synthesis_job2'),
+    (select jsonb_build_object(
+       'answer_version', 'antidep/agent-answer@1',
+       'task_version', 'antidep/agent-task@1',
+       'role', 'claim_synthesis',
+       'job_key', t.payload ->> 'job_key',
+       'request_digest', t.payload ->> 'request_digest',
+       'output_schema_version', t.payload ->> 'output_schema_version',
+       'identity', jsonb_build_object('provider', 'anthropic', 'model', 'Claude Opus',
+                                      'model_version_disclosure', 'not_exposed'),
+       'result', jsonb_build_object(
+         'claim', jsonb_build_object(
+           'statement', 'x',
+           'population_id', (select id from ids where name = 'population')),
+         'evidence_links', jsonb_build_array(
+           jsonb_build_object('evidence_item_id', 'f2000000-0000-4000-8000-000000000011',
+                              'relationship_type', 'supports', 'directness', 'direct',
+                              'relevance_note', 'Syntetisk.'),
+           jsonb_build_object('evidence_item_id', 'f2000000-0000-4000-8000-000000000012',
+                              'relationship_type', 'contradicts', 'directness', 'direct',
+                              'relevance_note', 'Syntetisk.'))))::text
+     from res t where t.label = 'synthesis_task2')
+  ),
+  '22023',
+  null,
+  'en populasjon utenfor oppgavens avgrensning avvises'
+);
+reset role;
+
+-- En oppbrukt oppgave skal ikke kunne hentes ut heller: alternativet er en hel
+-- økt i en KI-tjeneste på et svar importen uansett måtte avvise.
+update workflow.pipeline_jobs
+set attempts = max_attempts
+where id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'synthesis_job2');
+
+select set_config('request.jwt.claims',
+                  '{"sub":"78000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+select throws_ok(
+  format(
+    $$ select api.agent_task_payload(%L::uuid) $$,
+    (select payload ->> 'pipeline_job_id' from res where label = 'synthesis_job2')
+  ),
+  '23001',
+  null,
+  'en oppgave med oppbrukte forsøk kan ikke hentes ut'
 );
 reset role;
 
