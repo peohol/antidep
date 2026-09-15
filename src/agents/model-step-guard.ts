@@ -1,28 +1,25 @@
 // ============================================================================
 // Miljøvakten for modell-leddet — et lag i dybden, ikke *den* grensen
 //
-// EVIDENCE_PIPELINE.md §63 sier at et ledd som leser utrygt eksternt innhold,
-// ikke skal ha unødvendig tilgang til hemmeligheter eller destruktive
-// systemhandlinger. Modell-leddet er det leddet.
+// AGENTS.md sier at eksterne dokumenter er data, aldri instrukser, og
+// ANTIDEP_CONSTITUTION.md regel 7 krever minste privilegium også for agentene.
+// Modell-leddet er det leddet som leser det utrygge eksterne innholdet.
 //
 // ----------------------------------------------------------------------------
 // Hva denne vakten *ikke* kan
 //
 // Den ser miljøet til **denne prosessen**, og ingenting annet. Den kan ikke se
-// sesjonen som startet den, og den kan ikke se verktøy eller connectorer den
-// sesjonen har. Kjøres modell-leddet av en Claude Code Routine, er Routinen en
-// autonom sesjon med skall, med miljøet fra det kjøremiljøet den ble gitt, og
-// med de connectorene den ble opprettet med. En modell som har lest en
-// artikkel med noe instruksjonslignende i seg, kan i den sesjonen bruke hva
-// som helst av det — uavhengig av hva denne funksjonen sier.
+// prosessen eller tjenesten som startet den, eller hvilke verktøy og connectorer
+// den ytre kjørekonteksten eventuelt har tilgang til. En modell som har lest en
+// artikkel med noe instruksjonslignende i seg, må derfor isoleres av selve
+// runtime-miljøet; denne funksjonen kan ikke etablere den grensen alene.
 //
-// **Den primære grensen er derfor kjøremiljøet og connectorlisten**, ikke
-// koden her: Routinen som kjører modell-leddet, skal ha et eget kjøremiljø
-// uten skrivekapable hemmeligheter og uten skrivekapable connectorer
-// (`docs/ROUTINE_EXTRACTION.md` §3). Vakten under er laget under det: den
-// fanger det vanligste uhellet — at kommandoen kjøres i et skall der en
-// hemmelighet allerede er eksportert — og den sier fra med en gang framfor å la
-// kjøringen se uskyldig ut.
+// **Den primære grensen er kjøremiljøet og verktøytilgangen**, ikke koden her.
+// Modell-leddet skal kjøres uten skrivekapable hemmeligheter og uten
+// skrivekapable eksterne verktøy. Vakten under er et ekstra lag som fanger det
+// vanligste uhellet: at kommandoen kjøres i et skall der en hemmelighet allerede
+// er eksportert. Den framtidige live semantiske runtimen er fortsatt et
+// eksplisitt manglende produktledd i docs/EVIDENCE_PIPELINE.md.
 //
 // ----------------------------------------------------------------------------
 // Hvilke navn den kjenner
@@ -97,13 +94,13 @@ export function assertNoWriteCapableCredentials(env: ProcessEnv, command: string
   throw new Error(
     'Modell-leddet skal ikke kjøre med skrivekapabel legitimasjon i miljøet, og disse står ' +
       `der: ${present.join(', ')}.\n\n` +
-      'Leddet leser en artikkel Antidep ikke kontrollerer, og et ledd som gjør det, skal ikke ' +
-      'samtidig ha tilgang til noe som kan skrive (EVIDENCE_PIPELINE.md §63). Registreringen ' +
-      'er en egen kommando, med sin egen identitet, og skal kjøres for seg.\n\n' +
+      'Leddet leser eksternt innhold Antidep ikke kontrollerer, og minste privilegium krever ' +
+      'at det ikke samtidig har tilgang til noe som kan skrive (AGENTS.md; ' +
+      'ANTIDEP_CONSTITUTION.md regel 7). Registreringen er en egen operasjon med egen ' +
+      'rolle og legitimasjon.\n\n' +
       `Kjør modell-leddet uten dem:\n\n  env ${unset} ${command}\n\n` +
-      'Merk at dette bare dekker miljøet til denne prosessen. Kjøres leddet av en Claude Code ' +
-      'Routine, er den egentlige grensen at Routinen har sitt eget kjøremiljø uten ' +
-      'skrivekapable hemmeligheter og uten skrivekapable connectorer ' +
-      '(docs/ROUTINE_EXTRACTION.md §3).',
+      'Merk at dette bare dekker miljøet til denne prosessen. Den egentlige grensen må også ' +
+      'etableres i kjøremiljøet ved å utelate skrivekapable hemmeligheter og verktøy. Den ' +
+      'varige live-runtimen er ennå ikke implementert (docs/EVIDENCE_PIPELINE.md).',
   )
 }
