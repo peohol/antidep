@@ -14,17 +14,9 @@ DB_URL=$(npx --no-install supabase status -o json 2>/dev/null | node -e '
   })
 ')
 
-if [ -z "$DB_URL" ]; then
-  printf 'Fant ingen lokal databaseadresse for Antidep 2-oppgraderingsprøven.\n' >&2
-  exit 1
-fi
-case "$DB_URL" in
-  postgresql://postgres:postgres@127.0.0.1:*/*|postgresql://postgres:postgres@localhost:*/*) ;;
-  *)
-    printf 'Oppgraderingsprøven nekter å kjøre mot annet enn lokal Supabase: %s\n' "$DB_URL" >&2
-    exit 1
-    ;;
-esac
+# A localhost-looking URI can still redirect libpq through query parameters or
+# service/hostaddr defaults. Reject it before any SQL or destructive db reset.
+node scripts/local-test-db.mjs "$DB_URL"
 
 scalar() {
   psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -t -A -c "$1" | tr -d '\r\n'
@@ -209,5 +201,57 @@ assert_eq "$(scalar 'select count(*) from knowledge.evidence_items')" "$before_e
 assert_eq "$(scalar 'select count(*) from knowledge.claims')" "$unexpected_claims" 'scope-stopp slettet uventet klinisk innhold'
 assert_eq "$(scalar "select coalesce(to_regclass('audit.prototype_resets')::text, '')")" '' 'scope-stopp etterlot et snapshot fra en rullet tilbake reset'
 assert_preflight_left_no_partial_rollout
+
+# 5. Reproduce the transaction-boundary race without timing assumptions: commit
+# the preflight migration, start a new agent run, then execute the reset. A
+# second-preflight failure must preserve BOTH the old data and old RPC grants.
+reset_legacy
+before_evidence=$(scalar 'select count(*) from knowledge.evidence_items')
+before_claims=$(scalar 'select count(*) from knowledge.claims')
+rpc_grants_sql="select jsonb_agg(jsonb_build_object(
+  'function', p.oid::regprocedure::text,
+  'anon', has_function_privilege('anon', p.oid, 'EXECUTE'),
+  'authenticated', has_function_privilege('authenticated', p.oid, 'EXECUTE')
+) order by p.oid)
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'api' and p.proname = any (array[
+  'claim_review_workspace', 'extraction_review_workspace',
+  'register_human_claim_verification', 'register_human_extraction_verification',
+  'register_publication_approval', 'publish_claim_revision', 'create_evidence_item'
+])"
+before_grants=$(scalar "$rpc_grants_sql")
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260925090000_fulltext_clinical_gate_and_retired_client_api.sql \
+  >"$TMP_DIR/preflight-only.log" 2>&1
+assert_eq "$(scalar "$rpc_grants_sql")" "$before_grants" 'first migration changed operational RPC grants'
+assert_eq "$(scalar "select coalesce(to_regprocedure('knowledge.assert_clinical_full_text(uuid,uuid)')::text, '')")" '' 'first migration installed a gate outside the reset transaction'
+
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
+insert into provenance.agent_runs (
+  agent_identity_id, actor_id, agent_role,
+  provider, model, model_version, prompt_template_version, pipeline_version,
+  status, input_manifest
+)
+select ai.id, ai.actor_id, ai.agent_role,
+       'antidep-test', 'inter-migration-blocker', '1', 'test', 'test',
+       'running', '{"evidence_item_ids":["inter-migration-blocker"]}'::jsonb
+from provenance.agent_identities ai
+where ai.identity_key = 'agent-identity:extraction-verification-01';
+SQL
+assert_gt_zero "$(scalar "select count(*) from provenance.agent_runs where status = 'running'")" 'inter-migration fixture did not create a running agent'
+if psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -v VERBOSITY=verbose \
+  -f supabase/migrations/20260925091000_reset_active_prototype_content.sql \
+  >"$TMP_DIR/inter-migration.log" 2>&1; then
+  fail 'reset ignored an agent run committed between migrations'
+fi
+grep -q '23001' "$TMP_DIR/inter-migration.log" || {
+  cat "$TMP_DIR/inter-migration.log" >&2
+  fail 'inter-migration test failed for a reason other than the scope guard'
+}
+assert_eq "$(scalar 'select count(*) from knowledge.evidence_items')" "$before_evidence" 'inter-migration stop removed evidence'
+assert_eq "$(scalar 'select count(*) from knowledge.claims')" "$before_claims" 'inter-migration stop removed claims'
+assert_eq "$(scalar "$rpc_grants_sql")" "$before_grants" 'inter-migration stop stranded retired RPC grants'
+assert_eq "$(scalar "select coalesce(to_regprocedure('knowledge.assert_clinical_full_text(uuid,uuid)')::text, '')")" '' 'inter-migration stop stranded the full-text gate'
+assert_eq "$(scalar "select coalesce(to_regclass('audit.prototype_resets')::text, '')")" '' 'inter-migration stop left a reset snapshot'
 
 printf 'Antidep 2-oppgraderingsprøven gikk gjennom.\n'
