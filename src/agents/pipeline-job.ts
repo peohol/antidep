@@ -169,16 +169,16 @@ export interface PipelineJobApi {
   /**
    * Melder et vellykket utfall.
    *
+   * Utdatamanifestet oppgis ikke: databasen kopierer det fra den bundne
+   * kjøringen. Var det en parameter, kunne kjøringen registrert utfall A mens
+   * jobben ble merket vellykket med utfall B, og køens versjon ville vært den
+   * ingen kunne etterprøve.
+   *
    * Idempotent i databasen: en allerede fullført jobb skriver ingenting og
    * svarer med det registrerte utfallet. En kjører som mistet svaret sitt, kan
    * derfor spørre igjen framfor å måtte gjette.
    */
-  complete(
-    pipelineJobId: Uuid,
-    leaseToken: Uuid,
-    outputManifest: Record<string, unknown>,
-    agentRunId: Uuid,
-  ): Promise<void>
+  complete(pipelineJobId: Uuid, leaseToken: Uuid, agentRunId: Uuid): Promise<void>
   fail(pipelineJobId: Uuid, leaseToken: Uuid, failureReason: string): Promise<FailureReport>
 }
 
@@ -205,12 +205,11 @@ export function createPipelineJobApi(
       return parseClaimedJob(data)
     },
 
-    async complete(pipelineJobId, leaseToken, outputManifest, agentRunId) {
+    async complete(pipelineJobId, leaseToken, agentRunId) {
       const { error } = await client.rpc('complete_pipeline_job', {
         ...auth,
         p_pipeline_job_id: pipelineJobId,
         p_lease_token: leaseToken,
-        p_output_manifest: outputManifest,
         p_agent_run_id: agentRunId,
       })
       if (error !== null) {
@@ -246,10 +245,7 @@ export function createPipelineJobApi(
 export async function runOnePipelineJob(
   api: PipelineJobApi,
   agentRole: string,
-  work: (job: ClaimedJob) => Promise<{
-    readonly output: Record<string, unknown>
-    readonly agentRunId: Uuid
-  }>,
+  work: (job: ClaimedJob) => Promise<{ readonly agentRunId: Uuid }>,
   leaseSeconds?: number,
 ): Promise<{ readonly ran: false } | { readonly ran: true; readonly job: ClaimedJob }> {
   const claim = await api.claim(agentRole, leaseSeconds)
@@ -257,7 +253,7 @@ export async function runOnePipelineJob(
     return { ran: false }
   }
 
-  let result: { readonly output: Record<string, unknown>; readonly agentRunId: Uuid }
+  let result: { readonly agentRunId: Uuid }
   try {
     result = await work(claim.job)
   } catch (cause) {
@@ -266,11 +262,6 @@ export async function runOnePipelineJob(
     throw cause
   }
 
-  await api.complete(
-    claim.job.pipelineJobId,
-    claim.job.leaseToken,
-    result.output,
-    result.agentRunId,
-  )
+  await api.complete(claim.job.pipelineJobId, claim.job.leaseToken, result.agentRunId)
   return { ran: true, job: claim.job }
 }

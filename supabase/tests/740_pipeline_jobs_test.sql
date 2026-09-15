@@ -15,7 +15,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(35);
+select plan(37);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -207,7 +207,7 @@ select throws_ok(
   format(
     $$select api.complete_pipeline_job(
         'agent-identity:evidence-extraction-01', %L, %L,
-        '74000000-0000-4000-8000-0000000000ff'::uuid, '{"ok": true}'::jsonb, %L)$$,
+        '74000000-0000-4000-8000-0000000000ff'::uuid, %L)$$,
     (select secret from cred where label = 'extractor'),
     (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
     (select payload ->> 'agent_run_id' from result where label = 'run')
@@ -221,7 +221,7 @@ select throws_ok(
 select throws_ok(
   format(
     $$select api.complete_pipeline_job(
-        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb, null)$$,
+        'agent-identity:evidence-extraction-01', %L, %L, %L, null)$$,
     (select secret from cred where label = 'extractor'),
     (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
     (select payload ->> 'lease_token' from result where label = 'claimed')
@@ -233,7 +233,7 @@ select throws_ok(
 select throws_ok(
   format(
     $$select api.complete_pipeline_job(
-        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb,
+        'agent-identity:evidence-extraction-01', %L, %L, %L,
         '74000000-0000-4000-8000-0000000000a2')$$,
     (select secret from cred where label = 'extractor'),
     (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
@@ -249,7 +249,7 @@ select throws_ok(
 select throws_ok(
   format(
     $$select api.complete_pipeline_job(
-        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb, %L)$$,
+        'agent-identity:evidence-extraction-01', %L, %L, %L, %L)$$,
     (select secret from cred where label = 'extractor'),
     (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
     (select payload ->> 'lease_token' from result where label = 'claimed'),
@@ -274,7 +274,7 @@ select lives_ok(
 select lives_ok(
   format(
     $$select api.complete_pipeline_job(
-        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb, %L)$$,
+        'agent-identity:evidence-extraction-01', %L, %L, %L, %L)$$,
     (select secret from cred where label = 'extractor'),
     (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
     (select payload ->> 'lease_token' from result where label = 'claimed'),
@@ -289,7 +289,6 @@ insert into result select 'completed_again', api.complete_pipeline_job(
   'agent-identity:evidence-extraction-01', (select secret from cred where label = 'extractor'),
   (select (payload ->> 'pipeline_job_id')::uuid from result where label = 'claimed'),
   (select (payload ->> 'lease_token')::uuid from result where label = 'claimed'),
-  '{"ok": true}'::jsonb,
   (select (payload ->> 'agent_run_id')::uuid from result where label = 'run'));
 
 -- Et annet forsøk eier ikke utfallet, og kan heller ikke bekrefte det.
@@ -297,7 +296,7 @@ select throws_ok(
   format(
     $$select api.complete_pipeline_job(
         'agent-identity:evidence-extraction-01', %L, %L,
-        '74000000-0000-4000-8000-0000000000ff'::uuid, '{"ok": true}'::jsonb, %L)$$,
+        '74000000-0000-4000-8000-0000000000ff'::uuid, %L)$$,
     (select secret from cred where label = 'extractor'),
     (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
     (select payload ->> 'agent_run_id' from result where label = 'run')
@@ -333,6 +332,24 @@ select throws_ok(
   'en fullført jobb kan ikke stå uten kjøringen som gjorde arbeidet'
 );
 
+-- Utfallet er kjøringens eget, ikke en parallell påstand fra kalleren.
+-- api.complete_pipeline_job tar ikke lenger imot et manifest i det hele tatt,
+-- så køen og proveniensen kan ikke si hver sin ting om det samme arbeidet.
+select is(
+  (select j.output_manifest from workflow.pipeline_jobs j
+   where j.id = (select (payload ->> 'pipeline_job_id')::uuid from result where label = 'claimed')),
+  '{"registered": true}'::jsonb,
+  'jobbens utfall er det den bundne kjøringen registrerte'
+);
+select is(
+  (select count(*)::int from pg_proc pr
+   join pg_namespace n on n.oid = pr.pronamespace
+   where n.nspname = 'api' and pr.proname = 'complete_pipeline_job'
+     and pg_get_function_arguments(pr.oid) like '%p_output_manifest%'),
+  0,
+  'utfallet kan ikke oppgis av kalleren: parameteren finnes ikke'
+);
+
 -- ===========================================================================
 -- Del 5b — En kjøring fra én jobb kan ikke bære en annen
 --
@@ -361,7 +378,7 @@ select is(
 select throws_ok(
   format(
     $$select api.complete_pipeline_job(
-        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb, %L)$$,
+        'agent-identity:evidence-extraction-01', %L, %L, %L, %L)$$,
     (select secret from cred where label = 'extractor'),
     (select payload ->> 'pipeline_job_id' from result where label = 'claimed_second'),
     (select payload ->> 'lease_token' from result where label = 'claimed_second'),

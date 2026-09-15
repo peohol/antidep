@@ -123,7 +123,6 @@ describe('runOnePipelineJob', () => {
     const { api, completed, failed } = fakeApi({ claimed: false })
     expect(
       await runOnePipelineJob(api, 'evidence_extraction', async () => ({
-        output: {},
         agentRunId: RUN_ID,
       })),
     ).toEqual({ ran: false })
@@ -135,12 +134,13 @@ describe('runOnePipelineJob', () => {
     const claim = parseClaimedJob(claimedPayload())
     const { api, completed } = fakeApi(claim)
     await runOnePipelineJob(api, 'evidence_extraction', async () => ({
-      output: { registered: true },
       agentRunId: RUN_ID,
     }))
-    // Leienøkkelen og kjøringen følger utfallet: uten dem kan databasen
+    // Leienøkkelen og kjøringen er alt databasen trenger: uten dem kan den
     // verken vite hvilket forsøk som melder, eller hvilket arbeid som ble gjort.
-    expect(completed).toHaveBeenCalledWith(JOB_ID, LEASE, { registered: true }, RUN_ID)
+    // Utfallet oppgis ikke — det kopieres fra kjøringen, slik at køen ikke kan
+    // si noe annet enn proveniensen.
+    expect(completed).toHaveBeenCalledWith(JOB_ID, LEASE, RUN_ID)
   })
 
   // En jobb som ble tatt ut og aldri meldt, ville blitt stående til leien løp

@@ -243,8 +243,11 @@ export type AgentDatabase = {
           p_pipeline_job_id: Uuid
           /** Uttakets egen nøkkel. Identiteten er per rolle og deles. */
           p_lease_token: Uuid
-          p_output_manifest: Record<string, unknown>
-          /** Påkrevd: en fullført jobb skal peke på kjøringen som gjorde arbeidet. */
+          /**
+           * Påkrevd: en fullført jobb skal peke på kjøringen som gjorde
+           * arbeidet. Utdatamanifestet er ikke en parameter — databasen
+           * kopierer kjøringens eget.
+           */
           p_agent_run_id: Uuid
         }
         Returns: unknown

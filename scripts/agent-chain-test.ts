@@ -568,25 +568,25 @@ async function main(): Promise<void> {
       ) === 'true',
     )
 
-    const outcome = { evidence_item_id: evidenceItemId }
-    await jobs.complete(
-      claimed.job.pipelineJobId,
-      claimed.job.leaseToken,
-      outcome,
-      extraction.agentRunId,
-    )
-    await jobs.complete(
-      claimed.job.pipelineJobId,
-      claimed.job.leaseToken,
-      outcome,
-      extraction.agentRunId,
-    )
+    await jobs.complete(claimed.job.pipelineJobId, claimed.job.leaseToken, extraction.agentRunId)
+    await jobs.complete(claimed.job.pipelineJobId, claimed.job.leaseToken, extraction.agentRunId)
     check(
       'en fullført jobb kan meldes om igjen uten å skrive noe nytt',
       psql(
         config,
         `select (count(*) = 1)::text from workflow.pipeline_job_events e
          where e.pipeline_job_id = ${q(claimed.job.pipelineJobId)} and e.to_state = 'succeeded'`,
+      ) === 'true',
+    )
+    // Køens utfall er kjøringens eget, ikke en parallell påstand.
+    check(
+      'jobbens utfall er kjøringens eget utdatamanifest',
+      psql(
+        config,
+        `select (j.output_manifest = r.output_manifest)::text
+         from workflow.pipeline_jobs j
+         join provenance.agent_runs r on r.id = j.agent_run_id
+         where j.id = ${q(claimed.job.pipelineJobId)}`,
       ) === 'true',
     )
 
