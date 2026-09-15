@@ -129,6 +129,58 @@ create trigger role_model_assignments_are_append_only
     'En tildeling sier hvilken modell rollen faktisk handlet som i den perioden. Avslutt den med valid_to og registrer en ny; en slettet tildeling ville gjort kjøringene i perioden uforklarlige.'
   );
 
+-- Sletting er ikke den eneste måten å viske ut historikken på.
+--
+-- En UPDATE kunne skrevet om leverandør, modell, modellversjon, starttidspunkt,
+-- begrunnelse eller attribusjon i etterkant — og da ville raden sagt noe annet
+-- enn det kjøringene i perioden faktisk kjørte under, mens auditraden fra
+-- innsettingen fortsatt bar det opprinnelige øyeblikksbildet. To kilder som
+-- motsier hverandre er verre enn én, og den ene endringen som *skal* kunne
+-- gjøres, er å avslutte tildelingen.
+--
+-- Regelen er derfor smal: `valid_to` kan settes én gang, fra NULL til et
+-- tidspunkt. Alt annet er frosset.
+create function provenance.freeze_role_model_assignment()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  if new.agent_role is distinct from old.agent_role
+     or new.provider is distinct from old.provider
+     or new.model is distinct from old.model
+     or new.model_version is distinct from old.model_version
+     or new.valid_from is distinct from old.valid_from
+     or new.registered_by_actor_id is distinct from old.registered_by_actor_id
+     or new.reason is distinct from old.reason
+     or new.created_at is distinct from old.created_at
+     or new.id is distinct from old.id then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'En modelltildeling er uforanderlig bortsett fra at den kan avsluttes.',
+      hint = 'Hvilken modell en rolle handlet som i en periode, er et historisk faktum kjøringene i perioden hviler på. Sett valid_to og registrer en ny tildeling for den nye modellen; en omskriving ville gjort de gamle kjøringene uforklarlige (ANTIDEP_CONSTITUTION.md regel 3, 7).';
+  end if;
+
+  if old.valid_to is not null and new.valid_to is distinct from old.valid_to then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'En avsluttet modelltildeling kan ikke avsluttes på nytt eller gjenåpnes.',
+      hint = 'Avslutningen er selv et historisk faktum. En gjenåpning er en ny tildeling.';
+  end if;
+
+  return new;
+end;
+$$;
+
+comment on function provenance.freeze_role_model_assignment() is
+  'Fryser alt ved en modelltildeling bortsett fra at den kan avsluttes én gang (ANTIDEP_CONSTITUTION.md regel 3, 7). Uten den kunne en UPDATE skrevet om leverandør, modell, modellversjon, starttidspunkt, begrunnelse eller attribusjon i etterkant, slik at raden sa noe annet enn det kjøringene i perioden faktisk kjørte under — mens auditraden fra innsettingen fortsatt bar det opprinnelige øyeblikksbildet. Sletting er stengt av sin egen trigger; dette er den andre halvdelen av den samme regelen.';
+
+revoke execute on function provenance.freeze_role_model_assignment() from public;
+
+create trigger role_model_assignments_freeze_history
+  before update on provenance.role_model_assignments
+  for each row execute function provenance.freeze_role_model_assignment();
+
 create function audit.record_role_model_assignment_event()
   returns trigger
   language plpgsql

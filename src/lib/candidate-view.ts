@@ -22,6 +22,16 @@
 // finnes den bare der den tilfeldigvis er skrevet; regnes den her, er den den
 // samme overalt og kan prøves uten en nettleser.
 //
+// ----------------------------------------------------------------------------
+// Hvorfor hele det forseglede innholdet følger med
+//
+// Sluttkontrollen binder en navngitt fagperson til `candidate_digest`, og det
+// avtrykket dekker *hele* `content`. En lesing som plukket ut noen felter,
+// ville latt en fagperson attestere opplysninger hen aldri ble vist — og
+// avstanden ville vokst hver gang `knowledge.candidate_content` fikk et felt
+// til. `sealedContent` bærer derfor innholdet uendret, slik at flaten kan vise
+// alt avtrykket dekker uten at listen må vedlikeholdes to steder.
+//
 // Utrygg inndata: svaret er data. Ingenting her tolker en verdi som noe annet
 // enn en verdi.
 // ============================================================================
@@ -40,9 +50,65 @@ export interface CandidateClaim {
 export interface CandidateAssessment {
   readonly framework: string
   readonly certaintyLevel: string
+  /**
+   * GRADE-domenene.
+   *
+   * `null` betyr at domenet ikke lot seg vurdere — den ene tilstanden
+   * `evidence_assessments_*_pairing_check` tillater, og bare sammen med
+   * `no_assessable_evidence`. Det er noe annet enn «ingen nedgradering», og
+   * skilles derfor her framfor å bli en tom rute.
+   */
+  readonly riskOfBias: string | null
+  readonly inconsistency: string | null
+  readonly indirectness: string | null
+  readonly imprecision: string | null
+  readonly publicationBias: string | null
+  readonly otherConsiderations: string | null
   readonly rationale: string
   readonly evidenceGap: string | null
 }
+
+/**
+ * Kildestøttekontrollen av påstandsrevisjonen — de sju kontrollpunktene.
+ *
+ * Ligger i avtrykket og hører derfor til det en sluttkontrollør attesterer.
+ * Hvert punkt bæres for seg: en samlet «bestått» ville skjult hvilket punkt som
+ * ikke lot seg bedømme (ANTIDEP_CONSTITUTION.md regel 4).
+ */
+export interface CandidateCitationSupportCheck {
+  readonly outcome: string
+  readonly sourceAccess: string
+  readonly sourceSupport: string
+  readonly populationMatch: string
+  readonly comparatorMatch: string
+  readonly timeframeMatch: string
+  readonly directionAndMagnitude: string
+  readonly qualifiersComplete: string
+  readonly contradictoryEvidenceRepresented: string
+  readonly rationale: string
+  readonly findings: string | null
+  readonly verifiedEvidenceSetDigest: string
+}
+
+/** De sju kontrollpunktene, i den rekkefølgen de skal leses. */
+export const CITATION_SUPPORT_CHECK_FIELDS = [
+  'sourceSupport',
+  'populationMatch',
+  'comparatorMatch',
+  'timeframeMatch',
+  'directionAndMagnitude',
+  'qualifiersComplete',
+  'contradictoryEvidenceRepresented',
+] as const satisfies readonly (keyof CandidateCitationSupportCheck)[]
+
+/** GRADE-domenene, i den rekkefølgen de skal leses. */
+export const GRADE_DOMAIN_FIELDS = [
+  'riskOfBias',
+  'inconsistency',
+  'indirectness',
+  'imprecision',
+  'publicationBias',
+] as const satisfies readonly (keyof CandidateAssessment)[]
 
 export interface CandidateSourceCoverage {
   readonly sourceId: string
@@ -69,6 +135,17 @@ export interface CandidateEvidence {
   readonly reportedDirection: string
   readonly estimate: string | null
   readonly estimateUnit: string | null
+  readonly designCode: string
+  readonly sampleSize: number | null
+  readonly sampleSizeAvailability: string
+  readonly estimateAvailability: string
+  readonly effectMeasure: string | null
+  readonly ciLower: string | null
+  readonly ciUpper: string | null
+  readonly ciLevelPercent: string | null
+  readonly confidenceIntervalAvailability: string
+  readonly limitations: string | null
+  readonly sourceLocator: string
   readonly requiredCheckFields: readonly string[]
   readonly coveredCheckFields: readonly string[]
   readonly groundingMachineProved: boolean
@@ -97,9 +174,18 @@ export interface CandidateView {
   readonly claim: CandidateClaim
   /** `null` når ingen evidensvurdering er registrert — ikke en tom vurdering. */
   readonly assessment: CandidateAssessment | null
+  /** `null` når ingen kildestøttekontroll er registrert — ikke en bestått kontroll. */
+  readonly citationSupportCheck: CandidateCitationSupportCheck | null
   readonly evidence: readonly CandidateEvidence[]
   readonly sourceCoverage: readonly CandidateSourceCoverage[]
   readonly finalControls: readonly CandidateFinalControl[]
+  /**
+   * Det forseglede innholdet, uendret og i sin helhet.
+   *
+   * Avtrykket dekker nøyaktig dette. Feltene over er den lesbare visningen av
+   * det, ikke en avgrensning av hva som er attestert.
+   */
+  readonly sealedContent: Record<string, unknown>
 }
 
 const SUBJECT = 'Kandidatsvaret'
@@ -150,6 +236,17 @@ function count(record: Record<string, unknown>, key: string, where: string): num
   return value
 }
 
+function optionalCount(record: Record<string, unknown>, key: string, where: string): number | null {
+  const value = record[key]
+  if (value === undefined || value === null) {
+    return null
+  }
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    fail(`${where}.${key}`, 'er verken et helt tall som ikke er negativt, eller fraværende')
+  }
+  return value
+}
+
 function list(record: Record<string, unknown>, key: string, where: string): readonly unknown[] {
   const value = record[key]
   if (!Array.isArray(value)) {
@@ -184,6 +281,17 @@ function parseEvidence(value: unknown, index: number): CandidateEvidence {
     reportedDirection: text(record, 'reported_direction', where),
     estimate: optionalText(record, 'estimate', where),
     estimateUnit: optionalText(record, 'estimate_unit', where),
+    designCode: text(record, 'design_code', where),
+    sampleSize: optionalCount(record, 'sample_size', where),
+    sampleSizeAvailability: text(record, 'sample_size_availability', where),
+    estimateAvailability: text(record, 'estimate_availability', where),
+    effectMeasure: optionalText(record, 'effect_measure', where),
+    ciLower: optionalText(record, 'ci_lower', where),
+    ciUpper: optionalText(record, 'ci_upper', where),
+    ciLevelPercent: optionalText(record, 'ci_level_percent', where),
+    confidenceIntervalAvailability: text(record, 'confidence_interval_availability', where),
+    limitations: optionalText(record, 'limitations_text', where),
+    sourceLocator: text(record, 'source_locator', where),
     requiredCheckFields: textList(coverage, 'required_check_fields', `${where}.coverage`),
     coveredCheckFields: textList(coverage, 'covered_check_fields', `${where}.coverage`),
     groundingMachineProved: flag(coverage, 'grounding_machine_proved', `${where}.coverage`),
@@ -213,6 +321,7 @@ export function parseCandidateView(value: unknown): CandidateView {
   const content = objectAt(record['content'], 'content')
   const claim = objectAt(content['claim_revision'], 'content.claim_revision')
   const assessmentValue = content['evidence_assessment']
+  const checkValue = content['citation_support_check']
 
   return {
     candidateId: text(record, 'candidate_id', 'svaret'),
@@ -237,12 +346,44 @@ export function parseCandidateView(value: unknown): CandidateView {
       assessmentValue === undefined || assessmentValue === null
         ? null
         : (() => {
-            const assessment = objectAt(assessmentValue, 'content.evidence_assessment')
+            const at = 'content.evidence_assessment'
+            const assessment = objectAt(assessmentValue, at)
             return {
-              framework: text(assessment, 'framework', 'content.evidence_assessment'),
-              certaintyLevel: text(assessment, 'certainty_level', 'content.evidence_assessment'),
-              rationale: text(assessment, 'rationale', 'content.evidence_assessment'),
-              evidenceGap: optionalText(assessment, 'evidence_gap', 'content.evidence_assessment'),
+              framework: text(assessment, 'framework', at),
+              certaintyLevel: text(assessment, 'certainty_level', at),
+              riskOfBias: optionalText(assessment, 'risk_of_bias', at),
+              inconsistency: optionalText(assessment, 'inconsistency', at),
+              indirectness: optionalText(assessment, 'indirectness', at),
+              imprecision: optionalText(assessment, 'imprecision', at),
+              publicationBias: optionalText(assessment, 'publication_bias', at),
+              otherConsiderations: optionalText(assessment, 'other_considerations', at),
+              rationale: text(assessment, 'rationale', at),
+              evidenceGap: optionalText(assessment, 'evidence_gap', at),
+            }
+          })(),
+    citationSupportCheck:
+      checkValue === undefined || checkValue === null
+        ? null
+        : (() => {
+            const at = 'content.citation_support_check'
+            const check = objectAt(checkValue, at)
+            return {
+              outcome: text(check, 'outcome', at),
+              sourceAccess: text(check, 'source_access', at),
+              sourceSupport: text(check, 'source_support', at),
+              populationMatch: text(check, 'population_match', at),
+              comparatorMatch: text(check, 'comparator_match', at),
+              timeframeMatch: text(check, 'timeframe_match', at),
+              directionAndMagnitude: text(check, 'direction_and_magnitude', at),
+              qualifiersComplete: text(check, 'qualifiers_complete', at),
+              contradictoryEvidenceRepresented: text(
+                check,
+                'contradictory_evidence_represented',
+                at,
+              ),
+              rationale: text(check, 'rationale', at),
+              findings: optionalText(check, 'findings', at),
+              verifiedEvidenceSetDigest: text(check, 'verified_evidence_set_digest', at),
             }
           })(),
     evidence: list(content, 'evidence', 'content').map(parseEvidence),
@@ -269,6 +410,7 @@ export function parseCandidateView(value: unknown): CandidateView {
         candidateDigest: text(control, 'candidate_digest', where),
       }
     }),
+    sealedContent: content,
   }
 }
 

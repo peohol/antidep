@@ -5,84 +5,19 @@ import {
   coverageRatio,
   parseCandidateView,
   uncoveredCheckFields,
+  CITATION_SUPPORT_CHECK_FIELDS,
+  GRADE_DOMAIN_FIELDS,
 } from './candidate-view.ts'
-
-const DIGEST = `sha256:${'a'.repeat(64)}`
-
-function svar(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    candidate_id: '11111111-1111-4111-8111-111111111111',
-    claim_revision_id: '22222222-2222-4222-8222-222222222222',
-    candidate_digest: DIGEST,
-    evidence_set_digest: `sha256-v1:${'b'.repeat(64)}`,
-    built_at: '2026-09-26T09:00:00+00:00',
-    is_current: true,
-    current_digest: DIGEST,
-    experimental: true,
-    published: false,
-    content: {
-      claim_revision: {
-        statement: 'Sertralin er forbundet med en liten vektøkning ved langtidsbruk.',
-        scope: 'Voksne i allmennpraksis.',
-        subject_drug: 'sertralin',
-        topic: 'vektendring',
-        population: 'voksne med depressiv lidelse',
-        direction: 'increase',
-        uncertainty_summary: 'Grunnlaget er begrenset til én studie.',
-        qualifiers: null,
-      },
-      evidence_assessment: {
-        framework: 'grade',
-        certainty_level: 'low',
-        rationale: 'Én studie, alvorlig upresishet.',
-        evidence_gap: 'Ingen langtidsdata utover 32 uker.',
-      },
-      evidence: [
-        {
-          evidence_item_id: '33333333-3333-4333-8333-333333333333',
-          relationship_type: 'supports',
-          directness: 'direct',
-          outcome: 'vektendring',
-          outcome_detail: 'Gjennomsnittlig prosentvis vektendring ved endepunkt.',
-          reported_direction: 'increase',
-          estimate: '1.0',
-          estimate_unit: 'percent',
-          source: { title: 'Syntetisk artikkel om vektendring' },
-          coverage: {
-            required_check_fields: ['outcome', 'estimate', 'timepoint'],
-            covered_check_fields: ['outcome', 'estimate'],
-            grounded_check_fields: ['outcome', 'estimate'],
-            grounding_machine_proved: false,
-          },
-          field_groundings: [
-            {
-              check_field: 'estimate',
-              source_excerpt: 'Mean percent weight change was 1.0% at endpoint.',
-              source_locator: 'RESULTS',
-            },
-          ],
-          extraction_check: { outcome: 'verified' },
-        },
-      ],
-      source_coverage: [
-        {
-          source_id: '44444444-4444-4444-8444-444444444444',
-          title: 'Syntetisk artikkel om vektendring',
-          evidence_item_count: 1,
-          full_text_in_library: true,
-          readability_checked: true,
-          grounding_machine_proved: false,
-        },
-      ],
-    },
-    final_controls: [],
-    ...overrides,
-  }
-}
+import {
+  candidateContent,
+  candidateResponse,
+  FIXTURE_CANDIDATE_DIGEST,
+  FIXTURE_EVIDENCE_SET_DIGEST,
+} from './candidate-test-support.ts'
 
 describe('parseCandidateView', () => {
   it('leser kandidaten med påstand, vurdering, evidens og kildedekning', () => {
-    const view = parseCandidateView(svar())
+    const view = parseCandidateView(candidateResponse())
     expect(view.claim.subjectDrug).toBe('sertralin')
     expect(view.assessment?.certaintyLevel).toBe('low')
     expect(view.evidence).toHaveLength(1)
@@ -91,23 +26,88 @@ describe('parseCandidateView', () => {
     expect(view.experimental).toBe(true)
   })
 
+  // Avtrykket dekker vurderingen i sin helhet. En lesing som slo domenene
+  // sammen til én sikkerhetsgrad, ville latt en fagperson attestere en
+  // nedgradering hen aldri så begrunnelsen for.
+  it('leser hvert GRADE-domene for seg', () => {
+    const view = parseCandidateView(candidateResponse())
+    expect(GRADE_DOMAIN_FIELDS.map((field) => view.assessment?.[field])).toEqual([
+      'serious',
+      'not_assessable',
+      'not_serious',
+      'very_serious',
+      'not_assessable',
+    ])
+    expect(view.assessment?.otherConsiderations).toBe(
+      'Ingen dose-respons-sammenheng kunne vurderes.',
+    )
+  })
+
+  // Domenene er null nøyaktig når det ikke finnes noe å gradere ned fra
+  // (evidence_assessments_*_pairing_check). Det er ikke «ingen nedgradering».
+  it('skiller et domene som ikke lot seg vurdere fra et domene uten problem', () => {
+    const view = parseCandidateView(
+      candidateResponse({
+        content: candidateContent({
+          evidence_assessment: {
+            framework: 'grade',
+            certainty_level: 'no_assessable_evidence',
+            rationale: 'Det finnes ikke vurderbar evidens.',
+          },
+        }),
+      }),
+    )
+    expect(GRADE_DOMAIN_FIELDS.every((field) => view.assessment?.[field] === null)).toBe(true)
+    expect(view.assessment?.certaintyLevel).toBe('no_assessable_evidence')
+  })
+
+  it('leser alle de sju kontrollpunktene i kildestøttekontrollen', () => {
+    const view = parseCandidateView(candidateResponse())
+    expect(CITATION_SUPPORT_CHECK_FIELDS.map((f) => view.citationSupportCheck?.[f])).toEqual([
+      'ok',
+      'ok',
+      'not_assessable',
+      'ok',
+      'ok',
+      'deviation',
+      'not_assessable',
+    ])
+    expect(view.citationSupportCheck?.outcome).toBe('needs_correction')
+    expect(view.citationSupportCheck?.verifiedEvidenceSetDigest).toBe(FIXTURE_EVIDENCE_SET_DIGEST)
+  })
+
   // ANTIDEP_CONSTITUTION.md regel 4: fravær og tomhet er ikke det samme.
   it('leser en manglende evidensvurdering som fravær, ikke som en tom vurdering', () => {
     const view = parseCandidateView(
-      svar({ content: { ...(svar()['content'] as object), evidence_assessment: null } }),
+      candidateResponse({ content: candidateContent({ evidence_assessment: null }) }),
     )
     expect(view.assessment).toBeNull()
   })
 
+  it('leser en manglende kildestøttekontroll som fravær, ikke som en bestått kontroll', () => {
+    const view = parseCandidateView(
+      candidateResponse({ content: candidateContent({ citation_support_check: null }) }),
+    )
+    expect(view.citationSupportCheck).toBeNull()
+  })
+
+  // Avtrykket er av hele innholdet. Bæres bare et utvalg videre, kan ikke
+  // flaten vise det som faktisk attesteres.
+  it('bærer det forseglede innholdet videre uendret', () => {
+    const svar = candidateResponse()
+    const view = parseCandidateView(svar)
+    expect(view.sealedContent).toEqual(svar['content'])
+  })
+
   it('avviser et svar uten kontraktens form framfor å tegne en tom rute', () => {
-    expect(() => parseCandidateView(svar({ is_current: 'ja' }))).toThrow(/is_current/)
+    expect(() => parseCandidateView(candidateResponse({ is_current: 'ja' }))).toThrow(/is_current/)
     expect(() => parseCandidateView({})).toThrow(/content/)
   })
 })
 
 describe('kildedekningen', () => {
   it('sier hvor mange av kontrollfeltene som faktisk er dekket', () => {
-    const view = parseCandidateView(svar())
+    const view = parseCandidateView(candidateResponse())
     const evidence = view.evidence[0]
     expect(evidence).toBeDefined()
     if (evidence === undefined) return
@@ -117,7 +117,7 @@ describe('kildedekningen', () => {
   // Et ukontrollert felt er ikke det samme som et kontrollert felt uten avvik.
   // Vises bare det andre, ser det første ut som det.
   it('navngir feltene som ingen kontroll dekker', () => {
-    const view = parseCandidateView(svar())
+    const view = parseCandidateView(candidateResponse())
     const evidence = view.evidence[0]
     expect(evidence).toBeDefined()
     if (evidence === undefined) return
@@ -127,13 +127,14 @@ describe('kildedekningen', () => {
 
 describe('canBeFinalControlled', () => {
   it('lar en gjeldende kandidat sluttkontrolleres', () => {
-    expect(canBeFinalControlled(parseCandidateView(svar()))).toBe(true)
+    expect(canBeFinalControlled(parseCandidateView(candidateResponse()))).toBe(true)
   })
 
   it('stopper en kandidat hvis grunnlag er endret siden forseglingen', () => {
     const view = parseCandidateView(
-      svar({ is_current: false, current_digest: `sha256:${'c'.repeat(64)}` }),
+      candidateResponse({ is_current: false, current_digest: `sha256:${'c'.repeat(64)}` }),
     )
     expect(canBeFinalControlled(view)).toBe(false)
+    expect(view.candidateDigest).toBe(FIXTURE_CANDIDATE_DIGEST)
   })
 })

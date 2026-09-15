@@ -10,11 +10,23 @@
 // Hva som vises, og hvorfor akkurat det
 //
 // Påstanden og usikkerheten står øverst, fordi det er produktet. Deretter
-// evidensvurderingen, så kildedekningen, så hvert evidensfunn med sine ordrette
-// utdrag. Kildedekningen er ikke en fotnote: den svarer på hvor mye av det
-// raden påstår, som faktisk er kontrollert — og et felt som ingen kontroll
-// dekker, står navngitt framfor å være utelatt. Et felt som er borte fra
-// visningen, leses som et felt uten avvik (ANTIDEP_CONSTITUTION.md regel 4).
+// evidensvurderingen med hvert GRADE-domene for seg, kildestøttekontrollen med
+// hvert av de sju kontrollpunktene for seg, så kildedekningen, så hvert
+// evidensfunn med sine tall og sine ordrette utdrag. Kildedekningen er ikke en
+// fotnote: den svarer på hvor mye av det raden påstår, som faktisk er
+// kontrollert — og et felt som ingen kontroll dekker, står navngitt framfor å
+// være utelatt. Et felt som er borte fra visningen, leses som et felt uten
+// avvik (ANTIDEP_CONSTITUTION.md regel 4).
+//
+// ----------------------------------------------------------------------------
+// Hvorfor hele det forseglede innholdet står nederst
+//
+// Sluttkontrollen binder fagpersonen til `candidate_digest`, og det avtrykket
+// dekker hele innholdet — ikke bare de feltene denne komponenten har fått en
+// overskrift for. En visning som bare viste et utvalg, ville latt fagpersonen
+// attestere opplysninger hen aldri så, og avstanden ville vokst hver gang
+// `knowledge.candidate_content` fikk et felt til. Innholdet vises derfor også
+// i sin helhet, ordrett, før beslutningen avgis.
 //
 // ----------------------------------------------------------------------------
 // Hva flaten ikke kan
@@ -33,6 +45,10 @@ import {
   canBeFinalControlled,
   coverageRatio,
   uncoveredCheckFields,
+  CITATION_SUPPORT_CHECK_FIELDS,
+  GRADE_DOMAIN_FIELDS,
+  type CandidateAssessment,
+  type CandidateCitationSupportCheck,
   type CandidateEvidence,
   type CandidateView,
 } from '../lib/candidate-view'
@@ -53,6 +69,59 @@ const CERTAINTY_LABELS: Readonly<Record<string, string>> = {
   no_assessable_evidence: 'ingen vurderbar evidens',
 }
 
+const GRADE_RATING_LABELS: Readonly<Record<string, string>> = {
+  not_serious: 'ikke alvorlig',
+  serious: 'alvorlig',
+  very_serious: 'svært alvorlig',
+  not_assessable: 'lot seg ikke vurdere',
+}
+
+const GRADE_DOMAIN_LABELS: Readonly<Record<string, string>> = {
+  riskOfBias: 'Risiko for systematisk skjevhet',
+  inconsistency: 'Inkonsistens',
+  indirectness: 'Indirekthet',
+  imprecision: 'Upresishet',
+  publicationBias: 'Publikasjonsskjevhet',
+}
+
+const CHECK_RESULT_LABELS: Readonly<Record<string, string>> = {
+  ok: 'holder',
+  deviation: 'avvik',
+  not_assessable: 'lot seg ikke bedømme',
+}
+
+const CHECK_FIELD_LABELS: Readonly<Record<string, string>> = {
+  sourceSupport: 'Kildestøtte',
+  populationMatch: 'Populasjon',
+  comparatorMatch: 'Komparator',
+  timeframeMatch: 'Tidsvindu',
+  directionAndMagnitude: 'Retning og størrelse',
+  qualifiersComplete: 'Forbehold komplett',
+  contradictoryEvidenceRepresented: 'Motstridende evidens representert',
+}
+
+const OUTCOME_LABELS: Readonly<Record<string, string>> = {
+  verified: 'bekreftet',
+  needs_correction: 'må rettes',
+  rejected: 'avvist',
+  uncertain: 'usikker',
+}
+
+const SOURCE_ACCESS_LABELS: Readonly<Record<string, string>> = {
+  original_source: 'originalkilden selv',
+  verifiable_representation: 'etterprøvbar representasjon',
+  derived_summary: 'avledet sammendrag',
+}
+
+const AVAILABILITY_LABELS: Readonly<Record<string, string>> = {
+  reported_value: 'rapportert',
+  not_measured: 'ikke målt',
+  not_reported: 'ikke rapportert',
+  not_applicable: 'ikke relevant',
+  not_extractable: 'lot seg ikke hente ut',
+  uncertain_extraction: 'usikker uthenting',
+}
+
 /**
  * En vokabularverdi vist på norsk, eller verdien selv.
  *
@@ -61,6 +130,63 @@ const CERTAINTY_LABELS: Readonly<Record<string, string>> = {
  */
 function label(value: string, labels: Readonly<Record<string, string>>): string {
   return labels[value] ?? value
+}
+
+/**
+ * Evidensvurderingen, med hvert GRADE-domene navngitt.
+ *
+ * Domenene står som egne linjer og ikke som en samlet sikkerhetsgrad: en
+ * nedgradering skjuler *hvilket* domene som svikter, og et domene som ikke lot
+ * seg vurdere, er ikke et domene uten problem (ANTIDEP_CONSTITUTION.md regel 4).
+ */
+function AssessmentDomains({
+  assessment,
+}: {
+  readonly assessment: CandidateAssessment
+}): React.JSX.Element {
+  return (
+    <ul>
+      {GRADE_DOMAIN_FIELDS.map((field) => {
+        const rating = assessment[field]
+        return (
+          <li key={field}>
+            {label(field, GRADE_DOMAIN_LABELS)}:{' '}
+            {rating === null
+              ? 'ikke vurdert — det finnes ikke noe å gradere ned fra'
+              : label(rating, GRADE_RATING_LABELS)}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** Kildestøttekontrollen, med hvert av de sju kontrollpunktene for seg. */
+function CitationSupportCheck({
+  check,
+}: {
+  readonly check: CandidateCitationSupportCheck
+}): React.JSX.Element {
+  return (
+    <>
+      <p>
+        Utfall: {label(check.outcome, OUTCOME_LABELS)}. Verifikatoren hadde tilgang til{' '}
+        {label(check.sourceAccess, SOURCE_ACCESS_LABELS)}.
+      </p>
+      <ul>
+        {CITATION_SUPPORT_CHECK_FIELDS.map((field) => (
+          <li key={field}>
+            {label(field, CHECK_FIELD_LABELS)}: {label(check[field], CHECK_RESULT_LABELS)}
+          </li>
+        ))}
+      </ul>
+      <p>{check.rationale}</p>
+      {check.findings === null ? null : <p className="notice">Funn: {check.findings}</p>}
+      <p>
+        Kontrollert evidenssett: <code>{check.verifiedEvidenceSetDigest}</code>
+      </p>
+    </>
+  )
 }
 
 function EvidenceCard({ evidence }: { readonly evidence: CandidateEvidence }): React.JSX.Element {
@@ -73,9 +199,20 @@ function EvidenceCard({ evidence }: { readonly evidence: CandidateEvidence }): R
       <p>
         {evidence.outcomeDetail} Retning: {evidence.reportedDirection}.
         {evidence.estimate === null
-          ? ' Estimat er ikke rapportert.'
-          : ` Estimat: ${evidence.estimate}${evidence.estimateUnit === null ? '' : ` ${evidence.estimateUnit}`}.`}
+          ? ` Estimat: ${label(evidence.estimateAvailability, AVAILABILITY_LABELS)}.`
+          : ` Estimat: ${evidence.estimate}${evidence.estimateUnit === null ? '' : ` ${evidence.estimateUnit}`}${evidence.effectMeasure === null ? '' : ` (${evidence.effectMeasure})`}.`}
       </p>
+      <p>
+        Design: {evidence.designCode}.{' '}
+        {evidence.sampleSize === null
+          ? `Antall deltakere: ${label(evidence.sampleSizeAvailability, AVAILABILITY_LABELS)}.`
+          : `Antall deltakere: ${String(evidence.sampleSize)}.`}{' '}
+        {evidence.ciLower === null || evidence.ciUpper === null
+          ? `Konfidensintervall: ${label(evidence.confidenceIntervalAvailability, AVAILABILITY_LABELS)}.`
+          : `Konfidensintervall${evidence.ciLevelPercent === null ? '' : ` (${evidence.ciLevelPercent} %)`}: ${evidence.ciLower} til ${evidence.ciUpper}.`}{' '}
+        Sted i kilden: {evidence.sourceLocator}.
+      </p>
+      {evidence.limitations === null ? null : <p>Begrensninger: {evidence.limitations}</p>}
       <p>
         Kontrollert: {String(ratio.covered)} av {String(ratio.required)} felter.{' '}
         {evidence.extractionCheckOutcome === null
@@ -222,11 +359,27 @@ export function CandidatePage({ candidateId, gateway }: CandidatePageProps): Rea
               Sikkerhet i grunnlaget ({view.assessment.framework}):{' '}
               {label(view.assessment.certaintyLevel, CERTAINTY_LABELS)}.
             </p>
+            <AssessmentDomains assessment={view.assessment} />
+            {view.assessment.otherConsiderations === null ? null : (
+              <p>Andre hensyn: {view.assessment.otherConsiderations}</p>
+            )}
             <p>{view.assessment.rationale}</p>
             {view.assessment.evidenceGap === null ? null : (
               <p>Kunnskapshull: {view.assessment.evidenceGap}</p>
             )}
           </>
+        )}
+      </section>
+
+      <section aria-labelledby="kildestoette-title">
+        <h2 id="kildestoette-title">Kildestøttekontroll</h2>
+        {view.citationSupportCheck === null ? (
+          <p className="notice">
+            Ingen kildestøttekontroll er registrert. Det er noe annet enn en kontroll som ikke fant
+            avvik.
+          </p>
+        ) : (
+          <CitationSupportCheck check={view.citationSupportCheck} />
         )}
       </section>
 
@@ -265,6 +418,15 @@ export function CandidatePage({ candidateId, gateway }: CandidatePageProps): Rea
             ))}
           </ul>
         )}
+      </section>
+
+      <section aria-labelledby="forseglet-title">
+        <h2 id="forseglet-title">Alt avtrykket dekker</h2>
+        <p>
+          Sluttkontrollen under gjelder hele dette innholdet, ordrett. Avsnittene over er den
+          lesbare visningen av det, ikke en avgrensning av hva som attesteres.
+        </p>
+        <pre>{JSON.stringify(view.sealedContent, null, 2)}</pre>
       </section>
 
       <section aria-labelledby="kontroll-title">

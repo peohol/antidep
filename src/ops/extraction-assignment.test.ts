@@ -134,16 +134,23 @@ function katalog(options: {
     listSources: () => Promise.resolve(options.sources ?? [kilde()]),
     listSourceVersions: (sourceId) =>
       Promise.resolve(versions.filter((row) => row.source_id === sourceId)),
-    uploadFullTextDocument: (input) => {
+    // Dobbelen speiler det databasen faktisk gjør: opplastingen er idempotent
+    // *og* etterfyllende. Finnes kildeversjonen fra før, opprettes ingen ny —
+    // men filen, bindingen og lesbarhetskontrollen legges på plass om de
+    // mangler. En dobbel som alltid svarte «opprettet», ville skjult nettopp
+    // den etterfyllingen prøvene under handler om.
+    uploadFullTextDocument: async (input) => {
       uploaded.push(input)
-      return Promise.resolve({
+      const contentHash = await sourceVersionContentHash(input.extractedText)
+      const match = versions.find((row) => row.content_hash === contentHash)
+      return {
         source_document_id: '77777777-7777-4777-8777-777777777777',
-        document_sha256: `sha256:${'d'.repeat(64)}`,
-        document_byte_size: 1024,
-        document_stored: true,
-        source_version_id: NY_VERSJON,
-        source_version_created: true,
-        content_hash: `sha256:${'e'.repeat(64)}`,
+        document_sha256: await documentDigest(PDF),
+        document_byte_size: PDF.length,
+        document_stored: match === undefined,
+        source_version_id: match?.source_version_id ?? NY_VERSJON,
+        source_version_created: match === undefined,
+        content_hash: contentHash,
         publication_binding: { basis: 'doi', evidence: '10.4088/jcp.v61n1109' },
         readability: {
           character_count: 9000,
@@ -152,7 +159,7 @@ function katalog(options: {
           table_rows: 6,
           table_declarations: 2,
         },
-      })
+      }
     },
     createSourceVersionFromDocument: (input) => {
       registered.push(input)
@@ -386,6 +393,12 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
     expect(report.versionOutcome).toBe('reused')
     expect(report.sourceVersionId).toBe(NY_VERSJON)
     expect(catalog.registered).toHaveLength(0)
+    // Gjenbruk faller ikke ut før opplastingen. En kildeversjon registrert før
+    // migrasjon 009a har ingen fil i biblioteket, ingen publikasjonsbinding og
+    // ingen lesbarhetskontroll — og uten dem kan den ikke bære et klinisk funn.
+    // Falt kommandoen ut her, ville en ny `--pdf` tatt den samme veien om igjen
+    // uten å reparere noe.
+    expect(catalog.uploaded).toHaveLength(1)
   })
 
   // Den samme teksten kan komme av en annen PDF — den samme artikkelen fra to

@@ -69,6 +69,15 @@ export interface ClaimedJob {
   readonly inputManifest: Record<string, unknown>
   readonly attempt: number
   readonly maxAttempts: number
+  /**
+   * Nøkkelen for nettopp dette uttaket.
+   *
+   * Sendes tilbake med utfallet. Agentidentiteten er per rolle og deles av alle
+   * kjørere i den, så identiteten alene kan ikke skille en kjører hvis leie er
+   * løpt ut, fra den som nå holder jobben — og et foreldet utfall ville ellers
+   * blitt skrevet over det forsøket som faktisk arbeider.
+   */
+  readonly leaseToken: Uuid
   /** Begrunnelsen fra forrige mislykkede forsøk, når det var ett. */
   readonly lastFailureReason: string | null
 }
@@ -125,6 +134,7 @@ export function parseClaimedJob(value: unknown): ClaimResult {
       inputManifest: manifest as Record<string, unknown>,
       attempt: asPositiveInteger(fields, 'attempt'),
       maxAttempts: asPositiveInteger(fields, 'max_attempts'),
+      leaseToken: asText(fields, 'lease_token') as Uuid,
       lastFailureReason: optionalText(fields, 'last_failure_reason'),
     },
   }
@@ -165,10 +175,11 @@ export interface PipelineJobApi {
    */
   complete(
     pipelineJobId: Uuid,
+    leaseToken: Uuid,
     outputManifest: Record<string, unknown>,
-    agentRunId?: Uuid | null,
+    agentRunId: Uuid,
   ): Promise<void>
-  fail(pipelineJobId: Uuid, failureReason: string): Promise<FailureReport>
+  fail(pipelineJobId: Uuid, leaseToken: Uuid, failureReason: string): Promise<FailureReport>
 }
 
 function rejection(operation: string, error: { message: string; code?: string; details?: string }) {
@@ -194,10 +205,11 @@ export function createPipelineJobApi(
       return parseClaimedJob(data)
     },
 
-    async complete(pipelineJobId, outputManifest, agentRunId = null) {
+    async complete(pipelineJobId, leaseToken, outputManifest, agentRunId) {
       const { error } = await client.rpc('complete_pipeline_job', {
         ...auth,
         p_pipeline_job_id: pipelineJobId,
+        p_lease_token: leaseToken,
         p_output_manifest: outputManifest,
         p_agent_run_id: agentRunId,
       })
@@ -206,10 +218,11 @@ export function createPipelineJobApi(
       }
     },
 
-    async fail(pipelineJobId, failureReason) {
+    async fail(pipelineJobId, leaseToken, failureReason) {
       const { data, error } = await client.rpc('fail_pipeline_job', {
         ...auth,
         p_pipeline_job_id: pipelineJobId,
+        p_lease_token: leaseToken,
         p_failure_reason: failureReason,
       })
       if (error !== null) {
@@ -235,7 +248,7 @@ export async function runOnePipelineJob(
   agentRole: string,
   work: (job: ClaimedJob) => Promise<{
     readonly output: Record<string, unknown>
-    readonly agentRunId?: Uuid | null
+    readonly agentRunId: Uuid
   }>,
   leaseSeconds?: number,
 ): Promise<{ readonly ran: false } | { readonly ran: true; readonly job: ClaimedJob }> {
@@ -244,15 +257,20 @@ export async function runOnePipelineJob(
     return { ran: false }
   }
 
-  let result: { readonly output: Record<string, unknown>; readonly agentRunId?: Uuid | null }
+  let result: { readonly output: Record<string, unknown>; readonly agentRunId: Uuid }
   try {
     result = await work(claim.job)
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
-    await api.fail(claim.job.pipelineJobId, reason)
+    await api.fail(claim.job.pipelineJobId, claim.job.leaseToken, reason)
     throw cause
   }
 
-  await api.complete(claim.job.pipelineJobId, result.output, result.agentRunId ?? null)
+  await api.complete(
+    claim.job.pipelineJobId,
+    claim.job.leaseToken,
+    result.output,
+    result.agentRunId,
+  )
   return { ran: true, job: claim.job }
 }

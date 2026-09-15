@@ -20,7 +20,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(14);
+select plan(19);
 
 -- ===========================================================================
 -- Del 1 — Registeret
@@ -85,6 +85,50 @@ select is(
    where e.operation = 'role_model_assignment_registered'),
   'provenance.role_model_assignments',
   'auditraden peker på registeret'
+);
+
+-- Historikken er uforanderlig. Hvilken modell en rolle handlet som i en
+-- periode, er et faktum kjøringene i perioden hviler på: en omskriving i
+-- ettertid ville gjort dem uforklarlige (ANTIDEP_CONSTITUTION.md regel 3, 7).
+select throws_ok(
+  $$update provenance.role_model_assignments
+      set model = 'en-omskrevet-modell'
+    where agent_role = 'evidence_extraction' and valid_to is null$$,
+  '23001', 'En modelltildeling er uforanderlig bortsett fra at den kan avsluttes.',
+  'en modelltildeling kan ikke skrives om i ettertid'
+);
+select throws_ok(
+  $$update provenance.role_model_assignments
+      set reason = 'Prøve i 750: omskrevet begrunnelse.'
+    where agent_role = 'evidence_extraction' and valid_to is null$$,
+  '23001', 'En modelltildeling er uforanderlig bortsett fra at den kan avsluttes.',
+  'heller ikke begrunnelsen bak tildelingen kan skrives om'
+);
+
+-- Den ene endringen som er lov, er å avslutte den — én gang.
+select lives_ok(
+  $$update provenance.role_model_assignments
+      set valid_to = now()
+    where agent_role = 'claim_synthesis' and valid_to is null$$,
+  'en tildeling kan avsluttes'
+);
+select throws_ok(
+  $$update provenance.role_model_assignments
+      set valid_to = now() + interval '1 day'
+    where agent_role = 'claim_synthesis' and valid_to is not null$$,
+  '23001', 'En avsluttet modelltildeling kan ikke avsluttes på nytt eller gjenåpnes.',
+  'en avsluttet tildeling kan verken avsluttes på nytt eller gjenåpnes'
+);
+
+-- Og når den er avsluttet, kan rollen få en ny modell — men ikke en modell en
+-- annen rolle allerede handler som.
+select lives_ok(
+  $$insert into provenance.role_model_assignments
+      (agent_role, provider, model, model_version, registered_by_actor_id, reason)
+    select 'claim_synthesis', 'antidep', 'proposal-registered-synthesis', '1.1.0',
+           (select id from provenance.actors where actor_key = 'human:peder-holman'),
+           'Prøve i 750: ny tildeling etter at den gamle ble avsluttet.'$$,
+  'en avsluttet tildeling gir plass til en ny for den samme rollen'
 );
 
 -- ===========================================================================

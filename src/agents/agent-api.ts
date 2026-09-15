@@ -223,8 +223,11 @@ export type AgentDatabase = {
           p_identity_key: string
           p_secret: string
           p_pipeline_job_id: Uuid
+          /** Uttakets egen nøkkel. Identiteten er per rolle og deles. */
+          p_lease_token: Uuid
           p_output_manifest: Record<string, unknown>
-          p_agent_run_id?: Uuid | null
+          /** Påkrevd: en fullført jobb skal peke på kjøringen som gjorde arbeidet. */
+          p_agent_run_id: Uuid
         }
         Returns: unknown
       }
@@ -233,6 +236,7 @@ export type AgentDatabase = {
           p_identity_key: string
           p_secret: string
           p_pipeline_job_id: Uuid
+          p_lease_token: Uuid
           p_failure_reason: string
         }
         Returns: unknown

@@ -12,6 +12,8 @@ import {
 import type { Uuid } from '../types/api.ts'
 
 const JOB_ID = '11111111-1111-4111-8111-111111111111' as Uuid
+const LEASE = '22222222-2222-4222-8222-222222222222' as Uuid
+const RUN_ID = '33333333-3333-4333-8333-333333333333' as Uuid
 
 function claimedPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -22,6 +24,7 @@ function claimedPayload(overrides: Record<string, unknown> = {}): Record<string,
     input_manifest: { source_version_id: 'kildeversjon-1' },
     attempt: 1,
     max_attempts: 3,
+    lease_token: LEASE,
     last_failure_reason: null,
     ...overrides,
   }
@@ -45,6 +48,7 @@ describe('parseClaimedJob', () => {
     expect(result.claimed).toBe(true)
     if (!result.claimed) return
     expect(result.job.pipelineJobId).toBe(JOB_ID)
+    expect(result.job.leaseToken).toBe(LEASE)
     expect(result.job.inputManifest).toEqual({ source_version_id: 'kildeversjon-1' })
   })
 
@@ -65,6 +69,9 @@ describe('parseClaimedJob', () => {
     )
     expect(() => parseClaimedJob(claimedPayload({ attempt: 0 }))).toThrow(/attempt/)
     expect(() => parseClaimedJob({ claimed: 'ja' })).toThrow(/claimed/)
+    // Uten nøkkelen for nettopp dette uttaket kan utfallet ikke meldes, og en
+    // kjører som gjettet den ville skrevet over det forsøket som nå arbeider.
+    expect(() => parseClaimedJob(claimedPayload({ lease_token: null }))).toThrow(/lease_token/)
   })
 })
 
@@ -115,7 +122,10 @@ describe('runOnePipelineJob', () => {
   it('gjør ingenting når køen er tom', async () => {
     const { api, completed, failed } = fakeApi({ claimed: false })
     expect(
-      await runOnePipelineJob(api, 'evidence_extraction', async () => ({ output: {} })),
+      await runOnePipelineJob(api, 'evidence_extraction', async () => ({
+        output: {},
+        agentRunId: RUN_ID,
+      })),
     ).toEqual({ ran: false })
     expect(completed).not.toHaveBeenCalled()
     expect(failed).not.toHaveBeenCalled()
@@ -126,8 +136,11 @@ describe('runOnePipelineJob', () => {
     const { api, completed } = fakeApi(claim)
     await runOnePipelineJob(api, 'evidence_extraction', async () => ({
       output: { registered: true },
+      agentRunId: RUN_ID,
     }))
-    expect(completed).toHaveBeenCalledWith(JOB_ID, { registered: true }, null)
+    // Leienøkkelen og kjøringen følger utfallet: uten dem kan databasen
+    // verken vite hvilket forsøk som melder, eller hvilket arbeid som ble gjort.
+    expect(completed).toHaveBeenCalledWith(JOB_ID, LEASE, { registered: true }, RUN_ID)
   })
 
   // En jobb som ble tatt ut og aldri meldt, ville blitt stående til leien løp
@@ -141,7 +154,7 @@ describe('runOnePipelineJob', () => {
         throw new Error('Dokumentet lå ikke i biblioteket.')
       }),
     ).rejects.toThrow('Dokumentet lå ikke i biblioteket.')
-    expect(failed).toHaveBeenCalledWith(JOB_ID, 'Dokumentet lå ikke i biblioteket.')
+    expect(failed).toHaveBeenCalledWith(JOB_ID, LEASE, 'Dokumentet lå ikke i biblioteket.')
     expect(completed).not.toHaveBeenCalled()
   })
 })

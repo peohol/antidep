@@ -398,13 +398,19 @@ async function registerFromDocument(
           'representasjonen du faktisk mangler.',
       }
     }
-    log(`Kildeversjonen er allerede registrert: ${existing.source_version_id}.`)
-    return {
-      sourceVersionId: existing.source_version_id,
-      representation: existing.representation ?? representation,
-      outcome: 'reused',
-      document,
+    if (representation !== 'full_text') {
+      log(`Kildeversjonen er allerede registrert: ${existing.source_version_id}.`)
+      return {
+        sourceVersionId: existing.source_version_id,
+        representation: existing.representation ?? representation,
+        outcome: 'reused',
+        document,
+      }
     }
+    // En fulltekst faller *ikke* ut her. Se kommentaren over opplastingen: en
+    // kildeversjon registrert før migrasjon 009a har ingen rader i biblioteket,
+    // og bare opplastingen kan gi den dem.
+    log(`Kildeversjonen er allerede registrert: ${existing.source_version_id}.`)
   }
 
   const retrievedFrom = options.retrievedFrom?.trim()
@@ -453,6 +459,18 @@ async function registerFromDocument(
     }
   }
 
+  // Opplastingen kalles også når kildeversjonen allerede finnes, og det er
+  // ikke sløsing: den er idempotent *og* etterfyllende. En kildeversjon
+  // registrert før migrasjon 009a — eller av en kjøring som ble avbrutt mellom
+  // de fire skrivingene — har ingen fil i biblioteket, ingen
+  // publikasjonsbinding og ingen lesbarhetskontroll, og uten dem kan den ikke
+  // bære et klinisk funn. Falt kommandoen ut på gjenbruk, ville oppdraget blitt
+  // bygget mot en versjon ekstraksjonen aldri kunne registreres på, og en ny
+  // `--pdf` ville tatt den samme gjenbruksveien om igjen uten å reparere noe.
+  //
+  // At den samme teksten peker på et *annet* originaldokument, er allerede
+  // avvist over — og databasen avviser det uansett, så etterfyllingen kan ikke
+  // knytte en ny fil til en gammel rad.
   const upload = parseFullTextUploadResult(await options.catalog.uploadFullTextDocument(input))
   log(describeUpload(upload))
   return {

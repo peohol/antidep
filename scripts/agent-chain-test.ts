@@ -648,8 +648,19 @@ async function main(): Promise<void> {
     const claimed = await jobs.claim('evidence_extraction')
     check('kjøreren tar ut jobben med en leie', claimed.claimed)
     if (claimed.claimed) {
-      await jobs.complete(claimed.job.pipelineJobId, { evidence_item_id: evidenceItemId })
-      await jobs.complete(claimed.job.pipelineJobId, { evidence_item_id: evidenceItemId })
+      const outcome = { evidence_item_id: evidenceItemId }
+      await jobs.complete(
+        claimed.job.pipelineJobId,
+        claimed.job.leaseToken,
+        outcome,
+        extraction.agentRunId,
+      )
+      await jobs.complete(
+        claimed.job.pipelineJobId,
+        claimed.job.leaseToken,
+        outcome,
+        extraction.agentRunId,
+      )
       check(
         'en fullført jobb kan meldes om igjen uten å skrive noe nytt',
         psql(

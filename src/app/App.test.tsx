@@ -1,80 +1,50 @@
 import '@testing-library/jest-dom/vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './App'
 import type { CandidateGateway } from './candidate-gateway'
 import { parseCandidateView } from '../lib/candidate-view'
+import {
+  candidateContent,
+  candidateResponse,
+  FIXTURE_CANDIDATE_DIGEST,
+  FIXTURE_CANDIDATE_ID,
+  FIXTURE_STATEMENT,
+} from '../lib/candidate-test-support'
 
-const DIGEST = `sha256:${'a'.repeat(64)}`
-const CANDIDATE = '11111111-1111-4111-8111-111111111111'
+const DIGEST = FIXTURE_CANDIDATE_DIGEST
+const CANDIDATE = FIXTURE_CANDIDATE_ID
 
-function kandidatsvar(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    candidate_id: CANDIDATE,
-    claim_revision_id: '22222222-2222-4222-8222-222222222222',
-    candidate_digest: DIGEST,
-    built_at: '2026-09-26T09:00:00+00:00',
-    is_current: true,
-    current_digest: DIGEST,
-    experimental: true,
-    published: false,
-    content: {
-      claim_revision: {
-        statement: 'Sertralin er forbundet med en liten vektøkning ved langtidsbruk.',
-        scope: 'Voksne i allmennpraksis.',
-        subject_drug: 'sertralin',
-        topic: 'vektendring',
-        population: 'voksne med depressiv lidelse',
-        direction: 'increase',
-        uncertainty_summary: 'Grunnlaget er begrenset til én studie.',
-      },
-      evidence_assessment: {
-        framework: 'grade',
-        certainty_level: 'low',
-        rationale: 'Én studie, alvorlig upresishet.',
-      },
-      evidence: [
-        {
-          evidence_item_id: '33333333-3333-4333-8333-333333333333',
-          relationship_type: 'supports',
-          directness: 'direct',
-          outcome: 'vektendring',
-          outcome_detail: 'Gjennomsnittlig prosentvis vektendring ved endepunkt.',
-          reported_direction: 'increase',
-          estimate: '1.0',
-          estimate_unit: 'percent',
-          source: { title: 'Syntetisk artikkel om vektendring' },
-          coverage: {
-            required_check_fields: ['outcome', 'estimate', 'timepoint'],
-            covered_check_fields: ['outcome', 'estimate'],
-            grounded_check_fields: ['outcome', 'estimate'],
-            grounding_machine_proved: false,
-          },
-          field_groundings: [
-            {
-              check_field: 'estimate',
-              source_excerpt: 'Mean percent weight change was 1.0% at endpoint.',
-              source_locator: 'RESULTS',
-            },
-          ],
-          extraction_check: { outcome: 'verified' },
-        },
-      ],
-      source_coverage: [
-        {
-          source_id: '44444444-4444-4444-8444-444444444444',
-          title: 'Syntetisk artikkel om vektendring',
-          evidence_item_count: 1,
-          full_text_in_library: true,
-          readability_checked: true,
-          grounding_machine_proved: false,
-        },
-      ],
-    },
-    final_controls: [],
-    ...overrides,
+/**
+ * Ett avsnitt på kandidatsiden, slått opp på overskriften sin.
+ *
+ * Oppslagene går gjennom avsnittet og ikke gjennom hele siden, fordi siden
+ * *også* viser hele det forseglede innholdet ordrett: et treff der ville vært
+ * et treff i avtrykket, ikke i den lesbare visningen prøven gjelder.
+ */
+function section(name: string): HTMLElement {
+  return screen.getByRole('region', { name })
+}
+
+/**
+ * Hver bladverdi i det forseglede innholdet, som den står i svaret.
+ *
+ * Brukes til å prøve at flaten faktisk viser alt avtrykket dekker. Prøven er
+ * skrevet mot innholdet og ikke mot en liste over felter, slik at et nytt felt
+ * i `knowledge.candidate_content` gjør prøven rød framfor å bli usynlig.
+ */
+function leaves(value: unknown): readonly string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(leaves)
   }
+  if (typeof value === 'object' && value !== null) {
+    return Object.values(value).flatMap(leaves)
+  }
+  if (value === null) {
+    return []
+  }
+  return [String(value)]
 }
 
 function port(overrides: Partial<CandidateGateway> = {}): CandidateGateway {
@@ -83,7 +53,7 @@ function port(overrides: Partial<CandidateGateway> = {}): CandidateGateway {
       Promise.resolve([
         {
           candidateId: CANDIDATE,
-          statement: 'Sertralin er forbundet med en liten vektøkning ved langtidsbruk.',
+          statement: FIXTURE_STATEMENT,
           subjectDrug: 'sertralin',
           topic: 'vektendring',
           certaintyLevel: 'low',
@@ -92,7 +62,7 @@ function port(overrides: Partial<CandidateGateway> = {}): CandidateGateway {
           builtAt: '2026-09-26T09:00:00+00:00',
         },
       ]),
-    read: () => Promise.resolve(parseCandidateView(kandidatsvar())),
+    read: () => Promise.resolve(parseCandidateView(candidateResponse())),
     recordFinalControl: () => Promise.resolve(),
     ...overrides,
   }
@@ -132,11 +102,7 @@ describe('klinikerflaten', () => {
         <AppLayout gateway={port()} />
       </MemoryRouter>,
     )
-    expect(
-      await screen.findByRole('link', {
-        name: 'Sertralin er forbundet med en liten vektøkning ved langtidsbruk.',
-      }),
-    ).toBeVisible()
+    expect(await screen.findByRole('link', { name: FIXTURE_STATEMENT })).toBeVisible()
     expect(screen.getByText(/Eksperimentelt og upublisert/)).toBeVisible()
   })
 
@@ -147,18 +113,98 @@ describe('klinikerflaten', () => {
       </MemoryRouter>,
     )
 
+    expect(await screen.findByRole('heading', { name: FIXTURE_STATEMENT })).toBeVisible()
     expect(
-      await screen.findByRole('heading', {
-        name: 'Sertralin er forbundet med en liten vektøkning ved langtidsbruk.',
-      }),
+      within(section('Evidensvurdering')).getByText(/Sikkerhet i grunnlaget \(grade\): lav/),
     ).toBeVisible()
-    expect(screen.getByText(/Sikkerhet i grunnlaget \(grade\): lav/)).toBeVisible()
-    expect(screen.getByText(/Fullteksten ligger i biblioteket/)).toBeVisible()
-    expect(screen.getByText(/Mean percent weight change was 1.0% at endpoint/)).toBeVisible()
+    expect(
+      within(section('Kildedekning')).getByText(/Fullteksten ligger i biblioteket/),
+    ).toBeVisible()
+    expect(
+      within(section('Evidensgrunnlaget')).getByText(
+        /Mean percent weight change was 1.0% at endpoint/,
+      ),
+    ).toBeVisible()
     // Sluttkontrollen er bundet til avtrykket, og avtrykket vises.
     expect(screen.getByText(DIGEST)).toBeVisible()
     // En godkjenning publiserer ingenting, og flaten sier det selv.
     expect(screen.getByText(/publiserer ingenting/)).toBeVisible()
+  })
+
+  // Avtrykket dekker vurderingen i sin helhet. Vises bare sikkerhetsgraden,
+  // attesterer fagpersonen en nedgradering hen aldri ble vist grunnen til.
+  it('viser hvert GRADE-domene for seg', async () => {
+    render(
+      <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
+        <AppLayout gateway={port()} />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: FIXTURE_STATEMENT })
+    const vurdering = within(section('Evidensvurdering'))
+    expect(vurdering.getByText(/Risiko for systematisk skjevhet: alvorlig/)).toBeVisible()
+    expect(vurdering.getByText(/Upresishet: svært alvorlig/)).toBeVisible()
+    // Et domene som ikke lot seg vurdere, er ikke et domene uten problem.
+    expect(vurdering.getByText(/Inkonsistens: lot seg ikke vurdere/)).toBeVisible()
+    expect(vurdering.getByText(/Ingen dose-respons-sammenheng kunne vurderes/)).toBeVisible()
+  })
+
+  it('viser hvert av de sju kontrollpunktene i kildestøttekontrollen', async () => {
+    render(
+      <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
+        <AppLayout gateway={port()} />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: FIXTURE_STATEMENT })
+    const kontroll = within(section('Kildestøttekontroll'))
+    expect(kontroll.getByText(/Utfall: må rettes/)).toBeVisible()
+    expect(kontroll.getByText(/Kildestøtte: holder/)).toBeVisible()
+    expect(kontroll.getByText(/Forbehold komplett: avvik/)).toBeVisible()
+    // not_assessable er ikke ok, og skal ikke leses som det.
+    expect(kontroll.getByText(/Komparator: lot seg ikke bedømme/)).toBeVisible()
+    expect(kontroll.getByText(/Forbeholdet om langtidsbruk mangler/)).toBeVisible()
+  })
+
+  it('sier når ingen kildestøttekontroll er registrert, framfor å utelate den', async () => {
+    const view = parseCandidateView(
+      candidateResponse({ content: candidateContent({ citation_support_check: null }) }),
+    )
+    render(
+      <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
+        <AppLayout gateway={port({ read: () => Promise.resolve(view) })} />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText(/Ingen kildestøttekontroll er registrert/)).toBeVisible()
+  })
+
+  it('viser tallene evidensfunnet faktisk bærer', async () => {
+    render(
+      <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
+        <AppLayout gateway={port()} />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: FIXTURE_STATEMENT })
+    const evidens = within(section('Evidensgrunnlaget'))
+    expect(evidens.getByText(/Antall deltakere: 220/)).toBeVisible()
+    expect(evidens.getByText(/Konfidensintervall \(95 %\): 0.4 til 1.6/)).toBeVisible()
+    expect(evidens.getByText(/Åpen oppfølging etter uke 24/)).toBeVisible()
+  })
+
+  // Sluttkontrollen binder fagpersonen til avtrykket, og avtrykket dekker hele
+  // innholdet. En visning som bare viste et utvalg, ville latt hen attestere
+  // opplysninger hen aldri så — og avstanden ville vokst for hvert nye felt i
+  // `knowledge.candidate_content`. Prøven leser innholdet selv, ikke en liste.
+  it('viser alt avtrykket dekker, før beslutningen avgis', async () => {
+    const svar = candidateResponse()
+    const { container } = render(
+      <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
+        <AppLayout gateway={port()} />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: 'Registrer sluttkontroll' })
+
+    const shown = container.textContent ?? ''
+    const missing = leaves(svar['content']).filter((leaf) => !shown.includes(leaf))
+    expect(missing).toEqual([])
   })
 
   // ANTIDEP_CONSTITUTION.md regel 4: et felt uten kontroll er ikke det samme
@@ -200,7 +246,7 @@ describe('klinikerflaten', () => {
   // En kandidat hvis grunnlag er endret, er ikke den kandidaten noen leste.
   it('stenger sluttkontrollen når grunnlaget er endret siden forseglingen', async () => {
     const view = parseCandidateView(
-      kandidatsvar({ is_current: false, current_digest: `sha256:${'c'.repeat(64)}` }),
+      candidateResponse({ is_current: false, current_digest: `sha256:${'c'.repeat(64)}` }),
     )
     render(
       <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>

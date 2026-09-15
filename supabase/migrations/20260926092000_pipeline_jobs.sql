@@ -83,6 +83,15 @@ create table workflow.pipeline_jobs (
   leased_by_agent_identity_id uuid
     references provenance.agent_identities (id) on update restrict on delete restrict,
   lease_expires_at timestamptz,
+  -- Selve leien, og ikke bare hvem som holder den.
+  --
+  -- Identiteten er *per rolle*, ikke per kjører: to kjørere i samme rolle deler
+  -- den. Uten en egen nøkkel per uttak kunne en kjører hvis leie var løpt ut,
+  -- meldt utfall på det uttaket en annen nettopp hadde tatt — og skrevet sitt
+  -- foreldede resultat over det som faktisk pågikk. Nøkkelen er ugjettbar og ny
+  -- for hvert uttak, så et utfall hører alltid til det forsøket som gjorde
+  -- arbeidet.
+  lease_token uuid,
 
   agent_run_id uuid
     references provenance.agent_runs (id) on update restrict on delete restrict,
@@ -129,13 +138,25 @@ create table workflow.pipeline_jobs (
       end
     ),
   constraint pipeline_jobs_completed_after_enqueued_check
-    check (completed_at is null or completed_at >= enqueued_at)
+    check (completed_at is null or completed_at >= enqueued_at),
+  -- Leienøkkelen følger leieholderen: finnes den ene, finnes den andre.
+  constraint pipeline_jobs_lease_token_pairing_check
+    check ((leased_by_agent_identity_id is null) = (lease_token is null)),
+  -- En fullført jobb skal peke på kjøringen som gjorde arbeidet. Uten kravet
+  -- kunne en identitet tatt ut en jobb og meldt den fullført med et vilkårlig
+  -- manifest, uten at noen kjøring med premisser noen gang ble åpnet — og køen
+  -- ville rapportert utført agentarbeid uten proveniens (ANTIDEP_CONSTITUTION.md
+  -- regel 4, 7).
+  constraint pipeline_jobs_succeeded_needs_agent_run_check
+    check (state <> 'succeeded' or agent_run_id is not null)
 );
 
 comment on table workflow.pipeline_jobs is
   'Varig jobbtilstand for agentkjeden (ANTIDEP_CONSTITUTION.md regel 4, DATABASE_ARCHITECTURE.md §33). Én rad per stykke arbeid som gjenstår eller er gjort, identifisert av (agent_role, job_key) der job_key utledes deterministisk av hva jobben handler om. Unikheten er idempotensen: den som legger inn arbeid, kan gjenta hele listen sin uten å doble noe, og en avbrutt orkestrering kan derfor gjenopptas trygt. En jobb tas ut med en leie som løper ut, slik at en kjører som forsvinner ikke blokkerer køen — og telles ned mot max_attempts, slik at en jobb som virkelig feiler, blir stående som failed framfor å se ut som om den fortsatt er underveis. Tilstanden endres; overgangene bevares i workflow.pipeline_job_events.';
 comment on column workflow.pipeline_jobs.job_key is
   'Idempotensnøkkelen, utledet deterministisk av hva jobben handler om — kildeversjonen, evidensfunnet, påstandsrevisjonen. Aldri et tidspunkt eller et løpenummer: to jobber om det samme arbeidet skal være én rad, ikke to.';
+comment on column workflow.pipeline_jobs.lease_token is
+  'Den ugjettbare nøkkelen for *dette* uttaket, ny for hvert forsøk. Agentidentiteten er per rolle og deles av alle kjørere i den, så identiteten alene kan ikke skille en kjører hvis leie er løpt ut, fra den som nå holder den. Nøkkelen kan: et utfall meldes bare av det forsøket som faktisk gjorde arbeidet. Følger leieholderen — finnes den ene, finnes den andre.';
 comment on column workflow.pipeline_jobs.lease_expires_at is
   'Når leien på en leased jobb løper ut. En utløpt leie gjør jobben tilgjengelig igjen for en annen kjører. NULL i alle andre tilstander, håndhevet av pipeline_jobs_state_shape_check.';
 comment on column workflow.pipeline_jobs.attempts is
@@ -372,6 +393,9 @@ begin
   set state = 'leased',
       attempts = j.attempts + 1,
       leased_by_agent_identity_id = v_identity_id,
+      -- Ny nøkkel for hvert uttak. Den forrige slutter å gjelde i det samme
+      -- øyeblikket, så et utfall fra en utløpt leie treffer ingenting.
+      lease_token = gen_random_uuid(),
       lease_expires_at = now() + make_interval(secs => p_lease_seconds)
   where j.id = v_job.id
   returning * into v_job;
@@ -390,6 +414,7 @@ begin
     'input_manifest', v_job.input_manifest,
     'attempt', v_job.attempts,
     'max_attempts', v_job.max_attempts,
+    'lease_token', v_job.lease_token,
     'lease_expires_at', v_job.lease_expires_at,
     'last_failure_reason', v_job.failure_reason
   );
@@ -409,8 +434,9 @@ create function api.complete_pipeline_job(
   p_identity_key text,
   p_secret text,
   p_pipeline_job_id uuid,
+  p_lease_token uuid,
   p_output_manifest jsonb,
-  p_agent_run_id uuid default null
+  p_agent_run_id uuid
 )
   returns jsonb
   language plpgsql
@@ -437,11 +463,14 @@ begin
 
   -- Idempotent: en kjører som rakk å fullføre og mistet svaret, kan spørre
   -- igjen. Ingenting skrives, og det registrerte utfallet er svaret.
+  --
+  -- Nøkkelen avgjør, ikke identiteten: det er *forsøket* som eier utfallet.
   if v_job.state = 'succeeded' then
-    if v_job.leased_by_agent_identity_id is distinct from v_identity_id then
+    if v_job.lease_token is distinct from p_lease_token then
       raise exception using
         errcode = 'insufficient_privilege',
-        message = 'Jobben er allerede fullført av en annen identitet.';
+        message = 'Jobben er allerede fullført av et annet forsøk.',
+        hint = 'Utfallet hører til det forsøket som gjorde arbeidet. Et annet forsøk kan ikke bekrefte eller overskrive det.';
     end if;
     return jsonb_build_object(
       'pipeline_job_id', v_job.id, 'state', v_job.state::text,
@@ -449,14 +478,16 @@ begin
     );
   end if;
 
-  if v_job.state <> 'leased' or v_job.leased_by_agent_identity_id is distinct from v_identity_id then
+  if v_job.state <> 'leased'
+     or v_job.leased_by_agent_identity_id is distinct from v_identity_id
+     or v_job.lease_token is distinct from p_lease_token then
     raise exception using
       errcode = 'restrict_violation',
       message = format(
-        'Jobben %L står som %L og kan ikke fullføres av denne identiteten.',
+        'Jobben %L står som %L og kan ikke fullføres av dette forsøket.',
         p_pipeline_job_id, v_job.state::text
       ),
-      hint = 'Bare den identiteten som holder leien, kan melde et utfall. Er leien løpt ut og tatt av en annen, er arbeidet gjort om igjen der; ta jobben ut på nytt framfor å skrive over utfallet.';
+      hint = 'Bare det uttaket som holder leien, kan melde et utfall, og leienøkkelen er uttakets egen. Er leien løpt ut og tatt av et nytt forsøk, er arbeidet gjort om igjen der; ta jobben ut på nytt framfor å skrive over utfallet.';
   end if;
 
   if p_output_manifest is null then
@@ -466,15 +497,24 @@ begin
       hint = 'Manifestet er det som gjør utfallet lesbart i ettertid. En jobb som bare sier «ferdig», sier ingenting om hva den gjorde.';
   end if;
 
-  if p_agent_run_id is not null and not exists (
+  if p_agent_run_id is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'En fullført jobb skal peke på agentkjøringen som gjorde arbeidet.',
+      hint = 'Uten kjøringen ville køen rapportert utført agentarbeid uten premisser og uten spor — og en jobb kunne blitt meldt fullført uten at noe arbeid noen gang ble åpnet (ANTIDEP_CONSTITUTION.md regel 4, 7).';
+  end if;
+
+  if not exists (
     select 1
     from provenance.agent_runs r
-    where r.id = p_agent_run_id and r.agent_identity_id = v_identity_id
+    where r.id = p_agent_run_id
+      and r.agent_identity_id = v_identity_id
+      and r.agent_role = v_job.agent_role
   ) then
     raise exception using
       errcode = 'invalid_parameter_value',
-      message = 'Agentkjøringen tilhører ikke identiteten som melder utfallet.',
-      hint = 'Kjøringen knytter jobben til premissene arbeidet faktisk ble gjort under. En kjøring som tilhører en annen identitet, ville vært en usann kobling.';
+      message = 'Agentkjøringen tilhører ikke identiteten og rollen som melder utfallet.',
+      hint = 'Kjøringen knytter jobben til premissene arbeidet faktisk ble gjort under. En kjøring fra en annen identitet eller en annen rolle ville vært en usann kobling.';
   end if;
 
   v_from := v_job.state;
@@ -482,8 +522,10 @@ begin
   update workflow.pipeline_jobs j
   set state = 'succeeded',
       output_manifest = p_output_manifest,
-      agent_run_id = coalesce(p_agent_run_id, j.agent_run_id),
+      agent_run_id = p_agent_run_id,
       failure_reason = null,
+      -- Leienøkkelen blir stående: den er nøkkelen det fullførte forsøket
+      -- spør med når det gjentar kallet.
       lease_expires_at = null,
       completed_at = now()
   where j.id = v_job.id
@@ -501,11 +543,11 @@ begin
 end;
 $$;
 
-comment on function api.complete_pipeline_job(text, text, uuid, jsonb, uuid) is
-  'Melder et vellykket utfall på en jobb identiteten holder leien på (DATABASE_ARCHITECTURE.md §33, §43). Idempotent: en allerede fullført jobb skriver ingenting og svarer med det registrerte utdatamanifestet, slik at en kjører som mistet svaret sitt, kan spørre igjen. Bare leieholderen kan melde utfall — er leien løpt ut og tatt av en annen, er arbeidet gjort om igjen der, og et utfall herfra ville overskrevet det. p_agent_run_id knytter jobben til premissene arbeidet ble gjort under, og må tilhøre den samme identiteten. EXECUTE går til anon av samme grunn som api.claim_pipeline_job(text, text, text, integer).';
+comment on function api.complete_pipeline_job(text, text, uuid, uuid, jsonb, uuid) is
+  'Melder et vellykket utfall på det uttaket p_lease_token navngir (DATABASE_ARCHITECTURE.md §33, §43). Idempotent: en allerede fullført jobb skriver ingenting og svarer med det registrerte utdatamanifestet, slik at en kjører som mistet svaret sitt, kan spørre igjen med den samme nøkkelen. Nøkkelen og ikke identiteten er kontrollen: agentidentiteten er per rolle og deles av alle kjørere i den, så uten en nøkkel per uttak kunne en kjører hvis leie var løpt ut, skrevet sitt foreldede resultat over det uttaket en annen nettopp hadde tatt. p_agent_run_id er påkrevd og må tilhøre den samme identiteten og rollen: uten kjøringen ville køen rapportert utført agentarbeid uten premisser og uten spor. EXECUTE går til anon av samme grunn som api.claim_pipeline_job(text, text, text, integer).';
 
-revoke execute on function api.complete_pipeline_job(text, text, uuid, jsonb, uuid) from public;
-grant execute on function api.complete_pipeline_job(text, text, uuid, jsonb, uuid) to anon, authenticated;
+revoke execute on function api.complete_pipeline_job(text, text, uuid, uuid, jsonb, uuid) from public;
+grant execute on function api.complete_pipeline_job(text, text, uuid, uuid, jsonb, uuid) to anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- Feil: tilbake i køen, eller endelig
@@ -514,6 +556,7 @@ create function api.fail_pipeline_job(
   p_identity_key text,
   p_secret text,
   p_pipeline_job_id uuid,
+  p_lease_token uuid,
   p_failure_reason text
 )
   returns jsonb
@@ -540,13 +583,16 @@ begin
 
   v_identity_id := provenance.authenticate_agent_identity(p_identity_key, p_secret, v_job.agent_role);
 
-  if v_job.state <> 'leased' or v_job.leased_by_agent_identity_id is distinct from v_identity_id then
+  if v_job.state <> 'leased'
+     or v_job.leased_by_agent_identity_id is distinct from v_identity_id
+     or v_job.lease_token is distinct from p_lease_token then
     raise exception using
       errcode = 'restrict_violation',
       message = format(
-        'Jobben %L står som %L og kan ikke meldes mislykket av denne identiteten.',
+        'Jobben %L står som %L og kan ikke meldes mislykket av dette forsøket.',
         p_pipeline_job_id, v_job.state::text
-      );
+      ),
+      hint = 'Leienøkkelen er uttakets egen. Er leien løpt ut og tatt av et nytt forsøk, hører utfallet til det forsøket.';
   end if;
 
   if nullif(btrim(coalesce(p_failure_reason, '')), '') is null then
@@ -566,6 +612,9 @@ begin
       failure_reason = btrim(p_failure_reason),
       leased_by_agent_identity_id =
         case when v_next = 'failed' then j.leased_by_agent_identity_id else null end,
+      -- Nøkkelen følger leieholderen (pipeline_jobs_lease_token_pairing_check):
+      -- en jobb som er tilbake i køen, har ingen leie og dermed ingen nøkkel.
+      lease_token = case when v_next = 'failed' then j.lease_token else null end,
       lease_expires_at = null,
       completed_at = case when v_next = 'failed' then now() else null end
   where j.id = v_job.id
@@ -585,8 +634,8 @@ begin
 end;
 $$;
 
-comment on function api.fail_pipeline_job(text, text, uuid, text) is
-  'Melder et mislykket forsøk på en jobb identiteten holder leien på (ANTIDEP_CONSTITUTION.md regel 4, DATABASE_ARCHITECTURE.md §33). Jobben går tilbake til ready så lenge det er forsøk igjen, og blir stående som failed når de er brukt opp — fail-closed, slik at en reell feil ikke ser ut som en jobb som fortsatt er underveis. Begrunnelsen er påkrevd: uten den ville en teknisk feil og et forslag som ikke holdt mål, vært samme tilstand. EXECUTE går til anon av samme grunn som api.claim_pipeline_job(text, text, text, integer).';
+comment on function api.fail_pipeline_job(text, text, uuid, uuid, text) is
+  'Melder et mislykket forsøk på det uttaket p_lease_token navngir (ANTIDEP_CONSTITUTION.md regel 4, DATABASE_ARCHITECTURE.md §33). Jobben går tilbake til ready så lenge det er forsøk igjen, og blir stående som failed når de er brukt opp — fail-closed, slik at en reell feil ikke ser ut som en jobb som fortsatt er underveis. Begrunnelsen er påkrevd: uten den ville en teknisk feil og et forslag som ikke holdt mål, vært samme tilstand. EXECUTE går til anon av samme grunn som api.claim_pipeline_job(text, text, text, integer).';
 
-revoke execute on function api.fail_pipeline_job(text, text, uuid, text) from public;
-grant execute on function api.fail_pipeline_job(text, text, uuid, text) to anon, authenticated;
+revoke execute on function api.fail_pipeline_job(text, text, uuid, uuid, text) from public;
+grant execute on function api.fail_pipeline_job(text, text, uuid, uuid, text) to anon, authenticated;
