@@ -118,6 +118,15 @@
 #       commiter, A avviser etterpå. Registreringsnummeret og ikke klokka avgjør
 #       hvilken som gjelder, og publiseringsgaten stopper på avvisningen.
 #
+#   12  Publiseringen holder også låsene på det kandidatinnholdet faktisk
+#       bygges av. En samtidig ekstraksjonskontroll på et lenket evidensfunn må
+#       derfor vente; uten den låsen var kontrollen av at kandidaten fortsatt er
+#       den gjeldende, et øyeblikksbilde.
+#
+#   13  Det samme for sluttkontrollen, på revisjonen: en samtidig
+#       kildestøttekontroll må vente, fordi den er en del av det forseglede
+#       innholdet.
+#
 # Fiksturen er egen (scripts/publication-race-fixture.sql). Prøve 10 må commite
 # en publisering for å kunne vise det den viser, og fiksturen trekker den tilbake
 # før neste kjøring — gjennom den kontrollerte operasjonen, aldri ved å slette
@@ -993,5 +1002,49 @@ else
   sed 's/^/         /' "$a11_log" >&2
   exit 1
 fi
+
+# Prøve 12 og 13 — grunnlaget under kandidaten står stille gjennom kontrollen
+#
+# Publiseringen og sluttkontrollen kontrollerer at innholdet fortsatt bygger til
+# kandidatens avtrykk. Uten låser på det innholdet faktisk bygges av, ville den
+# kontrollen vært et øyeblikksbilde: en ekstraksjonskontroll låser evidensfunnet
+# og ikke kandidaten, og en kildestøttekontroll låste ingenting i det hele tatt,
+# så begge kunne commite mellom regningen av avtrykket og skrivingen.
+# knowledge.lock_candidate_inputs(uuid) og de tre triggerne fra migrasjon 009g
+# lukker det, og prøvene her leser forskjellen.
+pub_funn='7d000000-0000-4000-8000-000000000003'
+pub_verifikator=$(les "select a.id from provenance.actors a where a.actor_key = 'agent:extraction-verification'")
+pub_avtrykk1=$(les "select c.candidate_digest from knowledge.candidates c where c.id = '$pub_kandidat1'")
+
+# Revisjon 2, fordi prøve 10 commitet publiseringen av revisjon 1: en publisering
+# som ikke endrer noe er ikke en hendelse, og da ville økt A feilet før den rakk
+# å ta noen lås.
+proev 'en samtidig ekstraksjonskontroll må vente på publiseringen (55P03)' \
+  "$pub_sesjon
+   select knowledge.publish_claim_revision('$pub_rev2', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');" \
+  "select workflow.record_evidence_verification(
+     '$pub_funn', '$pub_verifikator', null,
+     'uncertain', 'original_source', array['source_locator'],
+     'Samtidighetsprøve; rulles tilbake.',
+     'Samtidighetsprøve; kontrollen konkluderte ikke.');" \
+  'Uten grunnlagslåsen kan en ekstraksjonskontroll commite mellom publiseringsgaten og hendelsen, og en kandidat som allerede er foreldet blir publisert som gjeldende (migrasjon 009g).'
+
+proev 'en samtidig kildestøttekontroll må vente på sluttkontrollen (55P03)' \
+  "select set_config('request.jwt.claims', '{\"sub\":\"$pub_fagperson\"}', true);
+   set local role authenticated;
+   select api.record_candidate_final_control('$pub_kandidat1', '$pub_avtrykk1', 'approved',
+     'Samtidighetsprøve; rulles tilbake.');
+   reset role;" \
+  "insert into workflow.claim_verifications
+     (claim_revision_id, verified_revision_creator_actor_id, verifier_actor_id, outcome,
+      source_access, source_support, population_match, comparator_match, timeframe_match,
+      direction_and_magnitude, qualifiers_complete, contradictory_evidence_represented,
+      rationale, verified_at)
+   select r.id, r.created_by_actor_id, '7d000000-0000-4000-8000-0000000000a1',
+          'uncertain', 'original_source', 'ok', 'not_assessable', 'ok', 'ok', 'ok', 'ok', 'ok',
+          'Samtidighetsprøve; rulles tilbake.', now()
+   from knowledge.claim_revisions r where r.id = '$pub_rev1';" \
+  'Uten låsen på revisjonen kan en kildestøttekontroll commite mellom regningen av avtrykket og sluttkontrollen, og godkjenningen ville gjaldt et innhold som allerede var et annet (migrasjon 009g).'
 
 printf '\nAlle samtidighetsprøvene passerte.\n'

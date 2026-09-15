@@ -15,7 +15,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(41);
+select plan(42);
 
 create temporary table fixture (name text primary key, id uuid not null) on commit drop;
 
@@ -431,6 +431,11 @@ select is_empty(
   $$,
   'alle tre publiseringsoperasjonene låser påstandsraden med FOR UPDATE før de leser publiseringspekeren'
 );
+-- Publiseringen og rollbacken tar revisjonslåsen gjennom
+-- knowledge.lock_candidate_inputs(uuid) fra migrasjon 009g: den låser
+-- revisjonen *og* alt kandidatinnholdet ellers bygges av, i den faste
+-- rekkefølgen. Kravet er derfor på låsen og ikke på hvor den er skrevet —
+-- men at den faktisk er der, prøves i begge ledd.
 select is_empty(
   $$
     select f.function_name
@@ -441,8 +446,23 @@ select is_empty(
            as f(function_name)
     where (select p.prosrc from pg_proc p where p.oid = f.function_name::regprocedure)
           !~ 'knowledge\.claim_revisions[^;]*for update'
+      and (select p.prosrc from pg_proc p where p.oid = f.function_name::regprocedure)
+          !~ 'knowledge\.lock_candidate_inputs'
   $$,
   'operasjonene og forseglingen låser revisjonsraden, i den faste rekkefølgen påstand deretter revisjon'
+);
+-- ... og helperen låser faktisk revisjonen, evidensfunnene og kildene.
+select is_empty(
+  $$
+    select t.needle
+    from (values ('knowledge.claim_revisions'), ('for update'),
+                 ('knowledge.evidence_items'), ('knowledge.sources'), ('for share'))
+           as t(needle)
+    where position(t.needle in
+           (select p.prosrc from pg_proc p
+            where p.oid = 'knowledge.lock_candidate_inputs(uuid)'::regprocedure)) = 0
+  $$,
+  'grunnlagslåsen dekker revisjonen, evidensfunnene og kildene kandidatinnholdet bygges av'
 );
 
 -- ---------------------------------------------------------------------------
