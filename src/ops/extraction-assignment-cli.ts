@@ -211,6 +211,24 @@ function catalogApi(client: Client): EditorCatalogApi {
         'editor_source_versions',
         await client.from('editor_source_versions').select('*').eq('source_id', sourceId),
       ),
+    uploadFullTextDocument: async (input: DocumentVersionInput): Promise<unknown> => {
+      const { data, error } = await client.rpc('upload_full_text_document', {
+        p_source_id: input.sourceId,
+        p_retrieved_at: input.retrievedAt,
+        p_retrieved_from: input.retrievedFrom,
+        p_document_base64: input.documentBase64,
+        p_extracted_text: input.extractedText,
+        p_text_extraction_tool: input.recipe.tool,
+        p_text_extraction_tool_version: input.recipe.toolVersion,
+        p_text_extraction_arguments: input.recipe.arguments,
+        p_text_extraction_transform: input.recipe.transform ?? '',
+        p_external_version: input.externalVersion,
+      })
+      if (error !== null) {
+        throw new Error(`Fullteksten ble ikke registrert: ${error.message}`)
+      }
+      return data
+    },
     createSourceVersionFromDocument: async (input: DocumentVersionInput): Promise<Uuid> => {
       const { data, error } = await client.rpc('create_source_version_from_document', {
         p_source_id: input.sourceId,

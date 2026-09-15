@@ -9,10 +9,10 @@ Antidep skal gi helsepersonell en forståelig, kildeforankret framstilling. Agen
 ## Ufravikelige regler
 
 1. Abstract, metadata og registeromtale er discovery-only. Forskningsbaserte kliniske funn og synteser krever riktig, komplett og kontrollerbar fulltekst.
-2. Kilde, kildeversjon, ordrette utdrag og avledede funn skal være sporbare. Originalfiler er private; gjengivelsesrett vurderes separat.
-3. Generator, kildestøttekontroll og evidensvurdering er separate roller. Egenverifikasjon og oppdiktet agentattestasjon er forbudt.
+2. Kilde, kildeversjon, ordrette utdrag og avledede funn skal være sporbare. Originalfiler lagres varig og privat, identifisert av sitt eget innhold, og må vises å tilhøre den publikasjonen de registreres under; gjengivelsesrett vurderes separat.
+3. Generator, kildestøttekontroll og evidensvurdering er separate roller. Egenverifikasjon og oppdiktet agentattestasjon er forbudt. Separasjonen er håndhevet på modellidentitet og ikke bare på aktør: to roller kan ikke dele modell, og en kontroll utført av den samme modellen som produserte innholdet, avvises.
 4. Forskningsusikkerhet, agentuenighet og teknisk feil er forskjellige tilstander. Manglende kontroll kan ikke kalles verifisert.
-5. Utkast er tilgangsbegrenset og merkes eksperimentelt. Bare nøyaktig godkjent kandidat kan publiseres; men kandidatbindingen er ennå ikke implementert.
+5. Utkast er tilgangsbegrenset og merkes eksperimentelt. Bare nøyaktig godkjent kandidat kan publiseres. Kandidaten er et forseglet innhold med et avtrykk beregnet av innholdet selv, og sluttkontrollen er strukturelt bundet til det avtrykket; er grunnlaget endret siden forseglingen, må kandidaten bygges på nytt før den kan sluttkontrolleres.
 6. Publisert historikk, audit, aktører, kontoer og kildebibliotek bevares. Tilbaketrekking og rollback skal være synlig.
 7. Minste privilegium, append-only proveniens og kontrollerte skriveveier gjelder også agentene.
 

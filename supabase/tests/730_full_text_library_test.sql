@@ -14,7 +14,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(27);
+select plan(28);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -81,14 +81,20 @@ select is_empty(
 
 -- En fulltekst som faktisk ser ut som en artikkel: brødtekst nok, og en tabell
 -- som overlevde tekstuttrekkingen.
+--
+-- Mellomrommene mellom cellene er *enkle*, slik Antideps leserekkefølge faktisk
+-- setter dem (src/agents/reading-order.ts). En fikstur med kolonner justert av
+-- flere mellomrom ville vært en fikstur av «pdftotext -layout», som Antidep
+-- ikke registrerer nye kildeversjoner med — og prøven ville bekreftet en regel
+-- kjeden aldri møter.
 create function pg_temp.readable_full_text() returns text language sql immutable as $$
   select repeat(
-    'Patients with major depressive disorder were randomised to double-blind treatment for 26 weeks.'
+    'Patients with major depressive disorder were randomised to treatment.'
     || chr(10), 80)
-    || 'Table 1  Baseline characteristics' || chr(10)
-    || 'Age (years)    42.1    41.8' || chr(10)
-    || 'Weight (kg)    74.2    73.9' || chr(10)
-    || 'BMI (kg/m2)    25.1    24.8' || chr(10)
+    || 'Table 1 Baseline characteristics' || chr(10)
+    || 'Age (years) 42.1 41.8' || chr(10)
+    || 'Weight (kg) 74.2 73.9' || chr(10)
+    || 'BMI (kg/m2) 25.1 24.8' || chr(10)
 $$;
 
 -- Den samme artikkelen der tabellen ble droppet som et bilde. Brødteksten er
@@ -96,9 +102,9 @@ $$;
 -- samtidig som de kliniske tallene mangler.
 create function pg_temp.full_text_without_tables() returns text language sql immutable as $$
   select repeat(
-    'Patients with major depressive disorder were randomised to double-blind treatment for 26 weeks.'
+    'Patients with major depressive disorder were randomised to treatment.'
     || chr(10), 80)
-    || 'Table 1  Baseline characteristics' || chr(10)
+    || 'Table 1 Baseline characteristics' || chr(10)
 $$;
 
 select is(
@@ -119,6 +125,15 @@ select is(
   (knowledge.full_text_readability_metrics(pg_temp.readable_full_text()) ->> 'table_rows')::int,
   3,
   'målingen teller de tre faktiske dataradene'
+);
+-- En resultatsetning har tall i seg uten å være en tabellrad. Uten dette
+-- skillet ville en artikkel uten tabeller sett ut som en med.
+select is(
+  (knowledge.full_text_readability_metrics(
+     'Mean percent weight change was 1.0% at endpoint with a 95% confidence interval from 0.5% to 1.5%.'
+   ) ->> 'table_rows')::int,
+  0,
+  'en resultatsetning er brødtekst, ikke en datarad'
 );
 select is(
   (knowledge.full_text_readability_metrics(pg_temp.readable_full_text())

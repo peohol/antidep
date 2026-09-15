@@ -207,6 +207,36 @@ export type AgentDatabase = {
         // `parseClaimSynthesisResult`, som avviser et svar som ikke har den.
         Returns: unknown
       }
+      claim_pipeline_job: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_role: string
+          p_lease_seconds?: number
+        }
+        // jsonb. Formen er dokumentert i migrasjon 009b og leses av
+        // `parseClaimedJob`, som avviser et svar som ikke har den.
+        Returns: unknown
+      }
+      complete_pipeline_job: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_pipeline_job_id: Uuid
+          p_output_manifest: Record<string, unknown>
+          p_agent_run_id?: Uuid | null
+        }
+        Returns: unknown
+      }
+      fail_pipeline_job: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_pipeline_job_id: Uuid
+          p_failure_reason: string
+        }
+        Returns: unknown
+      }
       register_evidence_assessment: {
         Args: {
           p_identity_key: string

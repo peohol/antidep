@@ -9,10 +9,19 @@ Abstract og metadata stopper ved discovery. Begrensede representasjoner kan aldr
 ## Implementert nå
 
 - Versjonerte kilder, dokumentfingeravtrykk og tillatt PDF-tekstuttrekksoppskrift.
+- **Privat fulltekstbibliotek.** Originalfilen blir liggende i databasen, utilgjengelig for enhver klientrolle. Fingeravtrykket beregnes av bytene og gjentas av en regel på raden, så filidentiteten er databasens og aldri en påstand kalleren skriver.
+- **Kontrollert publikasjonstilhørighet.** Opplastingen krever at fullteksten bærer kildens egen registrerte identitet — DOI, PMID navngitt som en PMID, eller tittelen — og avviser filen ellers. Et korrekt fingeravtrykk beviser hvilken fil dette er, ikke hvilken artikkel den er.
+- **Lesbarhets- og tabellkontroll.** Fullteksten prøves mot krav til mengde tekst, linjer, bokstavandel og antall datarader, og mot at et dokument som erklærer tabeller, faktisk har innhold under dem. En artikkel der tabellene ble droppet som bilder, ser hel ut i brødteksten samtidig som de kliniske tallene mangler; den registreres ikke.
 - Opptaksbasert modelladapter og rolleavgrensede agentinnganger for ekstraksjon, kontroll, syntese og evidensvurdering.
+- **Reelt separate modellroller.** Hver rolle har en registrert modellidentitet, ingen to roller kan dele en, og en kjøring må ha nøyaktig den registrerte. I tillegg avvises en kontroll utført av den samme modellidentiteten som produserte det kontrollerte.
+- **Varig og idempotent jobbtilstand.** Arbeid som gjenstår, ligger i databasen med idempotensnøkkel, leie og append-only spor. En avbrutt orkestrering kan gjenta listen sin uten å doble noe, en kjører som forsvinner blokkerer ikke køen, og oppbrukte forsøk gir en jobb som blir stående framfor å prøves i det uendelige.
+- **Forseglet kandidat med synlig kildedekning.** Alt en kliniker og en sluttkontrollør skal se, settes sammen deterministisk av rader som allerede finnes, og avtrykket er innholdet. Kildedekningen ligger inne i avtrykket.
+- **Kandidatbundet sluttkontroll.** En navngitt fagperson med mandat avgir beslutningen i den samme visningen klinikeren får, og beslutningen kan strukturelt ikke vise til et annet innhold enn det som ble lest. Er grunnlaget endret siden forseglingen, må kandidaten bygges på nytt.
 - Separate proveniens- og kontrollrader, fulltekststrukturvakt og publiseringsgater.
-- Lokal pgTAP-, samtidighets- og kjedeprøve.
+- Lokal pgTAP-, samtidighets- og kjedeprøve, der kjedeprøven går hele veien fra en privat PDF til en registrert sluttkontroll.
 
 ## Mangler
 
-Permanent privat PDF-lagring og validering av publikasjonstilhørighet, live semantisk runtime, varig jobbkø, ferdig kliniker-renderer og kandidatbundet sluttgodkjenning/publisering. Et lagringsnavn eller PDF-signatur beviser ikke at disse leddene finnes.
+Publiseringen er fortsatt stengt: `api.publish_claim_revision` er ikke kjørbar for klientrollene, og en sluttkontroll publiserer ingenting. Live semantisk runtime mangler også — utkastleddene kjøres av et opptak, ikke av en leverandørmodell.
+
+Et lagringsnavn, en PDF-signatur eller et registrert modellnavn beviser ikke at disse leddene finnes.

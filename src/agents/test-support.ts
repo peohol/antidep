@@ -555,6 +555,46 @@ export function syntheticPdf(lines: readonly string[]): Uint8Array {
 }
 
 /**
+ * En syntetisk artikkel som faktisk består lesbarhetskontrollen.
+ *
+ * Migrasjon 009a krever at en fulltekst har nok brødtekst, nok linjer og
+ * *datarader* — tallene fra tabellene, som er det som skiller en hel artikkel
+ * fra en der tabellene ble droppet som bilder. En fikstur på to linjer er ikke
+ * en artikkel, og skal ikke kunne bære et klinisk funn.
+ *
+ * Linjene kalleren oppgir, står **først**, slik at et ordrett utdrag fra dem
+ * fortsatt finnes i teksten. Resten er fyll og en liten tabell.
+ *
+ * Skriften er liten og linjeavstanden tett med vilje: `syntheticLayoutPdf`
+ * lager én side, og en artikkel må få plass på den. Verdiene er valgt slik at
+ * de 84 linjene ligger innenfor sidehøyden.
+ */
+export function syntheticArticlePdf(lines: readonly string[]): Uint8Array {
+  const filler = Array.from(
+    { length: Math.max(0, 76 - lines.length) },
+    (_unused, index) =>
+      'Patients with major depressive disorder were randomised to double-blind ' +
+      `treatment (line ${String(index)}).`,
+  )
+  return syntheticLayoutPdf([
+    {
+      x: 40,
+      y: 16,
+      lines: [
+        ...lines,
+        ...filler,
+        'Table 1  Baseline characteristics',
+        'Age (years)    42.1    41.8',
+        'Weight (kg)    74.2    73.9',
+        'BMI (kg/m2)    25.1    24.8',
+      ],
+      fontSize: 7,
+      leading: 9,
+    },
+  ])
+}
+
+/**
  * En linje i en fikstur: én gjennomgående tekstlinje, eller cellene i en rad.
  *
  * En rad — flere strenger — legges som flere `line`-elementer på den *samme*

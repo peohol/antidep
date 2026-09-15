@@ -59,6 +59,21 @@ select '7a000000-0000-4000-8000-000000000001', 'journal_article',
 from provenance.actors a where a.actor_key = 'human:peder-holman'
 on conflict (id) do nothing;
 
+-- From migration 009a the document digest IS the bytes, and the file must be in
+-- the private library, bound to the publication and readability-checked. Never
+-- weaken the production gate to make a fixture pass; give the fixture real
+-- bytes instead.
+create temporary table lock_probe_pdf as
+select convert_to('%PDF-1.7' || E'\nsamtidighetsprove\n%%EOF\n', 'UTF8') as bytes;
+
+insert into knowledge.source_documents
+  (sha256, byte_size, media_type, content, stored_by_actor_id)
+select knowledge.source_document_fingerprint(g.bytes), octet_length(g.bytes),
+       'application/pdf', g.bytes, a.id
+from lock_probe_pdf g
+join provenance.actors a on a.actor_key = 'human:peder-holman'
+on conflict (sha256) do nothing;
+
 insert into knowledge.source_versions
   (id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference, representation,
    retrieved_by_actor_id, document_sha256, document_byte_size, document_media_type,
@@ -68,10 +83,31 @@ select '7a000000-0000-4000-8000-000000000002',
        '7a000000-0000-4000-8000-000000000001', now(),
        'file:///syntetisk-samtidighetsprove.pdf', 'sha256:' || repeat('7', 64),
        'private://syntetisk-samtidighetsprove.pdf', 'full_text', a.id,
-       'sha256:' || repeat('8', 64), 1024, 'application/pdf', 'pdftotext', '24.02.0',
+       knowledge.source_document_fingerprint(g.bytes), octet_length(g.bytes),
+       'application/pdf', 'pdftotext', '24.02.0',
        '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
-from provenance.actors a where a.actor_key = 'human:peder-holman'
+from provenance.actors a
+cross join lock_probe_pdf g
+where a.actor_key = 'human:peder-holman'
 on conflict (id) do nothing;
+
+insert into knowledge.source_document_publications
+  (source_document_id, source_id, binding_basis, binding_evidence, bound_by_actor_id)
+select d.id, sv.source_id, 'title', 'syntetisk binding for samtidighetsprøven',
+       sv.retrieved_by_actor_id
+from knowledge.source_versions sv
+join knowledge.source_documents d on d.sha256 = sv.document_sha256
+where sv.id = '7a000000-0000-4000-8000-000000000002'
+on conflict on constraint source_document_publications_pairing_key do nothing;
+
+insert into knowledge.full_text_readability_checks
+  (source_version_id, source_document_id, character_count, letter_count,
+   line_count, table_row_count, table_declaration_count)
+select sv.id, d.id, 20000, 15000, 400, 12, 3
+from knowledge.source_versions sv
+join knowledge.source_documents d on d.sha256 = sv.document_sha256
+where sv.id = '7a000000-0000-4000-8000-000000000002'
+on conflict on constraint full_text_readability_checks_source_version_key do nothing;
 SQL
 
 if [ "$(psql "$DB_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c \

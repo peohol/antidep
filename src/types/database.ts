@@ -336,6 +336,78 @@ export type Database = {
         }
         Returns: Uuid
       }
+      // 009a: veien inn i det private fulltekstbiblioteket. Kalleren sender
+      // **bytene** som base64 og den uttrukne teksten; filidentiteten,
+      // størrelsen, mediatypen og representasjonen avleses eller fastsettes av
+      // databasen, slik at ingen av dem er en påstand kalleren skriver om seg
+      // selv. Svaret er jsonb — filen, kildeversjonen, bindingsgrunnlaget og
+      // lesbarhetsmålingen — og leses av `lib/full-text-upload-result.ts`.
+      upload_full_text_document: {
+        Args: {
+          p_source_id: Uuid
+          p_retrieved_at: string
+          p_retrieved_from: string
+          /** Originaldokumentet, base64-kodet, byte for byte slik filen er. */
+          p_document_base64: string
+          /** Teksten oppskriften ga. Databasen hasher den til content_hash. */
+          p_extracted_text: string
+          p_text_extraction_tool: string
+          p_text_extraction_tool_version: string
+          p_text_extraction_arguments: string
+          p_text_extraction_transform: string
+          p_external_version?: string | null
+        }
+        Returns: unknown
+      }
+      // 009b: innleggingen i den varige jobbkøen. Idempotent på (rolle,
+      // nøkkel), slik at en avbrutt orkestrering kan gjenta hele listen sin.
+      // De tre andre jobbveiene er agentveier og hører ikke hjemme her: appen
+      // skal aldri kalle dem, og en type som sa at den kunne, ville vært en
+      // invitasjon.
+      enqueue_pipeline_job: {
+        Args: {
+          p_agent_role: string
+          p_job_key: string
+          p_input_manifest: Record<string, unknown>
+        }
+        Returns: unknown
+      }
+      // De fire neste er kandidaten og sluttkontrollen (migrasjon 009d).
+      //
+      // `build_candidate` forsegler det agentferdige innholdet og er idempotent:
+      // uendret innhold gir den samme kandidaten. `candidate_for_control` er
+      // leseflaten klinikeren og sluttkontrolløren deler — samme visning, fordi
+      // en godkjenning ellers ville vært en godkjenning av noe annet enn det som
+      // vises. Begge svarer jsonb, lest av `lib/candidate-view.ts`.
+      build_candidate: {
+        Args: {
+          p_claim_revision_id: Uuid
+        }
+        Returns: unknown
+      }
+      candidate_for_control: {
+        Args: {
+          p_candidate_id: Uuid
+        }
+        Returns: unknown
+      }
+      candidate_control_queue: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      // `p_seen_candidate_digest` er avtrykket flaten faktisk viste, sendt
+      // tilbake uendret. Databasen krever at det er kandidatens eget *og* at
+      // innholdet fortsatt bygger til det: en godkjenning avgitt mot ett innhold
+      // og registrert mot et annet, ville vært en attestasjon uten dekning.
+      record_candidate_final_control: {
+        Args: {
+          p_candidate_id: Uuid
+          p_seen_candidate_digest: string
+          p_decision: string
+          p_rationale: string
+        }
+        Returns: unknown
+      }
     }
   }
 }

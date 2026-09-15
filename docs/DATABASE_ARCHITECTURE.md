@@ -8,7 +8,15 @@ Antidep 2-resetten er en eierautorisert engangshendelse, ikke et generelt slette
 
 De slettede prototype-radene lagres først i et privat, append-only snapshot med fingeravtrykk; katalog, kilder, kildeversjoner, kontoer, aktører, provenance og audit bevares.
 
-En klinisk kildeversjon må være `full_text`, tilhøre riktig kilde, ha komplett PDF-binding, positiv størrelse, SHA-256 for dokument og tekst og den gjeldende sikre, tillatte uttrekksoppskriften. Dette beviser strukturell binding, ikke permanent lagring eller riktig publikasjon.
+En klinisk kildeversjon må være `full_text`, tilhøre riktig kilde, ha komplett PDF-binding, positiv størrelse, SHA-256 for dokument og tekst og den gjeldende sikre, tillatte uttrekksoppskriften. I tillegg må originalfilen ligge i det private fulltekstbiblioteket, være vist å tilhøre nettopp den publikasjonen, og ha bestått lesbarhetskontrollen. De tre siste er fail-closed på fravær: en fil ingen kan hente fram igjen, en fil ingen har vist tilhører artikkelen, og en fulltekst ingen har kontrollert, er tre forskjellige mangler.
+
+Biblioteket er `knowledge.source_documents`: RLS med default deny, ingen grants, ingen policy og ingen view. Ingen klientrolle kan lese én byte, og eneste vei inn er `api.upload_full_text_document(...)`, som beregner fingeravtrykket av bytene og gjentar regningen som en regel på raden. Filen er privat; gjengivelsesrett vurderes separat.
+
+Hvilken modellidentitet hver agentrolle handler som, er registrerte rader i `provenance.role_model_assignments`, ikke verdier en kaller oppgir. To exclusion constraints gir én gyldig tildeling per rolle og forbyr to roller å dele modellidentitet i overlappende tid; `api.begin_agent_run` krever nøyaktig den registrerte, og en rolle uten tildeling kan ikke kjøre. Kontrollradene avviser i tillegg en kontroll utført av den samme modellidentiteten som produserte innholdet.
+
+Varig jobbtilstand ligger i `workflow.pipeline_jobs`, identifisert av `(agent_role, job_key)`. Nøkkelen utledes av hva jobben handler om, så den samme jobben lagt inn to ganger er én rad; uttak gir en leie som løper ut, og oppbrukte forsøk gir en jobb som blir stående framfor å prøves i det uendelige. Overgangene bevares i `workflow.pipeline_job_events`.
+
+`knowledge.candidates` forsegler det agentferdige innholdet med et avtrykk beregnet av innholdet selv, og `workflow.candidate_final_controls` binder en navngitt fagpersons beslutning til nøyaktig det avtrykket med en sammensatt fremmednøkkel. Sluttkontrollen publiserer ingenting: `api.publish_claim_revision` er fortsatt stengt for klientrollene.
 
 Alle skjemaendringer er fremoverrettede migrasjoner. Historiske migrasjoner i `scripts/legacy-migrations.sha256` skal aldri endres. Nye ID-er må sortere etter `20260924095000`. Test lokalt fra tom database og som oppgradering; hosted deploy krever review, rett prosjekt, backup og restore-prøve.
 

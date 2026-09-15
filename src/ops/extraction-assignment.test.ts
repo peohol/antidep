@@ -18,12 +18,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { sourceVersionContentHash } from '../agents/content-hash.ts'
 import { documentDigest } from '../agents/document-binding.ts'
 import {
+  currentPdfRecipe,
+  extractDocumentText,
   PDF_TEXT_ARGUMENTS,
   PDF_TEXT_TOOL,
   PDF_TEXT_TRANSFORM,
   runToolWithNode,
 } from '../agents/document-text.ts'
-import { syntheticPdf } from '../agents/test-support.ts'
+import { syntheticArticlePdf, syntheticPdf } from '../agents/test-support.ts'
 import type { EditorSourceRow, EditorSourceVersionRow, Uuid } from '../types/api.ts'
 import {
   buildAssignmentFromCatalog,
@@ -35,17 +37,39 @@ import {
 } from './extraction-assignment.ts'
 
 const LINJER = ['Mean weight change was 1.0% after 26 to 32 weeks.', 'Forty-eight completed.']
-const PDF = syntheticPdf(LINJER)
+/**
+ * Fiksturen er en *artikkel*, ikke to linjer.
+ *
+ * Fra migrasjon 009a må en fulltekst bestå lesbarhetskontrollen — nok brødtekst,
+ * nok linjer og datarader fra tabellene — før den kan registreres. En fikstur på
+ * to linjer ville blitt avvist, og med rette: den er ikke en artikkel.
+ */
+const PDF = syntheticArticlePdf(LINJER)
 
 /**
  * Teksten oppskriften faktisk gir av denne PDF-en.
  *
- * Linjene i én spalte blir én blokk, skilt fra neste side med et sideskift —
- * formen `antidep-reading-order@2` gir (`reading-order.ts`). Prøvene under
- * kjører det ekte verktøyet framfor en dobbel: oppskriften er en prosess, og en
- * dobbel som svarte med ren tekst ville prøvd noe annet enn det kommandoen gjør.
+ * Hentet ut av det **ekte** verktøyet framfor skrevet for hånd: oppskriften er
+ * en prosess, og en forventning satt sammen her ville prøvd noe annet enn det
+ * kommandoen gjør. Formen er den `antidep-reading-order@2` gir
+ * (`reading-order.ts`), og den er ikke opplagt — ordene settes sammen med ett
+ * mellomrom, også i en tabellrad.
  */
-const TEKST = `${LINJER.join('\n')}\n\f`
+const TEKST = await (async (): Promise<string> => {
+  const recipe = await currentPdfRecipe(runToolWithNode)
+  if (recipe.status === 'error') {
+    throw new Error(recipe.message)
+  }
+  const extracted = await extractDocumentText({
+    bytes: PDF,
+    recipe: recipe.recipe,
+    run: runToolWithNode,
+  })
+  if (extracted.status === 'error') {
+    throw new Error(extracted.message)
+  }
+  return extracted.extracted.text
+})()
 
 const KILDE = '11111111-1111-4111-8111-111111111111' as Uuid
 const ANNEN_KILDE = '22222222-2222-4222-8222-222222222222' as Uuid
@@ -89,6 +113,8 @@ function versjon(overrides: Partial<EditorSourceVersionRow> = {}): EditorSourceV
 
 interface FakeCatalog extends EditorCatalogApi {
   readonly registered: DocumentVersionInput[]
+  /** Fulltekstene som gikk gjennom biblioteket (migrasjon 009a). */
+  readonly uploaded: DocumentVersionInput[]
   readonly built: BuildAssignmentInput[]
 }
 
@@ -98,14 +124,36 @@ function katalog(options: {
   readonly assignment?: (input: BuildAssignmentInput) => unknown
 }): FakeCatalog {
   const registered: DocumentVersionInput[] = []
+  const uploaded: DocumentVersionInput[] = []
   const built: BuildAssignmentInput[] = []
   const versions = [...(options.versions ?? [])]
   return {
     registered,
+    uploaded,
     built,
     listSources: () => Promise.resolve(options.sources ?? [kilde()]),
     listSourceVersions: (sourceId) =>
       Promise.resolve(versions.filter((row) => row.source_id === sourceId)),
+    uploadFullTextDocument: (input) => {
+      uploaded.push(input)
+      return Promise.resolve({
+        source_document_id: '77777777-7777-4777-8777-777777777777',
+        document_sha256: `sha256:${'d'.repeat(64)}`,
+        document_byte_size: 1024,
+        document_stored: true,
+        source_version_id: NY_VERSJON,
+        source_version_created: true,
+        content_hash: `sha256:${'e'.repeat(64)}`,
+        publication_binding: { basis: 'doi', evidence: '10.4088/jcp.v61n1109' },
+        readability: {
+          character_count: 9000,
+          letter_count: 7000,
+          line_count: 200,
+          table_rows: 6,
+          table_declarations: 2,
+        },
+      })
+    },
     createSourceVersionFromDocument: (input) => {
       registered.push(input)
       return Promise.resolve(NY_VERSJON)
@@ -256,10 +304,15 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
 
     expect(report.versionOutcome).toBe('registered')
     expect(report.representation).toBe('full_text')
-    const registered = catalog.registered[0]
-    expect(registered?.representation).toBe('full_text')
-    expect(registered?.extractedText).toBe(TEKST)
-    expect(registered?.recipe).toEqual({
+    // Fulltekst går gjennom biblioteket, ikke gjennom den gamle dokumentveien:
+    // det er den ene representasjonen kliniske funn kan bygge på, og den ene
+    // som må være varig tilgjengelig, bundet til publikasjonen og kontrollert
+    // for lesbarhet (migrasjon 009a).
+    expect(catalog.registered).toHaveLength(0)
+    const uploaded = catalog.uploaded[0]
+    expect(uploaded?.representation).toBe('full_text')
+    expect(uploaded?.extractedText).toBe(TEKST)
+    expect(uploaded?.recipe).toEqual({
       tool: PDF_TEXT_TOOL,
       // Versjonen leses av verktøyet som faktisk er installert, og er derfor
       // ikke en fast verdi her. Resten av oppskriften er det.
@@ -268,10 +321,26 @@ describe('buildAssignmentFromCatalog — med originaldokument', () => {
       transform: PDF_TEXT_TRANSFORM,
     })
     // Bytene sendes, ikke fingeravtrykket: databasen skal eie hashen.
-    expect(Buffer.from(registered?.documentBase64 ?? '', 'base64').equals(Buffer.from(PDF))).toBe(
+    expect(Buffer.from(uploaded?.documentBase64 ?? '', 'base64').equals(Buffer.from(PDF))).toBe(
       true,
     )
     expect(report.document?.digest).toBe(await documentDigest(PDF))
+    expect(report.upload?.publicationBinding.basis).toBe('doi')
+  })
+
+  it('avviser en PDF som ikke gir en lesbar fulltekst, før filen sendes', async () => {
+    // To linjer er ikke en artikkel. Avvisningen er databasens regel, håndhevet
+    // her for at den skal komme før opplastingen framfor etter.
+    const catalog = katalog({ versions: [versjon()] })
+    await expect(
+      buildAssignmentFromCatalog({
+        ...grunnlag,
+        catalog,
+        documentPath: await pdfPaDisk(syntheticPdf(LINJER)),
+      }),
+    ).rejects.toThrow(/fulltekst/i)
+    expect(catalog.uploaded).toHaveLength(0)
+    expect(catalog.registered).toHaveLength(0)
   })
 
   it('legger dokumentet i lageret under fingeravtrykket sitt', async () => {

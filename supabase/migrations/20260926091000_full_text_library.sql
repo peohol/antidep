@@ -361,11 +361,31 @@ as $$
     from unnest(string_to_array(coalesce(p_text, ''), E'\n')) as line
   ),
   table_rows as (
-    select line
-    from lines
-    -- En etikett, så minst to kolonner som hver begynner med et tall. Kolonnene
-    -- er skilt av to eller flere blanktegn, slik tekstuttrekkingen setter dem.
-    where line ~ '\S[ ]{2,}[-+(]?[0-9]+([.,][0-9]+)?[^ ]*[ ]{2,}[-+(]?[0-9]+([.,][0-9]+)?'
+    -- En datarad er en linje der tallene dominerer: minst to tall-tokens, og
+    -- minst en tredel av ordene på linjen.
+    --
+    -- Regelen måler *ord* og ikke mellomrom, og det er ikke en detalj.
+    -- Antideps leserekkefølge (antidep-reading-order@2) bygger teksten av
+    -- ordposisjoner og setter nøyaktig ett mellomrom mellom ordene, så en
+    -- tabellrad kommer ut som «Age (years) 42.1 41.8». En regel som lette etter
+    -- kolonner skilt av flere mellomrom — slik «pdftotext -layout» setter dem —
+    -- ville ikke funnet en eneste tabellrad i en ekte artikkel, og
+    -- lesbarhetskontrollen ville avvist alt.
+    --
+    -- Tredelskravet skiller raden fra en resultatsetning: «Mean percent weight
+    -- change was 1.0% at endpoint with a 95% confidence interval from 0.5% to
+    -- 1.5%» har fire tall blant sytten ord, og er brødtekst.
+    select l.line
+    from lines l
+    cross join lateral (
+      select count(*) as total,
+             count(*) filter (
+               where token ~ '^[-+(\[]?[0-9]+([.,][0-9]+)?[%)\]]?$'
+             ) as numeric_tokens
+      from regexp_split_to_table(btrim(l.line), '[[:space:]]+') as token
+      where token <> ''
+    ) t
+    where t.total >= 3 and t.numeric_tokens >= 2 and t.numeric_tokens * 3 >= t.total
   ),
   declarations as (
     select line
