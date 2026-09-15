@@ -32,8 +32,10 @@ create trigger prototype_resets_reject_mutation
   );
 
 -- Lock every root or dependent table before inspecting the scope. A writer that
--- committed immediately before the lock is therefore visible to the checks
--- below; a writer after the lock must wait until this transaction is finished.
+-- committed immediately before the lock is therefore visible to the second
+-- preflight below; a writer after the lock must wait until this transaction is
+-- finished. The first migration already ran the same preflight before changing
+-- grants or write rules.
 lock table knowledge.publication_events, knowledge.claims, provenance.agent_runs,
   workflow.claim_verification_citations, workflow.claim_verifications,
   workflow.evidence_verifications, workflow.review_decisions,
@@ -45,71 +47,8 @@ do $$
 declare
   v_snapshot jsonb;
   v_counts jsonb;
-  v_root_counts jsonb;
 begin
-  if exists (select 1 from knowledge.publication_events)
-     or exists (select 1 from knowledge.claims where current_published_revision_id is not null) then
-    raise exception using errcode = '23001', message = 'Antidep 2-resetten stoppet: publiseringshistorikk finnes.';
-  end if;
-  if exists (select 1 from provenance.agent_runs where status = 'running') then
-    raise exception using errcode = '23001', message = 'Antidep 2-resetten stoppet: en agentkjøring er fortsatt åpen.';
-  end if;
-
-  -- The owner authorization covers exactly the two-item golden-slice graph
-  -- present at the reviewed legacy baseline. Never turn this migration into a
-  -- generic "delete all unpublished content" operation: any additional root
-  -- object means the target has diverged and requires a new explicit decision.
-  v_root_counts := jsonb_build_object(
-    'evidence_items', (select count(*) from knowledge.evidence_items),
-    'claims', (select count(*) from knowledge.claims),
-    'claim_revisions', (select count(*) from knowledge.claim_revisions),
-    'claim_evidence_links', (select count(*) from knowledge.claim_evidence_links),
-    'evidence_assessments', (select count(*) from knowledge.evidence_assessments)
-  );
-  if v_root_counts <> jsonb_build_object(
-       'evidence_items', 2,
-       'claims', 2,
-       'claim_revisions', 2,
-       'claim_evidence_links', 2,
-       'evidence_assessments', 2
-     ) then
-    raise exception using
-      errcode = '23001',
-      message = 'Antidep 2-resetten stoppet: aktivt klinisk innhold avviker fra den autoriserte legacy-baselinen.',
-      detail = 'Observerte rotantall: ' || v_root_counts::text;
-  end if;
-
-  if exists (
-    select 1
-    from knowledge.evidence_items e
-    join knowledge.sources s on s.id = e.source_id
-    join catalog.drugs d on d.id = e.intervention_drug_id
-    join catalog.clinical_concepts c on c.id = e.outcome_concept_id
-    where c.canonical_label <> 'vektendring'
-       or (d.canonical_name = 'sertralin'
-           and s.title <> 'Fluoxetine versus sertraline and paroxetine in major depressive disorder: changes in weight with long-term treatment')
-       or (d.canonical_name = 'mirtazapin'
-           and s.title <> 'Comparison of the effects of mirtazapine and fluoxetine in severely depressed patients')
-       or d.canonical_name not in ('sertralin', 'mirtazapin')
-  ) then
-    raise exception using
-      errcode = '23001',
-      message = 'Antidep 2-resetten stoppet: evidensrøttene er ikke den autoriserte legacy-prototypen.';
-  end if;
-
-  if exists (
-    select 1
-    from knowledge.claims cl
-    join catalog.drugs d on d.id = cl.subject_drug_id
-    join catalog.clinical_concepts c on c.id = cl.topic_concept_id
-    where cl.knowledge_type <> 'evidence_synthesis'
-       or c.canonical_label <> 'vektendring'
-       or d.canonical_name not in ('sertralin', 'mirtazapin')
-  ) then
-    raise exception using
-      errcode = '23001',
-      message = 'Antidep 2-resetten stoppet: påstandsrøttene er ikke den autoriserte legacy-prototypen.';
-  end if;
+  perform knowledge.assert_antidep2_reset_preconditions();
 
   v_snapshot := jsonb_build_object(
     'claim_verification_citations', (select coalesce(jsonb_agg(to_jsonb(t)), '[]') from workflow.claim_verification_citations t),
@@ -168,5 +107,10 @@ alter table knowledge.claim_evidence_links enable trigger claim_evidence_links_r
 alter table knowledge.claim_revisions enable trigger claim_revisions_reject_mutation;
 alter table knowledge.evidence_field_groundings enable trigger evidence_field_groundings_reject_mutation;
 alter table knowledge.evidence_items enable trigger evidence_items_reject_mutation;
+
+-- The helper only exists to make this two-migration rollout fail closed before
+-- the first structural change and to close the inter-migration race here. A
+-- successful reset has no ongoing need for a maintenance-only delete-scope API.
+drop function knowledge.assert_antidep2_reset_preconditions();
 
 commit;
