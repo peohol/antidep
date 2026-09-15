@@ -57,6 +57,13 @@ expect_upgrade_failure() {
   fi
 }
 
+assert_preflight_left_no_partial_rollout() {
+  assert_eq "$(scalar "select coalesce(to_regprocedure('knowledge.assert_clinical_full_text(uuid,uuid)')::text, '')")" '' \
+    'preflight-stopp etterlot fulltekstvakten halvveis installert'
+  assert_eq "$(scalar "select coalesce(to_regprocedure('knowledge.assert_antidep2_reset_preconditions()')::text, '')")" '' \
+    'preflight-stopp etterlot vedlikeholdsfunksjonen fra første migrasjon'
+}
+
 printf 'Antidep 2: oppgraderingsprøve fra legacy-baseline.\n'
 
 # 1. The actual pre-reset legacy database already contains the prototype graph.
@@ -75,6 +82,7 @@ assert_eq "$(scalar 'select count(*) from audit.prototype_resets')" '1' 'resette
 assert_eq "$(scalar "select jsonb_array_length(snapshot -> 'evidence_items') from audit.prototype_resets")" "$before_evidence" 'snapshotet dekker ikke alle evidensfunnene'
 assert_eq "$(scalar "select jsonb_array_length(snapshot -> 'claims') from audit.prototype_resets")" "$before_claims" 'snapshotet dekker ikke alle påstandene'
 assert_eq "$(scalar 'select count(*) from knowledge.sources')" "$before_sources" 'resetten endret kildebiblioteket'
+assert_eq "$(scalar "select coalesce(to_regprocedure('knowledge.assert_antidep2_reset_preconditions()')::text, '')")" '' 'vellykket reset etterlot en vedlikeholdsfunksjon'
 
 # Create genuinely new Antidep 2 content after the reset. A literal rerun of the
 # one-time migration must fail before touching it.
@@ -125,7 +133,7 @@ if psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 \
 fi
 assert_eq "$(scalar "select count(*) from knowledge.evidence_items where id = 'fa200000-0000-4000-8000-000000000001'")" '1' 'en omkjøring slettet nytt Antidep 2-innhold'
 
-# 2. Any publication history aborts the reset transaction without partial deletion.
+# 2. Any publication history aborts before the first structural change.
 reset_legacy
 before_evidence=$(scalar 'select count(*) from knowledge.evidence_items')
 before_claims=$(scalar 'select count(*) from knowledge.claims')
@@ -150,8 +158,9 @@ expect_upgrade_failure publication-history
 assert_eq "$(scalar 'select count(*) from knowledge.evidence_items')" "$before_evidence" 'publiseringsstopp etterlot delvis slettet evidens'
 assert_eq "$(scalar 'select count(*) from knowledge.claims')" "$before_claims" 'publiseringsstopp etterlot delvis slettede påstander'
 assert_eq "$(scalar "select coalesce(to_regclass('audit.prototype_resets')::text, '')")" '' 'publiseringsstopp etterlot et snapshot fra en rullet tilbake reset'
+assert_preflight_left_no_partial_rollout
 
-# 3. An open, structurally valid agent run likewise aborts without partial deletion.
+# 3. An open, structurally valid agent run likewise aborts before structural changes.
 reset_legacy
 before_evidence=$(scalar 'select count(*) from knowledge.evidence_items')
 before_claims=$(scalar 'select count(*) from knowledge.claims')
@@ -172,6 +181,7 @@ expect_upgrade_failure open-agent-run
 assert_eq "$(scalar 'select count(*) from knowledge.evidence_items')" "$before_evidence" 'agentstopp etterlot delvis slettet evidens'
 assert_eq "$(scalar 'select count(*) from knowledge.claims')" "$before_claims" 'agentstopp etterlot delvis slettede påstander'
 assert_eq "$(scalar "select coalesce(to_regclass('audit.prototype_resets')::text, '')")" '' 'agentstopp etterlot et snapshot fra en rullet tilbake reset'
+assert_preflight_left_no_partial_rollout
 
 # 4. Any additional clinical root is outside the owner-authorized reset scope.
 # The migration must fail closed rather than silently treating it as prototype data.
@@ -198,5 +208,6 @@ expect_upgrade_failure unexpected-scope
 assert_eq "$(scalar 'select count(*) from knowledge.evidence_items')" "$before_evidence" 'scope-stopp etterlot delvis slettet evidens'
 assert_eq "$(scalar 'select count(*) from knowledge.claims')" "$unexpected_claims" 'scope-stopp slettet uventet klinisk innhold'
 assert_eq "$(scalar "select coalesce(to_regclass('audit.prototype_resets')::text, '')")" '' 'scope-stopp etterlot et snapshot fra en rullet tilbake reset'
+assert_preflight_left_no_partial_rollout
 
 printf 'Antidep 2-oppgraderingsprøven gikk gjennom.\n'
