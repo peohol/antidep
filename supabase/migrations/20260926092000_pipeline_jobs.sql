@@ -224,6 +224,64 @@ create trigger pipeline_job_events_are_append_only
   );
 
 -- ----------------------------------------------------------------------------
+-- Bindingen mellom ett uttak og den kjøringen som gjorde arbeidet
+--
+-- At en jobb peker på en agentkjøring i riktig rolle, med riktig identitet og
+-- med et vellykket utfall, beviser bare at *identiteten en gang har hatt en
+-- vellykket kjøring i den rollen*. Kjøringens id velges av kalleren, så en
+-- kjører kunne tatt ut jobb B og meldt den ferdig med kjøringen fra jobb A —
+-- og raden ville sett like riktig ut.
+--
+-- Bindingen må derfor skrives når kjøringen åpnes, av databasen, mot det
+-- uttaket som gjelder da. `api.begin_pipeline_job_run` er den ene veien inn:
+-- den kontrollerer leien og nøkkelen før kjøringen åpnes, og skriver raden her.
+--
+-- Kjøringen er unik i tabellen. Én kjøring tjener nøyaktig ett uttak av én
+-- jobb, og kan aldri gjenbrukes til et annet — det er hele regelen, uttrykt som
+-- en nøkkel framfor som en kontroll noen må huske å gjøre.
+-- ----------------------------------------------------------------------------
+create table workflow.pipeline_job_runs (
+  id uuid primary key default gen_random_uuid(),
+
+  -- Unik, ikke bare en fremmednøkkel: én kjøring tjener nøyaktig ett uttak av
+  -- én jobb, og kan aldri gjenbrukes til et annet.
+  agent_run_id uuid not null unique
+    references provenance.agent_runs (id) on update restrict on delete restrict,
+
+  pipeline_job_id uuid not null
+    references workflow.pipeline_jobs (id) on update restrict on delete restrict,
+  -- Nøkkelen for nettopp det uttaket kjøringen ble åpnet for. Uten den ville
+  -- bindingen holdt på tvers av forsøk: et nytt uttak av den samme jobben ville
+  -- kunnet melde utfall med kjøringen fra det forrige.
+  lease_token uuid not null,
+  attempt integer not null,
+
+  created_at timestamptz not null default now(),
+
+  constraint pipeline_job_runs_attempt_check check (attempt > 0)
+);
+
+comment on table workflow.pipeline_job_runs is
+  'Hvilken agentkjøring som ble åpnet for hvilket uttak av hvilken pipelinejobb (DATABASE_ARCHITECTURE.md §33, §43). Skrives av api.begin_pipeline_job_run når kjøringen åpnes, etter at leien og leienøkkelen er kontrollert, og aldri av kalleren. Uten raden ville api.complete_pipeline_job bare kunnet kontrollere at kjøringen tilhørte den samme identiteten og rollen — og en kjører kunne meldt jobb B ferdig med kjøringen fra jobb A. Kjøringen er unik i tabellen: én kjøring tjener nøyaktig ett uttak av én jobb, og kan aldri gjenbrukes til et annet.';
+comment on column workflow.pipeline_job_runs.lease_token is
+  'Uttaket kjøringen ble åpnet for. Bindingen gjelder det forsøket og ikke jobben som sådan: et nytt uttak må åpne sin egen kjøring.';
+
+alter table workflow.pipeline_job_runs enable row level security;
+
+create index pipeline_job_runs_job_idx
+  on workflow.pipeline_job_runs (pipeline_job_id, lease_token);
+
+create trigger pipeline_job_runs_set_created_at
+  before insert on workflow.pipeline_job_runs
+  for each row execute function catalog.set_created_at();
+
+create trigger pipeline_job_runs_are_append_only
+  before update or delete on workflow.pipeline_job_runs
+  for each row execute function knowledge.reject_append_only_mutation(
+    'Bindingen sier hvilken kjøring som faktisk gjorde hvilket uttak. En ny kjøring er en ny rad.'
+  );
+
+-- ----------------------------------------------------------------------------
 -- Overgangsskriveren
 --
 -- Én funksjon, kalt av hver skrivevei, framfor fire steder å glemme sporet.
@@ -428,6 +486,87 @@ revoke execute on function api.claim_pipeline_job(text, text, text, integer) fro
 grant execute on function api.claim_pipeline_job(text, text, text, integer) to anon, authenticated;
 
 -- ----------------------------------------------------------------------------
+-- Å åpne en kjøring *for* et uttak
+--
+-- Rollen hentes fra jobben og oppgis ikke av kalleren: hvilken rolle arbeidet
+-- gjøres i, er allerede avgjort av jobben som ble lagt inn, og en kaller som
+-- kunne oppgitt en annen, ville kunnet åpne en kjøring i feil rolle for et
+-- uttak hen faktisk holdt.
+--
+-- Premissene går uendret videre til api.begin_agent_run, som beholder hele sin
+-- egen kontroll: autentisering, modellgaten og kravet om kildeversjon for
+-- ekstraksjonsrollen. Denne funksjonen legger til én ting — bindingen — og
+-- duplikerer ingenting av det.
+-- ----------------------------------------------------------------------------
+create function api.begin_pipeline_job_run(
+  p_identity_key text,
+  p_secret text,
+  p_pipeline_job_id uuid,
+  p_lease_token uuid,
+  p_provider text,
+  p_model text,
+  p_model_version text,
+  p_prompt_template_version text,
+  p_pipeline_version text,
+  p_input_manifest jsonb,
+  p_input_source_version_id uuid default null
+)
+  returns uuid
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_job workflow.pipeline_jobs;
+  v_identity_id uuid;
+  v_run_id uuid;
+begin
+  select j.* into v_job
+  from workflow.pipeline_jobs j
+  where j.id = p_pipeline_job_id
+  for update;
+
+  if not found then
+    raise exception using
+      errcode = 'no_data_found',
+      message = format('Pipelinejobben %L finnes ikke.', p_pipeline_job_id);
+  end if;
+
+  v_identity_id := provenance.authenticate_agent_identity(p_identity_key, p_secret, v_job.agent_role);
+
+  if v_job.state <> 'leased'
+     or v_job.leased_by_agent_identity_id is distinct from v_identity_id
+     or v_job.lease_token is distinct from p_lease_token then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format(
+        'Jobben %L står som %L, og dette forsøket holder ikke leien.',
+        p_pipeline_job_id, v_job.state::text
+      ),
+      hint = 'En kjøring åpnes for det uttaket som arbeider. Ta jobben ut på nytt framfor å åpne en kjøring på en leie som ikke er din.';
+  end if;
+
+  v_run_id := api.begin_agent_run(
+    p_identity_key, p_secret, v_job.agent_role::text,
+    p_provider, p_model, p_model_version,
+    p_prompt_template_version, p_pipeline_version,
+    p_input_manifest, p_input_source_version_id
+  );
+
+  insert into workflow.pipeline_job_runs (agent_run_id, pipeline_job_id, lease_token, attempt)
+  values (v_run_id, v_job.id, v_job.lease_token, v_job.attempts);
+
+  return v_run_id;
+end;
+$$;
+
+comment on function api.begin_pipeline_job_run(text, text, uuid, uuid, text, text, text, text, text, jsonb, uuid) is
+  'Åpner en agentkjøring for ett bestemt uttak av én pipelinejobb, og binder de to i workflow.pipeline_job_runs (DATABASE_ARCHITECTURE.md §33, §43). Leien og leienøkkelen kontrolleres først, og rollen hentes fra jobben framfor å oppgis av kalleren. Selve kjøringen åpnes av api.begin_agent_run(text, text, text, text, text, text, text, text, jsonb, uuid), som beholder hele sin egen kontroll — autentisering, modellgaten og kravet om kildeversjon for ekstraksjonsrollen — slik at ingenting av den er duplisert her. Uten denne veien kunne api.complete_pipeline_job bare kontrollert at kjøringen tilhørte den samme identiteten og rollen, og en kjører kunne meldt jobb B ferdig med kjøringen fra jobb A: bindingen er det som gjør raden til et bevis om *denne* jobben. EXECUTE går til anon av samme grunn som api.claim_pipeline_job(text, text, text, integer).';
+
+revoke execute on function api.begin_pipeline_job_run(text, text, uuid, uuid, text, text, text, text, text, jsonb, uuid) from public;
+grant execute on function api.begin_pipeline_job_run(text, text, uuid, uuid, text, text, text, text, text, jsonb, uuid) to anon, authenticated;
+
+-- ----------------------------------------------------------------------------
 -- Fullføring: idempotent, og bundet til den som holder leien
 -- ----------------------------------------------------------------------------
 create function api.complete_pipeline_job(
@@ -517,6 +656,25 @@ begin
       hint = 'Kjøringen knytter jobben til premissene arbeidet faktisk ble gjort under. En kjøring fra en annen identitet eller en annen rolle ville vært en usann kobling.';
   end if;
 
+  -- Bindingen, og ikke identiteten, er beviset.
+  --
+  -- Identitet og rolle sier bare at kjøringen kunne ha vært denne jobbens.
+  -- Raden i workflow.pipeline_job_runs sier at kjøringen ble åpnet *for dette
+  -- uttaket*, av databasen, mens leien var gyldig. Uten den kunne et uttak av
+  -- jobb B blitt meldt ferdig med en gammel, vellykket kjøring fra jobb A.
+  if not exists (
+    select 1
+    from workflow.pipeline_job_runs b
+    where b.agent_run_id = p_agent_run_id
+      and b.pipeline_job_id = v_job.id
+      and b.lease_token = v_job.lease_token
+  ) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Agentkjøringen ble ikke åpnet for dette uttaket av denne jobben.',
+      hint = 'Kjøringen bindes til uttaket når den åpnes, av api.begin_pipeline_job_run. En kjøring fra en annen jobb eller et annet forsøk ville gjort raden til et bevis om noe annet enn dette arbeidet (ANTIDEP_CONSTITUTION.md regel 4, 7).';
+  end if;
+
   -- En åpen kjøring har ikke konkludert, og en som feilet eller ble stoppet,
   -- har konkludert med noe annet enn suksess. Uten denne kontrollen kunne køen
   -- meldt vellykket agentarbeid mens kjøringen bak fortsatt sto som `running`
@@ -561,7 +719,7 @@ end;
 $$;
 
 comment on function api.complete_pipeline_job(text, text, uuid, uuid, jsonb, uuid) is
-  'Melder et vellykket utfall på det uttaket p_lease_token navngir (DATABASE_ARCHITECTURE.md §33, §43). Idempotent: en allerede fullført jobb skriver ingenting og svarer med det registrerte utdatamanifestet, slik at en kjører som mistet svaret sitt, kan spørre igjen med den samme nøkkelen. Nøkkelen og ikke identiteten er kontrollen: agentidentiteten er per rolle og deles av alle kjørere i den, så uten en nøkkel per uttak kunne en kjører hvis leie var løpt ut, skrevet sitt foreldede resultat over det uttaket en annen nettopp hadde tatt. p_agent_run_id er påkrevd, må tilhøre den samme identiteten og rollen, og må være avsluttet med status succeeded: uten kjøringen ville køen rapportert utført agentarbeid uten premisser og uten spor, og med en kjøring som fortsatt står som running, ville «ferdig» vært en påstand køen skrev om seg selv framfor et utfall proveniensen bærer. EXECUTE går til anon av samme grunn som api.claim_pipeline_job(text, text, text, integer).';
+  'Melder et vellykket utfall på det uttaket p_lease_token navngir (DATABASE_ARCHITECTURE.md §33, §43). Idempotent: en allerede fullført jobb skriver ingenting og svarer med det registrerte utdatamanifestet, slik at en kjører som mistet svaret sitt, kan spørre igjen med den samme nøkkelen. Nøkkelen og ikke identiteten er kontrollen: agentidentiteten er per rolle og deles av alle kjørere i den, så uten en nøkkel per uttak kunne en kjører hvis leie var løpt ut, skrevet sitt foreldede resultat over det uttaket en annen nettopp hadde tatt. p_agent_run_id er påkrevd, må være bundet til nettopp dette uttaket av denne jobben gjennom workflow.pipeline_job_runs, må tilhøre den samme identiteten og rollen, og må være avsluttet med status succeeded: uten kjøringen ville køen rapportert utført agentarbeid uten premisser og uten spor, og med en kjøring som fortsatt står som running, ville «ferdig» vært en påstand køen skrev om seg selv framfor et utfall proveniensen bærer. EXECUTE går til anon av samme grunn som api.claim_pipeline_job(text, text, text, integer).';
 
 revoke execute on function api.complete_pipeline_job(text, text, uuid, uuid, jsonb, uuid) from public;
 grant execute on function api.complete_pipeline_job(text, text, uuid, uuid, jsonb, uuid) to anon, authenticated;

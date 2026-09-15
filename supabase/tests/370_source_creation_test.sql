@@ -183,6 +183,7 @@ select is_empty(
         -- 740_pipeline_jobs_test.sql.
         'api.enqueue_pipeline_job(text,text,jsonb)',
         'api.claim_pipeline_job(text,text,text,integer)',
+        'api.begin_pipeline_job_run(text,text,uuid,uuid,text,text,text,text,text,jsonb,uuid)',
         'api.complete_pipeline_job(text,text,uuid,uuid,jsonb,uuid)',
         'api.fail_pipeline_job(text,text,uuid,uuid,text)',
         -- Migrasjon 009d. Kandidaten og den kandidatbundne sluttkontrollen,

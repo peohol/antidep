@@ -8,7 +8,7 @@
 
 `knowledge.candidates` forsegler det agentferdige innholdet for én påstandsrevisjon — påstanden, vurderingen, kontrollene, evidensfunnene med sine ordrette utdrag og kildedekningen — med et avtrykk som *er* innholdet. `workflow.candidate_final_controls` bærer en navngitt fagpersons beslutning om nøyaktig den kandidaten, låst til den av en sammensatt fremmednøkkel.
 
-`workflow.pipeline_jobs` er arbeidet som gjenstår, identifisert av hva det handler om framfor av når det ble lagt inn; `pipeline_job_events` er det append-only sporet over hver tilstandsovergang. `provenance.role_model_assignments` sier hvilken modellidentitet hver agentrolle handler som, og lar ingen to roller dele en. Raden kan ikke skrives om; den kan bare avsluttes, og både registreringen og avslutningen føres i `audit.events`.
+`workflow.pipeline_jobs` er arbeidet som gjenstår, identifisert av hva det handler om framfor av når det ble lagt inn; `pipeline_job_events` er det append-only sporet over hver tilstandsovergang, og `pipeline_job_runs` sier hvilken agentkjøring som ble åpnet for hvilket uttak. `provenance.role_model_assignments` sier hvilken modellidentitet hver agentrolle handler som, og lar ingen to roller dele en. Raden kan ikke skrives om; den kan bare avsluttes, og både registreringen og avslutningen føres i `audit.events`.
 
 Katalogdata er begreper og legemiddelidentiteter, ikke kliniske konklusjoner. Kildebiblioteket bevares ved reset, mens avledet prototypekunnskap tas ut av aktiv drift.
 

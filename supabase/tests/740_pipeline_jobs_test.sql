@@ -15,7 +15,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(30);
+select plan(35);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -147,28 +147,17 @@ select is(
 -- Del 5 — Fullføringen er bundet til forsøket, og til arbeidet som ble gjort
 --
 -- Agentidentiteten er per rolle og deles av alle kjørere i den, så identiteten
--- alene kan ikke skille et uttak fra et annet. Nøkkelen kan, og gjør det.
+-- alene kan ikke skille et uttak fra et annet — og heller ikke si hvilken
+-- kjøring som gjorde hvilken jobb. Leienøkkelen skiller uttakene, og
+-- workflow.pipeline_job_runs binder kjøringen til uttaket.
 -- ===========================================================================
 select ok(
   (select payload ->> 'lease_token' from result where label = 'claimed') is not null,
   'uttaket får sin egen leienøkkel, som utfallet meldes med'
 );
 
--- Kjøringen arbeidet faktisk ble gjort under, avsluttet med et vellykket utfall.
--- Den andre er i en annen rolle, og den tredje står fortsatt åpen; ingen av dem
--- skal kunne stå som premisset bak dette utfallet.
-insert into provenance.agent_runs
-  (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
-   prompt_template_version, pipeline_version, input_manifest,
-   status, completed_at, output_manifest)
-select '74000000-0000-4000-8000-0000000000a1', ai.id, ai.actor_id, 'evidence_extraction',
-       'antidep', 'proposal-grounded-extraction', '1.1.0',
-       'evidence-extraction/proposal/1', 'antidep-evidence/1',
-       '{"mode": "test-740"}'::jsonb,
-       'succeeded', now(), '{"registered": true}'::jsonb
-from provenance.agent_identities ai
-where ai.identity_key = 'agent-identity:evidence-extraction-01';
-
+-- En vellykket kjøring i en annen rolle, med en registrert identitet. Den
+-- gjorde ikke dette arbeidet, og skal ikke kunne bære det.
 insert into provenance.agent_runs
   (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
    prompt_template_version, pipeline_version, input_manifest,
@@ -181,17 +170,36 @@ select '74000000-0000-4000-8000-0000000000a2', ai.id, ai.actor_id, 'extraction_v
 from provenance.agent_identities ai
 where ai.identity_key = 'agent-identity:extraction-verification-01';
 
-insert into provenance.agent_runs
-  (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
-   prompt_template_version, pipeline_version, input_manifest)
-select '74000000-0000-4000-8000-0000000000a3', ai.id, ai.actor_id, 'evidence_extraction',
-       'antidep', 'proposal-grounded-extraction', '1.1.0',
-       'evidence-extraction/proposal/1', 'antidep-evidence/1',
-       '{"mode": "test-740-fortsatt-apen"}'::jsonb
-from provenance.agent_identities ai
-where ai.identity_key = 'agent-identity:evidence-extraction-01';
-
+-- Kjøringen som faktisk gjør arbeidet, åpnes *for uttaket*. Rollen oppgis ikke
+-- av kalleren: den hentes fra jobben.
 set local role anon;
+insert into result select 'run', jsonb_build_object(
+  'agent_run_id', api.begin_pipeline_job_run(
+    'agent-identity:evidence-extraction-01',
+    (select secret from cred where label = 'extractor'),
+    (select (payload ->> 'pipeline_job_id')::uuid from result where label = 'claimed'),
+    (select (payload ->> 'lease_token')::uuid from result where label = 'claimed'),
+    'antidep', 'proposal-grounded-extraction', '1.1.0',
+    'evidence-extraction/proposal/1', 'antidep-evidence/1',
+    '{"mode": "test-740"}'::jsonb,
+    'f2000000-0000-4000-8000-000000000002'));
+
+-- En leie kalleren ikke holder, gir ingen kjøring å arbeide under.
+select throws_ok(
+  format(
+    $$select api.begin_pipeline_job_run(
+        'agent-identity:evidence-extraction-01', %L, %L,
+        '74000000-0000-4000-8000-0000000000ff'::uuid,
+        'antidep', 'proposal-grounded-extraction', '1.1.0',
+        'evidence-extraction/proposal/1', 'antidep-evidence/1',
+        '{"mode": "test-740"}'::jsonb,
+        'f2000000-0000-4000-8000-000000000002')$$,
+    (select secret from cred where label = 'extractor'),
+    (select payload ->> 'pipeline_job_id' from result where label = 'claimed')
+  ),
+  '23001', null,
+  'en kjøring kan ikke åpnes på en leie kalleren ikke holder'
+);
 
 -- En kjører hvis leie er løpt ut, har den gamle nøkkelen. Uten denne regelen
 -- ville hen skrevet sitt foreldede resultat over det uttaket som nå arbeider.
@@ -199,10 +207,10 @@ select throws_ok(
   format(
     $$select api.complete_pipeline_job(
         'agent-identity:evidence-extraction-01', %L, %L,
-        '74000000-0000-4000-8000-0000000000ff'::uuid, '{"ok": true}'::jsonb,
-        '74000000-0000-4000-8000-0000000000a1')$$,
+        '74000000-0000-4000-8000-0000000000ff'::uuid, '{"ok": true}'::jsonb, %L)$$,
     (select secret from cred where label = 'extractor'),
-    (select payload ->> 'pipeline_job_id' from result where label = 'claimed')
+    (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
+    (select payload ->> 'agent_run_id' from result where label = 'run')
   ),
   '23001', null,
   'et utfall meldt med en annen leienøkkel enn uttakets egen, avvises'
@@ -241,24 +249,36 @@ select throws_ok(
 select throws_ok(
   format(
     $$select api.complete_pipeline_job(
-        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb,
-        '74000000-0000-4000-8000-0000000000a3')$$,
+        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb, %L)$$,
     (select secret from cred where label = 'extractor'),
     (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
-    (select payload ->> 'lease_token' from result where label = 'claimed')
+    (select payload ->> 'lease_token' from result where label = 'claimed'),
+    (select payload ->> 'agent_run_id' from result where label = 'run')
   ),
   '22023', 'Agentkjøringen er ikke avsluttet med et vellykket utfall.',
   'en kjøring som fortsatt står som running, kan ikke bære en fullført jobb'
 );
 
+-- Arbeidet er gjort, og kjøringen lukkes med sitt utfall.
+select lives_ok(
+  format(
+    $$select api.complete_agent_run(
+        'agent-identity:evidence-extraction-01', %L, %L, 'succeeded',
+        '{"registered": true}'::jsonb, null)$$,
+    (select secret from cred where label = 'extractor'),
+    (select payload ->> 'agent_run_id' from result where label = 'run')
+  ),
+  'kjøringen lukkes med et vellykket utfall'
+);
+
 select lives_ok(
   format(
     $$select api.complete_pipeline_job(
-        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb,
-        '74000000-0000-4000-8000-0000000000a1')$$,
+        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb, %L)$$,
     (select secret from cred where label = 'extractor'),
     (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
-    (select payload ->> 'lease_token' from result where label = 'claimed')
+    (select payload ->> 'lease_token' from result where label = 'claimed'),
+    (select payload ->> 'agent_run_id' from result where label = 'run')
   ),
   'leieholderen kan melde et utfall'
 );
@@ -270,17 +290,17 @@ insert into result select 'completed_again', api.complete_pipeline_job(
   (select (payload ->> 'pipeline_job_id')::uuid from result where label = 'claimed'),
   (select (payload ->> 'lease_token')::uuid from result where label = 'claimed'),
   '{"ok": true}'::jsonb,
-  '74000000-0000-4000-8000-0000000000a1');
+  (select (payload ->> 'agent_run_id')::uuid from result where label = 'run'));
 
 -- Et annet forsøk eier ikke utfallet, og kan heller ikke bekrefte det.
 select throws_ok(
   format(
     $$select api.complete_pipeline_job(
         'agent-identity:evidence-extraction-01', %L, %L,
-        '74000000-0000-4000-8000-0000000000ff'::uuid, '{"ok": true}'::jsonb,
-        '74000000-0000-4000-8000-0000000000a1')$$,
+        '74000000-0000-4000-8000-0000000000ff'::uuid, '{"ok": true}'::jsonb, %L)$$,
     (select secret from cred where label = 'extractor'),
-    (select payload ->> 'pipeline_job_id' from result where label = 'claimed')
+    (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
+    (select payload ->> 'agent_run_id' from result where label = 'run')
   ),
   '42501', 'Jobben er allerede fullført av et annet forsøk.',
   'en fullført jobb kan ikke bekreftes av et annet forsøk enn det som gjorde arbeidet'
@@ -303,7 +323,7 @@ select is(
 select is(
   (select j.agent_run_id from workflow.pipeline_jobs j
    where j.id = (select (payload ->> 'pipeline_job_id')::uuid from result where label = 'claimed')),
-  '74000000-0000-4000-8000-0000000000a1'::uuid,
+  (select (payload ->> 'agent_run_id')::uuid from result where label = 'run'),
   'den fullførte jobben peker på kjøringen som gjorde arbeidet'
 );
 select throws_ok(
@@ -311,6 +331,52 @@ select throws_ok(
     where state = 'succeeded'$$,
   '23514', null,
   'en fullført jobb kan ikke stå uten kjøringen som gjorde arbeidet'
+);
+
+-- ===========================================================================
+-- Del 5b — En kjøring fra én jobb kan ikke bære en annen
+--
+-- Dette er hele grunnen til at bindingen finnes. Uten den ville jobb B kunnet
+-- meldes ferdig med den vellykkede kjøringen fra jobb A: identitet, rolle og
+-- status ville stemt, og raden ville sett like riktig ut.
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"74000000-0000-4000-8000-00000000000b"}', true);
+set local role authenticated;
+insert into result select 'second', api.enqueue_pipeline_job(
+  'evidence_extraction', 'source-version:740-b', '{"source_version_id": "740-b"}'::jsonb);
+reset role;
+
+set local role anon;
+insert into result select 'claimed_second', api.claim_pipeline_job(
+  'agent-identity:evidence-extraction-01', (select secret from cred where label = 'extractor'),
+  'evidence_extraction', 900);
+
+select is(
+  (select payload ->> 'pipeline_job_id' from result where label = 'claimed_second'),
+  (select payload ->> 'pipeline_job_id' from result where label = 'second'),
+  'den neste jobben i samme rolle tas ut som sin egen jobb'
+);
+
+select throws_ok(
+  format(
+    $$select api.complete_pipeline_job(
+        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb, %L)$$,
+    (select secret from cred where label = 'extractor'),
+    (select payload ->> 'pipeline_job_id' from result where label = 'claimed_second'),
+    (select payload ->> 'lease_token' from result where label = 'claimed_second'),
+    (select payload ->> 'agent_run_id' from result where label = 'run')
+  ),
+  '22023', 'Agentkjøringen ble ikke åpnet for dette uttaket av denne jobben.',
+  'den vellykkede kjøringen fra den første jobben kan ikke fullføre den andre'
+);
+reset role;
+
+-- Og bindingen kan ikke skrives om i etterkant til å peke på den andre jobben.
+select throws_ok(
+  $$update workflow.pipeline_job_runs set pipeline_job_id = pipeline_job_id$$,
+  '23001', null,
+  'bindingen mellom uttak og kjøring er append-only'
 );
 
 -- ===========================================================================

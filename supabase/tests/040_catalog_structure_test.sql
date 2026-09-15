@@ -77,7 +77,8 @@ select set_eq(
            ('claim_verification_citations'), ('review_decisions'),
            -- Migrasjon 009b: den varige jobbtilstanden med sitt append-only
            -- spor. 009d: den kandidatbundne sluttkontrollen.
-           ('pipeline_jobs'), ('pipeline_job_events'), ('candidate_final_controls')$$,
+           ('pipeline_jobs'), ('pipeline_job_events'), ('pipeline_job_runs'),
+           ('candidate_final_controls')$$,
   'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b og 009d'
 );
 select set_eq(

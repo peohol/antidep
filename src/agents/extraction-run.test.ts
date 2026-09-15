@@ -11,6 +11,7 @@ import { AgentApiError } from './agent-api'
 import type {
   AgentRunPremises,
   EvidenceExtractionApi,
+  PipelineJobLease,
   RegisterAgentExtractionArgs,
 } from './agent-api'
 import { sourceVersionContentHash } from './content-hash'
@@ -37,6 +38,8 @@ interface FakeApi extends EvidenceExtractionApi {
   readonly registered: RegisterAgentExtractionArgs[]
   readonly premises: AgentRunPremises[]
   readonly manifests: Record<string, unknown>[]
+  /** Uttaket hver kjøring ble åpnet for, eller `null` for en kjøring uten kø. */
+  readonly jobs: (PipelineJobLease | null | undefined)[]
   readonly completions: {
     status: string
     outputManifest: Record<string, unknown> | null
@@ -48,16 +51,19 @@ function fakeApi(overrides: Partial<FakeApi> = {}): FakeApi {
   const registered: RegisterAgentExtractionArgs[] = []
   const premises: AgentRunPremises[] = []
   const manifests: Record<string, unknown>[] = []
+  const jobs: FakeApi['jobs'] = []
   const completions: FakeApi['completions'] = []
 
   return {
     registered,
     premises,
     manifests,
+    jobs,
     completions,
-    beginRun: (runPremises, inputManifest) => {
+    beginRun: (runPremises, inputManifest, _sourceVersionId, job) => {
       premises.push(runPremises)
       manifests.push(inputManifest)
+      jobs.push(job)
       return Promise.resolve(RUN_ID)
     },
     registerExtraction: (args) => {
@@ -594,6 +600,40 @@ describe('runEvidenceExtraction — den lykkede stien', () => {
 // ---------------------------------------------------------------------------
 // Kjøringens premisser er kjøringens, og erklæringen er forslagets
 // ---------------------------------------------------------------------------
+
+describe('runEvidenceExtraction — kjøringen som gjøres for et uttak', () => {
+  // Uten bindingen ville et utfall meldt på jobb B kunnet vise til kjøringen fra
+  // jobb A: identitet, rolle og status ville stemt, og raden ville sett like
+  // riktig ut (migrasjon 009b, workflow.pipeline_job_runs).
+  it('åpner kjøringen for uttaket når arbeidet er køarbeid', async () => {
+    const api = fakeApi()
+    const job: PipelineJobLease = {
+      pipelineJobId: '55555555-5555-4555-8555-555555555555',
+      leaseToken: '66666666-6666-4666-8666-666666666666',
+    }
+    await runEvidenceExtraction({
+      mode: 'unchecked_model',
+      api,
+      proposal: await proposal(),
+      retrieve: retrieveFixture(),
+      job,
+    })
+    expect(api.jobs[0]).toEqual(job)
+  })
+
+  // En direkte kjøring uten kø er ikke køarbeid, og skal ikke bindes til et
+  // uttak den ikke har.
+  it('åpner en kjøring uten uttak når det ikke finnes noen jobb', async () => {
+    const api = fakeApi()
+    await runEvidenceExtraction({
+      mode: 'unchecked_model',
+      api,
+      proposal: await proposal(),
+      retrieve: retrieveFixture(),
+    })
+    expect(api.jobs[0]).toBeNull()
+  })
+})
 
 describe('runEvidenceExtraction — hvem forslaget sier laget det', () => {
   // Kjøringen er ikke leddet som leste artikkelen: den henter, kontrollerer og

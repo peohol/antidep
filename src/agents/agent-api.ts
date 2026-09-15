@@ -73,6 +73,24 @@ export type AgentDatabase = {
         }
         Returns: Uuid
       }
+      // Samme kjøring, åpnet for ett uttak fra den varige køen. Rollen står
+      // ikke i argumentene: den hentes fra jobben.
+      begin_pipeline_job_run: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_pipeline_job_id: Uuid
+          p_lease_token: Uuid
+          p_provider: string
+          p_model: string
+          p_model_version: string
+          p_prompt_template_version: string
+          p_pipeline_version: string
+          p_input_manifest: Record<string, unknown>
+          p_input_source_version_id?: Uuid | null
+        }
+        Returns: Uuid
+      }
       complete_agent_run: {
         Args: {
           p_identity_key: string
@@ -334,6 +352,19 @@ export interface RegisterClaimVerificationArgs {
   readonly findings: string | null
 }
 
+/**
+ * Uttaket en kjøring åpnes for, når arbeidet er køarbeid.
+ *
+ * Bindingen skrives av databasen når kjøringen åpnes, mot den leien som gjelder
+ * da. Uten den ville et utfall bare kunnet vise at identiteten en gang hadde en
+ * vellykket kjøring i rollen — ikke at *denne* kjøringen gjorde *denne* jobben
+ * (migrasjon 009b, workflow.pipeline_job_runs).
+ */
+export interface PipelineJobLease {
+  readonly pipelineJobId: Uuid
+  readonly leaseToken: Uuid
+}
+
 /** Kjøringen, som er den samme mekanismen for hvert agentledd. */
 export interface AgentRunApi {
   /**
@@ -343,11 +374,17 @@ export interface AgentRunApi {
    * påkrevd for rollen `evidence_extraction`: evidensfunnet kjøringen
    * registrerer, bindes deklarativt til nettopp den (migrasjon 005z).
    * Verifikatorleddene leser en arbeidskø og lar den stå.
+   *
+   * `job` oppgis når kjøringen gjøres for et uttak fra den varige køen. Da går
+   * åpningen gjennom `api.begin_pipeline_job_run`, som kontrollerer leien,
+   * henter rollen fra jobben og binder kjøringen til uttaket. Uten `job` er
+   * kjøringen en direkte kjøring uten kø, og åpnes som før.
    */
   beginRun(
     premises: AgentRunPremises,
     inputManifest: Record<string, unknown>,
     inputSourceVersionId?: Uuid | null,
+    job?: PipelineJobLease | null,
   ): Promise<Uuid>
   completeRun(
     agentRunId: Uuid,
@@ -594,10 +631,11 @@ function identityOf(credential: AgentCredential): Identity {
  */
 function createAgentRunApi(client: AgentClient, identity: Identity, role: string): AgentRunApi {
   return {
-    async beginRun(premises, inputManifest, inputSourceVersionId = null) {
-      const { data, error } = await client.rpc('begin_agent_run', {
-        ...identity,
-        p_agent_role: role,
+    async beginRun(premises, inputManifest, inputSourceVersionId = null, job = null) {
+      // Premissene er de samme begge veier. Det som skiller, er om kjøringen
+      // åpnes for et uttak fra køen: da er rollen jobbens og ikke kallerens,
+      // og databasen skriver bindingen mellom de to.
+      const premiseArguments = {
         p_provider: premises.provider,
         p_model: premises.model,
         p_model_version: premises.modelVersion,
@@ -605,9 +643,23 @@ function createAgentRunApi(client: AgentClient, identity: Identity, role: string
         p_pipeline_version: premises.pipelineVersion,
         p_input_manifest: inputManifest,
         p_input_source_version_id: inputSourceVersionId,
-      })
+      }
+      const operation = job === null ? 'api.begin_agent_run' : 'api.begin_pipeline_job_run'
+      const { data, error } =
+        job === null
+          ? await client.rpc('begin_agent_run', {
+              ...identity,
+              p_agent_role: role,
+              ...premiseArguments,
+            })
+          : await client.rpc('begin_pipeline_job_run', {
+              ...identity,
+              p_pipeline_job_id: job.pipelineJobId,
+              p_lease_token: job.leaseToken,
+              ...premiseArguments,
+            })
       if (error !== null) {
-        fail('api.begin_agent_run', error)
+        fail(operation, error)
       }
       return data
     },

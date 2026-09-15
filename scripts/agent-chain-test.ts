@@ -178,6 +178,8 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
     delete from provenance.agent_runs where id::text like 'c2000000%';
     delete from workflow.pipeline_job_events where pipeline_job_id in (
       select id from workflow.pipeline_jobs where job_key like 'antidep2-kjede:%');
+    delete from workflow.pipeline_job_runs where pipeline_job_id in (
+      select id from workflow.pipeline_jobs where job_key like 'antidep2-kjede:%');
     delete from workflow.pipeline_jobs where job_key like 'antidep2-kjede:%';
     delete from knowledge.full_text_readability_checks where source_version_id in (
       select id from knowledge.source_versions where source_id = ${q(SOURCE)});
@@ -504,12 +506,49 @@ async function main(): Promise<void> {
       secret: agentSecret(verifierSecret),
     })
 
+    // ------------------------------------------------------------------
+    // Den varige, idempotente jobbtilstanden — og arbeidet som gjøres *i* den
+    //
+    // Jobben legges inn og tas ut før ekstraksjonen, fordi ekstraksjonen er
+    // det jobben er. Kjøringen åpnes for uttaket, slik at utfallet kan bevise
+    // at nettopp denne kjøringen gjorde nettopp denne jobben — ikke bare at
+    // identiteten en gang har hatt en vellykket kjøring i rollen.
+    // ------------------------------------------------------------------
+    const jobs = createPipelineJobApi(agent, {
+      identityKey: 'agent-identity:evidence-extraction-01',
+      secret: agentSecret(secret),
+    })
+    const key = jobKey('antidep2-kjede', report.sourceVersionId)
+    const enqueued = await editor.rpc('enqueue_pipeline_job', {
+      p_agent_role: 'evidence_extraction',
+      p_job_key: key,
+      p_input_manifest: { source_version_id: report.sourceVersionId },
+    })
+    const enqueuedAgain = await editor.rpc('enqueue_pipeline_job', {
+      p_agent_role: 'evidence_extraction',
+      p_job_key: key,
+      p_input_manifest: { source_version_id: report.sourceVersionId },
+    })
+    check(
+      'den samme jobben lagt inn to ganger er én rad',
+      enqueued.error === null &&
+        enqueuedAgain.error === null &&
+        (enqueued.data as { pipeline_job_id?: string } | null)?.pipeline_job_id ===
+          (enqueuedAgain.data as { pipeline_job_id?: string } | null)?.pipeline_job_id,
+      enqueued.error?.message ?? enqueuedAgain.error?.message ?? '',
+    )
+
+    const claimed = await jobs.claim('evidence_extraction')
+    check('kjøreren tar ut jobben med en leie', claimed.claimed)
+    if (!claimed.claimed) return
+
     const extraction = await runEvidenceExtraction({
       api: extractionApi,
       proposal,
       assignment: report.assignment,
       mode: 'with_assignment',
       documents,
+      job: { pipelineJobId: claimed.job.pipelineJobId, leaseToken: claimed.job.leaseToken },
     })
     const evidenceItemId = extraction.evidenceItemId ?? ''
     check(
@@ -518,6 +557,38 @@ async function main(): Promise<void> {
       extraction.reason ?? '',
     )
     if (evidenceItemId === '') return
+
+    check(
+      'kjøringen er bundet til nettopp det uttaket den ble åpnet for',
+      psql(
+        config,
+        `select (b.pipeline_job_id = ${q(claimed.job.pipelineJobId)}::uuid
+                 and b.lease_token = ${q(claimed.job.leaseToken)}::uuid)::text
+         from workflow.pipeline_job_runs b where b.agent_run_id = ${q(extraction.agentRunId)}`,
+      ) === 'true',
+    )
+
+    const outcome = { evidence_item_id: evidenceItemId }
+    await jobs.complete(
+      claimed.job.pipelineJobId,
+      claimed.job.leaseToken,
+      outcome,
+      extraction.agentRunId,
+    )
+    await jobs.complete(
+      claimed.job.pipelineJobId,
+      claimed.job.leaseToken,
+      outcome,
+      extraction.agentRunId,
+    )
+    check(
+      'en fullført jobb kan meldes om igjen uten å skrive noe nytt',
+      psql(
+        config,
+        `select (count(*) = 1)::text from workflow.pipeline_job_events e
+         where e.pipeline_job_id = ${q(claimed.job.pipelineJobId)} and e.to_state = 'succeeded'`,
+      ) === 'true',
+    )
 
     check(
       'EvidenceItem er bundet til den samme fulltekstversjonen',
@@ -617,59 +688,6 @@ async function main(): Promise<void> {
          )`,
       ) === 'true',
     )
-
-    // ------------------------------------------------------------------
-    // Den varige, idempotente jobbtilstanden
-    // ------------------------------------------------------------------
-    const jobs = createPipelineJobApi(agent, {
-      identityKey: 'agent-identity:evidence-extraction-01',
-      secret: agentSecret(secret),
-    })
-    const key = jobKey('antidep2-kjede', report.sourceVersionId)
-    const enqueued = await editor.rpc('enqueue_pipeline_job', {
-      p_agent_role: 'evidence_extraction',
-      p_job_key: key,
-      p_input_manifest: { source_version_id: report.sourceVersionId },
-    })
-    const enqueuedAgain = await editor.rpc('enqueue_pipeline_job', {
-      p_agent_role: 'evidence_extraction',
-      p_job_key: key,
-      p_input_manifest: { source_version_id: report.sourceVersionId },
-    })
-    check(
-      'den samme jobben lagt inn to ganger er én rad',
-      enqueued.error === null &&
-        enqueuedAgain.error === null &&
-        (enqueued.data as { pipeline_job_id?: string } | null)?.pipeline_job_id ===
-          (enqueuedAgain.data as { pipeline_job_id?: string } | null)?.pipeline_job_id,
-      enqueued.error?.message ?? enqueuedAgain.error?.message ?? '',
-    )
-
-    const claimed = await jobs.claim('evidence_extraction')
-    check('kjøreren tar ut jobben med en leie', claimed.claimed)
-    if (claimed.claimed) {
-      const outcome = { evidence_item_id: evidenceItemId }
-      await jobs.complete(
-        claimed.job.pipelineJobId,
-        claimed.job.leaseToken,
-        outcome,
-        extraction.agentRunId,
-      )
-      await jobs.complete(
-        claimed.job.pipelineJobId,
-        claimed.job.leaseToken,
-        outcome,
-        extraction.agentRunId,
-      )
-      check(
-        'en fullført jobb kan meldes om igjen uten å skrive noe nytt',
-        psql(
-          config,
-          `select (count(*) = 1)::text from workflow.pipeline_job_events e
-           where e.pipeline_job_id = ${q(claimed.job.pipelineJobId)} and e.to_state = 'succeeded'`,
-        ) === 'true',
-      )
-    }
 
     // ------------------------------------------------------------------
     // Den deterministiske kontrollen bekrefter ikke denne raden — og da kan
