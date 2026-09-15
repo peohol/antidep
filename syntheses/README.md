@@ -12,6 +12,6 @@ Denne katalogen er et internt arbeidsområde for agentmotoren og testene. Lokale
 
 `agent:synthesise-claims` er et beholdt utviklings-/testgrensesnitt. Det er ikke den ferdige, varige jobbkjeden.
 
-Det finnes ikke lenger en `/review`-basert menneskelig mikroreviewflyt. Målbildet er at agentene produserer en ferdig klinisk kandidat som deretter kontrolleres av en navngitt fagperson i samme renderer som klinikeren skal se. Denne kandidatbindingen og klinikerflaten er neste produktleveranse.
+Den gamle menneskelige mikroreview-ruten er avviklet. Målbildet er at agentene produserer en ferdig klinisk kandidat som deretter kontrolleres av en navngitt fagperson i samme renderer som klinikeren skal se. Denne kandidatbindingen og klinikerflaten er neste produktleveranse.
 
 Se [evidenskjeden](../docs/EVIDENCE_PIPELINE.md) og [roadmap](../docs/ROADMAP.md).
