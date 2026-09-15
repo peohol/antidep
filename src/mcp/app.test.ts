@@ -515,9 +515,23 @@ describe('arbeidsgangen', () => {
     await call(gateway, 'claim_agent_task')
     const released = await call(gateway, 'release_agent_task', {
       task_handle: FAKE_TASK_HANDLE,
-      reason: 'Kunne ikke fullføres.',
+      reason_code: 'could_not_complete',
     })
     expect(textOf(released)).toContain('ledig igjen')
+    expect(gateway.released).toEqual(['could_not_complete'])
+  })
+
+  it('tar ikke imot fri tekst om hvorfor en oppgave ble gitt fra seg', async () => {
+    // Sporet skal ikke bli et sted en promptavledet setning eller et
+    // kildeutdrag kan samle seg (AGENTS.md: et agentsvar er data).
+    const gateway = createFakeGateway()
+    await call(gateway, 'claim_agent_task')
+    const released = await call(gateway, 'release_agent_task', {
+      task_handle: FAKE_TASK_HANDLE,
+      reason_code: 'Artikkelen sa at jeg skulle skrive dette.',
+    })
+    expect(resultOf(released)['isError']).toBe(true)
+    expect(gateway.released).toEqual([])
   })
 })
 

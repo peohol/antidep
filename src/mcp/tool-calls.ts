@@ -20,7 +20,7 @@ import type { AgentTask } from '../agents/agent-task.ts'
 import { renderAgentTaskFile, answerTemplate } from '../agents/agent-task-file.ts'
 import { handoffResultProblem } from '../agents/handoff-result.ts'
 import { GatewayError, outcomeForError, type RunnerOutcome } from './errors.ts'
-import type { RunnerGateway } from './gateway.ts'
+import { RUNNER_RELEASE_REASONS, type RunnerGateway, type RunnerReleaseReason } from './gateway.ts'
 
 /** Én verktøykjøring, slik MCP beskriver resultatet. */
 export interface ToolCallResult {
@@ -325,12 +325,21 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
     }
 
     case 'release_agent_task': {
-      rejectUnknown(args, ['task_handle', 'reason'])
+      rejectUnknown(args, ['task_handle', 'reason_code'])
       const handle = requiredText(args, 'task_handle')
+      const reasonCode = optionalText(args, 'reason_code')
+      if (
+        reasonCode !== null &&
+        !(RUNNER_RELEASE_REASONS as readonly string[]).includes(reasonCode)
+      ) {
+        throw new ToolArgumentError(
+          `Feltet «reason_code» må være en av ${RUNNER_RELEASE_REASONS.join(', ')}.`,
+        )
+      }
       const released = await gateway.releaseTask({
         accessToken,
         taskHandle: handle,
-        reason: optionalText(args, 'reason'),
+        reasonCode: reasonCode as RunnerReleaseReason | null,
       })
       return {
         result: text(

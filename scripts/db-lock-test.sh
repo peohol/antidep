@@ -1243,6 +1243,6 @@ fi
 
 # Oppgaven gis fra seg igjen, slik at databasen ikke blir stående med en leie
 # fra en prøve som er ferdig.
-les "select api.release_agent_task('$kjorer_token', '$nytt_handle'::uuid, 'Samtidighetsprøven er ferdig.')" > /dev/null
+les "select api.release_agent_task('$kjorer_token', '$nytt_handle'::uuid, 'could_not_complete')" > /dev/null
 
 printf '\nAlle samtidighetsprøvene passerte.\n'

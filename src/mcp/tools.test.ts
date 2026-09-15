@@ -62,6 +62,15 @@ describe('verktøyflaten', () => {
     }
   })
 
+  it('tar ikke imot fri tekst fra modellen i noe felt som havner i sporet', () => {
+    // Sporet bærer Antideps egne setninger. Et fritekstfelt som ble skrevet dit,
+    // ville gjort proveniensen til et sted modellinnhold kunne samle seg.
+    const release = schemaOf('release_agent_task')['properties'] as Record<string, unknown>
+    const reason = release['reason_code'] as Record<string, unknown>
+    expect(Array.isArray(reason['enum'])).toBe(true)
+    expect(release['reason']).toBeUndefined()
+  })
+
   it('krever et oppgavehåndtak av hvert verktøy som gjelder én bestemt oppgave', () => {
     for (const name of ['get_agent_task', 'submit_agent_answer', 'release_agent_task']) {
       expect(schemaOf(name)['required']).toContain('task_handle')

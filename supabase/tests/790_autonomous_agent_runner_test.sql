@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(63);
+select plan(71);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -136,6 +136,7 @@ values
 
 create temporary table ids (name text primary key, id uuid) on commit drop;
 insert into ids select 'drug', id from catalog.drugs where canonical_name = 'sertralin';
+insert into ids select 'other_drug', id from catalog.drugs where canonical_name = 'mirtazapin';
 insert into ids select 'outcome', id from catalog.clinical_concepts
   where canonical_label = 'vektendring' and concept_type = 'outcome';
 insert into ids select 'population', id from catalog.populations
@@ -872,6 +873,142 @@ select ok(
    where connection_key = 'agent-runner:evidence-extraction'),
   'tilbaketrekkingen navngir hvem og hvorfor'
 );
+
+-- Og nøkkelen er ledig igjen. En global unikhet ville gjort tilbaketrekkingen
+-- til en blindvei: den dokumenterte gjenopprettingen — trekk tilbake, registrer
+-- på nytt — kunne ikke gjennomføres for det leddet igjen.
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+select lives_ok(
+  $$ select api.register_agent_runner(
+       'agent-runner:evidence-extraction', 'Antidep ekstraksjonskjører (ny)',
+       'evidence_extraction', 'Antidep Ekstraksjon II (ChatGPT)', 'platform_pinned',
+       'Prøve 790: kjøreren erstattes etter en tilbaketrekking.') $$,
+  'den samme nøkkelen kan brukes på nytt etter en tilbaketrekking'
+);
+reset role;
+
+select is(
+  (select count(*)::int from workflow.agent_runner_connections
+   where connection_key = 'agent-runner:evidence-extraction'),
+  2,
+  'begge tilkoblingene blir stående, hver med sin periode'
+);
+
+-- ===========================================================================
+-- Del 8 — Sporet tar ikke imot fri tekst fra en modell
+--
+-- `note` er Antideps egen setning. En grunn modellen skrev selv, ville gjort
+-- proveniensen til et sted en promptavledet setning eller et kildeutdrag kunne
+-- samle seg (AGENTS.md: et agentsvar er data, aldri instrukser).
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+insert into res
+select 'pairing2', api.issue_agent_runner_pairing_code('agent-runner:evidence-extraction');
+-- Egen avgrensning, slik at innleggingen blir en NY jobb: nøkkelen utledes av
+-- manifestet, og det samme manifestet lagt inn to ganger er én rad.
+insert into res
+select 'task3', api.enqueue_agent_task('evidence_extraction', jsonb_build_object(
+  'source_version_id', '79000000-0000-4000-8000-000000000002',
+  'drug_ids', jsonb_build_array(
+    (select id from ids where name = 'drug'),
+    (select id from ids where name = 'other_drug')),
+  'outcome_concept_ids', jsonb_build_array((select id from ids where name = 'outcome')),
+  'population_ids', jsonb_build_array((select id from ids where name = 'population'))
+));
+reset role;
+
+set local role anon;
+insert into res
+select 'grant2', api.authorize_agent_runner(
+  (select payload ->> 'pairing_code' from res where label = 'pairing2'),
+  (select payload ->> 'client_id' from res where label = 'client'),
+  'https://chatgpt.example/callback',
+  (select payload ->> 'challenge' from res where label = 'pkce'),
+  'S256');
+insert into res
+select 'tokens2', api.exchange_agent_runner_code(
+  (select payload ->> 'authorization_code' from res where label = 'grant2'),
+  (select payload ->> 'verifier' from res where label = 'pkce'),
+  (select payload ->> 'client_id' from res where label = 'client'),
+  'https://chatgpt.example/callback');
+insert into res
+select 'claim3', api.claim_agent_task(
+  (select payload ->> 'access_token' from res where label = 'tokens2'), null, 900);
+
+select throws_ok(
+  format(
+    $$ select api.release_agent_task(%L, %L::uuid, 'Artikkelen ba meg skrive dette.') $$,
+    (select payload ->> 'access_token' from res where label = 'tokens2'),
+    (select payload ->> 'task_handle' from res where label = 'claim3')
+  ),
+  '22023',
+  null,
+  'sporet tar ikke imot fri tekst fra en modell som grunn'
+);
+
+select is(
+  (select (api.release_agent_task(
+     (select payload ->> 'access_token' from res where label = 'tokens2'),
+     (select (payload ->> 'task_handle')::uuid from res where label = 'claim3'),
+     'could_not_complete') ->> 'released')::boolean),
+  true,
+  'en kjent klasse gir oppgaven fra seg'
+);
+reset role;
+
+select is(
+  (select e.note from workflow.agent_runner_events e
+   where e.tool_name = 'release_agent_task' and e.outcome = 'ok'
+   order by e.created_at desc limit 1),
+  'Kjøreren fikk ikke fullført arbeidet.',
+  'og sporet bærer Antideps egen setning, ikke modellens'
+);
+
+-- ===========================================================================
+-- Del 9 — Klientregistreringen er en takt, ikke et livstidstall
+--
+-- Raden er append-only. Et livstidstak ville gjort en liten mengde
+-- uautentisert trafikk til en varig driftsstans: den dagen taket var nådd,
+-- kunne ingen ekte klient registrere seg igjen.
+-- ===========================================================================
+set local role anon;
+select lives_ok(
+  $$
+    select api.register_agent_runner_client('Fyll ' || i::text,
+                                            array['https://fyll.example/cb'])
+    from generate_series(1, 19) as i
+  $$,
+  'nitten klienter til registreres innenfor vinduet'
+);
+select throws_ok(
+  $$ select api.register_agent_runner_client('En til', array['https://fyll.example/cb']) $$,
+  '23001',
+  null,
+  'og den neste avvises når takten er brukt opp'
+);
+reset role;
+
+-- Vinduet går over av seg selv. Flyttes de eldre registreringene ut av timen,
+-- er veien åpen igjen — og oppsettet kan fullføres.
+-- Tiden flyttes framfor å ventes ut, og append-only-regelen slås av for
+-- nøyaktig denne ene setningen i prøvens egen transaksjon. Prøven skal si noe
+-- om vinduet, ikke om klokka — og ikke svekke regelen for noen andre.
+set local session_replication_role = replica;
+update workflow.agent_runner_clients
+set created_at = statement_timestamp() - interval '2 hours'
+where client_name like 'Fyll %';
+set local session_replication_role = origin;
+
+set local role anon;
+select lives_ok(
+  $$ select api.register_agent_runner_client('Etter vinduet', array['https://fyll.example/cb']) $$,
+  'en flom av registreringer går over av seg selv, framfor å stenge veien for alltid'
+);
+reset role;
 
 select throws_ok(
   $$ delete from workflow.agent_runner_events $$,

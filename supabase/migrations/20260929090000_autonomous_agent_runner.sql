@@ -134,7 +134,14 @@ create table workflow.agent_runner_connections (
   -- at tabellen ikke er append-only, og den er databasens egen.
   updated_at timestamptz not null default now(),
 
-  constraint agent_runner_connections_connection_key_key unique (connection_key),
+  -- Nøkkelen er unik blant de GJELDENDE tilkoblingene, og ikke over all
+  -- historikk. En tilbaketrukket tilkobling blir stående med sin periode, og en
+  -- global unikhet ville derfor gjort tilbaketrekkingen til en blindvei: den
+  -- dokumenterte gjenopprettingen — trekk tilbake, registrer på nytt — kunne
+  -- ikke gjennomføres for det leddet igjen. Alle oppslag på nøkkelen leser
+  -- allerede bare den gjeldende raden.
+  constraint agent_runner_connections_one_live_key_excl
+    exclude using gist (connection_key with =, validity with &&),
   -- Samme nøkkelform som provenance.actors.actor_key og
   -- provenance.agent_identities.identity_key: maskinlesbar og stabil.
   constraint agent_runner_connections_connection_key_format_check
@@ -1445,6 +1452,7 @@ declare
   v_disclosure workflow.runner_model_disclosure;
   v_connection workflow.agent_runner_connections;
   v_holder text;
+  v_valid_from timestamptz;
 begin
   v_actor_id := knowledge.assert_editor_authorized();
 
@@ -1481,11 +1489,27 @@ begin
         hint = 'Pinner Workspace Agent-en en bestemt modell som plattformen viser, er verdien platform_pinned. Gjør den ikke det, er den not_exposed — og det er en sann opplysning framfor en mangel: separasjonen hviler da på modelltildelingen, ikke på plattformen (ANTIDEP_CONSTITUTION.md regel 3, 4).';
   end;
 
+  -- Perioden begynner der den forrige sluttet, og aldri før.
+  --
+  -- Standardverdien for valid_from er now(), altså transaksjonens starttid. En
+  -- tilbaketrekking og en ny registrering i den samme transaksjonen ville derfor
+  -- fått overlappende perioder, og exclusion-reglene ville avvist en
+  -- registrering som er helt legitim. Samme regning, og samme begrunnelse, som i
+  -- api.assign_agent_role_model.
+  select greatest(
+           statement_timestamp(),
+           coalesce(max(c.valid_to), statement_timestamp()))
+    into v_valid_from
+  from workflow.agent_runner_connections c
+  where c.agent_role = v_role
+     or c.connection_key = btrim(coalesce(p_connection_key, ''))
+     or c.platform_agent_reference = btrim(coalesce(p_platform_agent_reference, ''));
+
   begin
     insert into workflow.agent_runner_connections (
       connection_key, display_name, agent_role,
       platform_agent_reference, platform_model_disclosure,
-      registered_by_actor_id, registration_reason
+      valid_from, registered_by_actor_id, registration_reason
     )
     values (
       btrim(coalesce(p_connection_key, '')),
@@ -1493,6 +1517,7 @@ begin
       v_role,
       btrim(coalesce(p_platform_agent_reference, '')),
       v_disclosure,
+      coalesce(v_valid_from, statement_timestamp()),
       v_actor_id,
       coalesce(
         nullif(btrim(coalesce(p_reason, '')), ''),
@@ -1516,6 +1541,17 @@ begin
             'Workspace Agent-en %L kjører allerede agentleddet %s, og kan ikke også kjøre %s.',
             btrim(coalesce(p_platform_agent_reference, '')), v_holder, p_agent_role),
           hint = 'Én agentkonfigurasjon er én modellruntime. Lar vi den samme agenten både lage innholdet og vurdere det, er kontrollen den samme vurderingen gjort to ganger (ANTIDEP_CONSTITUTION.md regel 3). Opprett en egen Workspace Agent for dette leddet.';
+      end if;
+
+      if exists (
+        select 1 from workflow.agent_runner_connections c
+        where c.connection_key = btrim(coalesce(p_connection_key, ''))
+          and (c.valid_to is null or c.valid_to > statement_timestamp())
+      ) then
+        raise exception using
+          errcode = 'restrict_violation',
+          message = format('Nøkkelen %L tilhører allerede en gjeldende kjører.', p_connection_key),
+          hint = 'Trekk den gjeldende tilbake med api.revoke_agent_runner(text, text) først. Den samme nøkkelen kan brukes på nytt etterpå: unikheten gjelder de gjeldende tilkoblingene, ikke historikken.';
       end if;
 
       raise exception using
@@ -1762,12 +1798,22 @@ begin
   -- det hele tatt: uten en innløst tilkoblingskode kan klienten ikke få et
   -- eneste token. Taket finnes for at en åpen vei ikke skal kunne fylle en
   -- tabell, ikke fordi raden er farlig.
-  select count(*) into v_count from workflow.agent_runner_clients;
-  if v_count >= 200 then
+  --
+  -- Taket er en TAKT og ikke et livstidstall. Raden er append-only, så et
+  -- livstidstak ville gjort en liten mengde uautentisert trafikk til en varig
+  -- driftsstans: den dagen taket var nådd, kunne ingen ekte ChatGPT-klient
+  -- registrere seg igjen, og oppsettet ville vært umulig å fullføre. Med et
+  -- vindu går en flom over av seg selv, og den ekte tilkoblingen kan gjøres like
+  -- etterpå (ANTIDEP_CONSTITUTION.md regel 4: en teknisk grense skal ikke se ut
+  -- som en permanent tilstand).
+  select count(*) into v_count
+  from workflow.agent_runner_clients c
+  where c.created_at > statement_timestamp() - interval '1 hour';
+  if v_count >= 20 then
     raise exception using
       errcode = 'restrict_violation',
-      message = 'Det er registrert for mange OAuth-klienter mot denne appen.',
-      hint = 'Registreringen er åpen fordi MCP-autorisasjonen krever det, men den er ikke ubegrenset. Ta kontakt med den som eier Antidep-installasjonen.';
+      message = 'Det er registrert for mange OAuth-klienter mot denne appen den siste timen.',
+      hint = 'Registreringen er åpen fordi MCP-autorisasjonen krever det, men takten er begrenset. Prøv igjen om en stund; grensen gjelder et vindu og ikke for alltid.';
   end if;
 
   if nullif(btrim(coalesce(p_client_name, '')), '') is null then
@@ -2409,10 +2455,34 @@ comment on function api.submit_agent_answer(text, uuid, jsonb) is
 revoke execute on function api.submit_agent_answer(text, uuid, jsonb) from public;
 grant execute on function api.submit_agent_answer(text, uuid, jsonb) to anon, authenticated;
 
+-- Hvorfor en kjører ga en oppgave fra seg, som en lukket klasse.
+--
+-- Fri tekst fra modellen ville vært modellinnhold i det operative sporet, og
+-- sporet skal ikke bli et sted privat innhold eller en promptavledet setning
+-- samler seg (AGENTS.md: et agentsvar er data, aldri instrukser). Klassen sier
+-- det som faktisk er nyttig å vite, og Antidep skriver setningen selv.
+create function workflow.agent_release_note(p_reason_code text)
+  returns text
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select case p_reason_code
+    when 'blocked_by_task' then 'Kjøreren mente oppgaven ikke lot seg utføre slik den er stilt.'
+    when 'could_not_complete' then 'Kjøreren fikk ikke fullført arbeidet.'
+    when 'out_of_time' then 'Kjøringen rakk ikke å fullføre oppgaven.'
+  end;
+$$;
+
+comment on function workflow.agent_release_note(text) is
+  'Antideps egen setning om hvorfor en kjører ga en oppgave fra seg, valgt av en lukket klasse kjøreren oppgir. NULL for en ukjent klasse, som kalleren avviser. Fri tekst fra modellen ville vært modellinnhold i det operative sporet, og et spor som tok imot det, ville blitt et sted en promptavledet setning eller et kildeutdrag kunne samle seg (ANTIDEP_CONSTITUTION.md regel 2, 7).';
+
+revoke execute on function workflow.agent_release_note(text) from public;
+
 create function api.release_agent_task(
   p_access_token text,
   p_task_handle uuid,
-  p_reason text default null
+  p_reason_code text default null
 )
   returns jsonb
   language plpgsql
@@ -2422,8 +2492,19 @@ as $$
 declare
   v_connection workflow.agent_runner_connections;
   v_job workflow.pipeline_jobs;
+  v_note text;
 begin
   v_connection := workflow.authenticated_runner_connection(p_access_token);
+
+  if p_reason_code is not null then
+    v_note := workflow.agent_release_note(p_reason_code);
+    if v_note is null then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format('%L er ikke en kjent grunn til å gi en oppgave fra seg.', p_reason_code),
+        hint = 'Gyldige verdier er blocked_by_task, could_not_complete og out_of_time. Sporet tar ikke imot fri tekst fra en modell.';
+    end if;
+  end if;
 
   select j.* into v_job
   from workflow.pipeline_jobs j
@@ -2459,15 +2540,14 @@ begin
 
   perform workflow.record_agent_runner_event(
     v_connection.id, 'release_agent_task', 'ok'::workflow.agent_runner_outcome,
-    v_connection.agent_role, v_job.id,
-    nullif(left(btrim(coalesce(p_reason, '')), 300), ''));
+    v_connection.agent_role, v_job.id, v_note);
 
   return jsonb_build_object('released', true, 'agent_role', v_job.agent_role::text);
 end;
 $$;
 
 comment on function api.release_agent_task(text, uuid, text) is
-  'Gir en tatt oppgave fra seg med det samme, slik at den blir ledig igjen framfor å stå låst til leien løper ut (DATABASE_ARCHITECTURE.md §33). Forsøket står: et uttak ER et forsøk, og en kjører som kunne gi oppgaven fra seg uten å bruke et, kunne prøvd i det uendelige uten at noe i køen fortalte at det gikk galt. Begrunnelsen er kjørerens egen korte setning og lagres avkortet.';
+  'Gir en tatt oppgave fra seg med det samme, slik at den blir ledig igjen framfor å stå låst til leien løper ut (DATABASE_ARCHITECTURE.md §33). Forsøket står: et uttak ER et forsøk, og en kjører som kunne gi oppgaven fra seg uten å bruke et, kunne prøvd i det uendelige uten at noe i køen fortalte at det gikk galt. Grunnen er en lukket klasse og ikke fri tekst: en setning fra modellen ville vært modellinnhold i det operative sporet, og Antidep skriver derfor selv setningen klassen står for (workflow.agent_release_note(text)).';
 
 revoke execute on function api.release_agent_task(text, uuid, text) from public;
 grant execute on function api.release_agent_task(text, uuid, text) to anon, authenticated;

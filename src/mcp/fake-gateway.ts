@@ -40,6 +40,8 @@ export interface FakeGateway extends RunnerGateway {
   readonly submitted: Record<string, unknown>[]
   /** Utfallsklassene som ble skrevet til sporet. */
   readonly recorded: string[]
+  /** Grunnene kjøreren oppga da den ga en oppgave fra seg. */
+  readonly released: (string | null)[]
   /** Hvor mange ganger en oppgave er tatt ut. */
   claims: number
   expireLease(): void
@@ -51,6 +53,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
   const task = parseAgentTask(taskPayload(role))
   const submitted: Record<string, unknown>[] = []
   const recorded: string[] = []
+  const released: (string | null)[] = []
   let leaseValid = false
   let answered: string | null = null
   let claims = 0
@@ -64,6 +67,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
   const gateway: FakeGateway = {
     submitted,
     recorded,
+    released,
     get claims() {
       return claims
     },
@@ -216,6 +220,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
 
     releaseTask(input) {
       authenticated(input.accessToken)
+      released.push(input.reasonCode)
       if (!leaseValid || input.taskHandle !== FAKE_TASK_HANDLE) {
         return Promise.resolve({ released: false, reason: 'stale_task' })
       }

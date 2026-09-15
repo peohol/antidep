@@ -28,6 +28,8 @@
 // bestemme (AGENTS.md).
 // ============================================================================
 
+import { RUNNER_RELEASE_REASONS } from './gateway.ts'
+
 /** MCPs egne hint om hva et verktøy gjør. Se `docs/CHATGPT_WORKSPACE_AGENT.md`. */
 export interface ToolAnnotations {
   readonly title: string
@@ -182,10 +184,12 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
           type: 'string',
           description: 'Oppgavehåndtaket fra claim_agent_task.',
         },
-        reason: {
+        reason_code: {
           type: 'string',
-          maxLength: 300,
-          description: 'Én kort setning om hvorfor oppgaven ikke ble utført.',
+          enum: [...RUNNER_RELEASE_REASONS],
+          description:
+            'Hvorfor oppgaven ikke ble utført. En av de gitte verdiene, ikke fri tekst: sporet ' +
+            'skal ikke inneholde tekst en modell har skrevet.',
         },
       },
       required: ['task_handle'],

@@ -72,7 +72,7 @@ export type RunnerDatabase = {
       release_agent_task: RunnerRpc<{
         p_access_token: string
         p_task_handle: string
-        p_reason: string | null
+        p_reason_code: string | null
       }>
       agent_runner_identity: RunnerRpc<{ p_access_token: string }>
       record_agent_runner_outcome: RunnerRpc<{
@@ -151,6 +151,20 @@ export interface AuthorizationGrant {
   readonly agentRole: string
 }
 
+/**
+ * Grunnene en kjører kan oppgi for å gi en oppgave fra seg.
+ *
+ * En lukket klasse, og de samme verdiene `workflow.agent_release_note(text)`
+ * kjenner. Antidep skriver selv setningen klassen står for.
+ */
+export const RUNNER_RELEASE_REASONS = [
+  'blocked_by_task',
+  'could_not_complete',
+  'out_of_time',
+] as const
+
+export type RunnerReleaseReason = (typeof RUNNER_RELEASE_REASONS)[number]
+
 /** Hvem et token tilhører. Bærer ingen hemmelighet. */
 export interface RunnerIdentity {
   readonly connectionKey: string
@@ -218,7 +232,14 @@ export interface RunnerGateway {
   releaseTask(input: {
     readonly accessToken: string
     readonly taskHandle: string
-    readonly reason: string | null
+    /**
+     * Hvorfor oppgaven gis fra seg, som en lukket klasse.
+     *
+     * Ikke fri tekst: en setning fra modellen ville vært modellinnhold i det
+     * operative sporet, og sporet skal ikke bli et sted en promptavledet
+     * setning eller et kildeutdrag kan samle seg.
+     */
+    readonly reasonCode: RunnerReleaseReason | null
   }): Promise<{ readonly released: boolean; readonly reason?: string }>
 
   recordOutcome(input: {
@@ -489,7 +510,7 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
         await call('release_agent_task', {
           p_access_token: input.accessToken,
           p_task_handle: input.taskHandle,
-          p_reason: input.reason,
+          p_reason_code: input.reasonCode,
         }),
         where,
       )

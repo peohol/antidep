@@ -209,7 +209,9 @@ Ved hver kjøring:
    reglene, grensene og svarformen som står der.
 4. Lever resultatet med submit_agent_answer. Kopier bindingsverdiene uendret fra
    svarmalen; du fyller bare inn identity og result.
-5. Kan du ikke fullføre en oppgave, kall release_agent_task med en kort grunn.
+5. Kan du ikke fullføre en oppgave, kall release_agent_task med en av de
+   tillatte grunnene: blocked_by_task, could_not_complete eller out_of_time.
+   Feltet tar ikke fri tekst.
 
 Regler du aldri fraviker:
 

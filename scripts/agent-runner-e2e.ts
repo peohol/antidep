@@ -535,7 +535,8 @@ async function main(): Promise<void> {
       `select string_agg(distinct e.tool_name, ',' order by e.tool_name)
        from workflow.agent_runner_events e
        join workflow.agent_runner_connections c on c.id = e.connection_id
-       where c.connection_key = 'agent-runner:evidence-extraction'`,
+       where c.connection_key = 'agent-runner:evidence-extraction'
+         and c.valid_to is null`,
     ) === 'claim_agent_task,get_agent_task,list_pending_agent_tasks,submit_agent_answer',
   )
   check(
