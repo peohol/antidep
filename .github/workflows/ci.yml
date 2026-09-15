@@ -71,7 +71,8 @@ jobs:
       # pgTAP prøver SQL, og vitest prøver TypeScript med doble for databasen.
       # Grensen mellom dem — at parameternavnene agentporten sender, er nøyaktig
       # de api-funksjonene tar imot — er ikke prøvd av noen av dem. Denne kjører
-      # de ekte kjørerne mot den ekte stacken, hele veien til publisering.
+      # de ekte kjørerne mot den ekte stacken fram til et dokumentbundet
+      # EvidenceItem med uavhengig maskinkontroll. Publisering prøves ikke her.
       - name: Kjedeprøve (ekte kjørere mot ekte database)
         if: always()
         run: npm run db:test:chain
