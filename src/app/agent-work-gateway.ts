@@ -20,10 +20,14 @@
 
 import { getAntidepClient } from '../lib/supabase'
 import {
+  parseAgentRunnerConnections,
+  parseAgentRunnerPairingCode,
   parseAgentTask,
   parseAgentWorkQueue,
   parseImportOutcome,
   parseRoleModelAssignment,
+  type AgentRunnerConnection,
+  type AgentRunnerPairingCode,
   type AgentTask,
   type AgentWorkItem,
   type ImportOutcome,
@@ -49,6 +53,25 @@ export interface RoleModelChoice {
   readonly replacesReason: string | null
 }
 
+/**
+ * Registreringen av én autonom kjører, slik flaten samler den inn.
+ *
+ * `platformModelDisclosure` er en opplysning om plattformen og ikke om modellen:
+ * pinner Workspace Agent-en en bestemt modell plattformen viser, er den
+ * `platform_pinned`; gjør den ikke det, er den `not_exposed`. Det siste er en
+ * sann opplysning framfor en mangel som skal skjules — separasjonen hviler da på
+ * modelltildelingen, som i den manuelle handoffen
+ * (ANTIDEP_CONSTITUTION.md regel 3, 4).
+ */
+export interface RunnerRegistration {
+  readonly connectionKey: string
+  readonly displayName: string
+  readonly role: string
+  readonly platformAgentReference: string
+  readonly platformModelDisclosure: 'platform_pinned' | 'not_exposed'
+  readonly reason: string | null
+}
+
 export interface AgentWorkGateway {
   listQueue(): Promise<{
     readonly items: readonly AgentWorkItem[]
@@ -57,6 +80,10 @@ export interface AgentWorkGateway {
   assignRoleModel(choice: RoleModelChoice): Promise<RoleModelAssignment>
   readTask(pipelineJobId: string): Promise<AgentTask>
   importAnswer(pipelineJobId: string, answer: Record<string, unknown>): Promise<ImportOutcome>
+  listRunners(): Promise<readonly AgentRunnerConnection[]>
+  registerRunner(registration: RunnerRegistration): Promise<void>
+  issuePairingCode(connectionKey: string): Promise<AgentRunnerPairingCode>
+  revokeRunner(connectionKey: string, reason: string): Promise<void>
 }
 
 /** Avvisninger fra databasen når fram uendret: de sier hva som må gjøres. */
@@ -115,6 +142,48 @@ export function createAgentWorkGateway(): AgentWorkGateway {
         throw rejected('Svaret ble ikke registrert', error.message)
       }
       return parseImportOutcome(data)
+    },
+
+    async listRunners() {
+      const { data, error } = await client.rpc('agent_runner_connections', {})
+      if (error !== null) {
+        throw rejected('Kjørerne kunne ikke leses', error.message)
+      }
+      return parseAgentRunnerConnections(data)
+    },
+
+    async registerRunner(registration) {
+      const { error } = await client.rpc('register_agent_runner', {
+        p_connection_key: registration.connectionKey,
+        p_display_name: registration.displayName,
+        p_agent_role: registration.role,
+        p_platform_agent_reference: registration.platformAgentReference,
+        p_platform_model_disclosure: registration.platformModelDisclosure,
+        p_reason: registration.reason,
+      })
+      if (error !== null) {
+        throw rejected('Kjøreren ble ikke registrert', error.message)
+      }
+    },
+
+    async issuePairingCode(connectionKey) {
+      const { data, error } = await client.rpc('issue_agent_runner_pairing_code', {
+        p_connection_key: connectionKey,
+      })
+      if (error !== null) {
+        throw rejected('Tilkoblingskoden ble ikke utstedt', error.message)
+      }
+      return parseAgentRunnerPairingCode(data)
+    },
+
+    async revokeRunner(connectionKey, reason) {
+      const { error } = await client.rpc('revoke_agent_runner', {
+        p_connection_key: connectionKey,
+        p_reason: reason,
+      })
+      if (error !== null) {
+        throw rejected('Kjøreren ble ikke trukket tilbake', error.message)
+      }
     },
   }
 }

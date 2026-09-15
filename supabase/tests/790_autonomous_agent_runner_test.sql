@@ -1,0 +1,884 @@
+-- Migrasjon 011a — en autonom kjører over den eksterne agent-handoffen.
+--
+-- Filen dekker at setningene i migrasjonen betyr noe:
+--
+--   * tilkoblingen registreres av et menneske med mandat, aldri av et svar,
+--   * ett agentledd har høyst én kjører, og én Workspace Agent kjører ett ledd,
+--   * tilkoblingskoden er én gang, kort levetid og PKCE med S256,
+--   * tokenet gir arbeid i nøyaktig ett ledd, og ingenting annet,
+--   * bare ekte handoff-jobber eksponeres — aldri en vanlig pipelinejobb,
+--   * en løpende leie blokkerer, og en utløpt leie er ledig igjen,
+--   * oppgavehåndtaket ER leienøkkelen, så et manipulert håndtak treffer ingen,
+--   * leveringen går gjennom den samme skriveveien som et opplastet svar.json,
+--   * det samme svaret registrerer ingenting nytt, og et annet svar avvises,
+--   * en tilbaketrekking stopper tilgangen i det samme øyeblikket,
+--   * og sporet bærer utfallsklassen, aldri kildeteksten.
+--
+-- SQLSTATE 42501 = insufficient_privilege, 22023 = invalid_parameter_value,
+-- 23001 = restrict_violation, 23505 = unique_violation, 02000 = no_data_found.
+begin;
+\ir fixtures/active_clinical_fixture.inc
+
+create extension if not exists pgtap with schema extensions;
+
+select plan(63);
+
+-- ===========================================================================
+-- Del 1 — Flaten
+-- ===========================================================================
+select has_table('workflow', 'agent_runner_connections',
+                 'workflow.agent_runner_connections finnes');
+select has_table('workflow', 'agent_runner_secrets',
+                 'workflow.agent_runner_secrets finnes');
+select has_table('workflow', 'agent_runner_events',
+                 'workflow.agent_runner_events finnes');
+
+-- Redaktørveiene er authenticated og ingenting annet: å registrere en kjører,
+-- hente en engangskode og trekke den tilbake er avgjørelser om hvem som utfører
+-- kjedens arbeid.
+select is_empty(
+  $$
+    select f.name
+    from (values
+      ('api.register_agent_runner(text,text,text,text,text,text)'),
+      ('api.revoke_agent_runner(text,text)'),
+      ('api.issue_agent_runner_pairing_code(text)'),
+      ('api.agent_runner_connections()')
+    ) as f(name)
+    where has_function_privilege('anon', f.name, 'EXECUTE')
+       or has_function_privilege('public', f.name, 'EXECUTE')
+       or has_function_privilege('service_role', f.name, 'EXECUTE')
+  $$,
+  'redaktørveiene for kjøreren er ikke åpne for anon, service_role eller PUBLIC'
+);
+
+-- Kjørerveiene er anon, av samme grunn som api.claim_pipeline_job: en kjører har
+-- ingen brukerkonto, så tokenet og ikke Data API-rollen er kontrollen.
+select is_empty(
+  $$
+    select f.name
+    from (values
+      ('api.list_pending_agent_tasks(text)'),
+      ('api.claim_agent_task(text,text,integer)'),
+      ('api.agent_task_for_runner(text,uuid)'),
+      ('api.submit_agent_answer(text,uuid,jsonb)'),
+      ('api.release_agent_task(text,uuid,text)'),
+      ('api.agent_runner_identity(text)')
+    ) as f(name)
+    where not has_function_privilege('anon', f.name, 'EXECUTE')
+       or has_function_privilege('public', f.name, 'EXECUTE')
+       or has_function_privilege('service_role', f.name, 'EXECUTE')
+  $$,
+  'kjørerveiene er gitt til anon, og aldri til service_role eller PUBLIC'
+);
+
+select is_empty(
+  $$
+    select r.rolname
+    from (values ('anon'), ('authenticated'), ('service_role')) as r(rolname)
+    where has_table_privilege(r.rolname, 'workflow.agent_runner_secrets', 'SELECT')
+  $$,
+  'ingen klientrolle kan lese fingeravtrykkene av tokenene'
+);
+
+-- ===========================================================================
+-- Del 2 — Grunnlaget
+-- ===========================================================================
+create temporary table rep (text text) on commit drop;
+insert into rep values (
+  E'Syntetisk artikkel om sertralin og vektendring, for kjørerprøven.\n\n' ||
+  E'Patients (N = 100) with major depressive disorder were randomly assigned to sertraline for 8 weeks.\n\n' ||
+  E'Mean weight change from baseline was 0.8 kg in the sertraline arm at 8 weeks.\n\n' ||
+  E'No confidence interval was reported for the mean weight change.\n\n' ||
+  E'The study was limited by its short duration and its open-label design.\n');
+
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+values ('79000000-0000-4000-8000-000000000001', 'journal_article',
+        'Syntetisk kjørerkilde for 790', 'Testforfatter', pg_temp.extraction_actor_id());
+
+insert into knowledge.source_versions (
+  id, source_id, retrieved_at, retrieved_from, external_version, content_hash,
+  representation, retrieved_by_actor_id, document_sha256, document_byte_size,
+  document_media_type, text_extraction_tool, text_extraction_tool_version,
+  text_extraction_arguments, text_extraction_transform
+)
+select '79000000-0000-4000-8000-000000000002', '79000000-0000-4000-8000-000000000001',
+       now(), 'file:///runner-790.pdf', 'runner-v1',
+       knowledge.source_version_content_hash(r.text),
+       'full_text', pg_temp.extraction_actor_id(),
+       pg_temp.synthetic_pdf_digest('79000000-0000-4000-8000-000000000002'),
+       octet_length(pg_temp.synthetic_pdf('79000000-0000-4000-8000-000000000002')),
+       'application/pdf', 'pdftotext', '24.02.0',
+       '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
+from rep r;
+
+insert into knowledge.source_version_texts (source_version_id, representation, stored_by_actor_id)
+select '79000000-0000-4000-8000-000000000002', r.text, pg_temp.extraction_actor_id() from rep r;
+
+insert into auth.users (id, email) values
+  ('79000000-0000-4000-8000-00000000000e', 'redaktor-790@test.invalid'),
+  ('79000000-0000-4000-8000-00000000000f', 'utenmandat-790@test.invalid');
+
+insert into provenance.actors
+  (id, actor_type, actor_key, display_name, description, auth_user_id)
+values
+  ('ac790000-0000-4000-8000-00000000000e', 'human', 'human:redaktor-790', 'Redaktør 790',
+   'Aktør med editor-tildeling, for 790.', '79000000-0000-4000-8000-00000000000e'),
+  ('ac790000-0000-4000-8000-00000000000f', 'human', 'human:utenmandat-790', 'Uten mandat 790',
+   'Aktør uten editor-tildeling, for 790.', '79000000-0000-4000-8000-00000000000f');
+
+insert into workflow.user_roles
+  (user_id, role_code, scope_id, valid_from, granted_by_actor_id, grant_reason)
+values
+  ('79000000-0000-4000-8000-00000000000e', 'editor', null, now() - interval '1 year',
+   (select id from provenance.actors where actor_key = 'human:peder-holman'),
+   'Gyldig editor-tildeling for 790.');
+
+create temporary table ids (name text primary key, id uuid) on commit drop;
+insert into ids select 'drug', id from catalog.drugs where canonical_name = 'sertralin';
+insert into ids select 'outcome', id from catalog.clinical_concepts
+  where canonical_label = 'vektendring' and concept_type = 'outcome';
+insert into ids select 'population', id from catalog.populations
+  where canonical_label = 'voksne med depressiv lidelse';
+
+create temporary table res (label text primary key, payload jsonb) on commit drop;
+grant select, insert on res to authenticated, anon;
+grant select on ids to authenticated, anon;
+
+-- ===========================================================================
+-- Del 3 — Registreringen av kjøreren
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000f"}', true);
+set local role authenticated;
+select throws_ok(
+  $$ select api.register_agent_runner('agent-runner:x', 'X', 'evidence_extraction',
+                                      'Agent X', 'not_exposed') $$,
+  '42501',
+  null,
+  'en innlogget bruker uten editor-mandat kan ikke registrere en autonom kjører'
+);
+select throws_ok(
+  $$ select api.agent_runner_connections() $$,
+  '42501',
+  null,
+  'og kan ikke se hvilke kjørere som finnes'
+);
+reset role;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+
+-- De uavhengige kontrolleddene er Antideps egen deterministiske kode, og en
+-- ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en
+-- modellvurdering (ANTIDEP_CONSTITUTION.md regel 3).
+select throws_ok(
+  $$ select api.register_agent_runner('agent-runner:ekstraksjonskontroll', 'Kontroll',
+                                      'extraction_verification', 'Agent K', 'not_exposed') $$,
+  '22023',
+  null,
+  'et kontrolledd kan ikke settes ut til en autonom kjører'
+);
+
+select throws_ok(
+  $$ select api.register_agent_runner('agent-runner:ekstraksjon', 'Kjører',
+                                      'evidence_extraction', 'Agent A', 'kanskje') $$,
+  '22023',
+  null,
+  'eksponeringsgraden må være platform_pinned eller not_exposed, og ikke fri tekst'
+);
+
+insert into res
+select 'runner', api.register_agent_runner(
+  'agent-runner:evidence-extraction', 'Antidep ekstraksjonskjører',
+  'evidence_extraction', 'Antidep Ekstraksjon (ChatGPT)', 'not_exposed',
+  'Prøve 790: den planlagte kjøreren av ekstraksjonsleddet.');
+
+select is(
+  (select payload ->> 'agent_role' from res where label = 'runner'),
+  'evidence_extraction',
+  'kjøreren registreres bundet til nøyaktig ett agentledd'
+);
+
+-- Ett ledd har høyst én gjeldende kjører.
+select throws_ok(
+  $$ select api.register_agent_runner('agent-runner:ekstraksjon-to', 'En til',
+                                      'evidence_extraction', 'Antidep Ekstraksjon B', 'not_exposed') $$,
+  '23001',
+  null,
+  'et agentledd kan ikke ha to gjeldende autonome kjørere'
+);
+
+-- Og den samme Workspace Agent-en kan ikke kjøre to ledd. Én konfigurasjon er
+-- én modellruntime, og en kjede der den samme agenten både laget innholdet og
+-- vurderte det, ville vært egenverifikasjon med et ekstra ledd.
+select throws_ok(
+  $$ select api.register_agent_runner('agent-runner:claim-synthesis', 'Syntese',
+                                      'claim_synthesis', 'Antidep Ekstraksjon (ChatGPT)', 'not_exposed') $$,
+  '23001',
+  null,
+  'den samme Workspace Agent-en kan ikke kjøre to agentledd'
+);
+
+-- ===========================================================================
+-- Del 4 — Tilkoblingskoden og OAuth-flyten
+-- ===========================================================================
+insert into res
+select 'pairing', api.issue_agent_runner_pairing_code('agent-runner:evidence-extraction');
+
+select matches(
+  (select payload ->> 'pairing_code' from res where label = 'pairing'),
+  '^[0-9a-f]{64}$',
+  'tilkoblingskoden er 64 heksadesimale tegn fra databasens egen tilfeldighetskilde'
+);
+reset role;
+
+-- Koden lagres aldri i klartekst.
+select is_empty(
+  format(
+    $$ select s.id from workflow.agent_runner_secrets s
+       where s.secret_hash = %L $$,
+    (select payload ->> 'pairing_code' from res where label = 'pairing')
+  ),
+  'tilkoblingskoden finnes ikke i klartekst i databasen'
+);
+select is(
+  (select count(*)::int from workflow.agent_runner_secrets s where s.kind = 'pairing_code'),
+  1,
+  'én tilkoblingskode er utstedt'
+);
+
+-- PKCE-utfordringen regnes ut før rollen byttes: `anon` har ingen usage på
+-- workflow, og skal ikke ha det. Verifieren er RFC 7636 sitt eget eksempel.
+insert into res
+select 'pkce', jsonb_build_object(
+  'verifier', 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+  'challenge', workflow.pkce_s256_challenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'),
+  'other_challenge', workflow.pkce_s256_challenge('en-annen'));
+
+set local role anon;
+insert into res
+select 'client', api.register_agent_runner_client(
+  'Prøveklient', array['https://chatgpt.example/callback']);
+
+select throws_ok(
+  $$ select api.register_agent_runner_client('Ugyldig', array['http://ikke-lokal.example/cb']) $$,
+  '22023',
+  null,
+  'en redirect-adresse som verken er https eller loopback, avvises'
+);
+
+-- PKCE er påkrevd, og bare S256.
+select throws_ok(
+  format(
+    $$ select api.authorize_agent_runner(%L, %L, 'https://chatgpt.example/callback',
+                                         'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'plain') $$,
+    (select payload ->> 'pairing_code' from res where label = 'pairing'),
+    (select payload ->> 'client_id' from res where label = 'client')
+  ),
+  '22023',
+  null,
+  'PKCE med plain avvises; bare S256 godtas'
+);
+
+-- En adresse klienten ikke registrerte, svares på med det samme avslaget som en
+-- ukjent kode: en kaller som kunne skille dem, kunne kartlagt klienter.
+select throws_ok(
+  format(
+    $$ select api.authorize_agent_runner(%L, %L, 'https://angriper.example/cb',
+                                         'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'S256') $$,
+    (select payload ->> 'pairing_code' from res where label = 'pairing'),
+    (select payload ->> 'client_id' from res where label = 'client')
+  ),
+  '42501',
+  null,
+  'en autorisasjonskode leveres aldri til en adresse klienten ikke registrerte'
+);
+
+insert into res
+select 'grant', api.authorize_agent_runner(
+  (select payload ->> 'pairing_code' from res where label = 'pairing'),
+  (select payload ->> 'client_id' from res where label = 'client'),
+  'https://chatgpt.example/callback',
+  (select payload ->> 'challenge' from res where label = 'pkce'),
+  'S256');
+
+-- Engangskoden er brukt opp.
+select throws_ok(
+  format(
+    $$ select api.authorize_agent_runner(%L, %L, 'https://chatgpt.example/callback', %L, 'S256') $$,
+    (select payload ->> 'pairing_code' from res where label = 'pairing'),
+    (select payload ->> 'client_id' from res where label = 'client'),
+    (select payload ->> 'other_challenge' from res where label = 'pkce')
+  ),
+  '42501',
+  null,
+  'tilkoblingskoden kan bare brukes én gang'
+);
+
+-- Feil code_verifier gir ingen tokens.
+select throws_ok(
+  format(
+    $$ select api.exchange_agent_runner_code(%L, 'feil-verifier', %L,
+                                             'https://chatgpt.example/callback') $$,
+    (select payload ->> 'authorization_code' from res where label = 'grant'),
+    (select payload ->> 'client_id' from res where label = 'client')
+  ),
+  '42501',
+  null,
+  'en autorisasjonskode kan ikke innløses uten den riktige PKCE-verifieren'
+);
+
+insert into res
+select 'tokens', api.exchange_agent_runner_code(
+  (select payload ->> 'authorization_code' from res where label = 'grant'),
+  (select payload ->> 'verifier' from res where label = 'pkce'),
+  (select payload ->> 'client_id' from res where label = 'client'),
+  'https://chatgpt.example/callback');
+
+select is(
+  (select payload ->> 'token_type' from res where label = 'tokens'),
+  'Bearer',
+  'utvekslingen gir et Bearer-token'
+);
+
+-- Autorisasjonskoden er også en engangskode.
+select throws_ok(
+  format(
+    $$ select api.exchange_agent_runner_code(%L, %L, %L, 'https://chatgpt.example/callback') $$,
+    (select payload ->> 'authorization_code' from res where label = 'grant'),
+    (select payload ->> 'verifier' from res where label = 'pkce'),
+    (select payload ->> 'client_id' from res where label = 'client')
+  ),
+  '42501',
+  null,
+  'en autorisasjonskode kan bare innløses én gang'
+);
+
+select is(
+  (select payload ->> 'agent_role' from api.agent_runner_identity(
+     (select payload ->> 'access_token' from res where label = 'tokens')) as t(payload)),
+  'evidence_extraction',
+  'tokenet identifiserer nøyaktig det agentleddet tilkoblingen er registrert for'
+);
+
+select throws_ok(
+  $$ select api.agent_runner_identity(repeat('f', 64)) $$,
+  '42501',
+  null,
+  'et token databasen ikke kjenner, avvises med det samme avslaget'
+);
+reset role;
+
+-- ===========================================================================
+-- Del 5 — Arbeidet
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+
+-- En helt vanlig pipelinejobb i den samme rollen. Den skal ALDRI komme til
+-- syne for kjøreren: utførelsesmåten er en egenskap ved raden, ikke ved rollen.
+insert into res
+select 'internal', api.enqueue_pipeline_job(
+  'evidence_extraction', 'intern-jobb-790', jsonb_build_object(
+    'source_version_id', '79000000-0000-4000-8000-000000000002'));
+
+insert into res
+select 'task', api.enqueue_agent_task('evidence_extraction', jsonb_build_object(
+  'source_version_id', '79000000-0000-4000-8000-000000000002',
+  'drug_ids', jsonb_build_array((select id from ids where name = 'drug')),
+  'outcome_concept_ids', jsonb_build_array((select id from ids where name = 'outcome')),
+  'population_ids', jsonb_build_array((select id from ids where name = 'population'))
+));
+reset role;
+
+set local role anon;
+
+-- Ingen KI-tjeneste er valgt for leddet ennå. Oppgaven finnes, men den venter
+-- på et menneske — og det er noe annet enn at det ikke finnes arbeid.
+select is(
+  (select (api.list_pending_agent_tasks(
+     (select payload ->> 'access_token' from res where label = 'tokens')) -> 'tasks')::text),
+  '[]',
+  'en oppgave uten valgt KI-tjeneste er ikke arbeid kjøreren kan ta'
+);
+select cmp_ok(
+  (select (api.list_pending_agent_tasks(
+     (select payload ->> 'access_token' from res where label = 'tokens')) ->> 'blocked_count')::int),
+  '>=', 1,
+  'og den telles som noe som venter på et menneske, framfor å forsvinne'
+);
+reset role;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+select api.assign_agent_role_model(
+  'evidence_extraction', 'antidep-test', 'kjorer-modell-790', null, 'not_exposed',
+  'Prøve 790: tjenesten som utfører ekstraksjonsutkastet.');
+reset role;
+
+set local role anon;
+insert into res
+select 'pending', api.list_pending_agent_tasks(
+  (select payload ->> 'access_token' from res where label = 'tokens'));
+
+select is(
+  (select jsonb_array_length(payload -> 'tasks') from res where label = 'pending'),
+  1,
+  'bare den ekte handoff-oppgaven vises — den interne pipelinejobben aldri'
+);
+select matches(
+  (select payload -> 'tasks' -> 0 ->> 'task_ref' from res where label = 'pending'),
+  '^task_[0-9a-f]{24}$',
+  'køen gir en ugjennomsiktig henvisning, og ingen databaseidentitet'
+);
+
+-- Køen skal si hva oppgaven gjelder, og ikke bære artikkelen: én planlagt
+-- kjøring skal ikke laste ned hele fulltekstbiblioteket for å se hva som finnes.
+select is_empty(
+  $$
+    select 1 from res
+    where label = 'pending'
+      and payload::text like '%major depressive disorder%'
+  $$,
+  'køen inneholder ikke kildeteksten'
+);
+
+-- Et manipulert håndtak treffer ingen oppgave.
+select is(
+  (select api.claim_agent_task(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     'task_000000000000000000000000') ->> 'reason'),
+  'stale_task',
+  'en oppgavehenvisning kjøreren fant på, gir ingen oppgave'
+);
+
+insert into res
+select 'claim', api.claim_agent_task(
+  (select payload ->> 'access_token' from res where label = 'tokens'),
+  (select payload -> 'tasks' -> 0 ->> 'task_ref' from res where label = 'pending'),
+  900);
+
+select is(
+  (select (payload ->> 'claimed')::boolean from res where label = 'claim'),
+  true,
+  'kjøreren tar ut oppgaven med en leie'
+);
+
+-- En løpende leie blokkerer. Ingen annen kjøring og ingen import kan ta den.
+select is(
+  (select api.claim_agent_task(
+     (select payload ->> 'access_token' from res where label = 'tokens')) ->> 'reason'),
+  'no_work',
+  'en oppgave med løpende leie er ikke ledig for et nytt uttak'
+);
+
+select is(
+  (select (api.agent_task_for_runner(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     (select (payload ->> 'task_handle')::uuid from res where label = 'claim')) ->> 'available')::boolean),
+  true,
+  'den som holder leien, får hele oppgaven'
+);
+
+-- Og bare den. Et håndtak som ikke er jobbens gjeldende leie, gir ingen
+-- forskningsartikkel ut.
+select is(
+  (select api.agent_task_for_runner(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     '00000000-0000-4000-8000-000000000000'::uuid) ->> 'reason'),
+  'stale_task',
+  'et manipulert oppgavehåndtak gir ingen oppgave ut'
+);
+
+insert into res
+select 'payload', api.agent_task_for_runner(
+  (select payload ->> 'access_token' from res where label = 'tokens'),
+  (select (payload ->> 'task_handle')::uuid from res where label = 'claim'));
+
+select ok(
+  (select payload -> 'task' -> 'input' ->> 'representation_text' from res where label = 'payload')
+    like '%major depressive disorder%',
+  'oppgaven bærer hele den kontrollerte fullteksten når den først er tatt'
+);
+reset role;
+
+select ok(
+  (select payload -> 'task' ->> 'request_digest' from res where label = 'payload')
+    = (select workflow.agent_task_digest(workflow.agent_task(j) -> 'binding')
+       from workflow.pipeline_jobs j
+       where j.id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task')),
+  'avtrykket er nøyaktig det den manuelle veien ville gitt, av de samme radene'
+);
+
+-- ===========================================================================
+-- Del 6 — Leveringen
+--
+-- «Agenten» under er denne prøven. Den kopierer bindingsverdiene uendret ut av
+-- oppgaven og fyller inn de to tingene bare den vet: hvem den er, og hva den kom
+-- fram til.
+-- ===========================================================================
+create temporary table answers (label text primary key, payload jsonb) on commit drop;
+grant select, insert on answers to anon, authenticated;
+
+insert into answers
+select 'runner', jsonb_build_object(
+  'answer_version', 'antidep/agent-answer@1',
+  'task_version', 'antidep/agent-task@1',
+  'role', 'evidence_extraction',
+  'job_key', t.payload -> 'task' ->> 'job_key',
+  'request_digest', t.payload -> 'task' ->> 'request_digest',
+  'output_schema_version', t.payload -> 'task' ->> 'output_schema_version',
+  'identity', jsonb_build_object(
+    'provider', 'antidep-test', 'model', 'kjorer-modell-790',
+    'model_version_disclosure', 'not_exposed'),
+  'answered_at', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+  'result', jsonb_build_object(
+    'extraction', jsonb_build_object(
+      'design_code', 'randomized_controlled_trial',
+      'population_id', (select id from ids where name = 'population'),
+      'population_availability', 'reported_value',
+      'population_detail', 'Voksne med depressiv lidelse',
+      'sample_size', 100,
+      'sample_size_availability', 'reported_value',
+      'intervention_drug_id', (select id from ids where name = 'drug'),
+      'intervention_detail', 'sertralin',
+      'comparator_kind', 'none',
+      'comparator_drug_id', null,
+      'comparator_detail', null,
+      'outcome_concept_id', (select id from ids where name = 'outcome'),
+      'outcome_detail', 'Vektendring fra baseline',
+      'timepoint_min', '8 weeks',
+      'timepoint_max', '8 weeks',
+      'timepoint_availability', 'reported_value',
+      'reported_direction', 'increase',
+      'effect_measure', 'mean_change',
+      'estimate', '0.8',
+      'estimate_unit', 'kg',
+      'estimate_availability', 'reported_value',
+      'ci_lower', null, 'ci_upper', null, 'ci_level_percent', null,
+      'confidence_interval_availability', 'not_reported',
+      'limitations_text', 'Kort varighet og åpen design.',
+      'source_locator', 'Avsnitt 3',
+      'source_quote', 'Mean weight change from baseline was 0.8 kg in the sertraline arm at 8 weeks.'
+    ),
+    'field_groundings', (
+      select jsonb_agg(jsonb_build_object(
+        'check_field', f,
+        'source_excerpt', 'Mean weight change from baseline was 0.8 kg in the sertraline arm at 8 weeks.',
+        'source_locator', 'Avsnitt 3',
+        'justification', 'Utdraget oppgir verdien for ' || f || '.'))
+      from unnest(array['intervention_arm','outcome','reported_direction','availability_semantics',
+                        'effect_measure','population','sample_size','timepoint','estimate',
+                        'limitations']) as f
+    )
+  ))
+from res t where t.label = 'payload';
+
+set local role anon;
+
+-- Et svar levert på et håndtak kjøreren ikke holder, skriver ingenting.
+select is(
+  (select api.submit_agent_answer(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     '00000000-0000-4000-8000-000000000000'::uuid,
+     (select payload from answers where label = 'runner')) ->> 'reason'),
+  'stale_task',
+  'et svar på et foreldet håndtak registrerer ingenting'
+);
+
+-- Et svar fra en annen modell enn den leddet er tildelt, avvises før noe skrives.
+select throws_ok(
+  format(
+    $$ select api.submit_agent_answer(%L, %L::uuid, %L::jsonb) $$,
+    (select payload ->> 'access_token' from res where label = 'tokens'),
+    (select payload ->> 'task_handle' from res where label = 'claim'),
+    (select jsonb_set(payload, '{identity,model}', '"en-helt-annen-modell"')
+     from answers where label = 'runner')
+  ),
+  '22023',
+  null,
+  'et svar fra en annen modell enn den tildelte, avvises'
+);
+
+-- Og et svar avgitt på et annet grunnlag.
+select throws_ok(
+  format(
+    $$ select api.submit_agent_answer(%L, %L::uuid, %L::jsonb) $$,
+    (select payload ->> 'access_token' from res where label = 'tokens'),
+    (select payload ->> 'task_handle' from res where label = 'claim'),
+    (select jsonb_set(payload, '{request_digest}',
+                      to_jsonb('sha256:' || repeat('a', 64)))
+     from answers where label = 'runner')
+  ),
+  '22023',
+  null,
+  'et svar avgitt på et annet grunnlag, avvises'
+);
+
+-- Ukjente felter avvises, som i den manuelle veien.
+select throws_ok(
+  format(
+    $$ select api.submit_agent_answer(%L, %L::uuid, %L::jsonb) $$,
+    (select payload ->> 'access_token' from res where label = 'tokens'),
+    (select payload ->> 'task_handle' from res where label = 'claim'),
+    (select payload || '{"notat":"noe modellen fant på"}'::jsonb
+     from answers where label = 'runner')
+  ),
+  '22023',
+  null,
+  'et svar med et felt kontrakten ikke kjenner, avvises'
+);
+
+insert into res
+select 'submitted', api.submit_agent_answer(
+  (select payload ->> 'access_token' from res where label = 'tokens'),
+  (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
+  (select payload from answers where label = 'runner'));
+
+select is(
+  (select (payload ->> 'imported')::boolean from res where label = 'submitted'),
+  true,
+  'svaret registreres gjennom den samme skriveveien et opplastet svar.json går gjennom'
+);
+select is(
+  (select payload ->> 'delivered_by' from res where label = 'submitted'),
+  'autonomous_runner',
+  'importsporet sier at svaret kom fra en autonom kjører'
+);
+
+-- Det samme svaret sendt inn igjen registrerer ingenting nytt.
+insert into res
+select 'submitted_again', api.submit_agent_answer(
+  (select payload ->> 'access_token' from res where label = 'tokens'),
+  (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
+  (select payload from answers where label = 'runner'));
+
+select is(
+  (select (payload ->> 'already_imported')::boolean from res where label = 'submitted_again'),
+  true,
+  'det samme svaret sendt inn igjen registrerer ingenting nytt'
+);
+
+-- Et ANNET svar på en besvart oppgave avvises.
+select throws_ok(
+  format(
+    $$ select api.submit_agent_answer(%L, %L::uuid, %L::jsonb) $$,
+    (select payload ->> 'access_token' from res where label = 'tokens'),
+    (select payload ->> 'task_handle' from res where label = 'claim'),
+    (select jsonb_set(payload, '{result,extraction,sample_size}', '99')
+     from answers where label = 'runner')
+  ),
+  '23505',
+  null,
+  'et annet svar på en besvart oppgave avvises'
+);
+reset role;
+
+select is(
+  (select count(*)::int from knowledge.evidence_items e
+   where e.source_version_id = '79000000-0000-4000-8000-000000000002'),
+  1,
+  'gjentatte leveringer gir aldri doble kliniske artefakter'
+);
+
+-- Proveniensen bærer både registreringsidentiteten og den eksterne agenten som
+-- faktisk gjorde arbeidet.
+select is(
+  (select format('%s/%s', r.semantic_provider, r.semantic_model)
+   from workflow.agent_handoff_imports i
+   join provenance.agent_runs r on r.id = i.agent_run_id
+   where i.pipeline_job_id = (select (payload ->> 'pipeline_job_id')::uuid
+                              from res where label = 'task')),
+  'antidep-test/kjorer-modell-790',
+  'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet'
+);
+
+-- Og importen navngir kjøreren som leverte det, uten å gjøre den til aktør:
+-- ansvaret ligger hos mennesket som registrerte kjøreren.
+select is(
+  (select c.connection_key
+   from workflow.agent_handoff_imports i
+   join workflow.agent_runner_connections c on c.id = i.runner_connection_id
+   where i.pipeline_job_id = (select (payload ->> 'pipeline_job_id')::uuid
+                              from res where label = 'task')),
+  'agent-runner:evidence-extraction',
+  'importen navngir den autonome kjøreren som leverte svaret'
+);
+select is(
+  (select i.imported_by_actor_id from workflow.agent_handoff_imports i
+   where i.pipeline_job_id = (select (payload ->> 'pipeline_job_id')::uuid
+                              from res where label = 'task')),
+  'ac790000-0000-4000-8000-00000000000e'::uuid,
+  'ansvaret føres på mennesket som registrerte kjøreren, ikke på kjøreren selv'
+);
+
+-- ===========================================================================
+-- Del 7 — Sporet, leien og tilbaketrekkingen
+-- ===========================================================================
+select ok(
+  exists (
+    select 1 from workflow.agent_runner_events e
+    where e.tool_name = 'submit_agent_answer' and e.outcome = 'ok'
+  ),
+  'sporet bærer verktøynavnet og utfallsklassen'
+);
+select is_empty(
+  $$
+    select e.id from workflow.agent_runner_events e
+    where coalesce(e.note, '') like '%major depressive disorder%'
+       or coalesce(e.note, '') like '%sertraline%'
+  $$,
+  'sporet bærer aldri kildetekst'
+);
+
+-- En utløpt leie er ledig igjen. Det er nettopp den tilstanden som skal
+-- overleve at en planlagt kjøring døde midt i arbeidet.
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+insert into res
+select 'task2', api.enqueue_agent_task('evidence_extraction', jsonb_build_object(
+  'source_version_id', '79000000-0000-4000-8000-000000000002',
+  'drug_ids', jsonb_build_array((select id from ids where name = 'drug')),
+  'outcome_concept_ids', jsonb_build_array((select id from ids where name = 'outcome'))
+));
+reset role;
+
+set local role anon;
+insert into res
+select 'claim2', api.claim_agent_task(
+  (select payload ->> 'access_token' from res where label = 'tokens'), null, 900);
+reset role;
+
+-- Køen sier hvem som holder oppgaven. «Blokkert» er feil ord når arbeidet
+-- pågår automatisk akkurat nå.
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+insert into res select 'queue', jsonb_build_object('rows', api.agent_work_queue());
+reset role;
+
+select is(
+  (select q ->> 'held_by_runner'
+   from res, jsonb_array_elements(payload -> 'rows') as q
+   where label = 'queue'
+     and q ->> 'pipeline_job_id' = (select payload ->> 'pipeline_job_id' from res where label = 'task2')),
+  'Antidep ekstraksjonskjører',
+  'agentkøen sier hvilken autonom kjører som holder oppgaven akkurat nå'
+);
+
+-- Den manuelle veien kan ikke registrere det samme arbeidet mens kjøreren
+-- holder uttaket. De to deler kø, leie og jobb, og kan derfor ikke doble noe.
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+select throws_ok(
+  format(
+    $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
+    (select payload ->> 'pipeline_job_id' from res where label = 'task2'),
+    (select payload from answers where label = 'runner')
+  ),
+  '23001',
+  null,
+  'den manuelle importen kan ikke overta en oppgave en autonom kjører holder'
+);
+reset role;
+
+update workflow.pipeline_jobs
+set lease_expires_at = statement_timestamp() - interval '1 minute'
+where id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task2');
+
+set local role anon;
+select is(
+  (select api.agent_task_for_runner(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     (select (payload ->> 'task_handle')::uuid from res where label = 'claim2')) ->> 'reason'),
+  'stale_task',
+  'en kjøring med utløpt leie får ikke oppgaven ut igjen'
+);
+
+insert into res
+select 'reclaim', api.claim_agent_task(
+  (select payload ->> 'access_token' from res where label = 'tokens'), null, 900);
+select is(
+  (select (payload ->> 'claimed')::boolean from res where label = 'reclaim'),
+  true,
+  'en oppgave med utløpt leie kan tas på nytt'
+);
+select isnt(
+  (select payload ->> 'task_handle' from res where label = 'reclaim'),
+  (select payload ->> 'task_handle' from res where label = 'claim2'),
+  'det nye uttaket får sin egen nøkkel, så det gamle håndtaket treffer ingenting'
+);
+
+-- Og det foreldede håndtaket kan ikke levere et svar over det uttaket som nå
+-- arbeider.
+select is(
+  (select api.submit_agent_answer(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     (select (payload ->> 'task_handle')::uuid from res where label = 'claim2'),
+     (select payload from answers where label = 'runner')) ->> 'reason'),
+  'stale_task',
+  'et svar fra en utløpt leie kan ikke skrive over uttaket som nå arbeider'
+);
+reset role;
+
+-- Tilbaketrekkingen stopper tilgangen i det samme øyeblikket.
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+select throws_ok(
+  $$ select api.revoke_agent_runner('agent-runner:evidence-extraction', '   ') $$,
+  '22023',
+  null,
+  'en tilbaketrekking krever en begrunnelse'
+);
+select api.revoke_agent_runner(
+  'agent-runner:evidence-extraction', 'Prøve 790: kjøreren tas ut av bruk.');
+reset role;
+
+set local role anon;
+select throws_ok(
+  format($$ select api.list_pending_agent_tasks(%L) $$,
+         (select payload ->> 'access_token' from res where label = 'tokens')),
+  '42501',
+  null,
+  'et token slutter å gjelde i det samme øyeblikket kjøreren trekkes tilbake'
+);
+select throws_ok(
+  format($$ select api.refresh_agent_runner_token(%L, %L) $$,
+         (select payload ->> 'refresh_token' from res where label = 'tokens'),
+         (select payload ->> 'client_id' from res where label = 'client')),
+  '42501',
+  null,
+  'og en tilbaketrukket tilkobling kan ikke fornyes'
+);
+reset role;
+
+-- Historikken består. En kjører som har hentet arbeid, slettes aldri.
+select is(
+  (select count(*)::int from workflow.agent_runner_connections
+   where connection_key = 'agent-runner:evidence-extraction'),
+  1,
+  'tilkoblingen blir stående med sin periode, med hvem og hvorfor'
+);
+select ok(
+  (select revocation_reason is not null and revoked_by_actor_id is not null
+   from workflow.agent_runner_connections
+   where connection_key = 'agent-runner:evidence-extraction'),
+  'tilbaketrekkingen navngir hvem og hvorfor'
+);
+
+select throws_ok(
+  $$ delete from workflow.agent_runner_events $$,
+  '23001',
+  null,
+  'sporet etter en kjøring skrives ikke om'
+);
+
+select * from finish();
+rollback;

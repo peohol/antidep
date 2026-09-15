@@ -488,6 +488,39 @@ export type Database = {
         }
         Returns: unknown
       }
+      // Den autonome kjøreren (migrasjon 011a). Redaktørveiene, og bare dem:
+      // selve arbeidsflaten kjøreren bruker, er token-autentisert og kalles av
+      // MCP-appen, aldri av nettleseren. Tilkoblingskoden er det eneste stedet
+      // en hemmelighet forlater databasen i klartekst, og den lever i ti
+      // minutter.
+      agent_runner_connections: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      register_agent_runner: {
+        Args: {
+          p_connection_key: string
+          p_display_name: string
+          p_agent_role: string
+          p_platform_agent_reference: string
+          p_platform_model_disclosure: string
+          p_reason?: string | null
+        }
+        Returns: unknown
+      }
+      issue_agent_runner_pairing_code: {
+        Args: {
+          p_connection_key: string
+        }
+        Returns: unknown
+      }
+      revoke_agent_runner: {
+        Args: {
+          p_connection_key: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
       // `p_seen_candidate_digest` er avtrykket flaten faktisk viste, sendt
       // tilbake uendret. Databasen krever at det er kandidatens eget *og* at
       // innholdet fortsatt bygger til det: en godkjenning avgitt mot ett innhold

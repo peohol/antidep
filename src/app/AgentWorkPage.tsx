@@ -49,6 +49,9 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'reac
 
 import {
   HANDOFF_CONTRACTS,
+  HANDOFF_ROLES,
+  type AgentRunnerConnection,
+  type AgentRunnerPairingCode,
   type AgentTask,
   type AgentWorkItem,
   type ImportOutcome,
@@ -57,7 +60,7 @@ import { answerBindingProblem, parseAgentAnswer, parseAnswerJson } from '../agen
 import { agentTaskFileName, renderAgentTaskFile } from '../agents/agent-task-file'
 import { handoffResultProblem } from '../agents/handoff-result'
 import { describeModelIdentity } from '../agents/model-identity'
-import type { AgentWorkGateway, RoleModelChoice } from './agent-work-gateway'
+import type { AgentWorkGateway, RoleModelChoice, RunnerRegistration } from './agent-work-gateway'
 
 /** Hvordan en fil havner hos brukeren. Byttes ut i prøver. */
 export type SaveFile = (name: string, text: string) => void
@@ -138,10 +141,22 @@ export function AgentWorkPage({ gateway, saveFile }: AgentWorkPageProps): React.
   const [error, setError] = useState<string | null>(null)
   const [statuses, setStatuses] = useState<Readonly<Record<string, ItemStatus>>>({})
   const [busy, setBusy] = useState<string | null>(null)
+  const [runners, setRunners] = useState<readonly AgentRunnerConnection[] | null>(null)
   // Oppgaven som ble lastet ned sist for hver rad. Svaret kontrolleres mot den
   // før det sendes, slik at et menneske får en setning på norsk framfor en
   // SQLSTATE. Er den ikke der, hentes den på nytt ved opplasting.
   const tasks = useRef(new Map<string, AgentTask>())
+
+  const loadRunners = useCallback(() => {
+    gateway
+      .listRunners()
+      .then(setRunners)
+      // En kjørerliste som ikke kan leses, skal ikke ta ned agentkøen: den
+      // manuelle veien virker uten den, og det er hele poenget med at den består.
+      .catch(() => {
+        setRunners([])
+      })
+  }, [gateway])
 
   const load = useCallback(() => {
     let cancelled = false
@@ -166,6 +181,7 @@ export function AgentWorkPage({ gateway, saveFile }: AgentWorkPageProps): React.
   }, [gateway])
 
   useEffect(load, [load])
+  useEffect(loadRunners, [loadRunners])
 
   const setStatus = useCallback((id: string, status: ItemStatus) => {
     setStatuses((current) => ({ ...current, [id]: status }))
@@ -322,6 +338,8 @@ export function AgentWorkPage({ gateway, saveFile }: AgentWorkPageProps): React.
         </ul>
       )}
 
+      <AutonomousRunners gateway={gateway} onChanged={loadRunners} runners={runners} />
+
       {finished.length > 0 ? (
         <section>
           <h2>Nettopp registrert</h2>
@@ -387,7 +405,12 @@ function AgentWorkRow({
         <>
           <p>Skal utføres av {describeModelIdentity(item.registeredModel)}.</p>
 
-          {item.blockedReason !== null ? (
+          {item.heldByRunner !== null ? (
+            // Arbeidet pågår automatisk akkurat nå. «Blokkert» ville vært feil
+            // ord, og en flate som sa det, ville bedt noen gripe inn i noe som
+            // går av seg selv (ANTIDEP_CONSTITUTION.md regel 4).
+            <p>Utføres automatisk nå av {item.heldByRunner}.</p>
+          ) : item.blockedReason !== null ? (
             // Ingen «bytt tjeneste» her. Byttet gjelder agentleddet, og en rad
             // som ikke kan utføres, er ikke stedet å ta den avgjørelsen —
             // byttet ville ikke gjort den utførbar.
@@ -539,5 +562,255 @@ function ServicePicker({ item, busy, onAssign }: ServicePickerProps): React.JSX.
       </p>
       {fields}
     </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Den autonome kjøreren
+//
+// Registreringen er en avgjørelse om hvem som utfører kjedens arbeid, og den
+// hører hjemme her — hos den som har tilgangen, i den samme flaten som valget av
+// KI-tjeneste. Nedlast/opplast-veien over består uansett: den er fallback når en
+// planlagt kjøring er nede, den er nyttig ved feilsøking, og den er veien inn
+// for en tjeneste uten en autonom integrasjon.
+//
+// Engangskoden vises én gang og lagres aldri i klartekst. Siden sier det, fordi
+// en kode som ser ut som noe man kan hente igjen, er en kode noen lar bli
+// liggende.
+// ---------------------------------------------------------------------------
+
+/** Én setning om hva plattformen faktisk viser om modellen bak kjøreren. */
+function describeDisclosure(value: string): string {
+  return value === 'platform_pinned'
+    ? 'Plattformen pinner modellen, og separasjonen mellom agentleddene kan etterprøves der.'
+    : 'Plattformen oppgir ikke hvilken modell agenten kjører. Separasjonen hviler da på ' +
+        'modelltildelingen over, ikke på plattformen — og Antidep later ikke som noe annet.'
+}
+
+interface AutonomousRunnersProps {
+  readonly gateway: AgentWorkGateway
+  readonly runners: readonly AgentRunnerConnection[] | null
+  readonly onChanged: () => void
+}
+
+function AutonomousRunners({
+  gateway,
+  runners,
+  onChanged,
+}: AutonomousRunnersProps): React.JSX.Element {
+  const [code, setCode] = useState<AgentRunnerPairingCode | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const act = useCallback(
+    async (work: () => Promise<string | null>) => {
+      setBusy(true)
+      setMessage(null)
+      try {
+        const said = await work()
+        if (said !== null) {
+          setMessage(said)
+        }
+        onChanged()
+      } catch (cause) {
+        setMessage(cause instanceof Error ? cause.message : String(cause))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [onChanged],
+  )
+
+  const issue = (connectionKey: string): void => {
+    void act(async () => {
+      const issued = await gateway.issuePairingCode(connectionKey)
+      setCode(issued)
+      return null
+    })
+  }
+
+  const revoke = (connectionKey: string): void => {
+    void act(async () => {
+      await gateway.revokeRunner(
+        connectionKey,
+        'Trukket tilbake fra agentarbeidsflaten av den som eier innholdet.',
+      )
+      setCode(null)
+      return 'Kjøreren er trukket tilbake, og tokenene sluttet å gjelde med det samme.'
+    })
+  }
+
+  const register = (registration: RunnerRegistration): void => {
+    void act(async () => {
+      await gateway.registerRunner(registration)
+      return 'Kjøreren er registrert. Hent en tilkoblingskode når du kobler den til.'
+    })
+  }
+
+  return (
+    <section>
+      <h2>Autonom kjører</h2>
+      <p>
+        En planlagt KI-agent kan hente arbeidet selv, utføre det og levere svaret tilbake gjennom de
+        samme kontrollene. Den får arbeid i nøyaktig ett agentledd, og ingen databasetilgang utover
+        det. Nedlastingen og opplastingen over virker uansett.
+      </p>
+
+      {runners === null ? (
+        <p>Henter kjørerne …</p>
+      ) : runners.length === 0 ? (
+        <p>Ingen autonom kjører er registrert. Alt agentarbeid gjøres manuelt.</p>
+      ) : (
+        <ul>
+          {runners.map((runner) => (
+            <li key={runner.connectionKey}>
+              <h3>{runner.displayName}</h3>
+              <p>
+                Utfører{' '}
+                {HANDOFF_CONTRACTS[runner.role as keyof typeof HANDOFF_CONTRACTS]?.label ??
+                  runner.role}
+                . Agent: {runner.platformAgentReference}.{' '}
+                {runner.connected ? 'Tilkoblet nå.' : 'Ikke tilkoblet.'}{' '}
+                {runner.deliveredAnswers === 0
+                  ? 'Har ikke levert noe svar ennå.'
+                  : runner.deliveredAnswers === 1
+                    ? 'Har levert ett svar.'
+                    : `Har levert ${String(runner.deliveredAnswers)} svar.`}
+              </p>
+              <p className="notice">{describeDisclosure(runner.platformModelDisclosure)}</p>
+              <p>
+                <button disabled={busy} onClick={() => issue(runner.connectionKey)} type="button">
+                  Hent tilkoblingskode
+                </button>{' '}
+                <button disabled={busy} onClick={() => revoke(runner.connectionKey)} type="button">
+                  Trekk tilbake
+                </button>
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {code !== null ? (
+        <p aria-live="polite">
+          Tilkoblingskode for {code.displayName}: <code>{code.pairingCode}</code>. Lim den inn i
+          tilkoblingsvinduet. Den gjelder én gang og utløper {code.expiresAt}. Koden vises bare nå.
+        </p>
+      ) : null}
+
+      {message !== null ? (
+        <p aria-live="polite" className="notice">
+          {message}
+        </p>
+      ) : null}
+
+      <RunnerForm busy={busy} onRegister={register} />
+    </section>
+  )
+}
+
+interface RunnerFormProps {
+  readonly busy: boolean
+  readonly onRegister: (registration: RunnerRegistration) => void
+}
+
+/**
+ * Registreringen av én kjører.
+ *
+ * Ingen liste over plattformer er hardkodet, av samme grunn som i
+ * `ServicePicker`: Antidep kan ikke vite hvilke agentplattformer eieren faktisk
+ * har. Feltene er fri tekst, og navnet skal være det plattformen selv viser.
+ */
+function RunnerForm({ busy, onRegister }: RunnerFormProps): React.JSX.Element {
+  const [role, setRole] = useState<string>(HANDOFF_ROLES[0])
+  const [name, setName] = useState('')
+  const [reference, setReference] = useState('')
+  const [pinned, setPinned] = useState(false)
+
+  const ready = name.trim() !== '' && reference.trim() !== ''
+
+  const submit = (event: React.FormEvent): void => {
+    event.preventDefault()
+    if (!ready) {
+      return
+    }
+    onRegister({
+      // Nøkkelen utledes av rollen framfor å være enda et felt å fylle ut: den
+      // er maskinlesbar, og et menneske har ingenting å bidra med der.
+      connectionKey: `agent-runner:${role.replaceAll('_', '-')}`,
+      displayName: name.trim(),
+      role,
+      platformAgentReference: reference.trim(),
+      platformModelDisclosure: pinned ? 'platform_pinned' : 'not_exposed',
+      reason: null,
+    })
+    setName('')
+    setReference('')
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <h3>Registrer en kjører</h3>
+      <p>
+        <label htmlFor="runner-role">Agentledd</label>{' '}
+        <select
+          disabled={busy}
+          id="runner-role"
+          onChange={(event) => {
+            setRole(event.target.value)
+          }}
+          value={role}
+        >
+          {HANDOFF_ROLES.map((value) => (
+            <option key={value} value={value}>
+              {HANDOFF_CONTRACTS[value].label}
+            </option>
+          ))}
+        </select>
+      </p>
+      <p>
+        <label htmlFor="runner-name">Navn på kjøreren</label>{' '}
+        <input
+          disabled={busy}
+          id="runner-name"
+          onChange={(event) => {
+            setName(event.target.value)
+          }}
+          type="text"
+          value={name}
+        />
+      </p>
+      <p>
+        <label htmlFor="runner-reference">Agentens navn i plattformen</label>{' '}
+        <input
+          disabled={busy}
+          id="runner-reference"
+          onChange={(event) => {
+            setReference(event.target.value)
+          }}
+          type="text"
+          value={reference}
+        />
+      </p>
+      <p>
+        <label htmlFor="runner-pinned">
+          <input
+            checked={pinned}
+            disabled={busy}
+            id="runner-pinned"
+            onChange={(event) => {
+              setPinned(event.target.checked)
+            }}
+            type="checkbox"
+          />{' '}
+          Plattformen pinner og viser hvilken modell agenten kjører
+        </label>
+      </p>
+      <p>
+        <button disabled={busy || !ready} type="submit">
+          Registrer kjøreren
+        </button>
+      </p>
+    </form>
   )
 }

@@ -84,8 +84,12 @@ select set_eq(
            ('candidate_final_controls'),
            -- Migrasjon 010c: hvilke pipelinejobber som er eksterne
            -- agentoppgaver, og ett importert agentsvar per oppgave.
-           ('agent_handoff_jobs'), ('agent_handoff_imports')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d og 010c'
+           ('agent_handoff_jobs'), ('agent_handoff_imports'),
+           -- Migrasjon 011a: den autonome kjøreren over den samme handoffen —
+           -- tilkoblingen, OAuth-klienten, hemmelighetene og sporet.
+           ('agent_runner_connections'), ('agent_runner_clients'),
+           ('agent_runner_secrets'), ('agent_runner_events')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c og 011a'
 );
 select set_eq(
   $$

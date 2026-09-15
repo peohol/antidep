@@ -8,7 +8,7 @@ Repoet inneholder Supabase-skjemaet, en testbar agentmotor og klinikerflaten. Kj
 
 Sluttkontrollen er bundet til nøyaktig den kandidaten som ble lest, og publiserer ingenting. Publiseringen er en egen handling med et annet mandat: et menneske med publisher-rolle tar i bruk nøyaktig det godkjente avtrykket, klinikerflaten viser den forseglede raden ordrett, og tilbaketrekking og rollback er nye, synlige hendelser som aldri sletter historikk.
 
-Det semantiske agentarbeidet gjøres av KI-tjenester eieren allerede har tilgang til. Antidep bygger oppgaven, binder svaret til nøyaktig det grunnlaget oppgaven ble laget av, og registrerer resultatet gjennom de samme kontrollerte skriveveiene som før. Hele veien betjenes fra flaten `/agentarbeid`: last ned oppgaven, gi den til KI-tjenesten, last opp svaret. Ingen modellnøkkel og ingen betalt modell-API er nødvendig.
+Det semantiske agentarbeidet gjøres av KI-tjenester eieren allerede har tilgang til. Antidep bygger oppgaven, binder svaret til nøyaktig det grunnlaget oppgaven ble laget av, og registrerer resultatet gjennom de samme kontrollerte skriveveiene som før. En planlagt ChatGPT Workspace Agent kan hente arbeidet selv gjennom Antideps private MCP-app, utføre det og levere svaret tilbake uten et menneske i transporten; nedlast/opplast-veien på `/agentarbeid` består som fallback. Ingen modellnøkkel og ingen betalt modell-API er nødvendig.
 
 Denne kodeleveransen har ikke i seg selv endret noen hosted database.
 
@@ -26,14 +26,20 @@ npm run build
 npm run verify:repo
 ```
 
-Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:chain`, `npm run db:stop`.
+Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:chain`, `npm run db:test:mcp`, `npm run db:stop`.
+
+`npm run db:test:mcp` går hele veien gjennom den private MCP-appen — tilkobling, uttak, oppgave, svar og registrering — mot den lokale databasen. Ingen modell kalles, og ingen nøkkel finnes: «agenten» er prøven selv.
 
 ## Agentarbeid
 
-Flaten `/agentarbeid` viser hvilke agentoppgaver som venter, hvilket ledd de gjelder, og hvilken KI-tjeneste leddet er tildelt. Tjenesten velges der, én gang per ledd, før oppgaven kan hentes ut. Oppgaven lastes ned som én fil som inneholder alt agenten trenger — rollen, reglene, grensene, den forventede svarstrukturen og hele den kontrollerte kildeteksten — og svaret lastes opp igjen som én JSON-fil.
+Arbeidet kan gjøres på to måter, og begge går gjennom de samme kontrollene.
+
+**Automatisk.** En planlagt KI-agent kobler seg til Antideps private MCP-app, spør om det finnes arbeid i sitt eget agentledd, tar én oppgave med en leie, leser den, utfører den og leverer svaret tilbake. Appen gir agenten fem smale operasjoner og ingenting annet: ingen SQL, ingen generell databaseadgang, ingen nøkler. Engangsoppsettet står i [Antidep som privat app i ChatGPT Business](docs/CHATGPT_WORKSPACE_AGENT.md), med den ferdige agentinstruksen.
+
+**Manuelt.** Flaten `/agentarbeid` viser hvilke agentoppgaver som venter, hvilket ledd de gjelder, og hvilken KI-tjeneste leddet er tildelt. Tjenesten velges der, én gang per ledd, før oppgaven kan hentes ut. Oppgaven lastes ned som én fil som inneholder alt agenten trenger — rollen, reglene, grensene, den forventede svarstrukturen og hele den kontrollerte kildeteksten — og svaret lastes opp igjen som én JSON-fil.
 
 Oppgavefilen kan inneholde hele forskningsartikkelen. Den går rett fra flaten og inn i KI-tjenesten, og skal aldri commites, legges i en issue eller havne i en logg.
 
 Generator, kildestøttekontroll og evidensvurdering skal fortsatt være reelt separate. Hvilken KI-tjeneste et agentledd utføres av, velges på forhånd fra agentarbeidsflaten av den som har tilgangen, og ingen andre ledd kan bruke den samme. Valget inngår i oppgavens avtrykk, så et svar kan bekrefte identiteten sin men ikke bestemme den. Finnes ingen uavhengig modell, stopper kjeden framfor å registrere en kontroll som ikke er uavhengig.
 
-Se [roadmap](docs/ROADMAP.md), [evidenskjeden](docs/EVIDENCE_PIPELINE.md) og [styringsreglene](docs/ANTIDEP_CONSTITUTION.md).
+Se [roadmap](docs/ROADMAP.md), [evidenskjeden](docs/EVIDENCE_PIPELINE.md), [den private MCP-appen](docs/CHATGPT_WORKSPACE_AGENT.md) og [styringsreglene](docs/ANTIDEP_CONSTITUTION.md).

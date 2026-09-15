@@ -502,6 +502,10 @@ describe('den publiserte klinikerflaten', () => {
       assignRoleModel: () => Promise.reject(new Error('ingen oppgave')),
       readTask: () => Promise.reject(new Error('ingen oppgave')),
       importAnswer: () => Promise.reject(new Error('ingen oppgave')),
+      listRunners: () => Promise.resolve([]),
+      registerRunner: () => Promise.reject(new Error('ingen oppgave')),
+      issuePairingCode: () => Promise.reject(new Error('ingen oppgave')),
+      revokeRunner: () => Promise.reject(new Error('ingen oppgave')),
     }
 
     render(
