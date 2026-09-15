@@ -8,8 +8,10 @@
 //
 // The final control is performed by a named human actor, because that is what
 // the rule requires — an agent identity cannot record one, and the test does
-// not pretend otherwise. Publication stays closed: the chain asserts that no
-// publication event exists when it is done.
+// not pretend otherwise. Publication is a separate, explicit action by a third
+// human with the publisher mandate; the chain then reads the published content
+// as a clinician, withdraws it and rolls back, and asserts that the history is
+// append-only throughout.
 
 import { execFileSync } from 'node:child_process'
 import { createHash, createHmac } from 'node:crypto'
@@ -36,6 +38,11 @@ import { createPipelineJobApi, jobKey } from '../src/agents/pipeline-job.ts'
 import { syntheticArticlePdf } from '../src/agents/test-support.ts'
 import { parseCandidateView, canBeFinalControlled } from '../src/lib/candidate-view.ts'
 import {
+  parsePublicationOutcome,
+  parsePublishedClaim,
+  parsePublishedClaimIndex,
+} from '../src/lib/published-claim.ts'
+import {
   buildAssignmentFromCatalog,
   type EditorCatalogApi,
 } from '../src/ops/extraction-assignment.ts'
@@ -61,6 +68,15 @@ const EDITOR_ACTOR = 'c2000000-0000-4000-8000-0000000000e1'
 // annet (ANTIDEP_CONSTITUTION.md regel 5, §12).
 const REVIEWER_USER = 'c2000000-0000-4000-8000-0000000000f0'
 const REVIEWER_ACTOR = 'c2000000-0000-4000-8000-0000000000f1'
+// Publisering er en tredje rettighet med sin egen terskel, og den utføres av et
+// tredje menneske: å godkjenne og å publisere er to handlinger med hvert sitt
+// mandat (ANTIDEP_CONSTITUTION.md regel 5, 6).
+const PUBLISHER_USER = 'c2000000-0000-4000-8000-0000000000a0'
+const PUBLISHER_ACTOR = 'c2000000-0000-4000-8000-0000000000a1'
+// En innlogget kliniker uten noe mandat i det hele tatt. Hen skal kunne lese det
+// publiserte innholdet, og ingenting internt.
+const CLINICIAN_USER = 'c2000000-0000-4000-8000-0000000000b0'
+const CLINICIAN_ACTOR = 'c2000000-0000-4000-8000-0000000000b1'
 
 function localAnonKey(): string {
   const output = execFileSync('npx', ['supabase', 'status', '-o', 'env'], {
@@ -161,6 +177,13 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
       select id from knowledge.source_versions where source_id = ${q(SOURCE)});
     delete from knowledge.source_versions where source_id = ${q(SOURCE)};
     delete from knowledge.sources where id = ${q(SOURCE)};
+    -- Publiseringshistorikken peker på påstanden og på kandidaten med RESTRICT,
+    -- og kjeden publiserer nå på ekte. Uten dette ville en ny kjøring i den
+    -- gjenbrukbare lokale databasen ikke fått fjernet noe av det den lagde.
+    delete from knowledge.publication_events where claim_id::text like 'c2000000%';
+    update knowledge.claims
+    set current_published_revision_id = null, current_published_candidate_id = null
+    where id::text like 'c2000000%';
     delete from workflow.candidate_final_controls where candidate_id in (
       select c.id from knowledge.candidates c
       join knowledge.claim_revisions r on r.id = c.claim_revision_id
@@ -185,9 +208,12 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
       select id from knowledge.source_versions where source_id = ${q(SOURCE)});
     delete from knowledge.source_document_publications where source_id = ${q(SOURCE)};
     delete from knowledge.source_identifiers where source_id = ${q(SOURCE)};
-    delete from workflow.user_roles where user_id in (${q(EDITOR_USER)}, ${q(REVIEWER_USER)});
-    delete from provenance.actors where id in (${q(EDITOR_ACTOR)}, ${q(REVIEWER_ACTOR)});
-    delete from auth.users where id in (${q(EDITOR_USER)}, ${q(REVIEWER_USER)});
+    delete from workflow.user_roles where user_id in (
+      ${q(EDITOR_USER)}, ${q(REVIEWER_USER)}, ${q(PUBLISHER_USER)}, ${q(CLINICIAN_USER)});
+    delete from provenance.actors where id in (
+      ${q(EDITOR_ACTOR)}, ${q(REVIEWER_ACTOR)}, ${q(PUBLISHER_ACTOR)}, ${q(CLINICIAN_ACTOR)});
+    delete from auth.users where id in (
+      ${q(EDITOR_USER)}, ${q(REVIEWER_USER)}, ${q(PUBLISHER_USER)}, ${q(CLINICIAN_USER)});
     reset session_replication_role;
 
     insert into knowledge.sources
@@ -206,7 +232,11 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
     values (${q(EDITOR_USER)}, '00000000-0000-0000-0000-000000000000',
             'authenticated', 'authenticated', 'antidep2-kjede-editor@example.test'),
            (${q(REVIEWER_USER)}, '00000000-0000-0000-0000-000000000000',
-            'authenticated', 'authenticated', 'antidep2-kjede-fagperson@example.test');
+            'authenticated', 'authenticated', 'antidep2-kjede-fagperson@example.test'),
+           (${q(PUBLISHER_USER)}, '00000000-0000-0000-0000-000000000000',
+            'authenticated', 'authenticated', 'antidep2-kjede-publisher@example.test'),
+           (${q(CLINICIAN_USER)}, '00000000-0000-0000-0000-000000000000',
+            'authenticated', 'authenticated', 'antidep2-kjede-kliniker@example.test');
 
     insert into provenance.actors
       (id, actor_key, actor_type, display_name, description, auth_user_id)
@@ -215,7 +245,13 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
             ${q(EDITOR_USER)}),
            (${q(REVIEWER_ACTOR)}, 'human:antidep2-kjede-fagperson', 'human',
             'Antidep 2 kjedeprøvens fagperson', 'Bare for scripts/agent-chain-test.ts.',
-            ${q(REVIEWER_USER)});
+            ${q(REVIEWER_USER)}),
+           (${q(PUBLISHER_ACTOR)}, 'human:antidep2-kjede-publisher', 'human',
+            'Antidep 2 kjedeprøvens publisher', 'Bare for scripts/agent-chain-test.ts.',
+            ${q(PUBLISHER_USER)}),
+           (${q(CLINICIAN_ACTOR)}, 'human:antidep2-kjede-kliniker', 'human',
+            'Antidep 2 kjedeprøvens kliniker', 'Bare for scripts/agent-chain-test.ts.',
+            ${q(CLINICIAN_USER)});
 
     insert into workflow.user_roles
       (user_id, role_code, scope_id, valid_from, granted_by_actor_id, grant_reason)
@@ -226,7 +262,10 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
             (select id from catalog.clinical_concepts where canonical_label = 'vektendring'),
             now() - interval '1 day',
             (select id from provenance.actors where actor_key = 'human:peder-holman'),
-            'Antidep 2 syntetisk kjedeprøve: sluttkontroll.');
+            'Antidep 2 syntetisk kjedeprøve: sluttkontroll.'),
+           (${q(PUBLISHER_USER)}, 'publisher', null, now() - interval '1 day',
+            (select id from provenance.actors where actor_key = 'human:peder-holman'),
+            'Antidep 2 syntetisk kjedeprøve: publisering.');
     `,
   )
 
@@ -246,7 +285,10 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
 
 async function main(): Promise<void> {
   const config = readConfig(process.argv.slice(2))
-  console.log('Antidep 2: PDF → oppdrag → agentekstraksjon → uavhengig verifikasjon.\n')
+  console.log(
+    'Antidep 2: PDF → oppdrag → agentekstraksjon → uavhengig verifikasjon → forseglet ' +
+      'kandidat → sluttkontroll → publisering → klinikervisning → withdraw → rollback.\n',
+  )
 
   const { secret, verifierSecret } = seed(config)
   const editor = createClient(config.apiUrl, config.anonKey, {
@@ -960,18 +1002,301 @@ async function main(): Promise<void> {
     )
 
     check(
-      'kjeden oppretter ingen menneskelig mikroreview eller publisering',
+      'kjeden oppretter ingen menneskelig mikroreview',
       psql(
         config,
         `select (count(*) = 0)::text from workflow.review_decisions rd
          where rd.evidence_item_id = ${q(evidenceItemId)}`,
-      ) === 'true' &&
-        psql(
-          config,
-          `select (count(*) = 0)::text from knowledge.publication_events pe
-           join knowledge.claims c on c.id = pe.claim_id
-           where c.id::text like 'c2000000%'`,
-        ) === 'true',
+      ) === 'true',
+    )
+
+    // ------------------------------------------------------------------
+    // Publiseringen, klinikervisningen, tilbaketrekkingen og rollbacken
+    //
+    // Fra migrasjon 009e og 009f er publisering en egen, eksplisitt handling
+    // etter sluttkontrollen, med et annet mandat og på nøyaktig det forseglede
+    // innholdet. Kjeden går derfor hele veien: privat PDF → agentkjede →
+    // forseglet kandidat → menneskelig sluttkontroll → publisering →
+    // klinikervisning, og deretter withdraw og rollback.
+    // ------------------------------------------------------------------
+    const publisher = createClient(config.apiUrl, config.anonKey, {
+      db: { schema: 'api' },
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${userToken(config, PUBLISHER_USER)}` } },
+    })
+    const clinician = createClient(config.apiUrl, config.anonKey, {
+      db: { schema: 'api' },
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${userToken(config, CLINICIAN_USER)}` } },
+    })
+
+    const byReviewer = await reviewer.rpc('publish_candidate', {
+      p_candidate_id: candidateId,
+      p_seen_candidate_digest: view.candidateDigest,
+      p_reason: 'Kjedeprøve: fagpersonen publiserer selv.',
+    })
+    check(
+      'å sluttkontrollere gir ikke publiseringsrett',
+      byReviewer.error !== null,
+      'fagpersonen fikk publisere',
+    )
+
+    const staleDigest = await publisher.rpc('publish_candidate', {
+      p_candidate_id: candidateId,
+      p_seen_candidate_digest: `sha256:${'9'.repeat(64)}`,
+      p_reason: 'Kjedeprøve: feil avtrykk.',
+    })
+    check(
+      'en publisering mot et annet avtrykk enn kandidatens eget avvises',
+      staleDigest.error !== null,
+      'publiseringen gikk gjennom',
+    )
+
+    const published = await publisher.rpc('publish_candidate', {
+      p_candidate_id: candidateId,
+      p_seen_candidate_digest: view.candidateDigest,
+      p_reason: 'Kjedeprøve: godkjent innhold tas i bruk.',
+    })
+    check('publiseringen registreres', published.error === null, published.error?.message ?? '')
+    if (published.error !== null) return
+    const publishOutcome = parsePublicationOutcome(published.data)
+    check(
+      'publiseringen er den første hendelsen på påstanden',
+      publishOutcome.changed && publishOutcome.event.action === 'publish',
+    )
+
+    const again = await publisher.rpc('publish_candidate', {
+      p_candidate_id: candidateId,
+      p_seen_candidate_digest: view.candidateDigest,
+      p_reason: 'Kjedeprøve: gjentatt publisering.',
+    })
+    check(
+      'en gjentatt publisering skriver ingen ny hendelse',
+      again.error === null && parsePublicationOutcome(again.data).changed === false,
+    )
+
+    const claimId = publishOutcome.event.claimId ?? ''
+    const clinicianView = await clinician.rpc('published_claim', { p_claim_id: claimId })
+    check(
+      'klinikeren kan lese det publiserte innholdet',
+      clinicianView.error === null,
+      clinicianView.error?.message ?? '',
+    )
+    if (clinicianView.error !== null) return
+    const shown = parsePublishedClaim(clinicianView.data)
+    check(
+      'det publiserte innholdet er nøyaktig det forseglede kandidatinnholdet',
+      shown.published &&
+        shown.candidateId === candidateId &&
+        shown.candidateDigest === view.candidateDigest &&
+        JSON.stringify(shown.content?.sealedContent) === JSON.stringify(view.sealedContent),
+    )
+    check(
+      'og det hasher til det avtrykket sluttkontrollen ble bundet til',
+      psql(
+        config,
+        `select (knowledge.source_version_content_hash(c.content::text) = c.candidate_digest)::text
+         from knowledge.candidates c where c.id = ${q(candidateId)}`,
+      ) === 'true',
+    )
+    check(
+      'proveniensen peker tilbake til sluttkontrollen',
+      shown.finalControl?.reviewer === 'Antidep 2 kjedeprøvens fagperson',
+    )
+
+    const internal = await clinician.rpc('candidate_for_control', { p_candidate_id: candidateId })
+    check(
+      'interne kandidater er fortsatt private for en kliniker uten mandat',
+      internal.error !== null,
+      'klinikeren fikk lese kandidaten',
+    )
+
+    const catalogue = await clinician.rpc('published_claim_index', {})
+    check(
+      'den publiserte katalogen viser påstanden',
+      catalogue.error === null &&
+        parsePublishedClaimIndex(catalogue.data).some((entry) => entry.claimId === claimId),
+    )
+
+    // En andre revisjon, slik at rollbacken har noe å gå tilbake *fra*.
+    psql(
+      config,
+      `
+      insert into knowledge.claim_revisions
+        (id, claim_id, revision_number, knowledge_type, subject_drug_id, statement, scope,
+         comparator_kind, direction, uncertainty_summary, created_by_actor_id)
+      select 'c2000000-0000-4000-8000-000000000032', cl.id, 2, cl.knowledge_type,
+             cl.subject_drug_id,
+             'Sertralin er forbundet med en liten vektøkning ved langtidsbruk, med forbehold.',
+             'Kun syntetisk kjedeprøve.', 'none', 'increase',
+             'Grunnlaget er ett syntetisk funn; forbeholdet er presisert.',
+             (select id from provenance.actors where actor_key = 'agent:claim-synthesis')
+      from knowledge.claims cl where cl.id = 'c2000000-0000-4000-8000-000000000021';
+
+      insert into knowledge.claim_evidence_links
+        (claim_revision_id, evidence_item_id, relationship_type, directness, relevance_note,
+         created_by_actor_id)
+      values ('c2000000-0000-4000-8000-000000000032',
+              'c2000000-0000-4000-8000-000000000011', 'supports', 'direct',
+              'Eneste lenke i kjedeprøvens andre revisjon.',
+              (select id from provenance.actors where actor_key = 'agent:claim-synthesis'));
+
+      insert into provenance.agent_runs
+        (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
+         prompt_template_version, pipeline_version, input_manifest)
+      select 'c2000000-0000-4000-8000-000000000054', ai.id, ai.actor_id,
+             'citation_support_verification', 'antidep', 'deterministic-claim-check', '1.0.0',
+             'claim-verification/deterministic/1', 'antidep-evidence/1',
+             '{"mode": "antidep2-kjede-rev2"}'::jsonb
+      from provenance.agent_identities ai
+      where ai.identity_key = 'agent-identity:citation-support-verification-01';
+
+      insert into workflow.claim_verifications
+        (claim_revision_id, verified_revision_creator_actor_id, verifier_actor_id, outcome,
+         source_access, source_support, population_match, comparator_match, timeframe_match,
+         direction_and_magnitude, qualifiers_complete, contradictory_evidence_represented,
+         rationale, verified_at, agent_run_id)
+      select r.id, r.created_by_actor_id,
+             (select id from provenance.actors where actor_key = 'agent:citation-support-verification'),
+             'verified', 'original_source', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok',
+             'Kjedeprøve: den presiserte påstanden dekkes av grunnlaget.', now(),
+             'c2000000-0000-4000-8000-000000000054'
+      from knowledge.claim_revisions r where r.id = 'c2000000-0000-4000-8000-000000000032';
+
+      insert into workflow.claim_verification_citations
+        (claim_verification_id, claim_revision_id, claim_evidence_link_id, evidence_item_id,
+         source_access, source_version_id, checked_content_hash, relationship_supported)
+      select v.id, v.claim_revision_id, l.id, l.evidence_item_id, 'original_source',
+             e.source_version_id, sv.content_hash, 'ok'
+      from workflow.claim_verifications v
+      join knowledge.claim_evidence_links l on l.claim_revision_id = v.claim_revision_id
+      join knowledge.evidence_items e on e.id = l.evidence_item_id
+      join knowledge.source_versions sv on sv.id = e.source_version_id
+      where v.claim_revision_id = 'c2000000-0000-4000-8000-000000000032';
+
+      insert into provenance.agent_runs
+        (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
+         prompt_template_version, pipeline_version, input_manifest)
+      select 'c2000000-0000-4000-8000-000000000055', ai.id, ai.actor_id, 'evidence_assessment',
+             'antidep', 'proposal-registered-assessment', '1.0.0',
+             'evidence-assessment/proposal/1', 'antidep-evidence/1',
+             '{"mode": "antidep2-kjede-rev2"}'::jsonb
+      from provenance.agent_identities ai
+      where ai.identity_key = 'agent-identity:evidence-assessment-01';
+
+      insert into knowledge.evidence_assessments
+        (claim_revision_id, assessed_knowledge_type, framework, certainty_level, risk_of_bias,
+         inconsistency, indirectness, imprecision, publication_bias, rationale, evidence_gap,
+         assessed_at, created_by_actor_id, agent_run_id)
+      select r.id, r.knowledge_type, 'grade', 'low', 'serious', 'not_assessable', 'not_serious',
+             'serious', 'not_assessable', 'Kjedeprøve: ett funn, alvorlig upresishet.',
+             'Syntetisk grunnlag har med vilje begrenset dekning.', now(),
+             (select id from provenance.actors where actor_key = 'agent:evidence-assessment'),
+             'c2000000-0000-4000-8000-000000000055'
+      from knowledge.claim_revisions r where r.id = 'c2000000-0000-4000-8000-000000000032';
+      `,
+    )
+
+    const built2 = await editor.rpc('build_candidate', {
+      p_claim_revision_id: 'c2000000-0000-4000-8000-000000000032',
+    })
+    const candidate2 = (built2.data as { candidate_id?: string } | null)?.candidate_id ?? ''
+    const digest2 = (built2.data as { candidate_digest?: string } | null)?.candidate_digest ?? ''
+    check('den andre kandidaten forsegles', built2.error === null && candidate2 !== '')
+    if (candidate2 === '') return
+
+    const beforeControl = await publisher.rpc('publish_candidate', {
+      p_candidate_id: candidate2,
+      p_seen_candidate_digest: digest2,
+      p_reason: 'Kjedeprøve: publisering uten sluttkontroll.',
+    })
+    check(
+      'en kandidat uten sluttkontroll kan ikke publiseres',
+      beforeControl.error !== null,
+      'publiseringen gikk gjennom',
+    )
+
+    await reviewer.rpc('record_candidate_final_control', {
+      p_candidate_id: candidate2,
+      p_seen_candidate_digest: digest2,
+      p_decision: 'approved',
+      p_rationale: 'Kjedeprøve: den presiserte formuleringen er lest.',
+    })
+
+    const replaced = await publisher.rpc('publish_candidate', {
+      p_candidate_id: candidate2,
+      p_seen_candidate_digest: digest2,
+      p_reason: 'Kjedeprøve: den presiserte formuleringen tas i bruk.',
+    })
+    check(
+      'den nyere revisjonen erstatter den publiserte',
+      replaced.error === null && parsePublicationOutcome(replaced.data).event.action === 'replace',
+      replaced.error?.message ?? '',
+    )
+
+    const rolled = await publisher.rpc('rollback_claim_publication', {
+      p_claim_id: claimId,
+      p_target_candidate_id: candidateId,
+      p_seen_candidate_digest: view.candidateDigest,
+      p_reason: 'Kjedeprøve: den presiserte formuleringen var feil.',
+    })
+    check(
+      'rollbacken er en ny hendelse tilbake til det forrige innholdet',
+      rolled.error === null && parsePublicationOutcome(rolled.data).event.action === 'rollback',
+      rolled.error?.message ?? '',
+    )
+
+    const afterRollback = parsePublishedClaim(
+      (await clinician.rpc('published_claim', { p_claim_id: claimId })).data,
+    )
+    check(
+      'klinikerflaten viser igjen det tidligere godkjente innholdet',
+      afterRollback.candidateId === candidateId &&
+        JSON.stringify(afterRollback.content?.sealedContent) === JSON.stringify(view.sealedContent),
+    )
+
+    const byClinician = await clinician.rpc('withdraw_claim_publication', {
+      p_claim_id: claimId,
+      p_reason: 'Kjedeprøve: kliniker trekker tilbake.',
+    })
+    check(
+      'tilbaketrekking krever publisher-mandat',
+      byClinician.error !== null,
+      'klinikeren fikk trekke tilbake',
+    )
+
+    const withdrawn = await publisher.rpc('withdraw_claim_publication', {
+      p_claim_id: claimId,
+      p_reason: 'Kjedeprøve: innholdet tas ut av visning.',
+    })
+    check(
+      'tilbaketrekkingen registreres som en egen hendelse',
+      withdrawn.error === null &&
+        parsePublicationOutcome(withdrawn.data).event.action === 'withdraw',
+      withdrawn.error?.message ?? '',
+    )
+
+    const afterWithdraw = parsePublishedClaim(
+      (await clinician.rpc('published_claim', { p_claim_id: claimId })).data,
+    )
+    check(
+      'det tilbaketrukne innholdet presenteres ikke lenger som gjeldende',
+      !afterWithdraw.published && afterWithdraw.withdrawn && afterWithdraw.content === null,
+    )
+    check(
+      'men hele historikken er bevart og tilbaketrekkingen er synlig',
+      afterWithdraw.history.length === 4 &&
+        afterWithdraw.history[0]?.action === 'withdraw' &&
+        afterWithdraw.history.map((event) => event.action).join(',') ===
+          'withdraw,rollback,replace,publish',
+    )
+    check(
+      'ingen publiseringshendelse er slettet eller skrevet om',
+      psql(
+        config,
+        `select count(*)::text from knowledge.publication_events pe
+         where pe.claim_id = ${q(claimId)}`,
+      ) === '4',
     )
   } finally {
     rmSync(work, { recursive: true, force: true })

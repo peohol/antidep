@@ -161,7 +161,32 @@ export interface CandidateFinalControl {
   readonly candidateDigest: string
 }
 
-export interface CandidateView {
+/**
+ * Det forseglede innholdet, lest.
+ *
+ * Står for seg selv fordi det leses to steder: av kandidatvisningen før
+ * publisering, og av klinikerflaten etter. Det er den samme raden begge ganger —
+ * `knowledge.candidates.content` — og to lesinger av den ville før eller siden
+ * vist forskjellige ting om det samme avtrykket.
+ */
+export interface SealedContent {
+  readonly claim: CandidateClaim
+  /** `null` når ingen evidensvurdering er registrert — ikke en tom vurdering. */
+  readonly assessment: CandidateAssessment | null
+  /** `null` når ingen kildestøttekontroll er registrert — ikke en bestått kontroll. */
+  readonly citationSupportCheck: CandidateCitationSupportCheck | null
+  readonly evidence: readonly CandidateEvidence[]
+  readonly sourceCoverage: readonly CandidateSourceCoverage[]
+  /**
+   * Det forseglede innholdet, uendret og i sin helhet.
+   *
+   * Avtrykket dekker nøyaktig dette. Feltene over er den lesbare visningen av
+   * det, ikke en avgrensning av hva som er attestert.
+   */
+  readonly sealedContent: Record<string, unknown>
+}
+
+export interface CandidateView extends SealedContent {
   readonly candidateId: string
   readonly claimRevisionId: string
   readonly candidateDigest: string
@@ -171,21 +196,7 @@ export interface CandidateView {
   readonly currentDigest: string
   readonly experimental: boolean
   readonly published: boolean
-  readonly claim: CandidateClaim
-  /** `null` når ingen evidensvurdering er registrert — ikke en tom vurdering. */
-  readonly assessment: CandidateAssessment | null
-  /** `null` når ingen kildestøttekontroll er registrert — ikke en bestått kontroll. */
-  readonly citationSupportCheck: CandidateCitationSupportCheck | null
-  readonly evidence: readonly CandidateEvidence[]
-  readonly sourceCoverage: readonly CandidateSourceCoverage[]
   readonly finalControls: readonly CandidateFinalControl[]
-  /**
-   * Det forseglede innholdet, uendret og i sin helhet.
-   *
-   * Avtrykket dekker nøyaktig dette. Feltene over er den lesbare visningen av
-   * det, ikke en avgrensning av hva som er attestert.
-   */
-  readonly sealedContent: Record<string, unknown>
 }
 
 const SUBJECT = 'Kandidatsvaret'
@@ -315,23 +326,19 @@ function parseEvidence(value: unknown, index: number): CandidateEvidence {
   }
 }
 
-/** Leser svaret fra `api.candidate_for_control`, og avviser alt annet. */
-export function parseCandidateView(value: unknown): CandidateView {
-  const record = objectAt(value, 'svaret')
-  const content = objectAt(record['content'], 'content')
+/**
+ * Leser `knowledge.candidates.content`, og avviser alt annet.
+ *
+ * Den samme lesingen brukes av kandidatvisningen og av klinikerflaten, fordi
+ * det er den samme forseglede raden begge steder.
+ */
+export function parseSealedContent(value: unknown): SealedContent {
+  const content = objectAt(value, 'content')
   const claim = objectAt(content['claim_revision'], 'content.claim_revision')
   const assessmentValue = content['evidence_assessment']
   const checkValue = content['citation_support_check']
 
   return {
-    candidateId: text(record, 'candidate_id', 'svaret'),
-    claimRevisionId: text(record, 'claim_revision_id', 'svaret'),
-    candidateDigest: text(record, 'candidate_digest', 'svaret'),
-    builtAt: text(record, 'built_at', 'svaret'),
-    isCurrent: flag(record, 'is_current', 'svaret'),
-    currentDigest: text(record, 'current_digest', 'svaret'),
-    experimental: flag(record, 'experimental', 'svaret'),
-    published: flag(record, 'published', 'svaret'),
     claim: {
       statement: text(claim, 'statement', 'content.claim_revision'),
       scope: text(claim, 'scope', 'content.claim_revision'),
@@ -399,6 +406,24 @@ export function parseCandidateView(value: unknown): CandidateView {
         groundingMachineProved: flag(coverage, 'grounding_machine_proved', where),
       }
     }),
+    sealedContent: content,
+  }
+}
+
+/** Leser svaret fra `api.candidate_for_control`, og avviser alt annet. */
+export function parseCandidateView(value: unknown): CandidateView {
+  const record = objectAt(value, 'svaret')
+
+  return {
+    ...parseSealedContent(record['content']),
+    candidateId: text(record, 'candidate_id', 'svaret'),
+    claimRevisionId: text(record, 'claim_revision_id', 'svaret'),
+    candidateDigest: text(record, 'candidate_digest', 'svaret'),
+    builtAt: text(record, 'built_at', 'svaret'),
+    isCurrent: flag(record, 'is_current', 'svaret'),
+    currentDigest: text(record, 'current_digest', 'svaret'),
+    experimental: flag(record, 'experimental', 'svaret'),
+    published: flag(record, 'published', 'svaret'),
     finalControls: list(record, 'final_controls', 'svaret').map((entry, index) => {
       const where = `final_controls[${String(index)}]`
       const control = objectAt(entry, where)
@@ -410,7 +435,6 @@ export function parseCandidateView(value: unknown): CandidateView {
         candidateDigest: text(control, 'candidate_digest', where),
       }
     }),
-    sealedContent: content,
   }
 }
 

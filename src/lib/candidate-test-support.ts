@@ -130,3 +130,98 @@ export function candidateResponse(
     ...overrides,
   }
 }
+
+export const FIXTURE_CLAIM_ID = '55555555-5555-4555-8555-555555555555'
+export const FIXTURE_PUBLICATION_EVENT_ID = '66666666-6666-4666-8666-666666666666'
+
+/**
+ * Svaret fra en publiserings-, tilbaketrekkings- eller rollbackhandling.
+ *
+ * Formen følger `knowledge.publication_event_summary` (migrasjon 009f) felt for
+ * felt, med `changed` og `published` fra handlingen over den.
+ */
+export function publicationOutcomeResponse(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    changed: true,
+    published: true,
+    publication_event_id: FIXTURE_PUBLICATION_EVENT_ID,
+    claim_id: FIXTURE_CLAIM_ID,
+    action: 'publish',
+    claim_revision_id: '22222222-2222-4222-8222-222222222222',
+    revision_number: 1,
+    candidate_id: FIXTURE_CANDIDATE_ID,
+    candidate_digest: FIXTURE_CANDIDATE_DIGEST,
+    previous_claim_revision_id: null,
+    previous_candidate_id: null,
+    previous_candidate_digest: null,
+    published_at: '2026-09-27T09:00:00+00:00',
+    published_by: 'Navngitt publisher',
+    reason: 'Godkjent innhold tas i bruk.',
+    approval_decided_at: '2026-09-26T12:00:00+00:00',
+    ...overrides,
+  }
+}
+
+/** Én hendelse slik `api.claim_publication_history` svarer. */
+export function publicationHistoryEvent(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const event = publicationOutcomeResponse()
+  delete event['changed']
+  delete event['published']
+  return { ...event, sequence: 0, final_control: publishedFinalControl(), ...overrides }
+}
+
+export function publishedFinalControl(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    decision: 'approved',
+    decided_at: '2026-09-26T12:00:00+00:00',
+    reviewer: 'Navngitt fagperson',
+    rationale: 'Innholdet er lest i klinikerens egen visning.',
+    ...overrides,
+  }
+}
+
+/** Hele svaret fra `api.published_claim`. `overrides` erstatter toppfelter. */
+export function publishedClaimResponse(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    claim_id: FIXTURE_CLAIM_ID,
+    published: true,
+    withdrawn: false,
+    claim_revision_id: '22222222-2222-4222-8222-222222222222',
+    candidate_id: FIXTURE_CANDIDATE_ID,
+    candidate_digest: FIXTURE_CANDIDATE_DIGEST,
+    evidence_set_digest: FIXTURE_EVIDENCE_SET_DIGEST,
+    built_at: '2026-09-26T09:00:00+00:00',
+    content: candidateContent(),
+    publication: publicationOutcomeResponse(),
+    final_control: publishedFinalControl(),
+    history: [publicationHistoryEvent()],
+    ...overrides,
+  }
+}
+
+/** Én rad i `api.published_claim_index`. */
+export function publishedIndexEntry(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    claim_id: FIXTURE_CLAIM_ID,
+    candidate_id: FIXTURE_CANDIDATE_ID,
+    candidate_digest: FIXTURE_CANDIDATE_DIGEST,
+    claim_revision_id: '22222222-2222-4222-8222-222222222222',
+    statement: FIXTURE_STATEMENT,
+    subject_drug: 'sertralin',
+    topic: 'vektendring',
+    certainty_level: 'low',
+    source_count: 1,
+    published_at: '2026-09-27T09:00:00+00:00',
+    ...overrides,
+  }
+}

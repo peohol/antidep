@@ -293,3 +293,145 @@ create trigger evidence_items_bind_synthetic_test_full_text
 -- through a retired helper RPC. Re-open it only inside the pgTAP transaction;
 -- production keeps the Antidep 2 REVOKE from migration 20260925090000.
 grant execute on function api.register_publication_approval(uuid, text, text, text) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Kandidaten publiseringsgaten krever fra migrasjon 009e
+--
+-- Publiseringsgatens G11 og G12 spør ikke lenger etter en publication_approval i
+-- workflow.review_decisions, men etter et forseglet kandidatinnhold og en
+-- navngitt fagpersons sluttkontroll av nøyaktig det avtrykket. De eldre
+-- publiseringstestene er skrevet før kandidaten fantes, og gaten skal ikke mykes
+-- opp for dem: hjelperen gir dem den raden regelen faktisk krever.
+--
+-- Hjelperen finner ikke på noe. Innholdet er knowledge.candidate_content(uuid),
+-- avtrykket beregnes av innholdet av den samme funksjonen produksjonskoden
+-- bruker, og sluttkontrollen er en ekte rad fra en ekte menneskelig aktør. Den
+-- er idempotent, slik at en test kan kalle den etter hver endring i grunnlaget
+-- uten å legge igjen en kandidat til for det samme innholdet.
+-- ----------------------------------------------------------------------------
+create function pg_temp.owner_actor_id() returns uuid language sql stable as $$
+  select id from provenance.actors where actor_key = 'human:peder-holman'
+$$;
+
+/** Bare forseglingen. Ingen sluttkontroll: den er et menneskes egen handling. */
+create function pg_temp.seal_candidate(p_claim_revision_id uuid)
+  returns uuid language plpgsql as $$
+declare
+  v_content jsonb;
+  v_digest text;
+  v_candidate_id uuid;
+begin
+  v_content := knowledge.candidate_content(p_claim_revision_id);
+  v_digest := knowledge.source_version_content_hash(v_content::text);
+
+  select c.id into v_candidate_id
+  from knowledge.candidates c
+  where c.claim_revision_id = p_claim_revision_id and c.candidate_digest = v_digest;
+
+  if v_candidate_id is null then
+    insert into knowledge.candidates
+      (claim_revision_id, candidate_digest, evidence_set_digest, content, built_by_actor_id)
+    values (p_claim_revision_id, v_digest,
+            knowledge.claim_evidence_set_digest(p_claim_revision_id), v_content,
+            pg_temp.owner_actor_id())
+    returning id into v_candidate_id;
+  end if;
+
+  return v_candidate_id;
+end;
+$$;
+
+create function pg_temp.seal_and_approve_candidate(p_claim_revision_id uuid)
+  returns uuid language plpgsql as $$
+declare
+  v_candidate_id uuid;
+begin
+  v_candidate_id := pg_temp.seal_candidate(p_claim_revision_id);
+
+  -- Den *gjeldende* sluttkontrollen, ikke «finnes det en godkjenning»: en
+  -- senere omgjøring gjelder foran en tidligere godkjenning, og et fikstur som
+  -- overså det ville latt en test stå som grønn på en kandidat gaten stenger.
+  if (workflow.current_candidate_final_control(v_candidate_id)).decision
+     is distinct from 'approved'::workflow.final_control_decision then
+    insert into workflow.candidate_final_controls
+      (candidate_id, candidate_digest, decision, rationale,
+       reviewer_actor_id, reviewer_actor_type)
+    select v_candidate_id, c.candidate_digest, 'approved',
+           'Syntetisk sluttkontroll i databasetest.', pg_temp.owner_actor_id(), 'human'
+    from knowledge.candidates c where c.id = v_candidate_id;
+  end if;
+
+  return v_candidate_id;
+end;
+$$;
+
+/** Kandidaten for én revisjon, uten å bygge en ny. NULL når ingen er forseglet. */
+create function pg_temp.candidate_id_for(p_claim_revision_id uuid)
+  returns uuid language sql stable as $$
+  select c.id from knowledge.candidates c
+  where c.claim_revision_id = p_claim_revision_id
+  order by c.built_at desc, c.id desc
+  limit 1
+$$;
+
+/**
+ * Bindingen en publiseringshendelse må bære, for én revisjon.
+ *
+ * Tre oppslag framfor ett, fordi en INSERT setter kolonner hver for seg. Alle
+ * tre forsegler kandidaten og sluttkontrollen om de ikke finnes, slik at en
+ * eldre test som skriver en hendelse direkte, ikke må sette opp kandidaten selv
+ * — og slik at den fortsatt skriver en hendelse med en ekte kandidat og en ekte
+ * godkjenning bak seg, ikke med oppdiktede verdier.
+ */
+create function pg_temp.sealed_candidate_id(p_claim_revision_id uuid)
+  returns uuid language sql as $$
+  select pg_temp.seal_and_approve_candidate(p_claim_revision_id)
+$$;
+
+create function pg_temp.sealed_candidate_digest(p_claim_revision_id uuid)
+  returns text language sql as $$
+  select c.candidate_digest from knowledge.candidates c
+  where c.id = pg_temp.seal_and_approve_candidate(p_claim_revision_id)
+$$;
+
+create function pg_temp.sealed_final_control_id(p_claim_revision_id uuid)
+  returns uuid language sql as $$
+  select fc.id
+  from workflow.candidate_final_controls fc
+  where fc.candidate_id = pg_temp.seal_and_approve_candidate(p_claim_revision_id)
+    and fc.decision = 'approved'
+  order by fc.registration_ordinal desc
+  limit 1
+$$;
+
+/**
+ * En ny sluttkontroll med utfallet `approved` på revisjonens gjeldende kandidat.
+ *
+ * Til forskjell fra pg_temp.seal_and_approve_candidate(uuid) skriver denne
+ * alltid en ny rad. Den finnes for de testene som trenger *to* godkjenninger av
+ * det samme innholdet med hvert sitt tidspunkt — for eksempel en republisering
+ * på en ny gjennomgang, der hele poenget er at de to hendelsene bærer ulik
+ * godkjenningsdato.
+ */
+create function pg_temp.approve_candidate(
+  p_claim_revision_id uuid,
+  p_decided_at timestamptz default now(),
+  p_rationale text default 'Syntetisk sluttkontroll i databasetest.'
+)
+  returns uuid language plpgsql as $$
+declare
+  v_candidate_id uuid;
+begin
+  v_candidate_id := pg_temp.seal_candidate(p_claim_revision_id);
+
+  insert into workflow.candidate_final_controls
+    (candidate_id, candidate_digest, decision, rationale, decided_at,
+     reviewer_actor_id, reviewer_actor_type)
+  select v_candidate_id, c.candidate_digest, 'approved', p_rationale, p_decided_at,
+         pg_temp.owner_actor_id(), 'human'
+  from knowledge.candidates c
+  where c.id = v_candidate_id;
+
+  return v_candidate_id;
+end;
+$$;

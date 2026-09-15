@@ -44,15 +44,23 @@ select is_empty(
   'ingen av kandidatveiene er åpne for anon, service_role eller PUBLIC'
 );
 
--- Denne leveransen åpner ingen ny publiseringsvei. Rekkefølgen er med vilje:
--- kjeden skal virke før publiseringen åpnes.
+-- Sluttkontrollen publiserer fortsatt ingenting. Fra migrasjon 009f finnes
+-- publiseringen som en egen, eksplisitt handling med et annet mandat — og
+-- `anon` er ikke en av dem som har det: en agentidentitet er anon i Data
+-- API-et, og et menneske uten publisher-rolle avvises av gaten.
 select is_empty(
   $$
-    select r.role_name
-    from (values ('anon'), ('authenticated')) as r(role_name)
-    where has_function_privilege(r.role_name, 'api.publish_claim_revision(uuid,text)', 'EXECUTE')
+    select f.name
+    from (values
+      ('api.publish_candidate(uuid,text,text)'),
+      ('api.withdraw_claim_publication(uuid,text)'),
+      ('api.rollback_claim_publication(uuid,uuid,text,text)')
+    ) as f(name)
+    where has_function_privilege('anon', f.name, 'EXECUTE')
+       or has_function_privilege('public', f.name, 'EXECUTE')
+       or has_function_privilege('service_role', f.name, 'EXECUTE')
   $$,
-  'publiseringsveien er fortsatt stengt for klientrollene'
+  'publiseringsveien er stengt for anon, service_role og PUBLIC'
 );
 
 -- ===========================================================================

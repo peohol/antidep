@@ -97,11 +97,21 @@ where r.claim_id = (select id from fixture where name = 'claim') and r.revision_
 -- radrekkefølge. Det er også den eneste rekkefølgen auditloggen selv påstår noe
 -- om: den daterer, den ordner ikke (se migrasjonens innledning).
 -- ---------------------------------------------------------------------------
+-- Fra migrasjon 009e navngir hver hendelse også det forseglede innholdet og
+-- sluttkontrollen den hviler på. Kandidatene forsegles først, slik at
+-- hendelsene under kan navngi dem.
+select pg_temp.seal_and_approve_candidate(f.id)
+from fixture f where f.name in ('rev1', 'rev2');
+
 with e1 as (
   insert into knowledge.publication_events
     (claim_id, action, revision_id, revision_number,
+     candidate_id, candidate_digest, final_control_id, final_control_decision,
      published_by_actor_id, published_by_actor_type, reason, published_at)
-  select f.id, 'publish', r1.id, 1, p.id, 'human',
+  select f.id, 'publish', r1.id, 1,
+         pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+         pg_temp.sealed_final_control_id(r1.id), 'approved',
+         p.id, 'human',
          'Første publisering.', now() - interval '4 minutes'
   from fixture f, fixture r1, fixture p
   where f.name = 'claim' and r1.name = 'rev1' and p.name = 'publisher'
@@ -110,8 +120,14 @@ with e1 as (
   insert into knowledge.publication_events
     (claim_id, action, revision_id, revision_number,
      previous_revision_id, previous_revision_number, previous_event_id,
+     candidate_id, candidate_digest, final_control_id, final_control_decision,
+     previous_candidate_id, previous_candidate_digest,
      published_by_actor_id, published_by_actor_type, reason, published_at)
-  select f.id, 'replace', r2.id, 2, r1.id, 1, e1.id, p.id, 'human',
+  select f.id, 'replace', r2.id, 2, r1.id, 1, e1.id,
+         pg_temp.sealed_candidate_id(r2.id), pg_temp.sealed_candidate_digest(r2.id),
+         pg_temp.sealed_final_control_id(r2.id), 'approved',
+         pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+         p.id, 'human',
          'Erstattet med nyere revisjon.', now() - interval '3 minutes'
   from fixture f, fixture r1, fixture r2, fixture p, e1
   where f.name = 'claim' and r1.name = 'rev1' and r2.name = 'rev2' and p.name = 'publisher'
@@ -120,8 +136,14 @@ with e1 as (
   insert into knowledge.publication_events
     (claim_id, action, revision_id, revision_number,
      previous_revision_id, previous_revision_number, previous_event_id,
+     candidate_id, candidate_digest, final_control_id, final_control_decision,
+     previous_candidate_id, previous_candidate_digest,
      published_by_actor_id, published_by_actor_type, reason, published_at)
-  select f.id, 'rollback', r1.id, 1, r2.id, 2, e2.id, p.id, 'human',
+  select f.id, 'rollback', r1.id, 1, r2.id, 2, e2.id,
+         pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+         pg_temp.sealed_final_control_id(r1.id), 'approved',
+         pg_temp.sealed_candidate_id(r2.id), pg_temp.sealed_candidate_digest(r2.id),
+         p.id, 'human',
          'Rullet tilbake til forrige revisjon.', now() - interval '2 minutes'
   from fixture f, fixture r1, fixture r2, fixture p, e2
   where f.name = 'claim' and r1.name = 'rev1' and r2.name = 'rev2' and p.name = 'publisher'
@@ -129,8 +151,11 @@ with e1 as (
 )
 insert into knowledge.publication_events
   (claim_id, action, previous_revision_id, previous_revision_number, previous_event_id,
+   previous_candidate_id, previous_candidate_digest,
    published_by_actor_id, published_by_actor_type, reason, published_at)
-select f.id, 'withdraw', r1.id, 1, e3.id, p.id, 'human',
+select f.id, 'withdraw', r1.id, 1, e3.id,
+       pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+       p.id, 'human',
        'Trukket tilbake i påvente av ny vurdering.', now() - interval '1 minute'
 from fixture f, fixture r1, fixture p, e3
 where f.name = 'claim' and r1.name = 'rev1' and p.name = 'publisher';

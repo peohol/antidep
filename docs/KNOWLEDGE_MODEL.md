@@ -12,6 +12,8 @@
 
 Katalogdata er begreper og legemiddelidentiteter, ikke kliniske konklusjoner. Kildebiblioteket bevares ved reset, mens avledet prototypekunnskap tas ut av aktiv drift.
 
+`knowledge.publication_events` er den append-only historikken over hva Antidep har sagt. Hver hendelse navngir både revisjonen og det forseglede innholdet som ble publisert — og for en tilbaketrekking, det innholdet som ble tatt ut av visning — sammen med den sluttkontrollen publiseringen hviler på. `knowledge.claims` bærer to pekere som ikke kan si hver sin ting: revisjonen og kandidaten som er publisert nå.
+
 ## Planlagt, ikke implementert
 
-Et eget studie-/rapportobjekt. Publiseringen av en sluttkontrollert kandidat er modellert, men veien dit er ikke åpnet: `knowledge.publication_events` finnes, og `api.publish_claim_revision` er stengt for klientrollene.
+Et eget studie-/rapportobjekt.

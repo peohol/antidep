@@ -13,7 +13,7 @@ Antidep skal gi helsepersonell en forståelig, kildeforankret framstilling. Agen
 3. Generator, kildestøttekontroll og evidensvurdering er separate roller. Egenverifikasjon og oppdiktet agentattestasjon er forbudt. Separasjonen er håndhevet på modellidentitet og ikke bare på aktør: to roller kan ikke dele modell, og en kontroll utført av den samme modellen som produserte innholdet, avvises.
 4. Forskningsusikkerhet, agentuenighet og teknisk feil er forskjellige tilstander. Manglende kontroll kan ikke kalles verifisert.
 5. Utkast er tilgangsbegrenset og merkes eksperimentelt. Bare nøyaktig godkjent kandidat kan publiseres. Kandidaten er et forseglet innhold med et avtrykk beregnet av innholdet selv, og sluttkontrollen er strukturelt bundet til det avtrykket; er grunnlaget endret siden forseglingen, må kandidaten bygges på nytt før den kan sluttkontrolleres.
-6. Publisert historikk, audit, aktører, kontoer og kildebibliotek bevares. Tilbaketrekking og rollback skal være synlig.
+6. Publisert historikk, audit, aktører, kontoer og kildebibliotek bevares. Publisering er en egen, eksplisitt handling etter sluttkontrollen, utført av et menneske med publisher-mandat, og den gjelder nøyaktig det avtrykket som ble godkjent. Tilbaketrekking og rollback er nye hendelser som navngir hvilket innhold de gjelder, av hvem og hvorfor; de sletter og skriver aldri om historikk, og de skal være synlige der innholdet leses.
 7. Minste privilegium, append-only proveniens og kontrollerte skriveveier gjelder også agentene.
 
 Sikkerhetskritiske beregnings- og doseringsregler krever egne versjonerte tester og eksplisitt faglig godkjenning.

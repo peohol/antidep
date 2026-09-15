@@ -80,14 +80,65 @@
 # vilkåret var sant.
 #
 # ----------------------------------------------------------------------------
-# Prøve 5 er den samme formen, på det stedet konsekvensen er alvorligst
+# Prøve 5 er den samme formen, på en menneskelig beslutning
 #
 # Der prøve 4 handler om en maskinell kontroll, handler prøve 5 om et menneskes
-# publiseringsbeslutning: økt A begynner først, økt B godkjenner og commiter, og
-# A avviser etterpå. Prøven krever at avvisningen — raden som faktisk ble skrevet
-# sist — er den gjeldende både i reviewerflaten og i publiseringsgaten, og at
-# gaten stopper på G12 (migrasjon 006i). Fiksturen er egen og bygget slik at G1
-# til G10 holder, slik at det eneste som avgjør utfallet, er beslutningen.
+# reviewbeslutning: økt A begynner først, økt B godkjenner og commiter, og A
+# avviser etterpå. Prøven krever at avvisningen — raden som faktisk ble skrevet
+# sist — er den gjeldende i reviewerflaten. Fiksturen er egen og bygget slik at
+# G1 til G10 holder, slik at det eneste som avgjør utfallet, er beslutningen.
+#
+# Publiseringsgatens halvdel av dette flyttet med migrasjon 009e: fra da leser
+# G11 og G12 den forseglede kandidaten og sluttkontrollen, ikke en
+# publication_approval. Den samme regelen, på det objektet som nå bærer den,
+# prøves i prøve 11.
+#
+# ----------------------------------------------------------------------------
+# Prøve 8 til 11 — publiseringen, tilbaketrekkingen og rollbacken
+#
+# Publiseringslaget har to låser som må holde samtidig, og én rekkefølgeregel:
+#
+#   8   knowledge.publish_claim_revision(...) tar FOR UPDATE på påstanden før
+#       den leser tilstanden. En samtidig tilbaketrekking må derfor vente; uten
+#       låsen kunne de to lest den samme tilstanden og etterlatt to gjeldende
+#       sannheter.
+#
+#   9   api.record_candidate_final_control(...) tar FOR UPDATE på kandidaten, og
+#       publiseringen tar FOR SHARE på den samme raden. En publisering kan derfor
+#       ikke skje mens en sluttkontroll pågår; uten låsen kunne en `rejected`
+#       commite mellom gatens G12 og innsettingen av hendelsen.
+#
+#   10  Den motsatte formen, som prøve 4: økt A begynner først, økt B publiserer
+#       og commiter, og A publiserer en nyere revisjon etterpå. A tar låsen når
+#       den skriver, leser da den nye tilstanden, og registrerer en `replace` med
+#       B sin hendelse som forgjenger. Kjeden har ett hode, og pekeren navngir
+#       hodets eget innhold.
+#
+#   11  Samme form på sluttkontrollen: A begynner først, B godkjenner og
+#       commiter, A avviser etterpå. Registreringsnummeret og ikke klokka avgjør
+#       hvilken som gjelder, og publiseringsgaten stopper på avvisningen.
+#
+#   12  Publiseringen holder også låsene på det kandidatinnholdet faktisk
+#       bygges av. En samtidig ekstraksjonskontroll på et lenket evidensfunn må
+#       derfor vente; uten den låsen var kontrollen av at kandidaten fortsatt er
+#       den gjeldende, et øyeblikksbilde.
+#
+#   13  Det samme for sluttkontrollen, på revisjonen: en samtidig
+#       kildestøttekontroll må vente, fordi den er en del av det forseglede
+#       innholdet.
+#
+#   14  Rollbacken holder de samme grunnlagslåsene, på *målrevisjonen*. Fra
+#       migrasjon 009h krever den at kandidaten kalleren navnga fortsatt er det
+#       gjeldende innholdet der, og den kontrollen er bare en garanti hvis
+#       grunnlaget står stille fram til hendelsen.
+#
+#   15  Og den holder radlåsen på påstanden: en samtidig tilbaketrekking må
+#       vente, som i prøve 8.
+#
+# Fiksturen er egen (scripts/publication-race-fixture.sql). Prøve 10 må commite
+# en publisering for å kunne vise det den viser, og fiksturen trekker den tilbake
+# før neste kjøring — gjennom den kontrollerte operasjonen, aldri ved å slette
+# historikk.
 set -euo pipefail
 
 DB_URL=""
@@ -476,8 +527,12 @@ fi
 # decided_at, fordi now() er transaksjonens starttidspunkt.
 #
 # Prøven krever at avvisningen — raden som faktisk ble skrevet sist — er den
-# gjeldende både i reviewerflaten og i publiseringsgaten, og at gaten stopper på
-# G12 og ikke slipper gjennom godkjenningen som ble skrevet før den.
+# gjeldende i reviewerflaten.
+#
+# Publiseringsgatens halvdel av dette flyttet med migrasjon 009e: fra da leser
+# G11 og G12 den forseglede kandidaten og sluttkontrollen, ikke en
+# publication_approval. Den samme regelen, på det objektet som nå bærer den,
+# prøves i prøve 11.
 #
 # Fiksturen er egen (scripts/review-decision-race-fixture.sql) og bygget slik at
 # G1 til G10 holder. Uten det ville gaten stoppet på et tidligere vilkår, og
@@ -547,15 +602,6 @@ fi
 
 # …og økt A avviser etterpå, med det eldre tidsstempelet.
 cat >&9 <<SQL
-do \$p\$
-begin
-  perform knowledge.assert_claim_revision_publishable('$prove_revisjon');
-exception
-  when others then
-    raise exception 'Forutsetningen mangler: godkjenningen fra økt B gjør ikke revisjonen publiserbar (%). Prøven kan ikke vise at en avvisning blokkerer den.', sqlerrm;
-end
-\$p\$;
-
 select set_config('request.jwt.claims', '{"sub":"$prove_konto"}', true);
 set local role authenticated;
 select api.register_publication_approval(
@@ -568,7 +614,6 @@ declare
   v_a workflow.review_decisions;
   v_b workflow.review_decisions;
   v_gjeldende text;
-  v_blokkert boolean := false;
 begin
   select * into v_a from workflow.review_decisions
   where claim_revision_id = '$prove_revisjon'
@@ -593,19 +638,6 @@ begin
   if v_gjeldende is distinct from v_a.id::text then
     raise exception 'Den gjeldende beslutningen i reviewerflaten er ikke den som ble skrevet sist.';
   end if;
-
-  begin
-    perform knowledge.assert_claim_revision_publishable('$prove_revisjon');
-  exception
-    when restrict_violation then
-      v_blokkert := true;
-      if sqlerrm not like '%er rejected, ikke approved%' then
-        raise exception 'Gaten blokkerte, men ikke på den gjeldende beslutningen: %', sqlerrm;
-      end if;
-  end;
-  if not v_blokkert then
-    raise exception 'En avvisning skrevet sist blokkerte ikke publiseringen.';
-  end if;
 end
 \$p\$;
 \echo BESLUTNINGSREKKEFØLGE_BEVIST
@@ -618,9 +650,9 @@ okt_a_pid=""
 rm -f "$styr5"
 
 if grep -q 'BESLUTNINGSREKKEFØLGE_BEVIST' "$a5_log"; then
-  printf 'ok       en avvisning skrevet sist er den gjeldende og blokkerer publisering\n'
+  printf 'ok       en avvisning skrevet sist er den gjeldende reviewbeslutningen\n'
 else
-  printf 'AVVIK    en avvisning skrevet sist er den gjeldende og blokkerer publisering\n' >&2
+  printf 'AVVIK    en avvisning skrevet sist er den gjeldende reviewbeslutningen\n' >&2
   printf '         Uten en registreringsrekkefølge kan et menneskes nei bære det eldste tidsstempelet, og forsvinne bak en godkjenning som ble skrevet før det (migrasjon 006i).\n' >&2
   printf '         Svaret fra økt A:\n' >&2
   sed 's/^/         /' "$a5_log" >&2
@@ -666,5 +698,398 @@ proev 'en samtidig reviewbeslutning må vente på fjerningen (55P03)' \
           'Samtidighetsprøve: beslutning.', '$fjerning_aktor', 'human', now()
    from knowledge.evidence_items e where e.id = '$fjerning_funn';" \
   'Vakten leser workflow.review_decisions, og ingen fremmednøkkel peker fra den mot noe fjerningen sletter. Uten låsen kan en beslutning commite etter at vakten leste «ingen», og fjerningen lykkes likevel (migrasjon 005ai).'
+
+# ----------------------------------------------------------------------------
+# Prøve 8 til 11 — publiseringen, tilbaketrekkingen og rollbacken
+#
+# Fiksturen er egen (scripts/publication-race-fixture.sql) og har to fullt
+# publiserbare revisjoner med hver sin forseglede kandidat og sin godkjente
+# sluttkontroll, en fagperson med reviewer-mandat og en publisher med
+# publisher-mandat. Se hodekommentaren i fiksturen for hvorfor den nullstiller
+# publiseringshistorikken sin.
+# ----------------------------------------------------------------------------
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -f "$(dirname "$0")/publication-race-fixture.sql"
+
+pub_paastand='7d000000-0000-4000-8000-000000000004'
+pub_rev1='7d000000-0000-4000-8000-000000000005'
+pub_rev2='7d000000-0000-4000-8000-000000000015'
+pub_fagperson='7d000000-0000-4000-8000-0000000000a0'
+pub_publisher_konto='7d000000-0000-4000-8000-0000000000b0'
+pub_publisher_aktor='7d000000-0000-4000-8000-0000000000b1'
+
+pub_kandidat1=$(les "select c.id from knowledge.candidates c where c.claim_revision_id = '$pub_rev1'")
+pub_kandidat2=$(les "select c.id from knowledge.candidates c where c.claim_revision_id = '$pub_rev2'")
+pub_avtrykk2=$(les "select c.candidate_digest from knowledge.candidates c where c.id = '$pub_kandidat2'")
+
+if [ -z "$pub_kandidat1" ] || [ -z "$pub_kandidat2" ] || [ -z "$pub_avtrykk2" ]; then
+  printf 'Fikk ikke satt opp fiksturen for publiseringsprøvene. Kjør migrasjonene først (npm run db:reset).\n' >&2
+  exit 1
+fi
+
+pub_sesjon="select set_config('request.jwt.claims', '{\"sub\":\"$pub_publisher_konto\"}', true);"
+
+# Utgangsverdien prøve 10 teller mot. Fiksturen trekker tilbake framfor å slette,
+# så historikken vokser mellom kjøringer — og et fast tall ville vært riktig bare
+# den første gangen.
+
+# Prøve 8 — publiseringen holder radlåsen på påstanden
+#
+# knowledge.publish_claim_revision(...) tar FOR UPDATE på påstanden før den leser
+# tilstanden og skriver hendelsen. En samtidig tilbaketrekking må derfor vente.
+# Uten låsen ville de to lest den samme tilstanden, og historikken kunne fått to
+# hendelser med samme forgjenger — eller pekeren og hendelsen kunne sagt hver sin
+# ting om hva som er publisert nå.
+proev 'en samtidig tilbaketrekking må vente på publiseringen (55P03)' \
+  "$pub_sesjon
+   select knowledge.publish_claim_revision('$pub_rev1', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');" \
+  "$pub_sesjon
+   select knowledge.withdraw_claim_publication('$pub_paastand', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');" \
+  'Uten radlåsen på påstanden kan en publisering og en tilbaketrekking lese den samme tilstanden, og etterlate to gjeldende sannheter (migrasjon 009e).'
+
+# Prøve 9 — sluttkontrollen holder radlåsen på kandidaten
+#
+# api.record_candidate_final_control(...) tar FOR UPDATE på kandidaten, og
+# publiseringen tar FOR SHARE på den samme raden etter at påstanden er låst. En
+# publisering kan derfor ikke skje mens en sluttkontroll pågår. Uten den låsen
+# kunne en `rejected` commite i vinduet mellom gatens G12 og innsettingen av
+# hendelsen, og publiseringen ville hvilt på en godkjenning som var gjort om.
+proev 'en samtidig publisering må vente på sluttkontrollen (55P03)' \
+  "select set_config('request.jwt.claims', '{\"sub\":\"$pub_fagperson\"}', true);
+   set local role authenticated;
+   select api.record_candidate_final_control('$pub_kandidat2', '$pub_avtrykk2', 'rejected',
+     'Samtidighetsprøve; rulles tilbake.');
+   reset role;" \
+  "$pub_sesjon
+   select knowledge.publish_claim_revision('$pub_rev2', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');" \
+  'Uten kandidatlåsen kan en sluttkontroll commite mellom publiseringsgatens G12 og publiseringshendelsen, og publiseringen ville hvilt på en godkjenning som var gjort om (migrasjon 009e).'
+
+# Prøve 10 — to publiseringer som ikke venter på hverandre gir én historikk
+#
+# Samme form som prøve 4 og 5: økt A begynner først, økt B publiserer og
+# commiter, og A publiserer etterpå. A tar radlåsen på påstanden når den skriver,
+# og leser da den nye tilstanden — så A sin hendelse blir en `replace` med B sin
+# hendelse som forgjenger, ikke en andre `publish` fra den samme tilstanden.
+#
+# Prøven krever at kjeden har nøyaktig ett hode, at pekeren navngir hodets eget
+# innhold, og at A faktisk skrev en `replace`. Uten radlåsen ville begge lest
+# «ingenting er publisert», og den andre ville blitt avvist av
+# publication_events_no_forked_history_key — historikken ville vært konsistent,
+# men prøven her viser at den også blir *riktig*: den andre publiseringen venter,
+# ser den nye tilstanden og registrerer den overgangen som faktisk skjedde.
+pub_hendelser_for=$(les "select count(*) from knowledge.publication_events where claim_id = '$pub_paastand'")
+
+a10_log="$arbeid/a10.log"
+styr10="$arbeid/styr10.$$"
+rm -f "$styr10"
+mkfifo "$styr10"
+
+(
+  printf "begin;\n"
+  printf "select 1;\n"
+  printf "\\\\echo A10_STARTET\n"
+  cat "$styr10"
+) | psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$a10_log" 2>&1 &
+okt_a_pid=$!
+exec 9>"$styr10"
+
+for i in $(seq 1 100); do
+  grep -q 'A10_STARTET' "$a10_log" 2>/dev/null && break
+  sleep 0.1
+done
+if ! grep -q 'A10_STARTET' "$a10_log" 2>/dev/null; then
+  printf 'Økt A kom ikke i gang i prøve 10:\n' >&2
+  cat "$a10_log" >&2
+  exec 9>&-
+  exit 1
+fi
+
+sleep 0.3
+
+if ! psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 >"$arbeid/b10.log" 2>&1 <<SQL
+begin;
+$pub_sesjon
+select knowledge.publish_claim_revision('$pub_rev1', '$pub_publisher_aktor',
+  'Samtidighetsprøve: publisert av økt B, som begynte sist.');
+commit;
+SQL
+then
+  printf 'Økt B fikk ikke publisert i prøve 10:\n' >&2
+  cat "$arbeid/b10.log" >&2
+  exec 9>&-
+  exit 1
+fi
+
+cat >&9 <<SQL
+$pub_sesjon
+select knowledge.publish_claim_revision('$pub_rev2', '$pub_publisher_aktor',
+  'Samtidighetsprøve: publisert av økt A, som begynte først og skrev sist.');
+
+do \$p\$
+declare
+  v_hendelser integer;
+  v_hoder integer;
+  v_hode knowledge.publication_events;
+  v_peker uuid;
+  v_kandidatpeker uuid;
+begin
+  select count(*) into v_hendelser
+  from knowledge.publication_events where claim_id = '$pub_paastand';
+  if v_hendelser <> $pub_hendelser_for + 2 then
+    raise exception 'To publiseringer ga % nye hendelser, ikke to.',
+      v_hendelser - $pub_hendelser_for;
+  end if;
+
+  select count(*) into v_hoder
+  from knowledge.publication_events e
+  where e.claim_id = '$pub_paastand'
+    and not exists (select 1 from knowledge.publication_events s
+                    where s.previous_event_id = e.id);
+  if v_hoder <> 1 then
+    raise exception 'Historikken har % hoder: to samtidige publiseringer ga to gjeldende sannheter.', v_hoder;
+  end if;
+
+  v_hode := knowledge.publication_head_event('$pub_paastand');
+  if v_hode.action <> 'replace' then
+    raise exception 'Økt A skrev % og ikke replace: den så ikke tilstanden økt B commitet.', v_hode.action;
+  end if;
+  if v_hode.revision_id is distinct from '$pub_rev2'::uuid then
+    raise exception 'Hodet i kjeden navngir ikke revisjonen økt A publiserte.';
+  end if;
+
+  select current_published_revision_id, current_published_candidate_id
+    into v_peker, v_kandidatpeker
+  from knowledge.claims where id = '$pub_paastand';
+  if v_peker is distinct from v_hode.revision_id
+     or v_kandidatpeker is distinct from v_hode.candidate_id then
+    raise exception 'Publiseringspekeren og hodet i kjeden sier forskjellige ting.';
+  end if;
+end
+\$p\$;
+\echo PUBLISERINGSREKKEFØLGE_BEVIST
+rollback;
+SQL
+
+exec 9>&-
+wait "$okt_a_pid" 2>/dev/null || true
+okt_a_pid=""
+rm -f "$styr10"
+
+if grep -q 'PUBLISERINGSREKKEFØLGE_BEVIST' "$a10_log"; then
+  printf 'ok       to samtidige publiseringer gir én konsistent historikk\n'
+else
+  printf 'AVVIK    to samtidige publiseringer gir én konsistent historikk\n' >&2
+  printf '         Uten radlåsen på påstanden kan to publiseringer lese den samme tilstanden, og etterlate en forgrenet historikk eller to gjeldende sannheter (migrasjon 009e).\n' >&2
+  printf '         Svaret fra økt A:\n' >&2
+  sed 's/^/         /' "$a10_log" >&2
+  exit 1
+fi
+
+# Prøve 11 — den gjeldende *sluttkontrollen* følger skrivingene, ikke klokka
+#
+# Samme form, på det objektet publiseringsgaten faktisk leser fra migrasjon 009e:
+# økt A begynner først, økt B godkjenner kandidaten og commiter, og A avviser
+# etterpå. A sin rad bærer da det eldste decided_at, fordi now() er
+# transaksjonens starttidspunkt.
+#
+# Prøven krever at avvisningen — raden som faktisk ble skrevet sist — er den
+# gjeldende, og at publiseringsgaten stopper på den og ikke slipper gjennom
+# godkjenningen som ble skrevet før den.
+a11_log="$arbeid/a11.log"
+styr11="$arbeid/styr11.$$"
+rm -f "$styr11"
+mkfifo "$styr11"
+
+(
+  printf "begin;\n"
+  printf "select 1;\n"
+  printf "\\\\echo A11_STARTET\n"
+  cat "$styr11"
+) | psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$a11_log" 2>&1 &
+okt_a_pid=$!
+exec 9>"$styr11"
+
+for i in $(seq 1 100); do
+  grep -q 'A11_STARTET' "$a11_log" 2>/dev/null && break
+  sleep 0.1
+done
+if ! grep -q 'A11_STARTET' "$a11_log" 2>/dev/null; then
+  printf 'Økt A kom ikke i gang i prøve 11:\n' >&2
+  cat "$a11_log" >&2
+  exec 9>&-
+  exit 1
+fi
+
+sleep 0.3
+
+if ! psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 >"$arbeid/b11.log" 2>&1 <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$pub_fagperson"}', true);
+set local role authenticated;
+select api.record_candidate_final_control('$pub_kandidat2', '$pub_avtrykk2', 'approved',
+  'Samtidighetsprøve: godkjenning skrevet av økt B, som begynte sist.');
+reset role;
+commit;
+SQL
+then
+  printf 'Økt B fikk ikke registrert sluttkontrollen sin i prøve 11:\n' >&2
+  cat "$arbeid/b11.log" >&2
+  exec 9>&-
+  exit 1
+fi
+
+cat >&9 <<SQL
+do \$p\$
+begin
+  perform knowledge.assert_claim_revision_publishable('$pub_rev2');
+exception
+  when others then
+    raise exception 'Forutsetningen mangler: godkjenningen fra økt B gjør ikke revisjonen publiserbar (%). Prøven kan ikke vise at en avvisning blokkerer den.', sqlerrm;
+end
+\$p\$;
+
+select set_config('request.jwt.claims', '{"sub":"$pub_fagperson"}', true);
+set local role authenticated;
+select api.record_candidate_final_control('$pub_kandidat2', '$pub_avtrykk2', 'rejected',
+  'Samtidighetsprøve: avvisning skrevet av økt A, som begynte først og skrev sist.');
+reset role;
+
+do \$p\$
+declare
+  v_a workflow.candidate_final_controls;
+  v_b workflow.candidate_final_controls;
+  v_blokkert boolean := false;
+begin
+  v_a := workflow.current_candidate_final_control('$pub_kandidat2');
+
+  select * into v_b from workflow.candidate_final_controls
+  where candidate_id = '$pub_kandidat2' and decision = 'approved'
+  order by registration_ordinal desc limit 1;
+
+  if v_a.decision <> 'rejected' then
+    raise exception 'Den gjeldende sluttkontrollen er ikke den økt A skrev.';
+  end if;
+  if not (v_a.decided_at < v_b.decided_at) then
+    raise exception 'Forutsetningen mangler: økt A sin rad bærer ikke et eldre tidsstempel enn økt B sin.';
+  end if;
+  if not (v_a.registration_ordinal > v_b.registration_ordinal) then
+    raise exception 'Raden som ble skrevet sist fikk ikke det høyeste registreringsnummeret.';
+  end if;
+
+  begin
+    perform knowledge.assert_claim_revision_publishable('$pub_rev2');
+  exception
+    when restrict_violation then
+      v_blokkert := true;
+      if sqlerrm not like '%er rejected, ikke approved%' then
+        raise exception 'Gaten blokkerte, men ikke på den gjeldende sluttkontrollen: %', sqlerrm;
+      end if;
+  end;
+  if not v_blokkert then
+    raise exception 'En avvisning skrevet sist blokkerte ikke publiseringen.';
+  end if;
+end
+\$p\$;
+\echo SLUTTKONTROLLREKKEFØLGE_BEVIST
+rollback;
+SQL
+
+exec 9>&-
+wait "$okt_a_pid" 2>/dev/null || true
+okt_a_pid=""
+rm -f "$styr11"
+
+if grep -q 'SLUTTKONTROLLREKKEFØLGE_BEVIST' "$a11_log"; then
+  printf 'ok       en avvisning skrevet sist er den gjeldende sluttkontrollen og blokkerer publisering\n'
+else
+  printf 'AVVIK    en avvisning skrevet sist er den gjeldende sluttkontrollen og blokkerer publisering\n' >&2
+  printf '         Uten et registreringsnummer kan et menneskes nei bære det eldste tidsstempelet, og forsvinne bak en godkjenning som ble skrevet før det (migrasjon 009e).\n' >&2
+  printf '         Svaret fra økt A:\n' >&2
+  sed 's/^/         /' "$a11_log" >&2
+  exit 1
+fi
+
+# Prøve 12 og 13 — grunnlaget under kandidaten står stille gjennom kontrollen
+#
+# Publiseringen og sluttkontrollen kontrollerer at innholdet fortsatt bygger til
+# kandidatens avtrykk. Uten låser på det innholdet faktisk bygges av, ville den
+# kontrollen vært et øyeblikksbilde: en ekstraksjonskontroll låser evidensfunnet
+# og ikke kandidaten, og en kildestøttekontroll låste ingenting i det hele tatt,
+# så begge kunne commite mellom regningen av avtrykket og skrivingen.
+# knowledge.lock_candidate_inputs(uuid) og de tre triggerne fra migrasjon 009g
+# lukker det, og prøvene her leser forskjellen.
+pub_funn='7d000000-0000-4000-8000-000000000003'
+pub_verifikator=$(les "select a.id from provenance.actors a where a.actor_key = 'agent:extraction-verification'")
+pub_avtrykk1=$(les "select c.candidate_digest from knowledge.candidates c where c.id = '$pub_kandidat1'")
+
+# Revisjon 2, fordi prøve 10 commitet publiseringen av revisjon 1: en publisering
+# som ikke endrer noe er ikke en hendelse, og da ville økt A feilet før den rakk
+# å ta noen lås.
+proev 'en samtidig ekstraksjonskontroll må vente på publiseringen (55P03)' \
+  "$pub_sesjon
+   select knowledge.publish_claim_revision('$pub_rev2', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');" \
+  "select workflow.record_evidence_verification(
+     '$pub_funn', '$pub_verifikator', null,
+     'uncertain', 'original_source', array['source_locator'],
+     'Samtidighetsprøve; rulles tilbake.',
+     'Samtidighetsprøve; kontrollen konkluderte ikke.');" \
+  'Uten grunnlagslåsen kan en ekstraksjonskontroll commite mellom publiseringsgaten og hendelsen, og en kandidat som allerede er foreldet blir publisert som gjeldende (migrasjon 009g).'
+
+proev 'en samtidig kildestøttekontroll må vente på sluttkontrollen (55P03)' \
+  "select set_config('request.jwt.claims', '{\"sub\":\"$pub_fagperson\"}', true);
+   set local role authenticated;
+   select api.record_candidate_final_control('$pub_kandidat1', '$pub_avtrykk1', 'approved',
+     'Samtidighetsprøve; rulles tilbake.');
+   reset role;" \
+  "insert into workflow.claim_verifications
+     (claim_revision_id, verified_revision_creator_actor_id, verifier_actor_id, outcome,
+      source_access, source_support, population_match, comparator_match, timeframe_match,
+      direction_and_magnitude, qualifiers_complete, contradictory_evidence_represented,
+      rationale, verified_at)
+   select r.id, r.created_by_actor_id, '7d000000-0000-4000-8000-0000000000a1',
+          'uncertain', 'original_source', 'ok', 'not_assessable', 'ok', 'ok', 'ok', 'ok', 'ok',
+          'Samtidighetsprøve; rulles tilbake.', now()
+   from knowledge.claim_revisions r where r.id = '$pub_rev1';" \
+  'Uten låsen på revisjonen kan en kildestøttekontroll commite mellom regningen av avtrykket og sluttkontrollen, og godkjenningen ville gjaldt et innhold som allerede var et annet (migrasjon 009g).'
+
+# Prøve 14 og 15 — rollbacken holder de samme låsene som publiseringen
+#
+# Fra migrasjon 009h navngir en rollback et innhold og ikke en revisjon, og
+# krever at nettopp den kandidaten fortsatt er det gjeldende innholdet. Den
+# kontrollen er bare en garanti dersom grunnlaget under målrevisjonen står
+# stille fra kontrollen til hendelsen: ellers kunne en kildestøttekontroll
+# commite i vinduet, og rollbacken ville tatt i bruk et innhold som ikke lenger
+# var det som lå der. Økt A publiserer først revisjon 2, slik at revisjon 1 blir
+# et gyldig og eldre rollback-mål, og ruller deretter tilbake til kandidaten sin.
+proev 'en samtidig kildestøttekontroll må vente på rollbacken (55P03)' \
+  "$pub_sesjon
+   select knowledge.publish_claim_revision('$pub_rev2', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');
+   select knowledge.rollback_claim_publication('$pub_paastand', '$pub_kandidat1',
+     '$pub_publisher_aktor', 'Samtidighetsprøve; rulles tilbake.');" \
+  "insert into workflow.claim_verifications
+     (claim_revision_id, verified_revision_creator_actor_id, verifier_actor_id, outcome,
+      source_access, source_support, population_match, comparator_match, timeframe_match,
+      direction_and_magnitude, qualifiers_complete, contradictory_evidence_represented,
+      rationale, verified_at)
+   select r.id, r.created_by_actor_id, '7d000000-0000-4000-8000-0000000000a1',
+          'uncertain', 'original_source', 'ok', 'not_assessable', 'ok', 'ok', 'ok', 'ok', 'ok',
+          'Samtidighetsprøve; rulles tilbake.', now()
+   from knowledge.claim_revisions r where r.id = '$pub_rev1';" \
+  'Uten grunnlagslåsen på målrevisjonen kan en kildestøttekontroll commite mellom kontrollen av at kandidaten er den gjeldende og rollbackhendelsen, og rollbacken ville gjenopprettet et innhold som allerede var foreldet (migrasjon 009g, 009h).'
+
+proev 'en samtidig tilbaketrekking må vente på rollbacken (55P03)' \
+  "$pub_sesjon
+   select knowledge.publish_claim_revision('$pub_rev2', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');
+   select knowledge.rollback_claim_publication('$pub_paastand', '$pub_kandidat1',
+     '$pub_publisher_aktor', 'Samtidighetsprøve; rulles tilbake.');" \
+  "$pub_sesjon
+   select knowledge.withdraw_claim_publication('$pub_paastand', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');" \
+  'Uten radlåsen på påstanden kan en rollback og en tilbaketrekking lese den samme tilstanden, og etterlate to gjeldende sannheter (migrasjon 009e).'
 
 printf '\nAlle samtidighetsprøvene passerte.\n'

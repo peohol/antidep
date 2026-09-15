@@ -4,14 +4,22 @@ import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './App'
 import type { CandidateGateway } from './candidate-gateway'
+import type { PublicationGateway } from './publication-gateway'
 import { parseCandidateView } from '../lib/candidate-view'
+import { parsePublicationOutcome } from '../lib/published-claim'
 import {
   candidateContent,
   candidateResponse,
+  publicationHistoryEvent,
+  publicationOutcomeResponse,
+  publishedClaimResponse,
+  publishedIndexEntry,
   FIXTURE_CANDIDATE_DIGEST,
   FIXTURE_CANDIDATE_ID,
+  FIXTURE_CLAIM_ID,
   FIXTURE_STATEMENT,
 } from '../lib/candidate-test-support'
+import { parsePublishedClaim, parsePublishedClaimIndex } from '../lib/published-claim'
 
 const DIGEST = FIXTURE_CANDIDATE_DIGEST
 const CANDIDATE = FIXTURE_CANDIDATE_ID
@@ -64,6 +72,25 @@ function port(overrides: Partial<CandidateGateway> = {}): CandidateGateway {
       ]),
     read: () => Promise.resolve(parseCandidateView(candidateResponse())),
     recordFinalControl: () => Promise.resolve(),
+    publish: () => Promise.resolve(parsePublicationOutcome(publicationOutcomeResponse())),
+    ...overrides,
+  }
+}
+
+/** Den publiserte flatens vei til databasen, som en dobbel. */
+function publicationPort(overrides: Partial<PublicationGateway> = {}): PublicationGateway {
+  return {
+    listPublished: () => Promise.resolve(parsePublishedClaimIndex([publishedIndexEntry()])),
+    readPublished: () => Promise.resolve(parsePublishedClaim(publishedClaimResponse())),
+    publish: () => Promise.resolve(parsePublicationOutcome(publicationOutcomeResponse())),
+    withdraw: () =>
+      Promise.resolve(
+        parsePublicationOutcome(
+          publicationOutcomeResponse({ action: 'withdraw', published: false }),
+        ),
+      ),
+    rollback: () =>
+      Promise.resolve(parsePublicationOutcome(publicationOutcomeResponse({ action: 'rollback' }))),
     ...overrides,
   }
 }
@@ -271,5 +298,197 @@ describe('klinikerflaten', () => {
       </MemoryRouter>,
     )
     expect(await screen.findByText(/tilgangsbegrenset/)).toBeVisible()
+  })
+})
+
+describe('publiseringen', () => {
+  it('er en egen handling etter sluttkontrollen, og sender avtrykket uendret', async () => {
+    const publish = vi.fn(() =>
+      Promise.resolve(parsePublicationOutcome(publicationOutcomeResponse())),
+    )
+    render(
+      <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
+        <AppLayout gateway={port({ publish })} />
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('button', { name: 'Publiser kandidaten' })
+    // To handlinger, to knapper: å godkjenne og å publisere er ikke det samme.
+    expect(screen.getByRole('button', { name: 'Registrer sluttkontroll' })).toBeVisible()
+
+    fireEvent.change(screen.getByLabelText('Begrunnelse for publiseringen'), {
+      target: { value: 'Godkjent innhold tas i bruk.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Publiser kandidaten' }))
+
+    await waitFor(() => {
+      expect(publish).toHaveBeenCalledWith({
+        candidateId: CANDIDATE,
+        seenCandidateDigest: DIGEST,
+        reason: 'Godkjent innhold tas i bruk.',
+      })
+    })
+  })
+
+  it('viser databasens avvisning ordrett når mandatet mangler', async () => {
+    render(
+      <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
+        <AppLayout
+          gateway={port({
+            publish: () =>
+              Promise.reject(
+                new Error('Brukeren har ikke gyldig publisher-rolle for dette innholdsområdet.'),
+              ),
+          })}
+        />
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('button', { name: 'Publiser kandidaten' })
+    fireEvent.change(screen.getByLabelText('Begrunnelse for publiseringen'), {
+      target: { value: 'Forsøk uten mandat.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Publiser kandidaten' }))
+
+    expect(await screen.findByText(/ikke gyldig publisher-rolle/)).toBeVisible()
+  })
+})
+
+describe('den publiserte klinikerflaten', () => {
+  it('lister det som faktisk er publisert', async () => {
+    render(
+      <MemoryRouter initialEntries={['/publisert']}>
+        <AppLayout publication={publicationPort()} />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('link', { name: FIXTURE_STATEMENT })).toBeVisible()
+    expect(screen.getByText(/Sikkerhet i grunnlaget: lav/)).toBeVisible()
+  })
+
+  it('viser det forseglede innholdet med proveniens og historikk', async () => {
+    render(
+      <MemoryRouter initialEntries={[`/publisert/${FIXTURE_CLAIM_ID}`]}>
+        <AppLayout publication={publicationPort()} />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('heading', { name: FIXTURE_STATEMENT })).toBeVisible()
+    // Proveniensen står over innholdet, ikke bare i historikken under.
+    expect(screen.getAllByText(/Sluttkontrollert av Navngitt fagperson/).length).toBeGreaterThan(0)
+    // Avtrykket vises, slik at innholdet er etterprøvbart mot det som ble godkjent.
+    expect(screen.getByText(DIGEST)).toBeVisible()
+    expect(
+      within(section('Publiseringshistorikk')).getByText(/publisert — Navngitt publisher/),
+    ).toBeVisible()
+    // Den samme rendereren som kandidatsiden bruker: samme visning, ett innhold.
+    expect(
+      within(section('Evidensvurdering')).getByText(/Sikkerhet i grunnlaget \(grade\): lav/),
+    ).toBeVisible()
+  })
+
+  it('slutter å presentere et tilbaketrukket innhold som gjeldende, men beholder historikken', async () => {
+    const withdrawn = parsePublishedClaim({
+      claim_id: FIXTURE_CLAIM_ID,
+      published: false,
+      withdrawn: true,
+      content: null,
+      history: [
+        publicationHistoryEvent({
+          action: 'withdraw',
+          final_control: null,
+          reason: 'Nye data gjør formuleringen misvisende.',
+        }),
+        publicationHistoryEvent({ publication_event_id: '99999999-9999-4999-8999-999999999999' }),
+      ],
+    })
+    render(
+      <MemoryRouter initialEntries={[`/publisert/${FIXTURE_CLAIM_ID}`]}>
+        <AppLayout
+          publication={publicationPort({ readPublished: () => Promise.resolve(withdrawn) })}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: /Ingenting er publisert om denne påstanden nå/ }),
+    ).toBeVisible()
+    expect(
+      screen.getByText(/trukket tilbake, og presenteres ikke lenger som gjeldende/),
+    ).toBeVisible()
+    // Innholdet er borte som gjeldende, men historikken er fortsatt etterprøvbar.
+    expect(screen.queryByRole('region', { name: 'Evidensvurdering' })).not.toBeInTheDocument()
+    const historikk = within(section('Publiseringshistorikk'))
+    expect(historikk.getByText(/Nye data gjør formuleringen misvisende/)).toBeVisible()
+  })
+
+  it('lar en rollback peke på en tidligere publisert versjon, med dens eget avtrykk', async () => {
+    const rollback = vi.fn(() =>
+      Promise.resolve(parsePublicationOutcome(publicationOutcomeResponse({ action: 'rollback' }))),
+    )
+    const eldre = publicationHistoryEvent({
+      publication_event_id: '99999999-9999-4999-8999-999999999999',
+      candidate_id: '88888888-8888-4888-8888-888888888888',
+      candidate_digest: `sha256:${'c'.repeat(64)}`,
+      revision_number: 1,
+    })
+    const view = parsePublishedClaim(
+      publishedClaimResponse({ history: [publicationHistoryEvent(), eldre] }),
+    )
+    render(
+      <MemoryRouter initialEntries={[`/publisert/${FIXTURE_CLAIM_ID}`]}>
+        <AppLayout
+          publication={publicationPort({ readPublished: () => Promise.resolve(view), rollback })}
+        />
+      </MemoryRouter>,
+    )
+
+    await screen.findByRole('button', { name: 'Rull tilbake' })
+    fireEvent.change(screen.getByLabelText('Gå tilbake til'), {
+      target: { value: '88888888-8888-4888-8888-888888888888' },
+    })
+    fireEvent.change(screen.getByLabelText('Begrunnelse for rollback'), {
+      target: { value: 'Den nyere formuleringen var feil.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Rull tilbake' }))
+
+    await waitFor(() => {
+      expect(rollback).toHaveBeenCalledWith({
+        claimId: FIXTURE_CLAIM_ID,
+        targetCandidateId: '88888888-8888-4888-8888-888888888888',
+        seenCandidateDigest: `sha256:${'c'.repeat(64)}`,
+        reason: 'Den nyere formuleringen var feil.',
+      })
+    })
+  })
+
+  it('krever en begrunnelse for tilbaketrekkingen', async () => {
+    const withdraw = vi.fn(() =>
+      Promise.resolve(
+        parsePublicationOutcome(
+          publicationOutcomeResponse({ action: 'withdraw', published: false }),
+        ),
+      ),
+    )
+    render(
+      <MemoryRouter initialEntries={[`/publisert/${FIXTURE_CLAIM_ID}`]}>
+        <AppLayout publication={publicationPort({ withdraw })} />
+      </MemoryRouter>,
+    )
+
+    const knapp = await screen.findByRole('button', { name: 'Trekk tilbake' })
+    expect(knapp).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('Begrunnelse for tilbaketrekking'), {
+      target: { value: 'Nye data gjør formuleringen misvisende.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Trekk tilbake' }))
+
+    await waitFor(() => {
+      expect(withdraw).toHaveBeenCalledWith({
+        claimId: FIXTURE_CLAIM_ID,
+        reason: 'Nye data gjør formuleringen misvisende.',
+      })
+    })
   })
 })
