@@ -31,7 +31,7 @@
 -- ----------------------------------------------------------------------------
 insert into auth.users (id, instance_id, aud, role, email)
 values ('7b000000-0000-4000-8000-0000000000a0',
-        '00000000-0000-0000-8000-000000000000', 'authenticated', 'authenticated',
+        '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
         'samtidighetsprove@antidep.test')
 on conflict (id) do nothing;
 
