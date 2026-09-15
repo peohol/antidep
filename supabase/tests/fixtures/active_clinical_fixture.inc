@@ -114,6 +114,16 @@ declare
   v_title text;
 begin
   select s.title into v_title from knowledge.sources s where s.id = new.source_id;
+
+  -- 280 tests content-hash serialization, not document extraction. Its fixture
+  -- predates reading-order@2 and still spells the retired @1 value explicitly.
+  -- Normalize only that synthetic test source to the current safe recipe before
+  -- the production full-text trigger ever sees an EvidenceItem from it.
+  if v_title = 'Serialiseringstestkilde'
+     and new.text_extraction_transform = 'antidep-reading-order@1' then
+    new.text_extraction_transform := 'antidep-reading-order@2';
+  end if;
+
   if v_prefix in ('340','400','440','460','470','480','490','580','590','600','610','620','630','660','670','680','690','700','710')
      or v_title in ('Immutabilitetstestkilde', 'Upublisert testkilde for 400') then
     new.representation := 'full_text';
