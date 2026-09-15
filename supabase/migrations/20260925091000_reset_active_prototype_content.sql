@@ -1,4 +1,4 @@
--- Antidep 2 owner-authorized, atomic, one-time removal of the known legacy prototype graph.
+-- Antidep 2: atomic gate installation, client retirement and prototype reset.
 begin;
 
 create table audit.prototype_resets (
@@ -31,11 +31,9 @@ create trigger prototype_resets_reject_mutation
     'Et reset-snapshot er et uforanderlig gjenopprettingsspor. En rettelse registreres som en ny hendelse; snapshotet endres eller slettes aldri.'
   );
 
--- Lock every root or dependent table before inspecting the scope. A writer that
--- committed immediately before the lock is therefore visible to the second
--- preflight below; a writer after the lock must wait until this transaction is
--- finished. The first migration already ran the same preflight before changing
--- grants or write rules.
+-- A writer committed after the first migration is visible to this locked
+-- preflight. Both the operational schema changes and the reset are below this
+-- boundary, in this same transaction; a failure cannot strand a partial rollout.
 lock table knowledge.publication_events, knowledge.claims, provenance.agent_runs,
   workflow.claim_verification_citations, workflow.claim_verifications,
   workflow.evidence_verifications, workflow.review_decisions,
@@ -68,10 +66,7 @@ begin
           'Owner-approved removal of the bounded pre-Antidep-2 prototype graph', v_counts, v_snapshot,
           encode(extensions.digest(convert_to(v_snapshot::text, 'UTF8'), 'sha256'), 'hex'));
 
-  -- Re-read the row we actually stored. The reset is allowed to proceed only
-  -- if both its fingerprint and its per-table counts agree with the stored
-  -- payload; checking only the pre-insert variable would not prove that the
-  -- private recovery row itself is intact.
+  -- Verify the stored recovery row itself before deleting any active content.
   if not exists (
     select 1
     from audit.prototype_resets pr
@@ -89,6 +84,81 @@ begin
       message = 'Antidep 2-resetten stoppet: det lagrede snapshotet eller radantallene kunne ikke verifiseres.';
   end if;
 end $$;
+
+-- Install the operational changes only inside the locked reset transaction.
+create function knowledge.assert_clinical_full_text(
+  p_source_id uuid,
+  p_source_version_id uuid
+) returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v knowledge.source_versions;
+  v_status knowledge.source_status;
+begin
+  if p_source_version_id is null then
+    raise exception using errcode = '22023', message = 'Kliniske evidensfunn krever en eksplisitt fulltekstversjon.';
+  end if;
+
+  select sv.* into v
+  from knowledge.source_versions sv
+  where sv.id = p_source_version_id;
+
+  select s.source_status into v_status
+  from knowledge.sources s
+  where s.id = v.source_id;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'Kildeversjonen finnes ikke.';
+  end if;
+  if v.source_id <> p_source_id then
+    -- Preserve the composite foreign key's error class for a mismatched source.
+    raise exception using errcode = '23503', message = 'Kildeversjonen tilhører ikke evidensfunnets kilde.';
+  end if;
+  if v_status in ('retracted', 'withdrawn') then
+    raise exception using errcode = '23001', message = 'En tilbaketrukket kilde kan ikke bære klinisk evidens.';
+  end if;
+  if v.representation is distinct from 'full_text'::knowledge.source_representation then
+    raise exception using errcode = '23001', message = 'Abstract og begrensede representasjoner er bare til kildeoppdagelse; klinisk evidens krever fulltekst.';
+  end if;
+  if v.document_sha256 is null or v.document_sha256 !~ '^sha256:[0-9a-f]{64}$'
+     or v.document_byte_size is null or v.document_byte_size <= 0
+     or v.document_media_type is distinct from 'application/pdf'
+     or v.content_hash is null or v.content_hash !~ '^sha256:[0-9a-f]{64}$'
+     or v.text_extraction_tool is distinct from 'pdftotext'
+     or nullif(btrim(v.text_extraction_tool_version), '') is null
+     or v.text_extraction_arguments is distinct from '-bbox-layout -enc UTF-8 -eol unix'
+     or v.text_extraction_transform is distinct from 'antidep-reading-order@2' then
+    raise exception using
+      errcode = '23001',
+      message = 'Fulltekstversjonen mangler komplett dokumentbinding eller gjeldende tillatt tekstuttrekksoppskrift.';
+  end if;
+end;
+$$;
+revoke execute on function knowledge.assert_clinical_full_text(uuid, uuid) from public, anon, authenticated;
+
+create function knowledge.enforce_evidence_full_text() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  perform knowledge.assert_clinical_full_text(new.source_id, new.source_version_id);
+  return new;
+end;
+$$;
+revoke execute on function knowledge.enforce_evidence_full_text() from public;
+create trigger evidence_items_require_clinical_full_text
+before insert on knowledge.evidence_items
+for each row execute function knowledge.enforce_evidence_full_text();
+
+-- Retire the obsolete browser workflow while preserving internal publication code.
+revoke execute on function api.claim_review_workspace(uuid) from anon, authenticated;
+revoke execute on function api.extraction_review_workspace(uuid) from anon, authenticated;
+revoke execute on function api.register_human_claim_verification(uuid, text, text, text, text, text, text, text, text, text, jsonb, text, text) from anon, authenticated;
+revoke execute on function api.register_human_extraction_verification(uuid, text, text, text, text[], text, text) from anon, authenticated;
+revoke execute on function api.register_publication_approval(uuid, text, text, text) from anon, authenticated;
+revoke execute on function api.publish_claim_revision(uuid, text) from anon, authenticated;
+revoke execute on function api.create_evidence_item(uuid, text, text, text, text, uuid, text, uuid, text, text, text, text, text, text, uuid, uuid, integer, text, uuid, text, text, text, text, numeric, text, numeric, numeric, numeric, text, text) from anon, authenticated;
 
 -- Only the named append-only guards are suspended, inside this migration transaction.
 alter table workflow.claim_verification_citations disable trigger claim_verification_citations_reject_mutation;
@@ -122,9 +192,7 @@ alter table knowledge.claim_revisions enable trigger claim_revisions_reject_muta
 alter table knowledge.evidence_field_groundings enable trigger evidence_field_groundings_reject_mutation;
 alter table knowledge.evidence_items enable trigger evidence_items_reject_mutation;
 
--- The helper only exists to make this two-migration rollout fail closed before
--- the first structural change and to close the inter-migration race here. A
--- successful reset has no ongoing need for a maintenance-only delete-scope API.
+-- Successful rollout has no ongoing need for a maintenance-only scope check.
 drop function knowledge.assert_antidep2_reset_preconditions();
 
 commit;
