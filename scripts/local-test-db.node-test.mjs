@@ -1,13 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -41,7 +34,7 @@ for (const value of [
   `${local}\n`,
   'host=localhost dbname=postgres',
 ]) {
-  test(`rejects a nonlocal or ambiguous URI: ${value.replace('do-not-print-me', 'redacted')}`, () => {
+  test(`rejects unsafe URI: ${value.replace('do-not-print-me', 'redacted')}`, () => {
     assert.throws(() => assertLocalTestDatabase(value, {}), /local Supabase/)
   })
 }
@@ -120,7 +113,7 @@ for (const args of [
   ['--db-url', local, '--db-url', remote],
   ['--db-url', local, '--db-url', local],
 ]) {
-  test(`wrapper rejects unsafe arguments before any database command: ${args[0]} (${args.length})`, () => {
+  test(`rejects unsafe arguments before SQL: ${args[0]} (${args.length})`, () => {
     const result = runWrapper(args)
     assert.notEqual(result.status, 0)
     assert.equal(result.calls, '')
