@@ -68,11 +68,25 @@ begin
           'Owner-approved removal of the bounded pre-Antidep-2 prototype graph', v_counts, v_snapshot,
           encode(extensions.digest(convert_to(v_snapshot::text, 'UTF8'), 'sha256'), 'hex'));
 
-  if (select snapshot_sha256 from audit.prototype_resets where reset_id = 'antidep-2-reset-2026-09')
-     <> encode(extensions.digest(convert_to(v_snapshot::text, 'UTF8'), 'sha256'), 'hex') then
+  -- Re-read the row we actually stored. The reset is allowed to proceed only
+  -- if both its fingerprint and its per-table counts agree with the stored
+  -- payload; checking only the pre-insert variable would not prove that the
+  -- private recovery row itself is intact.
+  if not exists (
+    select 1
+    from audit.prototype_resets pr
+    where pr.reset_id = 'antidep-2-reset-2026-09'
+      and pr.snapshot_sha256 = encode(
+        extensions.digest(convert_to(pr.snapshot::text, 'UTF8'), 'sha256'), 'hex'
+      )
+      and pr.row_counts = (
+        select jsonb_object_agg(key, jsonb_array_length(value))
+        from jsonb_each(pr.snapshot)
+      )
+  ) then
     raise exception using
       errcode = '23001',
-      message = 'Antidep 2-resetten stoppet: snapshotets fingeravtrykk kunne ikke verifiseres.';
+      message = 'Antidep 2-resetten stoppet: det lagrede snapshotet eller radantallene kunne ikke verifiseres.';
   end if;
 end $$;
 
