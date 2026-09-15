@@ -68,4 +68,5 @@ reject_grep_matches \
   'MVP_IMPLEMENTATION_PLAN|ROUTINE_EXTRACTION|/extraction-review|/review' \
   "${operational_docs[@]}"
 
+node --test scripts/local-test-db.node-test.mjs
 node scripts/verify-doc-links.mjs
