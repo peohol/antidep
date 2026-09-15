@@ -4,7 +4,7 @@ Antidep utvikles som et agentstyrt, etterprøvbart kunnskapssystem om antidepres
 
 ## Status
 
-Repoet inneholder et minimalt React-skall, Supabase-skjemaet og en testbar agentmotor. Det finnes foreløpig ingen live semantisk modelladapter, permanent PDF-opplasting eller ferdig klinikerflate. Prototypeinnholdet er tatt ut av aktiv drift av en fremoverrettet, reversibel migrasjon; ingen hostet database er endret av kodeleveransen.
+Repoet inneholder et minimalt React-skall, Supabase-skjemaet og en testbar agentmotor. Det finnes foreløpig ingen live semantisk modelladapter, permanent PDF-opplasting eller ferdig klinikerflate. Antidep 2-migrasjonene er laget for å ta den reviewede legacy-prototypen ut av aktiv drift ved utrulling og stoppe dersom databasen har avveket fra det autoriserte scope-et. Denne kodeleveransen har ikke i seg selv endret noen hosted database.
 
 ## Utvikling
 
@@ -20,6 +20,6 @@ npm run build
 npm run verify:repo
 ```
 
-Lokal database: `npm run db:start`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:chain`, `npm run db:stop`.
+Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:chain`, `npm run db:stop`.
 
 Se [roadmap](docs/ROADMAP.md), [evidenskjeden](docs/EVIDENCE_PIPELINE.md) og [styringsreglene](docs/ANTIDEP_CONSTITUTION.md).
