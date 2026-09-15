@@ -35,6 +35,14 @@ import { EXTRACTION_VERIFICATION_PREMISES } from '../src/agents/pipeline-version
 import { readProposalFile } from '../src/agents/proposal-files.ts'
 import { documentsIn } from '../src/agents/source-document.ts'
 import { createPipelineJobApi, jobKey } from '../src/agents/pipeline-job.ts'
+import {
+  parseAgentTask,
+  parseAgentWorkQueue,
+  parseImportOutcome,
+} from '../src/agents/agent-task.ts'
+import { renderAgentTaskFile } from '../src/agents/agent-task-file.ts'
+import { parseAgentAnswer, answerBindingProblem } from '../src/agents/agent-answer.ts'
+import { handoffResultProblem } from '../src/agents/handoff-result.ts'
 import { syntheticArticlePdf } from '../src/agents/test-support.ts'
 import { parseCandidateView, canBeFinalControlled } from '../src/lib/candidate-view.ts'
 import {
@@ -204,6 +212,27 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
     delete from workflow.pipeline_job_runs where pipeline_job_id in (
       select id from workflow.pipeline_jobs where job_key like 'antidep2-kjede:%');
     delete from workflow.pipeline_jobs where job_key like 'antidep2-kjede:%';
+    -- Handoff-oppgavene kjeden legger inn, har en utledet nøkkel og kan derfor
+    -- ikke kjennes igjen på et prefiks. De kjennes igjen på hvem som la dem inn:
+    -- kjedens egen redaktøraktør, som slettes og opprettes på nytt hver kjøring.
+    -- Uten dette ville en ny kjøring i den gjenbrukbare lokale databasen møtt en
+    -- oppgave som allerede var besvart.
+    delete from workflow.agent_handoff_imports where pipeline_job_id in (
+      select id from workflow.pipeline_jobs
+      where job_key like 'agent-handoff:%' and enqueued_by_actor_id = ${q(EDITOR_ACTOR)});
+    delete from workflow.pipeline_job_events where pipeline_job_id in (
+      select id from workflow.pipeline_jobs
+      where job_key like 'agent-handoff:%' and enqueued_by_actor_id = ${q(EDITOR_ACTOR)});
+    delete from workflow.pipeline_job_runs where pipeline_job_id in (
+      select id from workflow.pipeline_jobs
+      where job_key like 'agent-handoff:%' and enqueued_by_actor_id = ${q(EDITOR_ACTOR)});
+    delete from workflow.pipeline_jobs
+    where job_key like 'agent-handoff:%' and enqueued_by_actor_id = ${q(EDITOR_ACTOR)};
+    -- Den semantiske modelltildelingen kjeden registrerer, er append-only i
+    -- drift. I den gjenbrukbare testdatabasen må den likevel bort, ellers ville
+    -- neste kjøring møtt sin egen modell som «allerede registrert».
+    delete from provenance.role_model_assignments
+    where capacity = 'semantic' and provider = 'antidep-test';
     delete from knowledge.full_text_readability_checks where source_version_id in (
       select id from knowledge.source_versions where source_id = ${q(SOURCE)});
     delete from knowledge.source_document_publications where source_id = ${q(SOURCE)};
@@ -367,6 +396,11 @@ async function main(): Promise<void> {
       'Patients with major depressive disorder were randomised to double-blind sertraline treatment for 26 to 32 weeks.',
       'Forty-eight sertraline-treated patients completed the trial and were analysed.',
       'Mean percent weight change was 1.0% at endpoint with a 95% confidence interval from 0.5% to 1.5%.',
+      // Den andre armen finnes for at den eksterne agent-handoffen skal kunne
+      // registrere sitt eget evidensfunn av den samme artikkelen, uten å bli en
+      // dublett av sertralinfunnet over.
+      'A parallel mirtazapine arm of forty-two patients was followed for the same period.',
+      'Mean percent weight change in the mirtazapine arm was 3.0% at endpoint with a 95% confidence interval from 2.1% to 3.9%.',
     ])
     const pdfPath = join(work, 'article.pdf')
     const documentStore = join(work, 'documents')
@@ -1297,6 +1331,245 @@ async function main(): Promise<void> {
         `select count(*)::text from knowledge.publication_events pe
          where pe.claim_id = ${q(claimId)}`,
       ) === '4',
+    )
+
+    // ------------------------------------------------------------------
+    // Ekstern agent-handoff: Antidep → KI-agent → Antidep
+    //
+    // Det samme leddet en gang til, men uten en eneste fil på disk og uten en
+    // kjøremappe: oppgaven bygges av databasen, «agenten» er koden under, og
+    // svaret går inn gjennom api.import_agent_answer. Prøven finnes her og ikke
+    // bare i vitest fordi grensen som skal prøves, er den mellom
+    // oppgavekontrakten i TypeScript og de api-funksjonene som faktisk tar imot
+    // den.
+    // ------------------------------------------------------------------
+    const otherDrugId = psql(
+      config,
+      `select id from catalog.drugs where canonical_name = 'mirtazapin'`,
+    )
+
+    const enqueuedTask = await editor.rpc('enqueue_agent_task', {
+      p_agent_role: 'evidence_extraction',
+      p_input_manifest: {
+        source_version_id: report.sourceVersionId,
+        drug_ids: [otherDrugId],
+        outcome_concept_ids: [outcomeId],
+        population_ids: [populationId],
+      },
+    })
+    check(
+      'agentoppgaven legges inn med en utledet nøkkel',
+      enqueuedTask.error === null,
+      enqueuedTask.error?.message ?? '',
+    )
+    const handoffJobId = (enqueuedTask.data as { pipeline_job_id?: string } | null)?.pipeline_job_id
+    if (handoffJobId === undefined) return
+
+    const queue = parseAgentWorkQueue((await editor.rpc('agent_work_queue', {})).data)
+    check(
+      'agentkøen viser oppgaven med hva den gjelder, og ingenting som hindrer den',
+      queue.items.some(
+        (item) =>
+          item.pipelineJobId === handoffJobId &&
+          item.blockedReason === null &&
+          !item.answered &&
+          item.subjectLabel.length > 0,
+      ),
+    )
+
+    const taskPayload = await editor.rpc('agent_task_payload', {
+      p_pipeline_job_id: handoffJobId,
+    })
+    check(
+      'oppgaven kan hentes ut av flaten',
+      taskPayload.error === null,
+      taskPayload.error?.message ?? '',
+    )
+    if (taskPayload.error !== null) return
+    const agentTask = parseAgentTask(taskPayload.data)
+
+    // Filen brukeren laster ned. Den skal bære hele artikkelen, slik at ingen
+    // trenger original-PDF-en ved siden av.
+    const taskFile = renderAgentTaskFile(agentTask)
+    check(
+      'oppgavefilen bærer hele den kontrollerte fullteksten og avtrykket',
+      taskFile.includes('Mean percent weight change in the mirtazapine arm was 3.0%') &&
+        taskFile.includes(agentTask.requestDigest) &&
+        taskFile.includes('### Svarmal'),
+    )
+
+    const otherArmMethod =
+      'A parallel mirtazapine arm of forty-two patients was followed for the same period.'
+    const otherArmResult =
+      'Mean percent weight change in the mirtazapine arm was 3.0% at endpoint with a 95% confidence interval from 2.1% to 3.9%.'
+
+    const handoffResult = {
+      extraction: {
+        design_code: 'randomized_controlled_trial',
+        population_id: populationId,
+        population_availability: 'reported_value',
+        population_detail: 'Voksne med depressiv lidelse.',
+        sample_size: 42,
+        sample_size_availability: 'reported_value',
+        intervention_drug_id: otherDrugId,
+        comparator_kind: 'none',
+        outcome_concept_id: outcomeId,
+        outcome_detail: 'Gjennomsnittlig prosentvis vektendring ved endepunkt.',
+        timepoint_min: '26 weeks',
+        timepoint_max: '32 weeks',
+        timepoint_availability: 'reported_value',
+        reported_direction: 'increase',
+        effect_measure: 'mean_change',
+        estimate: '3.0',
+        estimate_unit: 'percent',
+        estimate_availability: 'reported_value',
+        ci_lower: '2.1',
+        ci_upper: '3.9',
+        ci_level_percent: '95',
+        confidence_interval_availability: 'reported_value',
+        source_locator: 'Syntetisk fulltekst, resultater',
+        source_quote: otherArmResult,
+      },
+      field_groundings: [
+        ['intervention_arm', otherArmMethod],
+        ['sample_size', otherArmMethod],
+        ['outcome', otherArmResult],
+        ['estimate', otherArmResult],
+        ['effect_measure', otherArmResult],
+        ['reported_direction', otherArmResult],
+        ['confidence_interval', otherArmResult],
+        ['timepoint', otherArmMethod],
+        ['population', methodExcerpt],
+        ['availability_semantics', otherArmResult],
+      ].map(([field, excerpt]) => ({
+        check_field: field,
+        source_excerpt: excerpt,
+        source_locator: 'RESULTS',
+        justification: `Utdraget oppgir verdien for ${String(field)}.`,
+      })),
+    }
+
+    // «KI-agenten»: kopierer bindingsverdiene uendret ut av oppgaven, og fyller
+    // inn de to tingene bare den vet.
+    const handoffAnswer = {
+      answer_version: agentTask.answerVersion,
+      task_version: agentTask.taskVersion,
+      role: agentTask.role,
+      job_key: agentTask.jobKey,
+      request_digest: agentTask.requestDigest,
+      output_schema_version: agentTask.outputSchemaVersion,
+      identity: {
+        provider: 'antidep-test',
+        model: 'ekstern-kjedeagent',
+        model_version_disclosure: 'not_exposed',
+      },
+      answered_at: new Date().toISOString(),
+      result: handoffResult,
+    }
+
+    const parsedAnswer = parseAgentAnswer(handoffAnswer)
+    check(
+      'svaret hører til oppgaven, og utkastet står ordrett i kildeteksten',
+      answerBindingProblem(agentTask, parsedAnswer) === null &&
+        handoffResultProblem(agentTask, parsedAnswer.result) === null,
+      answerBindingProblem(agentTask, parsedAnswer) ??
+        handoffResultProblem(agentTask, parsedAnswer.result) ??
+        '',
+    )
+
+    const imported = await editor.rpc('import_agent_answer', {
+      p_pipeline_job_id: handoffJobId,
+      p_answer: handoffAnswer,
+    })
+    check(
+      'det eksterne agentsvaret registreres gjennom den kontrollerte skriveveien',
+      imported.error === null && parseImportOutcome(imported.data).imported,
+      imported.error?.message ?? '',
+    )
+    if (imported.error !== null) return
+    const importOutcome = parseImportOutcome(imported.data)
+
+    check(
+      'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet',
+      psql(
+        config,
+        `select format('%s/%s/%s', r.semantic_provider, r.semantic_model, r.semantic_model_version)
+         from provenance.agent_runs r where r.id = ${q(importOutcome.agentRunId)}`,
+      ) === 'antidep-test/ekstern-kjedeagent/ikke-eksponert',
+    )
+
+    const importedAgain = await editor.rpc('import_agent_answer', {
+      p_pipeline_job_id: handoffJobId,
+      p_answer: handoffAnswer,
+    })
+    check(
+      'det samme svaret sendt inn igjen lager ingen doble kliniske artefakter',
+      importedAgain.error === null &&
+        parseImportOutcome(importedAgain.data).alreadyImported &&
+        psql(
+          config,
+          `select count(*)::text from knowledge.evidence_items e
+           where e.source_version_id = ${q(report.sourceVersionId)}
+             and e.intervention_drug_id = ${q(otherDrugId)}`,
+        ) === '1',
+      importedAgain.error?.message ?? '',
+    )
+
+    // Et svar avgitt på en oppgave som siden har fått et annet grunnlag, har et
+    // annet avtrykk. Her prøves den samme regelen med et avtrykk som aldri var
+    // oppgavens.
+    const staleJob = await editor.rpc('enqueue_agent_task', {
+      p_agent_role: 'evidence_extraction',
+      p_input_manifest: {
+        source_version_id: report.sourceVersionId,
+        drug_ids: [otherDrugId, drugId],
+        outcome_concept_ids: [outcomeId],
+        population_ids: [populationId],
+      },
+    })
+    const staleJobId = (staleJob.data as { pipeline_job_id?: string } | null)?.pipeline_job_id ?? ''
+    const stale = await editor.rpc('import_agent_answer', {
+      p_pipeline_job_id: staleJobId,
+      p_answer: { ...handoffAnswer, request_digest: `sha256:${'a'.repeat(64)}` },
+    })
+    check('et svar avgitt på et annet grunnlag avvises', stale.error !== null)
+
+    // Separasjonen: den samme eksterne modellen kan ikke gjøre arbeidet i to
+    // agentledd (ANTIDEP_CONSTITUTION.md regel 3).
+    const synthesisJob = await editor.rpc('enqueue_agent_task', {
+      p_agent_role: 'claim_synthesis',
+      p_input_manifest: {
+        topic_concept_id: outcomeId,
+        subject_drug_id: otherDrugId,
+        evidence_item_ids: [String(importOutcome.outcome['evidence_item_id'])],
+      },
+    })
+    const synthesisJobId =
+      (synthesisJob.data as { pipeline_job_id?: string } | null)?.pipeline_job_id ?? ''
+    const synthesisTask = parseAgentTask(
+      (await editor.rpc('agent_task_payload', { p_pipeline_job_id: synthesisJobId })).data,
+    )
+    const sameModel = await editor.rpc('import_agent_answer', {
+      p_pipeline_job_id: synthesisJobId,
+      p_answer: {
+        answer_version: synthesisTask.answerVersion,
+        task_version: synthesisTask.taskVersion,
+        role: synthesisTask.role,
+        job_key: synthesisTask.jobKey,
+        request_digest: synthesisTask.requestDigest,
+        output_schema_version: synthesisTask.outputSchemaVersion,
+        identity: {
+          provider: 'antidep-test',
+          model: 'ekstern-kjedeagent',
+          model_version_disclosure: 'not_exposed',
+        },
+        result: { claim: { statement: 'x' }, evidence_links: [] },
+      },
+    })
+    check(
+      'den samme eksterne modellen kan ikke gjøre arbeidet i to agentledd',
+      sameModel.error !== null,
+      'separasjonen slo ikke til',
     )
   } finally {
     rmSync(work, { recursive: true, force: true })

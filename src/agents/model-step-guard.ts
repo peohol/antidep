@@ -18,8 +18,12 @@
 // Modell-leddet skal kjøres uten skrivekapable hemmeligheter og uten
 // skrivekapable eksterne verktøy eller connectorer. Vakten under er et ekstra
 // lag som fanger det vanligste uhellet: at kommandoen kjøres i et skall der en
-// hemmelighet allerede er eksportert. Den framtidige live semantiske runtimen
-// er fortsatt et eksplisitt manglende produktledd i docs/EVIDENCE_PIPELINE.md.
+// hemmelighet allerede er eksportert.
+//
+// I den eksterne agent-handoffen er den samme grensen enda skarpere: den
+// eksterne KI-agenten kjører et helt annet sted, uten noe av Antideps miljø, og
+// svaret kommer tilbake som data gjennom api.import_agent_answer (migrasjon
+// 010c).
 //
 // ----------------------------------------------------------------------------
 // Hvilke navn den kjenner
@@ -101,7 +105,6 @@ export function assertNoWriteCapableCredentials(env: ProcessEnv, command: string
       `Kjør modell-leddet uten dem:\n\n  env ${unset} ${command}\n\n` +
       'Merk at dette bare dekker miljøet til denne prosessen. Den egentlige grensen må også ' +
       'etableres i kjøremiljøet ved å utelate skrivekapable hemmeligheter, verktøy og ' +
-      'connectorer. Den varige live-runtimen er ennå ikke implementert ' +
-      '(docs/EVIDENCE_PIPELINE.md).',
+      'connectorer (docs/EVIDENCE_PIPELINE.md).',
   )
 }

@@ -15,4 +15,6 @@ Den varige lagringen er databasen. `api.upload_full_text_document(...)` legger o
 
 Opplastingen er idempotent: den samme filen finner sin egen rad på fingeravtrykket, og den samme teksten sin egen kildeversjon. En avbrutt kjøring kan derfor kjøres om igjen uten å rydde.
 
+Selve teksten blir også liggende, like privat som filen: `knowledge.source_version_texts` har RLS med default deny, ingen grants og ingen view. Den forlater databasen bare som en del av en agentoppgave, til en kaller med editor-mandat. Oppgavefilen som lastes ned, kan derfor inneholde hele artikkelen ordrett — den går rett inn i KI-tjenesten og skal aldri commites, legges i en issue eller havne i en logg.
+
 Se [evidenskjeden](../docs/EVIDENCE_PIPELINE.md) og [roadmap](../docs/ROADMAP.md).

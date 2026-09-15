@@ -27,6 +27,8 @@ Agent-CLI-ene bruker prosjektets Data API med publishable key, aldri `service_ro
 
 Hemmeligheter skal bare ligge i gitignorerte lokale miljøfiler eller et autorisert runtime-miljø. De skal aldri få `VITE_`-prefiks, commites eller legges i klientbunten.
 
+Den eksterne agent-handoffen trenger ingen av dem, og ingen modelleverandørnøkkel. Oppgaven hentes og svaret importeres av et menneske med editor-mandat, gjennom sin egen innlogging; databasen åpner kjøringen og skriver gjennom de samme kontrollerte veiene som agentkjørerne bruker.
+
 ## Hosted utrulling
 
 Utrulling er en separat, menneskelig autorisert driftsoperasjon etter teknisk review: bekreft prosjekt og miljø, stopp gamle jobber, ta privat databasebackup, sikkerhetskopier Storage separat, prøv restore isolert, kontroller stopphendelser og mål-antall, og deploy reviewede migrasjoner. Ikke legg eksport, snapshot eller hemmeligheter i repo eller Actions-artefakter. Resetten skal stoppe ved publiseringshistorikk, publiseringspeker, åpen agentkjøring eller uventet avhengighet.

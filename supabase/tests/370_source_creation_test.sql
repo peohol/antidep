@@ -201,7 +201,18 @@ select is_empty(
         'api.rollback_claim_publication(uuid,uuid,text,text)',
         'api.claim_publication_history(uuid)',
         'api.published_claim(uuid)',
-        'api.published_claim_index()'
+        'api.published_claim_index()',
+        -- Migrasjon 010c. Den eksterne agent-handoffen: køen, oppgaven og
+        -- importen av ett agentsvar, pluss innleggingen og avslutningen av en
+        -- rolles semantiske modell. Alle fem er authenticated og ingen av dem
+        -- anon: oppgaven bærer hele den kontrollerte kildeteksten, og importen
+        -- skriver kliniske objekter på vegne av et agentledd. Kontrolleres i
+        -- 780_external_agent_handoff_test.sql.
+        'api.agent_work_queue()',
+        'api.agent_task_payload(uuid)',
+        'api.import_agent_answer(uuid,jsonb)',
+        'api.enqueue_agent_task(text,jsonb)',
+        'api.release_agent_role_model(text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

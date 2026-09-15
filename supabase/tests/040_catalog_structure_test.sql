@@ -57,8 +57,11 @@ select set_eq(
            -- Migrasjon 009a: det private fulltekstbiblioteket, publikasjons-
            -- bindingen og lesbarhetskontrollen. 009d: den forseglede kandidaten.
            ('source_documents'), ('source_document_publications'),
-           ('full_text_readability_checks'), ('candidates')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a og 009d'
+           ('full_text_readability_checks'), ('candidates'),
+           -- Migrasjon 010b: representasjonen kildeversjonen er registrert med,
+           -- lagret privat ved siden av originalfilen.
+           ('source_version_texts')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d og 010b'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
@@ -78,8 +81,10 @@ select set_eq(
            -- Migrasjon 009b: den varige jobbtilstanden med sitt append-only
            -- spor. 009d: den kandidatbundne sluttkontrollen.
            ('pipeline_jobs'), ('pipeline_job_events'), ('pipeline_job_runs'),
-           ('candidate_final_controls')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b og 009d'
+           ('candidate_final_controls'),
+           -- Migrasjon 010c: ett importert eksternt agentsvar per oppgave.
+           ('agent_handoff_imports')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d og 010c'
 );
 select set_eq(
   $$
@@ -116,12 +121,17 @@ select set_eq(
   $$,
   $$values ('id'), ('agent_identity_id'), ('actor_id'), ('agent_role'),
            ('provider'), ('model'), ('model_version'),
+           -- Migrasjon 010a: om versjonen er en tjenesten faktisk oppgir, og
+           -- hvilken ekstern KI-agent som gjorde det semantiske arbeidet.
+           ('model_version_disclosure'),
+           ('semantic_provider'), ('semantic_model'), ('semantic_model_version'),
+           ('semantic_model_version_disclosure'),
            ('prompt_template_version'), ('pipeline_version'),
            ('status'), ('input_manifest'), ('input_source_version_id'),
            ('output_manifest'),
            ('failure_reason'), ('started_at'), ('completed_at'),
            ('created_at'), ('updated_at')$$,
-  'provenance.agent_runs bærer rolle, identitet, modell- og pipelineversjon, input, output og tidspunkter (DATABASE_ARCHITECTURE.md §33)'
+  'provenance.agent_runs bærer rolle, identitet, modell- og pipelineversjon, den eksterne modellen som gjorde arbeidet, input, output og tidspunkter (DATABASE_ARCHITECTURE.md §33)'
 );
 
 -- audit har både den varige hendelsesloggen og Antidep 2-resetens private,

@@ -1,0 +1,2012 @@
+-- ============================================================================
+-- Migrasjon 010c — ekstern agent-handoff som en førstegangs støttet arbeidsform
+--
+-- Antidep har hele tiden hatt én arbeidsform for det semantiske arbeidet: en
+-- aktør utenfor Antidep leser en bunden forespørsel og legger svaret sitt i en
+-- fil, og Antidep kontrollerer filen og registrerer resultatet. Den formen har
+-- vært beskrevet som en midlertidighet i påvente av en «live semantisk
+-- modellruntime» med leverandørnøkler.
+--
+-- Eieren har besluttet noe annet: ingen betalt modell-API skal tas i bruk. Det
+-- semantiske arbeidet skal gjøres av KI-agenter eieren allerede har tilgang til
+-- — i praksis vanlig ChatGPT i et nettleservindu — og handoff-en er derfor ikke
+-- en nødløsning. Den er produktet.
+--
+-- Denne migrasjonen gjør den til én felles, versjonert kontrakt som gjelder for
+-- flere agentroller, og som kan betjenes fra Antidep-flaten av et menneske som
+-- verken har repoet, en terminal eller en modellnøkkel.
+--
+-- ----------------------------------------------------------------------------
+-- 1. Oppgaven er databasens, og avtrykket er oppgavens identitet
+--
+-- `api.agent_task_payload(...)` bygger hele oppgaven av rader som allerede
+-- finnes, og beregner `request_digest` av nøyaktig de opplysningene som binder
+-- svaret: rollen, oppgavenøkkelen, promptmalversjonen, outputschemaversjonen,
+-- inndataens versjon — kildeversjonens fingeravtrykk, evidenssettets avtrykk,
+-- revisjonens innholdshash — og de tidligere agentkjøringene rollen hviler på.
+--
+-- Avtrykket regnes ut på nytt ved import, av de samme radene. Endres grunnlaget
+-- i mellomtiden, får oppgaven et annet avtrykk, og et svar avgitt på den gamle
+-- kan ikke importeres. Det er riktig utfall, ikke et hinder: alternativet er et
+-- svar lest ut av ett grunnlag, registrert mot et annet
+-- (ANTIDEP_CONSTITUTION.md regel 2, 4).
+--
+-- Verken filnavn eller katalogplassering betyr noe. Det gjør de heller ikke i
+-- den filbaserte kjøremappa; her finnes de ikke i det hele tatt.
+--
+-- ----------------------------------------------------------------------------
+-- 2. Svaret er data, og det får aldri skrive selv
+--
+-- `api.import_agent_answer(...)` tar imot svarfilen ordrett. Den kontrollerer
+-- bindingen, henter verdiene ut av svaret selv — kalleren kan ikke bytte dem ut
+-- underveis — og skriver gjennom nøyaktig de samme interne skriveveiene som
+-- agentkjørerne bruker, med de samme constraintene, de samme gatene og det
+-- samme auditsporet. Et eksternt modellsvar har ingen databaselegitimasjon og
+-- ingen egen skrivevei.
+--
+-- Den ordrette kontrollen av hvert kildeutdrag ligger der den alltid har ligget:
+-- i Antideps egen deterministiske kode før registreringen, og deretter i den
+-- uavhengige ekstraksjonskontrollen, som er en egen rolle med en egen identitet
+-- og en egen kjøring. Den er ikke duplisert her — en andre implementasjon av
+-- den samme normaliseringen ville kunnet svare noe annet på den samme kilden,
+-- og to kontroller som er uenige er verre enn én.
+--
+-- ----------------------------------------------------------------------------
+-- 3. Modellen registrerer seg selv, én gang, og kan aldri gjøre to jobber
+--
+-- Hvilken ekstern KI-agent en rolle handler som, kan ikke settes på forhånd av
+-- noen som ikke vet hvilke modeller eieren faktisk har. Første svar i en rolle
+-- registrerer derfor identiteten sin, med hvem som importerte og hvorfor, og
+-- alle senere svar i rollen må være fra nøyaktig den.
+--
+-- Separasjonen er uendret og strukturell: exclusion-regelen på registeret gjør
+-- at ingen to roller kan dele modellidentitet. Forsøker eieren å la den samme
+-- ChatGPT-modellen både lage innholdet og vurdere det, blir det andre svaret
+-- avvist med en setning som sier hva som må gjøres — bytte modell — framfor at
+-- kjeden later som om kontrollen var uavhengig (ANTIDEP_CONSTITUTION.md regel
+-- 3, 4).
+--
+-- Styrende dokumenter:
+--   docs/ANTIDEP_CONSTITUTION.md regel 1-7
+--   docs/DATABASE_ARCHITECTURE.md §33, §43, §48, §50
+--   docs/EVIDENCE_PIPELINE.md
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 1. Kontrakten
+--
+-- Versjonene står her fordi databasen eier oppgaven og avtrykket. De samme
+-- verdiene står i src/agents/agent-task.ts, som er den siden som *skriver*
+-- oppgavefilen — den samme kontrakten sett fra hver sin side av databasegrensen,
+-- som tekstuttrekksoppskriften og modelltildelingene allerede er, og pinnet av
+-- en prøve på begge sider.
+--
+-- En rolle uten kontrakt kan ikke ta imot et eksternt agentsvar. Fraværet er
+-- tilsiktet: de uavhengige kontrolleddene er Antideps egen deterministiske kode,
+-- og en ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en
+-- modellvurdering.
+-- ----------------------------------------------------------------------------
+create function workflow.agent_handoff_task_version()
+  returns text language sql immutable set search_path = ''
+as $$ select 'antidep/agent-task@1'::text $$;
+
+create function workflow.agent_handoff_answer_version()
+  returns text language sql immutable set search_path = ''
+as $$ select 'antidep/agent-answer@1'::text $$;
+
+comment on function workflow.agent_handoff_task_version() is
+  'Versjonen av oppgaveformen den eksterne agent-handoffen bruker. Én versjon for alle roller: kontrakten er felles, og det rollespesifikke ligger i promptmalen og outputschemaet.';
+comment on function workflow.agent_handoff_answer_version() is
+  'Versjonen av svarformen den eksterne agent-handoffen tar imot. Et svar med en annen versjon avvises framfor å bli lest med standardverdier.';
+
+revoke execute on function workflow.agent_handoff_task_version() from public;
+revoke execute on function workflow.agent_handoff_answer_version() from public;
+
+create function workflow.agent_task_contract(p_agent_role provenance.agent_role)
+  returns jsonb
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select case p_agent_role
+    when 'evidence_extraction' then jsonb_build_object(
+      'prompt_template_version', 'evidence-extraction/handoff-drafting/1',
+      'output_schema_version', 'antidep/extraction-draft@1'
+    )
+    when 'claim_synthesis' then jsonb_build_object(
+      'prompt_template_version', 'claim-synthesis/handoff-drafting/1',
+      'output_schema_version', 'antidep/claim-synthesis-draft@1'
+    )
+    when 'evidence_assessment' then jsonb_build_object(
+      'prompt_template_version', 'evidence-assessment/handoff-drafting/1',
+      'output_schema_version', 'antidep/evidence-assessment-draft@1'
+    )
+    else null
+  end;
+$$;
+
+comment on function workflow.agent_task_contract(provenance.agent_role) is
+  'Promptmalversjonen og outputschemaversjonen rollen er bundet til i den eksterne agent-handoffen, eller NULL for en rolle som ikke kan ta imot et eksternt agentsvar. Begge verdiene inngår i request_digest, slik at et svar avgitt under en eldre mal eller et eldre skjema ikke kan importeres på en oppgave bygget under en nyere. Verdiene er de samme som i src/agents/agent-task.ts, og pinnes av en prøve på begge sider av databasegrensen.';
+
+revoke execute on function workflow.agent_task_contract(provenance.agent_role) from public;
+
+-- ----------------------------------------------------------------------------
+-- 2. Den semantiske modellidentiteten registrerer seg selv, én gang
+-- ----------------------------------------------------------------------------
+create function provenance.ensure_semantic_model_assignment(
+  p_agent_role provenance.agent_role,
+  p_provider text,
+  p_model text,
+  p_model_version text,
+  p_disclosure provenance.model_version_disclosure,
+  p_actor_id uuid
+)
+  returns provenance.role_model_assignments
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_current provenance.role_model_assignments;
+  v_holder text;
+begin
+  v_current := provenance.current_semantic_model(p_agent_role);
+
+  if v_current.id is not null then
+    if v_current.provider is distinct from p_provider
+       or v_current.model is distinct from p_model
+       or v_current.model_version is distinct from p_model_version then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format(
+          'Rollen %L er registrert med den eksterne modellen %s/%s (%s), men svaret kom fra %s/%s (%s).',
+          p_agent_role, v_current.provider, v_current.model, v_current.model_version,
+          p_provider, p_model, p_model_version
+        ),
+        hint = 'Hvilken KI-agent en rolle handler som, er en registrert avgjørelse og ikke noe svaret bestemmer. Bruk den registrerte modellen, eller avslutt tildelingen med api.release_agent_role_model(...) og registrer en ny — den avslutningen er en synlig hendelse med hvem og hvorfor.';
+    end if;
+    return v_current;
+  end if;
+
+  -- Ingen tildeling ennå: den første modellen som svarer i rollen, registrerer
+  -- seg selv. Erklæringen kommer fra svaret og ikke fra en verdi noen har
+  -- gjettet på forhånd — det er den eneste måten proveniensen kan være sann.
+  begin
+    insert into provenance.role_model_assignments (
+      agent_role, capacity, provider, model, model_version, model_version_disclosure,
+      registered_by_actor_id, reason
+    )
+    values (
+      p_agent_role, 'semantic', p_provider, p_model, p_model_version, p_disclosure,
+      p_actor_id,
+      format(
+        'Registrert av det første importerte eksterne agentsvaret i rollen. Modellidentiteten er agentens egen erklæring, ikke en verdi Antidep har gjettet.'
+      )
+    )
+    returning * into v_current;
+  exception
+    when exclusion_violation then
+      select string_agg(distinct a.agent_role::text, ', ' order by a.agent_role::text)
+        into v_holder
+      from provenance.role_model_assignments a
+      where a.provider = p_provider and a.model = p_model
+        and a.model_version = p_model_version
+        and a.valid_from <= statement_timestamp()
+        and (a.valid_to is null or a.valid_to > statement_timestamp());
+
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format(
+          'Modellen %s/%s (%s) er allerede registrert for rollen %s, og kan ikke også gjøre arbeidet i rollen %s.',
+          p_provider, p_model, p_model_version, coalesce(v_holder, 'en annen rolle'), p_agent_role
+        ),
+        hint = 'Generator, kildestøttekontroll og evidensvurdering skal være reelt separate (ANTIDEP_CONSTITUTION.md regel 3). Utfør denne oppgaven med en annen KI-modell du allerede har tilgang til. Finnes ingen, skal kjeden stoppe her framfor å registrere en vurdering som ikke er uavhengig.';
+  end;
+
+  return v_current;
+end;
+$$;
+
+comment on function provenance.ensure_semantic_model_assignment(provenance.agent_role, text, text, text, provenance.model_version_disclosure, uuid) is
+  'Krever at et eksternt agentsvar kommer fra den modellen rollen er registrert med, og registrerer tildelingen første gang rollen tar imot et svar (ANTIDEP_CONSTITUTION.md regel 3). Første svar registrerer seg selv fordi ingen kan vite på forhånd hvilke KI-modeller eieren faktisk har — en verdi gjettet i en migrasjon ville enten blokkert arbeidet eller blitt en usann proveniens. Separasjonen er uendret og strukturell: exclusion-regelen på registeret gjør at ingen to roller kan dele modellidentitet, og et forsøk avvises her med en setning som sier hva som må gjøres.';
+
+revoke execute on function provenance.ensure_semantic_model_assignment(provenance.agent_role, text, text, text, provenance.model_version_disclosure, uuid) from public;
+
+-- Avslutningen, slik at en feilregistrert modell ikke blir en blindvei.
+--
+-- Avslutter, og skriver aldri om: tildelingen som gjaldt, blir stående med sin
+-- periode, og auditsporet får sin egen rad fra triggeren på tabellen. En ny
+-- modell registreres av det neste svaret.
+create function api.release_agent_role_model(p_agent_role text, p_reason text)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+  v_role provenance.agent_role;
+  v_current provenance.role_model_assignments;
+begin
+  v_actor_id := knowledge.assert_editor_authorized();
+
+  begin
+    v_role := p_agent_role::provenance.agent_role;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format('%L er ikke en kjent agentrolle.', p_agent_role);
+  end;
+
+  if nullif(btrim(coalesce(p_reason, '')), '') is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'En avslutning krever en begrunnelse.',
+      hint = 'At en rolle slutter å handle som en modell, er øyeblikket separasjonen mellom to ledd kan endre seg. En endring uten grunn ville vært en endring uten ansvar.';
+  end if;
+
+  v_current := provenance.current_semantic_model(v_role);
+  if v_current.id is null then
+    return jsonb_build_object('agent_role', p_agent_role, 'released', false);
+  end if;
+
+  update provenance.role_model_assignments
+  set valid_to = statement_timestamp(),
+      closed_by_actor_id = v_actor_id,
+      close_reason = btrim(p_reason)
+  where id = v_current.id;
+
+  return jsonb_build_object(
+    'agent_role', p_agent_role,
+    'released', true,
+    'provider', v_current.provider,
+    'model', v_current.model,
+    'model_version', v_current.model_version
+  );
+end;
+$$;
+
+comment on function api.release_agent_role_model(text, text) is
+  'Avslutter den gjeldende semantiske modelltildelingen for en agentrolle, slik at neste importerte svar kan registrere en ny (ANTIDEP_CONSTITUTION.md regel 3, 7). Finnes for at en feilregistrert modell ikke skal bli en blindvei som krever en migrasjon. Skriver aldri om: tildelingen som gjaldt, blir stående med sin periode, og triggeren på tabellen skriver auditraden over avslutningen med hvem og hvorfor. Krever editor-mandat og en begrunnelse. SECURITY DEFINER fordi provenance har RLS med default deny; kalleren valideres på funksjonens eget kall.';
+
+revoke execute on function api.release_agent_role_model(text, text) from public;
+grant execute on function api.release_agent_role_model(text, text) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 3. Importsporet
+--
+-- Én rad per jobb som har tatt imot et svar. Unikheten på jobben er regelen mot
+-- doble kliniske artefakter: en gjentatt import av det samme svaret svarer med
+-- det som allerede ble registrert, og et *annet* svar på en jobb som allerede
+-- er besvart, avvises. Uten den ville en dobbel innsending gitt to
+-- evidensfunn, to revisjoner eller to vurderinger av det samme arbeidet.
+-- ----------------------------------------------------------------------------
+create table workflow.agent_handoff_imports (
+  id uuid primary key default gen_random_uuid(),
+
+  pipeline_job_id uuid not null unique
+    references workflow.pipeline_jobs (id) on update restrict on delete restrict,
+  agent_role provenance.agent_role not null,
+
+  request_digest text not null,
+  answer_digest text not null,
+
+  agent_run_id uuid not null unique
+    references provenance.agent_runs (id) on update restrict on delete restrict,
+  imported_by_actor_id uuid not null
+    references provenance.actors (id) on update restrict on delete restrict,
+  answered_at timestamptz,
+  outcome jsonb not null,
+
+  created_at timestamptz not null default now(),
+
+  constraint agent_handoff_imports_request_digest_format_check
+    check (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+  constraint agent_handoff_imports_answer_digest_format_check
+    check (answer_digest ~ '^sha256:[0-9a-f]{64}$'),
+  constraint agent_handoff_imports_outcome_shape_check
+    check (jsonb_typeof(outcome) = 'object' and outcome <> '{}'::jsonb)
+);
+
+comment on table workflow.agent_handoff_imports is
+  'Ett importert eksternt agentsvar per pipelinejobb (ANTIDEP_CONSTITUTION.md regel 4, 7). Unikheten på jobben er regelen mot doble kliniske artefakter: det samme svaret sendt inn igjen svarer med det som allerede ble registrert, og et annet svar på en jobb som allerede er besvart, avvises. answer_digest er fingeravtrykket av svarfilen ordrett, slik at «det samme svaret» er et faktum framfor en vurdering. Sporet er append-only.';
+comment on column workflow.agent_handoff_imports.request_digest is
+  'Avtrykket av oppgaven svaret ble avgitt på, slik databasen regnet det ut av sitt eget grunnlag ved importen. Endres grunnlaget senere, får oppgaven et annet avtrykk — og raden her sier hvilket som faktisk gjaldt.';
+comment on column workflow.agent_handoff_imports.imported_by_actor_id is
+  'Mennesket som importerte svaret. Selve arbeidet er gjort av en ekstern KI-agent, og den står på kjøringen (provenance.agent_runs.semantic_*); dette er hvem som førte det inn i Antidep.';
+
+alter table workflow.agent_handoff_imports enable row level security;
+
+create index agent_handoff_imports_role_idx
+  on workflow.agent_handoff_imports (agent_role, created_at desc);
+
+create trigger agent_handoff_imports_set_created_at
+  before insert on workflow.agent_handoff_imports
+  for each row execute function catalog.set_created_at();
+
+create trigger agent_handoff_imports_are_append_only
+  before update or delete on workflow.agent_handoff_imports
+  for each row execute function knowledge.reject_append_only_mutation(
+    'En import sier hvilket eksternt agentsvar som faktisk ble registrert mot hvilken oppgave. Et nytt svar er en ny jobb.'
+  );
+
+-- ----------------------------------------------------------------------------
+-- 3b. Én implementasjon, to autentiseringsveier
+--
+-- Registreringen av en syntese og av en evidensvurdering har hittil ligget inne
+-- i api-funksjonen, sammen med autentiseringen av agentlegitimasjonen. Den
+-- eksterne handoffen har ingen agentlegitimasjon å autentisere: den autoriseres
+-- av mandatet til mennesket som importerer, og kjøringen åpnes av databasen
+-- selv.
+--
+-- Selve skrivingen er den samme, og skal være det. Kroppen flyttes derfor ut i
+-- en intern funksjon som tar den åpne kjøringen og aktøren som parametre, og
+-- api-funksjonen blir det den egentlig er: autentisering, og så det samme
+-- arbeidet. En kopi ville vært et andre sted å endre en regel, og den ene som
+-- ble glemt, ville sluppet gjennom noe den andre stoppet.
+--
+-- Funksjonene under er ordrett den samme koden som før, med autentiseringen
+-- byttet ut med aktøren kalleren allerede har fastslått.
+-- ----------------------------------------------------------------------------
+create function knowledge.record_agent_claim_synthesis(
+  p_agent_run_id uuid,
+  p_actor_id uuid,
+  p_topic_concept_id uuid,
+  p_subject_drug_id uuid,
+  p_statement text,
+  p_scope text,
+  p_comparator_kind text,
+  p_uncertainty_summary text,
+  p_evidence_links jsonb,
+  p_claim_id uuid default null,
+  p_population_id uuid default null,
+  p_timeframe_min text default null,
+  p_timeframe_max text default null,
+  p_comparator_drug_id uuid default null,
+  p_direction text default null,
+  p_magnitude_measure text default null,
+  p_magnitude_value numeric default null,
+  p_magnitude_unit text default null,
+  p_qualifiers text default null
+)
+  returns jsonb
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+  v_claim_id uuid;
+  v_claim_topic uuid;
+  v_claim_drug uuid;
+  v_claim_type knowledge.knowledge_type;
+  v_claim_retired timestamptz;
+  v_revision_number integer;
+  v_supersedes uuid;
+  v_revision_id uuid;
+  v_evidence_item_ids uuid[];
+  v_link_ids jsonb;
+begin
+  v_actor_id := p_actor_id;
+
+  -- Formen på evidenslenkene, før noe skrives. En tom eller feilformet liste
+  -- skal si hva som mangler, ikke feile på en fremmednøkkel lenger nede.
+  if p_evidence_links is null
+     or jsonb_typeof(p_evidence_links) <> 'array'
+     or jsonb_array_length(p_evidence_links) = 0 then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'p_evidence_links må være en ikke-tom JSON-liste med evidenslenker.',
+      hint = 'Hver lenke er et objekt med evidence_item_id, relationship_type, directness og relevance_note. Både relasjonstypen og begrunnelsen er påkrevd: en kilde som bare omhandler samme tema, skal ikke kunne telle som støtte (ANTIDEP_CONSTITUTION.md §4).';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(p_evidence_links) as link(value)
+    where jsonb_typeof(link.value) <> 'object'
+       or nullif(btrim(coalesce(link.value ->> 'evidence_item_id', '')), '') is null
+       or nullif(btrim(coalesce(link.value ->> 'relationship_type', '')), '') is null
+       or nullif(btrim(coalesce(link.value ->> 'directness', '')), '') is null
+       or nullif(btrim(coalesce(link.value ->> 'relevance_note', '')), '') is null
+  ) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Hver evidenslenke må ha evidence_item_id, relationship_type, directness og relevance_note.',
+      hint = 'Begrunnelsen er alltid påkrevd: den sier hvorfor nettopp dette funnet har nettopp denne relasjonen til nettopp denne formuleringen (KNOWLEDGE_MODEL.md §12).';
+  end if;
+
+  select array_agg(distinct (link.value ->> 'evidence_item_id')::uuid)
+    into v_evidence_item_ids
+  from jsonb_array_elements(p_evidence_links) as link(value);
+
+  if cardinality(v_evidence_item_ids) <> jsonb_array_length(p_evidence_links) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Det samme evidensfunnet er oppført flere ganger i evidenslenkene.',
+      hint = 'Ett funn kan ha nøyaktig én relasjon til én revisjon (claim_evidence_links_revision_item_key). To oppføringer ville fått ett funn til å se ut som flere uavhengige, og en senere vurdering til å hvile på en oppblåst evidensmengde.';
+  end if;
+
+  -- Kontrollnivået, før påstanden lages. Se migrasjon 005aj, avsnitt 1.
+  perform workflow.assert_evidence_usable_for_synthesis(v_evidence_item_ids);
+
+  -- Identiteten: enten en ny påstand, eller en ny revisjon av en som finnes.
+  --
+  -- Den gjenbrukes ikke automatisk på (tema, virkestoff): to atomiske påstander
+  -- om samme virkestoff og samme endepunkt er normalt og riktig
+  -- (EVIDENCE_PIPELINE.md §28), og et automatisk oppslag ville slått dem sammen
+  -- til revisjoner av hverandre. Kalleren sier hva den mener.
+  if p_claim_id is null then
+    insert into knowledge.claims (
+      knowledge_type, topic_concept_id, subject_drug_id, created_by_actor_id
+    )
+    values (
+      'evidence_synthesis'::knowledge.knowledge_type,
+      p_topic_concept_id,
+      p_subject_drug_id,
+      v_actor_id
+    )
+    returning id into v_claim_id;
+
+    v_revision_number := 1;
+    v_supersedes := null;
+  else
+    select c.id, c.topic_concept_id, c.subject_drug_id, c.knowledge_type, c.retired_at
+      into v_claim_id, v_claim_topic, v_claim_drug, v_claim_type, v_claim_retired
+    from knowledge.claims c
+    where c.id = p_claim_id
+    for update;
+
+    if v_claim_id is null then
+      raise exception using
+        errcode = 'no_data_found',
+        message = format('Påstanden %L finnes ikke.', p_claim_id),
+        hint = 'La p_claim_id stå tom for å opprette en ny påstandsidentitet, eller oppgi id-en til en som finnes.';
+    end if;
+
+    if v_claim_retired is not null then
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format('Påstanden %L er trukket tilbake og kan ikke få nye revisjoner.', p_claim_id),
+        hint = 'En tilbaketrukket påstand er tatt ut av bruk. Opprett en ny påstand dersom temaet fortsatt skal dekkes; historikken til den gamle bevares (DATABASE_ARCHITECTURE.md §36).';
+    end if;
+
+    -- Identiteten er uforanderlig (knowledge.freeze_claim_identity). En kaller
+    -- som oppgir et annet tema eller virkestoff enn påstanden har, mener en
+    -- annen påstand, og skal få vite det her framfor å få en revisjon som sier
+    -- noe annet enn identiteten den henger på.
+    if v_claim_topic is distinct from p_topic_concept_id
+       or v_claim_drug is distinct from p_subject_drug_id
+       or v_claim_type <> 'evidence_synthesis' then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format(
+          'Påstanden %L gjelder et annet tema, virkestoff eller kunnskapstype enn det som er oppgitt.',
+          p_claim_id
+        ),
+        hint = 'Kunnskapstype, tema og virkestoff er påstandens identitet og kan ikke endres (ANTIDEP_CONSTITUTION.md §7). Et endret tema eller virkestoff er en ny påstand.';
+    end if;
+
+    select max(r.revision_number) + 1,
+           (array_agg(r.id order by r.revision_number desc))[1]
+      into v_revision_number, v_supersedes
+    from knowledge.claim_revisions r
+    where r.claim_id = v_claim_id;
+
+    -- En påstand uten revisjoner er en tilstand skriveveien her aldri lager,
+    -- men den kan finnes: identiteten og revisjonen er to rader.
+    v_revision_number := coalesce(v_revision_number, 1);
+  end if;
+
+  insert into knowledge.claim_revisions (
+    claim_id, revision_number, knowledge_type, subject_drug_id, supersedes_revision_id,
+    statement, scope, population_id, timeframe_min, timeframe_max,
+    comparator_kind, comparator_drug_id, direction,
+    magnitude_measure, magnitude_value, magnitude_unit,
+    qualifiers, uncertainty_summary,
+    created_by_actor_id, agent_run_id
+  )
+  values (
+    v_claim_id,
+    v_revision_number,
+    'evidence_synthesis'::knowledge.knowledge_type,
+    p_subject_drug_id,
+    v_supersedes,
+    p_statement,
+    p_scope,
+    p_population_id,
+    p_timeframe_min::interval,
+    p_timeframe_max::interval,
+    p_comparator_kind::knowledge.comparator_kind,
+    p_comparator_drug_id,
+    p_direction::knowledge.claim_direction,
+    p_magnitude_measure::knowledge.effect_measure,
+    p_magnitude_value,
+    p_magnitude_unit::knowledge.estimate_unit,
+    p_qualifiers,
+    p_uncertainty_summary,
+    v_actor_id,
+    -- agent_run_role er en generert konstant på raden (migrasjon 004a) og
+    -- oppgis ikke her: rollen skal ikke kunne settes av en kaller.
+    p_agent_run_id
+  )
+  returning id into v_revision_id;
+
+  with inserted as (
+    insert into knowledge.claim_evidence_links (
+      claim_revision_id, evidence_item_id, relationship_type, directness,
+      relevance_note, created_by_actor_id
+    )
+    select
+      v_revision_id,
+      (link.value ->> 'evidence_item_id')::uuid,
+      (link.value ->> 'relationship_type')::knowledge.claim_evidence_relationship,
+      (link.value ->> 'directness')::knowledge.evidence_directness,
+      btrim(link.value ->> 'relevance_note'),
+      v_actor_id
+    from jsonb_array_elements(p_evidence_links) as link(value)
+    returning id, evidence_item_id
+  )
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object('claim_evidence_link_id', i.id, 'evidence_item_id', i.evidence_item_id)
+      order by i.id::text
+    ),
+    '[]'::jsonb
+  )
+    into v_link_ids
+  from inserted i;
+
+  return jsonb_build_object(
+    'claim_id', v_claim_id,
+    'claim_revision_id', v_revision_id,
+    'revision_number', v_revision_number,
+    'supersedes_revision_id', v_supersedes,
+    'evidence_links', v_link_ids,
+    -- Avtrykket av det evidenssettet revisjonen hviler på. Kjøringen fører det i
+    -- proveniensen sin; claim-verifikasjonen må gjelde nøyaktig det
+    -- (publiseringsgatens G9b), og evidensvurderingen som kommer etter den, må
+    -- oppgi det samme avtrykket som sett (api.register_evidence_assessment).
+    'evidence_set_digest', knowledge.claim_evidence_set_digest(v_revision_id)
+  );
+end;
+$$;
+
+create or replace function api.register_claim_synthesis(
+  p_identity_key text,
+  p_secret text,
+  p_agent_run_id uuid,
+  p_topic_concept_id uuid,
+  p_subject_drug_id uuid,
+  p_statement text,
+  p_scope text,
+  p_comparator_kind text,
+  p_uncertainty_summary text,
+  p_evidence_links jsonb,
+  p_claim_id uuid default null,
+  p_population_id uuid default null,
+  p_timeframe_min text default null,
+  p_timeframe_max text default null,
+  p_comparator_drug_id uuid default null,
+  p_direction text default null,
+  p_magnitude_measure text default null,
+  p_magnitude_value numeric default null,
+  p_magnitude_unit text default null,
+  p_qualifiers text default null
+)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_identity_id uuid;
+  v_actor_id uuid;
+begin
+  v_identity_id := provenance.authenticate_agent_identity(
+    p_identity_key, p_secret, 'claim_synthesis'::provenance.agent_role
+  );
+  v_actor_id := provenance.assert_agent_run_open(p_agent_run_id, v_identity_id);
+
+  return knowledge.record_agent_claim_synthesis(
+    p_agent_run_id,
+    v_actor_id,
+    p_topic_concept_id,
+    p_subject_drug_id,
+    p_statement,
+    p_scope,
+    p_comparator_kind,
+    p_uncertainty_summary,
+    p_evidence_links,
+    p_claim_id,
+    p_population_id,
+    p_timeframe_min,
+    p_timeframe_max,
+    p_comparator_drug_id,
+    p_direction,
+    p_magnitude_measure,
+    p_magnitude_value,
+    p_magnitude_unit,
+    p_qualifiers
+  );
+end;
+$$;
+
+create function knowledge.record_evidence_assessment_row(
+  p_agent_run_id uuid,
+  p_actor_id uuid,
+  p_claim_revision_id uuid,
+  p_seen_evidence_set_digest text,
+  p_framework text,
+  p_certainty_level text,
+  p_rationale text,
+  p_risk_of_bias text default null,
+  p_inconsistency text default null,
+  p_indirectness text default null,
+  p_imprecision text default null,
+  p_publication_bias text default null,
+  p_other_considerations text default null,
+  p_evidence_gap text default null
+)
+  returns jsonb
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+  v_claim_id uuid;
+  v_knowledge_type knowledge.knowledge_type;
+  v_retired_at timestamptz;
+  v_evidence_item_ids uuid[];
+  v_assessment_id uuid;
+  v_assessed_at timestamptz;
+begin
+  v_actor_id := p_actor_id;
+
+  select r.claim_id, r.knowledge_type, c.retired_at
+    into v_claim_id, v_knowledge_type, v_retired_at
+  from knowledge.claim_revisions r
+  join knowledge.claims c on c.id = r.claim_id
+  where r.id = p_claim_revision_id;
+
+  if v_claim_id is null then
+    raise exception using
+      errcode = 'no_data_found',
+      message = format('Påstandsrevisjon %L finnes ikke.', p_claim_revision_id),
+      hint = 'Vurderingen gjelder en eksakt revisjon, ikke påstandsidentiteten (KNOWLEDGE_MODEL.md §19.3). Kontroller revisjons-ID-en.';
+  end if;
+
+  -- Samme avgrensning som synteseveien, og av samme grunn: en klinisk
+  -- anbefaling skal ikke ha en KI-kjøring som opphav, og et deterministisk
+  -- faktum skal ikke ha en GRADE-vurdering i det hele tatt
+  -- (ANTIDEP_CONSTITUTION.md §12, §17, KNOWLEDGE_MODEL.md §13).
+  if v_knowledge_type <> 'evidence_synthesis' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format(
+        'Revisjon %L er av typen %s, og denne veien vurderer bare evidenssynteser.',
+        p_claim_revision_id, v_knowledge_type
+      ),
+      hint = 'En klinisk anbefaling skal ikke ha en KI-kjøring som opphav, og et deterministisk faktum skal ikke ha en evidensvurdering. Trenger en annen kunnskapstype en vurdering, er det en egen skrivevei med sine egne vilkår.';
+  end if;
+
+  if v_retired_at is not null then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format(
+        'Påstanden bak revisjon %L er trukket tilbake og skal ikke vurderes.',
+        p_claim_revision_id
+      ),
+      hint = 'En tilbaketrukket påstand er tatt ut av bruk. Historikken bevares (DATABASE_ARCHITECTURE.md §36).';
+  end if;
+
+  -- Låsen på revisjonsraden tas her, og holdes ut transaksjonen. Den er både
+  -- kontrollen av at kalleren vurderte det grunnlaget som faktisk ligger der, og
+  -- serialiseringen mot en evidenslenke som commiter i vinduet mellom lesningen
+  -- og innsettingen — den samme raden hver innsetting i
+  -- knowledge.claim_evidence_links allerede låser (migrasjon 006f). Uten den
+  -- ville vurderingen kunnet forsegle et sett den aldri så.
+  perform workflow.assert_evidence_set_unchanged(p_claim_revision_id, p_seen_evidence_set_digest);
+
+  select array_agg(distinct l.evidence_item_id)
+    into v_evidence_item_ids
+  from knowledge.claim_evidence_links l
+  where l.claim_revision_id = p_claim_revision_id;
+
+  if v_evidence_item_ids is null then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format(
+        'Revisjon %L har ingen registrerte evidenslenker, og det finnes ikke noe grunnlag å vurdere.',
+        p_claim_revision_id
+      ),
+      hint = 'Evidenslenkene registreres sammen med revisjonen av api.register_claim_synthesis(...). En vurdering uten et evidensgrunnlag ville vært en gradering av ingenting (ANTIDEP_CONSTITUTION.md §4).';
+  end if;
+
+  -- Kontrollnivået leses på nytt, på vurderingstidspunktet: et funn kan ha blitt
+  -- trukket tilbake, eller fått et åpent avvik, etter at revisjonen ble laget.
+  -- Samme funksjon som synteseveien bruker, slik at de to ikke kan bli uenige.
+  perform workflow.assert_evidence_usable_for_synthesis(v_evidence_item_ids);
+
+  -- Rekkefølgen: kildestøtteverifikasjonen kommer først. Se hodekommentaren.
+  perform workflow.assert_claim_verified_before_assessment(p_claim_revision_id);
+
+  -- Én vurdering per revisjon (evidence_assessments_claim_revision_key). En
+  -- eksisterende vurdering skal ikke møtes av en naken unique-avvisning: den
+  -- betyr at revisjonen allerede er gradert, og at en ny vurdering hører hjemme
+  -- i en ny revisjon.
+  if exists (
+    select 1
+    from knowledge.evidence_assessments a
+    where a.claim_revision_id = p_claim_revision_id
+  ) then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format('Revisjon %L har allerede en evidensvurdering.', p_claim_revision_id),
+      hint = 'Vurderingen er append-only og forsegler evidenssettet til revisjonen. En endret vurdering av det samme grunnlaget er en ny revisjon, ikke en overskriving (ANTIDEP_CONSTITUTION.md §14).';
+  end if;
+
+  insert into knowledge.evidence_assessments (
+    claim_revision_id, assessed_knowledge_type, framework, certainty_level,
+    risk_of_bias, inconsistency, indirectness, imprecision, publication_bias,
+    other_considerations, rationale, evidence_gap, assessed_at,
+    created_by_actor_id, agent_run_id
+  )
+  values (
+    p_claim_revision_id,
+    v_knowledge_type,
+    p_framework::knowledge.assessment_framework,
+    p_certainty_level::knowledge.certainty_level,
+    p_risk_of_bias::knowledge.grade_domain_rating,
+    p_inconsistency::knowledge.grade_domain_rating,
+    p_indirectness::knowledge.grade_domain_rating,
+    p_imprecision::knowledge.grade_domain_rating,
+    p_publication_bias::knowledge.grade_domain_rating,
+    btrim(p_other_considerations),
+    btrim(p_rationale),
+    btrim(p_evidence_gap),
+    -- Tidspunktet eies av databasen, som verified_at på kontrollene: en verdi
+    -- kalleren kunne oppgitt, kunne datert en vurdering til noe annet enn da den
+    -- faktisk ble gjort (DATABASE_ARCHITECTURE.md §7.3).
+    now(),
+    v_actor_id,
+    -- agent_run_role er en generert konstant på raden (migrasjon 004b) og
+    -- oppgis ikke her: rollen skal ikke kunne settes av en kaller.
+    p_agent_run_id
+  )
+  returning id, assessed_at into v_assessment_id, v_assessed_at;
+
+  return jsonb_build_object(
+    'evidence_assessment_id', v_assessment_id,
+    'claim_revision_id', p_claim_revision_id,
+    'claim_id', v_claim_id,
+    'certainty_level', p_certainty_level,
+    'assessed_at', v_assessed_at,
+    'evidence_set_digest', knowledge.claim_evidence_set_digest(p_claim_revision_id)
+  );
+end;
+$$;
+
+create or replace function api.register_evidence_assessment(
+  p_identity_key text,
+  p_secret text,
+  p_agent_run_id uuid,
+  p_claim_revision_id uuid,
+  p_seen_evidence_set_digest text,
+  p_framework text,
+  p_certainty_level text,
+  p_rationale text,
+  p_risk_of_bias text default null,
+  p_inconsistency text default null,
+  p_indirectness text default null,
+  p_imprecision text default null,
+  p_publication_bias text default null,
+  p_other_considerations text default null,
+  p_evidence_gap text default null
+)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_identity_id uuid;
+  v_actor_id uuid;
+begin
+  v_identity_id := provenance.authenticate_agent_identity(
+    p_identity_key, p_secret, 'evidence_assessment'::provenance.agent_role
+  );
+  v_actor_id := provenance.assert_agent_run_open(p_agent_run_id, v_identity_id);
+
+  return knowledge.record_evidence_assessment_row(
+    p_agent_run_id,
+    v_actor_id,
+    p_claim_revision_id,
+    p_seen_evidence_set_digest,
+    p_framework,
+    p_certainty_level,
+    p_rationale,
+    p_risk_of_bias,
+    p_inconsistency,
+    p_indirectness,
+    p_imprecision,
+    p_publication_bias,
+    p_other_considerations,
+    p_evidence_gap
+  );
+end;
+$$;
+
+comment on function knowledge.record_agent_claim_synthesis(uuid, uuid, uuid, uuid, text, text, text, text, jsonb, uuid, uuid, text, text, uuid, text, text, numeric, text, text) is
+  'Registreringen av én påstandsrevisjon med sitt evidensgrunnlag, uten autentisering: kalleren har allerede fastslått hvem aktøren er og at kjøringen er åpen og tilhører den. Finnes fordi det er to autentiseringsveier inn i den samme skrivingen — agentkjøreren med legitimasjon (api.register_claim_synthesis) og den eksterne agent-handoffen med et menneskes mandat (api.import_agent_answer) — og de to skal håndheve nøyaktig de samme invariantene. Ingen regel er duplisert her; kroppen er den som alltid har ligget i api-funksjonen.';
+
+comment on function knowledge.record_evidence_assessment_row(uuid, uuid, uuid, text, text, text, text, text, text, text, text, text, text, text) is
+  'Registreringen av evidensvurderingen for én påstandsrevisjon, uten autentisering: kalleren har allerede fastslått hvem aktøren er og at kjøringen er åpen og tilhører den. Samme grunn som for synteseveien: to autentiseringsveier inn i den samme skrivingen, og én implementasjon å endre.';
+
+revoke execute on function knowledge.record_agent_claim_synthesis(
+  uuid, uuid, uuid, uuid, text, text, text, text, jsonb, uuid, uuid, text, text, uuid,
+  text, text, numeric, text, text
+) from public;
+
+revoke execute on function knowledge.record_evidence_assessment_row(
+  uuid, uuid, uuid, text, text, text, text, text, text, text, text, text, text, text
+) from public;
+
+-- ----------------------------------------------------------------------------
+-- 4. Oppgaven, bygget av rader som allerede finnes
+--
+-- Tre små lesere først. De finnes for at en feilskrevet id i et inndatamanifest
+-- skal bli en setning om hva som mangler, og ikke en cast-feil fra dypet av en
+-- spørring.
+-- ----------------------------------------------------------------------------
+create function workflow.manifest_uuid(p_manifest jsonb, p_key text)
+  returns uuid
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select case
+    when p_manifest ->> p_key ~
+      '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    then (p_manifest ->> p_key)::uuid
+  end;
+$$;
+
+create function workflow.manifest_uuids(p_manifest jsonb, p_key text)
+  returns uuid[]
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select case when jsonb_typeof(p_manifest -> p_key) <> 'array' then null
+    else (
+      select coalesce(array_agg(t.value::uuid order by t.value), array[]::uuid[])
+      from jsonb_array_elements_text(p_manifest -> p_key) as t(value)
+      where t.value ~
+        '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    )
+  end;
+$$;
+
+comment on function workflow.manifest_uuid(jsonb, text) is
+  'Én id ut av et inndatamanifest, eller NULL når feltet mangler eller ikke er en uuid. Et cast rett på verdien ville gitt en SQLSTATE fra dypet av en spørring der kalleren trenger en setning om hva som mangler.';
+comment on function workflow.manifest_uuids(jsonb, text) is
+  'Id-listen ut av et inndatamanifest, sortert og uten verdier som ikke er uuid-er, eller NULL når feltet ikke er en liste. Kalleren sammenligner antallet med listens lengde: er de ulike, bar listen noe som ikke er en id.';
+
+revoke execute on function workflow.manifest_uuid(jsonb, text) from public;
+revoke execute on function workflow.manifest_uuids(jsonb, text) from public;
+
+create function workflow.agent_task_digest(p_binding jsonb)
+  returns text
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select 'sha256:' || encode(sha256(convert_to(p_binding::text, 'UTF8')), 'hex');
+$$;
+
+comment on function workflow.agent_task_digest(jsonb) is
+  'Avtrykket av oppgavens binding. jsonb sorterer nøklene og gjengir dem entydig, og bindingen inneholder bare tekst- og uuid-verdier, så den samme bindingen gir den samme strengen. Avtrykket regnes ut på nytt ved import av de samme radene: er grunnlaget endret, er avtrykket et annet, og et svar avgitt på den gamle oppgaven kan ikke importeres (ANTIDEP_CONSTITUTION.md regel 2, 4).';
+
+revoke execute on function workflow.agent_task_digest(jsonb) from public;
+
+-- Hva som eventuelt hindrer at oppgaven kan bygges eller besvares.
+--
+-- Returnerer én setning på norsk, eller NULL. Den står i køen ved siden av
+-- oppgaven, fordi «venter på deg» og «kan ikke kjøres ennå» er to forskjellige
+-- tilstander, og en flate som viste dem likt, ville bedt noen gjøre noe som
+-- ikke går (ANTIDEP_CONSTITUTION.md regel 4).
+create function workflow.agent_task_problem(p_job workflow.pipeline_jobs)
+  returns text
+  language plpgsql
+  stable
+  set search_path = ''
+as $$
+declare
+  v_manifest jsonb := p_job.input_manifest;
+  v_source_version_id uuid;
+  v_revision_id uuid;
+  v_ids uuid[];
+  v_count integer;
+begin
+  if workflow.agent_task_contract(p_job.agent_role) is null then
+    return format(
+      'Rollen %s utføres av Antideps egen deterministiske kode, og kan ikke settes ut til en ekstern KI-agent.',
+      p_job.agent_role
+    );
+  end if;
+
+  if p_job.agent_role = 'evidence_extraction' then
+    v_source_version_id := workflow.manifest_uuid(v_manifest, 'source_version_id');
+    if v_source_version_id is null then
+      return 'Oppgaven sier ikke hvilken kildeversjon den gjelder.';
+    end if;
+    if not exists (select 1 from knowledge.source_versions sv where sv.id = v_source_version_id) then
+      return 'Kildeversjonen oppgaven gjelder, finnes ikke.';
+    end if;
+    if knowledge.source_version_text(v_source_version_id) is null then
+      return 'Kildeteksten er ikke lagret for denne kildeversjonen, så oppgaven kan ikke inneholde artikkelen. Last opp fullteksten på nytt gjennom fulltekstbiblioteket.';
+    end if;
+
+    v_ids := workflow.manifest_uuids(v_manifest, 'drug_ids');
+    if v_ids is null or cardinality(v_ids) = 0 then
+      return 'Oppgaven sier ikke hvilke virkestoff funnet kan gjelde.';
+    end if;
+    select count(*) into v_count from catalog.drugs d where d.id = any (v_ids);
+    if v_count <> cardinality(v_ids) then
+      return 'Ett av virkestoffene i oppgaven finnes ikke i katalogen.';
+    end if;
+
+    v_ids := workflow.manifest_uuids(v_manifest, 'outcome_concept_ids');
+    if v_ids is null or cardinality(v_ids) = 0 then
+      return 'Oppgaven sier ikke hvilke endepunkt funnet kan gjelde.';
+    end if;
+    select count(*) into v_count
+    from catalog.clinical_concepts c
+    where c.id = any (v_ids) and c.concept_type = 'outcome';
+    if v_count <> cardinality(v_ids) then
+      return 'Ett av endepunktene i oppgaven finnes ikke i katalogen.';
+    end if;
+
+    v_ids := coalesce(workflow.manifest_uuids(v_manifest, 'population_ids'), array[]::uuid[]);
+    select count(*) into v_count from catalog.populations p where p.id = any (v_ids);
+    if v_count <> cardinality(v_ids) then
+      return 'En av populasjonene i oppgaven finnes ikke i katalogen.';
+    end if;
+    return null;
+  end if;
+
+  if p_job.agent_role = 'claim_synthesis' then
+    if workflow.manifest_uuid(v_manifest, 'topic_concept_id') is null
+       or workflow.manifest_uuid(v_manifest, 'subject_drug_id') is null then
+      return 'Oppgaven sier ikke hvilket tema og virkestoff påstanden skal gjelde.';
+    end if;
+    -- Katalogverdiene må finnes, og ikke bare ha formen. Uten dette ville
+    -- oppgaven blitt bygget av et tomt oppslag, og feilen kommet først når et
+    -- ferdig svar ikke lot seg registrere.
+    if not exists (
+      select 1 from catalog.clinical_concepts c
+      where c.id = workflow.manifest_uuid(v_manifest, 'topic_concept_id')
+        and c.concept_type = 'outcome'
+    ) then
+      return 'Temaet oppgaven gjelder, finnes ikke som et endepunkt i katalogen.';
+    end if;
+    if not exists (
+      select 1 from catalog.drugs d
+      where d.id = workflow.manifest_uuid(v_manifest, 'subject_drug_id')
+    ) then
+      return 'Virkestoffet oppgaven gjelder, finnes ikke i katalogen.';
+    end if;
+    v_ids := workflow.manifest_uuids(v_manifest, 'evidence_item_ids');
+    if v_ids is null or cardinality(v_ids) = 0 then
+      return 'Oppgaven sier ikke hvilke evidensfunn syntesen skal bygge på.';
+    end if;
+    select count(*) into v_count from knowledge.evidence_items e where e.id = any (v_ids);
+    if v_count <> cardinality(v_ids) then
+      return 'Ett av evidensfunnene i oppgaven finnes ikke.';
+    end if;
+    return null;
+  end if;
+
+  if p_job.agent_role = 'evidence_assessment' then
+    v_revision_id := workflow.manifest_uuid(v_manifest, 'claim_revision_id');
+    if v_revision_id is null then
+      return 'Oppgaven sier ikke hvilken påstandsrevisjon den gjelder.';
+    end if;
+    if not exists (select 1 from knowledge.claim_revisions r where r.id = v_revision_id) then
+      return 'Påstandsrevisjonen oppgaven gjelder, finnes ikke.';
+    end if;
+    -- Databasen krever en gjeldende, bekreftet kildestøttekontroll før en
+    -- vurdering kan registreres. Køen sier det på forhånd framfor å la svaret
+    -- bli avvist etter at arbeidet er gjort.
+    if not exists (
+      select 1 from workflow.claim_verifications v
+      where v.claim_revision_id = v_revision_id
+    ) then
+      return 'Påstanden er ikke kildestøttekontrollert ennå. Evidensvurderingen kommer etter den kontrollen.';
+    end if;
+    return null;
+  end if;
+
+  return format('Rollen %s har ingen oppgaveform ennå.', p_job.agent_role);
+end;
+$$;
+
+comment on function workflow.agent_task_problem(workflow.pipeline_jobs) is
+  'Én setning om hva som hindrer at oppgaven kan bygges eller besvares, eller NULL. Står i køen ved siden av oppgaven fordi «venter på deg» og «kan ikke kjøres ennå» er to forskjellige tilstander, og en flate som viste dem likt, ville bedt noen gjøre noe som ikke går (ANTIDEP_CONSTITUTION.md regel 4).';
+
+revoke execute on function workflow.agent_task_problem(workflow.pipeline_jobs) from public;
+
+
+-- Hva oppgaven gjelder, i klartekst.
+--
+-- Egen funksjon fordi køen trenger den for hver rad, og hele oppgaven — som
+-- inneholder artikkelen — er altfor dyr å bygge bare for å lese en overskrift.
+create function workflow.agent_task_subject(p_job workflow.pipeline_jobs)
+  returns jsonb
+  language sql
+  stable
+  set search_path = ''
+as $$
+  select case p_job.agent_role
+    when 'evidence_extraction' then (
+      select jsonb_build_object('kind', 'kilde', 'label', s.title)
+      from knowledge.source_versions sv
+      join knowledge.sources s on s.id = sv.source_id
+      where sv.id = workflow.manifest_uuid(p_job.input_manifest, 'source_version_id')
+    )
+    when 'claim_synthesis' then (
+      select jsonb_build_object('kind', 'påstand',
+               'label', format('%s — %s', d.canonical_name, c.canonical_label))
+      from catalog.drugs d, catalog.clinical_concepts c
+      where d.id = workflow.manifest_uuid(p_job.input_manifest, 'subject_drug_id')
+        and c.id = workflow.manifest_uuid(p_job.input_manifest, 'topic_concept_id')
+    )
+    when 'evidence_assessment' then (
+      select jsonb_build_object('kind', 'påstandsrevisjon', 'label', r.statement)
+      from knowledge.claim_revisions r
+      where r.id = workflow.manifest_uuid(p_job.input_manifest, 'claim_revision_id')
+    )
+  end;
+$$;
+
+comment on function workflow.agent_task_subject(workflow.pipeline_jobs) is
+  'Hva oppgaven gjelder, i klartekst: kildens tittel, virkestoffet og temaet, eller påstandens formulering. Egen funksjon fordi køen trenger den for hver rad, og hele oppgaven — som inneholder artikkelen — er altfor dyr å bygge bare for å lese en overskrift.';
+
+revoke execute on function workflow.agent_task_subject(workflow.pipeline_jobs) from public;
+
+-- Selve oppgaven.
+create function workflow.agent_task(p_job workflow.pipeline_jobs)
+  returns jsonb
+  language plpgsql
+  stable
+  set search_path = ''
+as $$
+declare
+  v_manifest jsonb := p_job.input_manifest;
+  v_contract jsonb := workflow.agent_task_contract(p_job.agent_role);
+  v_binding jsonb;
+  v_input jsonb;
+  v_subject jsonb;
+  v_ignored jsonb;
+  v_prior jsonb := '[]'::jsonb;
+  v_model provenance.role_model_assignments;
+  v_source_version_id uuid;
+  v_revision_id uuid;
+  v_evidence_ids uuid[];
+  v_drug_ids uuid[];
+  v_outcome_ids uuid[];
+  v_population_ids uuid[];
+begin
+  if p_job.agent_role = 'evidence_extraction' then
+    v_source_version_id := workflow.manifest_uuid(v_manifest, 'source_version_id');
+    v_drug_ids := workflow.manifest_uuids(v_manifest, 'drug_ids');
+    v_outcome_ids := workflow.manifest_uuids(v_manifest, 'outcome_concept_ids');
+    v_population_ids := coalesce(workflow.manifest_uuids(v_manifest, 'population_ids'), array[]::uuid[]);
+
+    select jsonb_build_object(
+             'source_id', sv.source_id,
+             'source_version_id', sv.id,
+             'content_hash', sv.content_hash,
+             'representation', sv.representation::text,
+             'document_sha256', sv.document_sha256,
+             'drug_ids', to_jsonb(v_drug_ids),
+             'outcome_concept_ids', to_jsonb(v_outcome_ids),
+             'population_ids', to_jsonb(v_population_ids)
+           ),
+           jsonb_build_object(
+             'source', jsonb_build_object(
+               'source_id', s.id,
+               'title', s.title,
+               'authors_or_issuer', s.authors_or_issuer,
+               'publisher_or_journal', s.publisher_or_journal,
+               'publication_date', s.publication_date,
+               'source_type', s.source_type::text
+             ),
+             'source_version', jsonb_build_object(
+               'source_version_id', sv.id,
+               'retrieved_from', sv.retrieved_from,
+               'retrieved_at', sv.retrieved_at,
+               'content_hash', sv.content_hash,
+               'representation', sv.representation::text,
+               'document_sha256', sv.document_sha256
+             ),
+             'representation_text', knowledge.source_version_text(sv.id),
+             'drugs', (
+               select coalesce(jsonb_agg(jsonb_build_object(
+                        'drug_id', d.id, 'label', d.canonical_name) order by d.canonical_name), '[]'::jsonb)
+               from catalog.drugs d where d.id = any (v_drug_ids)
+             ),
+             'outcomes', (
+               select coalesce(jsonb_agg(jsonb_build_object(
+                        'outcome_concept_id', c.id, 'label', c.canonical_label) order by c.canonical_label), '[]'::jsonb)
+               from catalog.clinical_concepts c where c.id = any (v_outcome_ids)
+             ),
+             'populations', (
+               select coalesce(jsonb_agg(jsonb_build_object(
+                        'population_id', p.id, 'label', p.canonical_label) order by p.canonical_label), '[]'::jsonb)
+               from catalog.populations p where p.id = any (v_population_ids)
+             )
+           ),
+           null::jsonb
+      into v_binding, v_input, v_ignored
+    from knowledge.source_versions sv
+    join knowledge.sources s on s.id = sv.source_id
+    where sv.id = v_source_version_id;
+
+  elsif p_job.agent_role = 'claim_synthesis' then
+    v_evidence_ids := workflow.manifest_uuids(v_manifest, 'evidence_item_ids');
+
+    select jsonb_build_object(
+             'topic_concept_id', workflow.manifest_uuid(v_manifest, 'topic_concept_id'),
+             'subject_drug_id', workflow.manifest_uuid(v_manifest, 'subject_drug_id'),
+             'claim_id', workflow.manifest_uuid(v_manifest, 'claim_id'),
+             'population_ids', to_jsonb(coalesce(
+               workflow.manifest_uuids(v_manifest, 'population_ids'), array[]::uuid[])),
+             'evidence', (
+               select coalesce(jsonb_agg(
+                 jsonb_build_object('evidence_item_id', e.id, 'content_hash', e.content_hash)
+                 order by e.id::text), '[]'::jsonb)
+               from knowledge.evidence_items e where e.id = any (v_evidence_ids)
+             )
+           ),
+           jsonb_build_object(
+             'topic', jsonb_build_object(
+               'topic_concept_id', c.id, 'label', c.canonical_label),
+             'subject_drug', jsonb_build_object(
+               'drug_id', d.id, 'label', d.canonical_name),
+             'claim_id', workflow.manifest_uuid(v_manifest, 'claim_id'),
+             'populations', (
+               select coalesce(jsonb_agg(jsonb_build_object(
+                        'population_id', p.id, 'label', p.canonical_label) order by p.canonical_label), '[]'::jsonb)
+               from catalog.populations p
+               where p.id = any (coalesce(
+                 workflow.manifest_uuids(v_manifest, 'population_ids'), array[]::uuid[]))
+             ),
+             'evidence', (
+               select coalesce(jsonb_agg(workflow.evidence_extraction_dossier(e.id) order by e.id::text), '[]'::jsonb)
+               from knowledge.evidence_items e where e.id = any (v_evidence_ids)
+             )
+           ),
+           null::jsonb
+      into v_binding, v_input, v_ignored
+    from catalog.clinical_concepts c, catalog.drugs d
+    where c.id = workflow.manifest_uuid(v_manifest, 'topic_concept_id')
+      and d.id = workflow.manifest_uuid(v_manifest, 'subject_drug_id');
+
+    select coalesce(jsonb_agg(
+             jsonb_build_object('role', r.agent_role::text, 'agent_run_id', r.id)
+             order by r.id::text), '[]'::jsonb)
+      into v_prior
+    from knowledge.evidence_items e
+    join provenance.agent_runs r on r.id = e.agent_run_id
+    where e.id = any (v_evidence_ids);
+
+  else
+    v_revision_id := workflow.manifest_uuid(v_manifest, 'claim_revision_id');
+
+    select jsonb_build_object(
+             'claim_revision_id', r.id,
+             'revision_content_hash', r.content_hash,
+             'evidence_set_digest', knowledge.claim_evidence_set_digest(r.id)
+           ),
+           jsonb_build_object(
+             'dossier', workflow.claim_evidence_dossier(r.id),
+             'seen_evidence_set_digest', knowledge.claim_evidence_set_digest(r.id)
+           ),
+           null::jsonb
+      into v_binding, v_input, v_ignored
+    from knowledge.claim_revisions r
+    where r.id = v_revision_id;
+
+    select coalesce(jsonb_agg(
+             jsonb_build_object('role', x.role, 'agent_run_id', x.run_id)
+             order by x.role, x.run_id::text), '[]'::jsonb)
+      into v_prior
+    from (
+      select r.agent_role::text as role, r.id as run_id
+      from knowledge.claim_revisions cr
+      join provenance.agent_runs r on r.id = cr.agent_run_id
+      where cr.id = v_revision_id
+      union all
+      select r.agent_role::text, r.id
+      from workflow.claim_verifications v
+      join provenance.agent_runs r on r.id = v.agent_run_id
+      where v.claim_revision_id = v_revision_id
+    ) x;
+  end if;
+
+  v_binding := jsonb_build_object(
+    'task_version', workflow.agent_handoff_task_version(),
+    'role', p_job.agent_role::text,
+    'job_key', p_job.job_key,
+    'pipeline_job_id', p_job.id,
+    'prompt_template_version', v_contract ->> 'prompt_template_version',
+    'output_schema_version', v_contract ->> 'output_schema_version',
+    'input', v_binding,
+    'prior_runs', v_prior
+  );
+
+  v_subject := workflow.agent_task_subject(p_job);
+  v_model := provenance.current_semantic_model(p_job.agent_role);
+
+  return jsonb_build_object(
+    'task_version', workflow.agent_handoff_task_version(),
+    'answer_version', workflow.agent_handoff_answer_version(),
+    'pipeline_job_id', p_job.id,
+    'job_key', p_job.job_key,
+    'role', p_job.agent_role::text,
+    'prompt_template_version', v_contract ->> 'prompt_template_version',
+    'output_schema_version', v_contract ->> 'output_schema_version',
+    'request_digest', workflow.agent_task_digest(v_binding),
+    'binding', v_binding,
+    'subject', v_subject,
+    'registered_model', case when v_model.id is null then null else jsonb_build_object(
+      'provider', v_model.provider,
+      'model', v_model.model,
+      'model_version', v_model.model_version,
+      'model_version_disclosure', v_model.model_version_disclosure::text
+    ) end,
+    'input', v_input
+  );
+end;
+$$;
+
+comment on function workflow.agent_task(workflow.pipeline_jobs) is
+  'Hele agentoppgaven, bygget av rader som allerede finnes (ANTIDEP_CONSTITUTION.md regel 2, 4). binding er nøyaktig de opplysningene som binder svaret — rollen, oppgavenøkkelen, promptmalversjonen, outputschemaversjonen, inndataens versjon og de tidligere agentkjøringene rollen hviler på — og request_digest er avtrykket av den. Den semantiske modellen står IKKE i bindingen: den registreres av det første importerte svaret i rollen, og et avtrykk som endret seg ved den registreringen, ville gjort alle utestående oppgaver ugyldige i samme øyeblikk. input er innholdet agenten skal lese, inkludert hele den kontrollerte kildeteksten der rollen leser en kilde.';
+
+revoke execute on function workflow.agent_task(workflow.pipeline_jobs) from public;
+
+-- ----------------------------------------------------------------------------
+-- 5. Flaten: køen, oppgaven og innleggingen
+--
+-- Alle tre krever editor-mandat. Oppgaven inneholder hele den kontrollerte
+-- kildeteksten, og den skal ikke kunne leses av en innlogget kliniker: teksten
+-- er beskyttet materiale, og den forlater databasen bare til den som faktisk
+-- skal utføre agentarbeidet (ANTIDEP_CONSTITUTION.md regel 2, 7).
+-- ----------------------------------------------------------------------------
+create function api.agent_work_queue()
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_rows jsonb;
+begin
+  perform knowledge.assert_editor_authorized();
+
+  select coalesce(jsonb_agg(row_to_json(q)::jsonb order by q.enqueued_at), '[]'::jsonb)
+    into v_rows
+  from (
+    select
+      j.id as pipeline_job_id,
+      j.agent_role::text as agent_role,
+      j.job_key,
+      j.state::text as state,
+      j.attempts,
+      j.max_attempts,
+      j.enqueued_at,
+      j.failure_reason,
+      workflow.agent_task_problem(j) as blocked_reason,
+      (i.id is not null) as answered,
+      i.created_at as answered_at,
+      coalesce(workflow.agent_task_subject(j) ->> 'label', j.job_key) as subject_label,
+      (
+        select jsonb_build_object(
+                 'provider', a.provider, 'model', a.model,
+                 'model_version', a.model_version,
+                 'model_version_disclosure', a.model_version_disclosure::text)
+        from provenance.role_model_assignments a
+        where a.agent_role = j.agent_role and a.capacity = 'semantic'
+          and a.valid_from <= statement_timestamp()
+          and (a.valid_to is null or a.valid_to > statement_timestamp())
+      ) as registered_model
+    from workflow.pipeline_jobs j
+    left join workflow.agent_handoff_imports i on i.pipeline_job_id = j.id
+    where workflow.agent_task_contract(j.agent_role) is not null
+  ) q;
+
+  return v_rows;
+end;
+$$;
+
+comment on function api.agent_work_queue() is
+  'Agentoppgavene som finnes, slik en operativ flate trenger dem: rolle, hva oppgaven gjelder, tilstand, om den allerede er besvart, hvilken ekstern modell rollen er registrert med, og én setning om hva som eventuelt hindrer at den kan kjøres. Inneholder ikke kildeteksten — den ligger i api.agent_task_payload(uuid), som hentes når oppgaven faktisk skal utføres. Krever editor-mandat. SECURITY DEFINER fordi workflow og provenance har RLS med default deny; kalleren valideres på funksjonens eget kall.';
+
+revoke execute on function api.agent_work_queue() from public;
+grant execute on function api.agent_work_queue() to authenticated;
+
+create function api.agent_task_payload(p_pipeline_job_id uuid)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_job workflow.pipeline_jobs;
+  v_problem text;
+begin
+  perform knowledge.assert_editor_authorized();
+
+  select j.* into v_job from workflow.pipeline_jobs j where j.id = p_pipeline_job_id;
+  if not found then
+    raise exception using
+      errcode = 'no_data_found',
+      message = format('Det finnes ingen agentoppgave med id %L.', p_pipeline_job_id);
+  end if;
+
+  v_problem := workflow.agent_task_problem(v_job);
+  if v_problem is not null then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = v_problem,
+      hint = 'Oppgaven bygges av grunnlaget som faktisk ligger der. Mangler noe av det, skal oppgaven ikke hentes ut — et svar avgitt på et ufullstendig grunnlag ville ikke kunnet registreres (ANTIDEP_CONSTITUTION.md regel 4).';
+  end if;
+
+  return workflow.agent_task(v_job);
+end;
+$$;
+
+comment on function api.agent_task_payload(uuid) is
+  'Hele agentoppgaven for én pipelinejobb, inkludert den kontrollerte kildeteksten der rollen leser en kilde (ANTIDEP_CONSTITUTION.md regel 2). Krever editor-mandat: innholdet er beskyttet materiale, og det forlater databasen bare til den som faktisk skal utføre agentarbeidet. request_digest i svaret er oppgavens identitet og skal kopieres uendret inn i svarfilen; endres grunnlaget, får oppgaven et annet avtrykk, og det gamle svaret kan ikke importeres. Kan hentes så mange ganger man vil: den skriver ingenting, og den samme oppgaven gir det samme avtrykket.';
+
+revoke execute on function api.agent_task_payload(uuid) from public;
+grant execute on function api.agent_task_payload(uuid) to authenticated;
+
+-- Innleggingen: nøkkelen utledes, framfor å velges.
+create function api.enqueue_agent_task(p_agent_role text, p_input_manifest jsonb)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_role provenance.agent_role;
+  v_subject text;
+  v_job_key text;
+  v_result jsonb;
+  v_job workflow.pipeline_jobs;
+  v_problem text;
+begin
+  begin
+    v_role := p_agent_role::provenance.agent_role;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format('%L er ikke en kjent agentrolle.', p_agent_role);
+  end;
+
+  if workflow.agent_task_contract(v_role) is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format(
+        'Rollen %L kan ikke settes ut til en ekstern KI-agent.', p_agent_role),
+      hint = 'De uavhengige kontrolleddene er Antideps egen deterministiske kode. En ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en modellvurdering (ANTIDEP_CONSTITUTION.md regel 3).';
+  end if;
+
+  if p_input_manifest is null or jsonb_typeof(p_input_manifest) <> 'object' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Inndatamanifestet må være et JSON-objekt.';
+  end if;
+
+  v_subject := case v_role
+    when 'evidence_extraction' then coalesce(p_input_manifest ->> 'source_version_id', '?')
+    when 'claim_synthesis' then format('%s+%s',
+      coalesce(p_input_manifest ->> 'subject_drug_id', '?'),
+      coalesce(p_input_manifest ->> 'topic_concept_id', '?'))
+    else coalesce(p_input_manifest ->> 'claim_revision_id', '?')
+  end;
+
+  -- Nøkkelen utledes av hva jobben handler om, med et kort avtrykk av hele
+  -- manifestet bak. Subjektet gjør køen lesbar; avtrykket gjør to forskjellige
+  -- avgrensninger av det samme subjektet til to jobber framfor til en kollisjon.
+  v_job_key := format('agent-handoff:%s:%s', v_subject,
+    left(encode(sha256(convert_to(p_input_manifest::text, 'UTF8')), 'hex'), 12));
+
+  v_result := api.enqueue_pipeline_job(p_agent_role, v_job_key, p_input_manifest);
+
+  select j.* into v_job
+  from workflow.pipeline_jobs j
+  where j.id = (v_result ->> 'pipeline_job_id')::uuid;
+
+  v_problem := workflow.agent_task_problem(v_job);
+  if v_problem is not null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = v_problem,
+      hint = 'En oppgave som ikke kan bygges, skal ikke legges i køen: den ville stått der som noe som ventet på et menneske, uten å kunne utføres (ANTIDEP_CONSTITUTION.md regel 4).';
+  end if;
+
+  return v_result || jsonb_build_object('job_key', v_job_key);
+end;
+$$;
+
+comment on function api.enqueue_agent_task(text, jsonb) is
+  'Legger inn én ekstern agentoppgave og utleder jobbnøkkelen av hva oppgaven handler om — subjektet i klartekst, med et kort avtrykk av hele inndatamanifestet bak, slik at to forskjellige avgrensninger av det samme subjektet blir to jobber framfor en kollisjon. Kaller api.enqueue_pipeline_job(text, text, jsonb), som er idempotent på (rolle, nøkkel), og avviser en oppgave som ikke kan bygges av grunnlaget som faktisk ligger der. Krever editor-mandat gjennom det kallet.';
+
+revoke execute on function api.enqueue_agent_task(text, jsonb) from public;
+grant execute on function api.enqueue_agent_task(text, jsonb) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 6. Importen
+--
+-- Svarfilen kommer inn ordrett. Funksjonen kontrollerer bindingen, henter
+-- verdiene ut av svaret selv — kalleren kan ikke bytte dem ut underveis — og
+-- skriver gjennom nøyaktig de samme interne skriveveiene agentkjørerne bruker.
+--
+-- Rekkefølgen er ikke tilfeldig. Autorisasjon, så bindingen, så
+-- modellidentiteten, så arbeidet. Et svar som ikke hører til oppgaven, eller som
+-- kommer fra en modell som ikke får gjøre denne rollen, skal avvises før noe
+-- skrives — ikke etter.
+-- ----------------------------------------------------------------------------
+create function api.import_agent_answer(p_pipeline_job_id uuid, p_answer jsonb)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+  v_job workflow.pipeline_jobs;
+  v_problem text;
+  v_task jsonb;
+  v_binding jsonb;
+  v_input jsonb;
+  v_answer_digest text;
+  v_existing workflow.agent_handoff_imports;
+  v_identity jsonb;
+  v_provider text;
+  v_model text;
+  v_model_version text;
+  v_disclosure provenance.model_version_disclosure;
+  v_disclosure_text text;
+  v_answered_at timestamptz;
+  v_result jsonb;
+  v_unknown text;
+  v_agent_identity provenance.agent_identities;
+  v_agent_actor_id uuid;
+  v_registration provenance.role_model_assignments;
+  v_semantic provenance.role_model_assignments;
+  v_lease uuid := gen_random_uuid();
+  v_run_id uuid;
+  v_outcome jsonb;
+  v_extraction jsonb;
+  v_claim jsonb;
+  v_assessment jsonb;
+  v_evidence_item_id uuid;
+  v_ids uuid[];
+  v_id uuid;
+begin
+  v_actor_id := knowledge.assert_editor_authorized();
+
+  select j.* into v_job
+  from workflow.pipeline_jobs j
+  where j.id = p_pipeline_job_id
+  for update;
+
+  if not found then
+    raise exception using
+      errcode = 'no_data_found',
+      message = format('Det finnes ingen agentoppgave med id %L.', p_pipeline_job_id);
+  end if;
+
+  -- ------------------------------------------------------------------
+  -- Gjentakelsen først, før alt annet
+  --
+  -- Det samme svaret sendt inn igjen — et dobbeltklikk, en gjenopptatt
+  -- økt — skal svare med det som allerede ble registrert, framfor å lage
+  -- et nytt klinisk objekt. Et *annet* svar på en jobb som allerede er
+  -- besvart, er ikke en gjentakelse, og avvises.
+  -- ------------------------------------------------------------------
+  v_answer_digest := 'sha256:' || encode(sha256(convert_to(p_answer::text, 'UTF8')), 'hex');
+
+  select i.* into v_existing
+  from workflow.agent_handoff_imports i
+  where i.pipeline_job_id = p_pipeline_job_id;
+
+  if found then
+    if v_existing.answer_digest = v_answer_digest then
+      return jsonb_build_object(
+        'imported', false,
+        'already_imported', true,
+        'pipeline_job_id', p_pipeline_job_id,
+        'agent_role', v_existing.agent_role::text,
+        'agent_run_id', v_existing.agent_run_id,
+        'outcome', v_existing.outcome
+      );
+    end if;
+    raise exception using
+      errcode = 'unique_violation',
+      message = 'Denne agentoppgaven har allerede tatt imot et annet svar.',
+      hint = 'Ett svar per oppgave. To svar ville gitt to kliniske objekter for det samme arbeidet, og ingen ville kunnet si hvilket som gjaldt (ANTIDEP_CONSTITUTION.md regel 4). Skal arbeidet gjøres om igjen, er det en ny oppgave.';
+  end if;
+
+  if v_job.state = 'succeeded' then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'Agentoppgaven er allerede fullført.',
+      hint = 'Jobben har et registrert utfall fra før. Skal arbeidet gjøres om igjen, er det en ny oppgave.';
+  end if;
+  if v_job.attempts >= v_job.max_attempts then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'Agentoppgaven har brukt opp forsøkene sine og blir stående.',
+      hint = 'En oppbrukt jobb skal ikke se ut som en jobb som fortsatt er underveis (ANTIDEP_CONSTITUTION.md regel 4). Legg inn oppgaven på nytt dersom den skal forsøkes igjen.';
+  end if;
+
+  v_problem := workflow.agent_task_problem(v_job);
+  if v_problem is not null then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = v_problem;
+  end if;
+
+  -- ------------------------------------------------------------------
+  -- Formen på svaret, og bindingen
+  -- ------------------------------------------------------------------
+  if p_answer is null or jsonb_typeof(p_answer) <> 'object' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Svaret er ikke et JSON-objekt.';
+  end if;
+
+  select string_agg(quote_literal(k.value), ', ' order by k.value) into v_unknown
+  from jsonb_object_keys(p_answer) as k(value)
+  where k.value not in (
+    'answer_version', 'task_version', 'role', 'job_key', 'request_digest',
+    'output_schema_version', 'identity', 'answered_at', 'result'
+  );
+  if v_unknown is not null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('Svaret har felter denne kontrakten ikke kjenner: %s.', v_unknown),
+      hint = 'Ukjente felter avvises framfor å ignoreres: et felt med skrivefeil ville ellers sett ut som en utelatt opplysning, og et felt ingen leser, ville vært en påstand uten virkning.';
+  end if;
+
+  v_task := workflow.agent_task(v_job);
+  v_binding := v_task -> 'binding';
+  v_input := v_binding -> 'input';
+
+  if p_answer ->> 'answer_version' is distinct from workflow.agent_handoff_answer_version() then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('Svaret er skrevet mot %L, men Antidep leser %L.',
+        p_answer ->> 'answer_version', workflow.agent_handoff_answer_version());
+  end if;
+  if p_answer ->> 'task_version' is distinct from workflow.agent_handoff_task_version() then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('Svaret gjelder oppgaveformen %L, men denne oppgaven er %L.',
+        p_answer ->> 'task_version', workflow.agent_handoff_task_version());
+  end if;
+  if p_answer ->> 'role' is distinct from v_job.agent_role::text then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('Svaret er avgitt i rollen %L, mens oppgaven gjelder rollen %L.',
+        p_answer ->> 'role', v_job.agent_role::text),
+      hint = 'Rollen avgjør hva svaret får lov til å registrere. Et svar fra ett ledd skal ikke kunne lukkes inn i et annet.';
+  end if;
+  if p_answer ->> 'job_key' is distinct from v_job.job_key then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Svaret gjelder en annen agentoppgave enn den det importeres på.';
+  end if;
+  if p_answer ->> 'output_schema_version' is distinct from (v_task ->> 'output_schema_version') then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('Svaret er skrevet mot svarformen %L, mens oppgaven krever %L.',
+        p_answer ->> 'output_schema_version', v_task ->> 'output_schema_version');
+  end if;
+  if p_answer ->> 'request_digest' is distinct from (v_task ->> 'request_digest') then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format(
+        'Svaret er avgitt på forespørselen %s, mens oppgaven nå er %s.',
+        coalesce(p_answer ->> 'request_digest', '(mangler)'), v_task ->> 'request_digest'),
+      hint = 'Avtrykket dekker rollen, oppgaven, promptmalen, svarformen og hele grunnlaget oppgaven ble bygget av. Er noe av det endret siden oppgaven ble hentet ut, gjelder ikke det gamle svaret lenger. Hent oppgaven på nytt og be om et nytt svar (ANTIDEP_CONSTITUTION.md regel 2, 4).';
+  end if;
+
+  v_result := p_answer -> 'result';
+  if v_result is null or jsonb_typeof(v_result) <> 'object' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Svaret har ingen result som er et JSON-objekt.';
+  end if;
+
+  -- ------------------------------------------------------------------
+  -- Hvem som svarte
+  -- ------------------------------------------------------------------
+  v_identity := p_answer -> 'identity';
+  if v_identity is null or jsonb_typeof(v_identity) <> 'object' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Svaret sier ikke hvilken modell som utførte oppgaven.',
+      hint = 'identity skal ha provider, model og model_version_disclosure — og model_version når tjenesten faktisk oppgir en versjon. Uten den kan ingen si om kontrollene i kjeden er uavhengige (ANTIDEP_CONSTITUTION.md regel 3).';
+  end if;
+
+  select string_agg(quote_literal(k.value), ', ' order by k.value) into v_unknown
+  from jsonb_object_keys(v_identity) as k(value)
+  where k.value not in ('provider', 'model', 'model_version', 'model_version_disclosure');
+  if v_unknown is not null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('identity har felter denne kontrakten ikke kjenner: %s.', v_unknown);
+  end if;
+
+  v_provider := nullif(btrim(coalesce(v_identity ->> 'provider', '')), '');
+  v_model := nullif(btrim(coalesce(v_identity ->> 'model', '')), '');
+  v_disclosure_text := coalesce(nullif(btrim(coalesce(v_identity ->> 'model_version_disclosure', '')), ''), 'exact');
+  v_model_version := nullif(btrim(coalesce(v_identity ->> 'model_version', '')), '');
+
+  if v_provider is null or v_model is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'identity mangler leverandør eller modellnavn.',
+      hint = 'Skriv tjenesten og det modellnavnet tjenesten selv viser. Antidep finner ikke på et navn på vegne av en leverandør.';
+  end if;
+  if v_disclosure_text not in ('exact', 'not_exposed') then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('model_version_disclosure er %L, som ikke er exact eller not_exposed.', v_disclosure_text);
+  end if;
+  v_disclosure := v_disclosure_text::provenance.model_version_disclosure;
+
+  if v_disclosure = 'not_exposed' then
+    -- Den kanoniske verdien, og ikke den frie teksten svaret måtte ha skrevet.
+    -- To ukjente versjoner av den samme modellen skal være den samme
+    -- identiteten; ellers ville separasjonsregelen sluttet å virke.
+    v_model_version := provenance.unexposed_model_version();
+  elsif v_model_version is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'identity oppgir model_version_disclosure = exact, men ingen model_version.',
+      hint = 'Oppgir tjenesten ingen versjon, skal model_version_disclosure være not_exposed. En oppdiktet versjon ville sett like troverdig ut som en sann (ANTIDEP_CONSTITUTION.md regel 4).';
+  elsif v_model_version = provenance.unexposed_model_version() then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('model_version er %L, som er den kanoniske verdien for en versjon tjenesten ikke oppgir.', v_model_version),
+      hint = 'Sett model_version_disclosure = not_exposed og la model_version stå tom.';
+  end if;
+
+  v_semantic := provenance.ensure_semantic_model_assignment(
+    v_job.agent_role, v_provider, v_model, v_model_version, v_disclosure, v_actor_id
+  );
+
+  if p_answer ->> 'answered_at' is not null then
+    begin
+      v_answered_at := (p_answer ->> 'answered_at')::timestamptz;
+    exception
+      when others then
+        raise exception using
+          errcode = 'invalid_parameter_value',
+          message = format('answered_at er %L, som ikke er et tidspunkt.', p_answer ->> 'answered_at');
+    end;
+
+    -- Et svar kan ikke være avgitt i framtiden. Slakken finnes fordi agenten
+    -- kjører på en annen maskin med en annen klokke, og et tidspunkt avrundet
+    -- til nærmeste minutt ikke er en usann påstand; uten den ville en riktig
+    -- import blitt stoppet av tre sekunder, og kontrollen blitt skrudd av
+    -- framfor fulgt. Samme regel og samme slakk som i den filbaserte kjøringen.
+    if v_answered_at > statement_timestamp() + interval '5 minutes'
+       or v_answered_at < v_job.enqueued_at - interval '5 minutes' then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format(
+          'answered_at er %L, som ligger utenfor oppgaven: den ble lagt inn %L og importeres nå.',
+          v_answered_at, v_job.enqueued_at
+        ),
+        hint = 'Tidspunktet registreres som da agenten svarte. Et svar avgitt før oppgaven fantes, eller inn i framtiden, er ikke en unøyaktighet — det er en usann proveniens (ANTIDEP_CONSTITUTION.md regel 4). La feltet stå tomt om du er usikker.';
+    end if;
+  end if;
+
+  -- ------------------------------------------------------------------
+  -- Uttaket og kjøringen
+  --
+  -- Importen gjør det en kjører ville gjort: tar ut jobben med en leie i
+  -- rollens egen agentidentitet, åpner kjøringen for nettopp det uttaket, og
+  -- melder utfallet. Da gjelder de samme bindingene og de samme reglene som
+  -- for et automatisert ledd — inkludert at kjøringen ikke kan gjenbrukes på
+  -- en annen jobb.
+  -- ------------------------------------------------------------------
+  select ai.* into v_agent_identity
+  from provenance.agent_identities ai
+  where ai.agent_role = v_job.agent_role
+    and ai.valid_from <= statement_timestamp()
+    and (ai.valid_to is null or ai.valid_to > statement_timestamp())
+  order by ai.valid_from
+  limit 1;
+
+  if v_agent_identity.id is null then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format('Rollen %L har ingen gyldig agentidentitet å registrere kjøringen under.', v_job.agent_role);
+  end if;
+  v_agent_actor_id := v_agent_identity.actor_id;
+
+  v_registration := provenance.current_role_model(v_job.agent_role);
+  if v_registration.id is null then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format('Rollen %L har ingen gyldig modelltildeling for registreringsleddet.', v_job.agent_role);
+  end if;
+
+  update workflow.pipeline_jobs
+  set state = 'leased',
+      attempts = v_job.attempts + 1,
+      leased_by_agent_identity_id = v_agent_identity.id,
+      lease_expires_at = statement_timestamp() + interval '15 minutes',
+      lease_token = v_lease,
+      -- En jobb som sto som failed, bærer et fullføringstidspunkt. Uttaket er
+      -- et nytt forsøk, og et forsøk som pågår, er ikke fullført.
+      completed_at = null
+  where id = v_job.id;
+
+  perform workflow.record_pipeline_job_event(
+    v_job.id, v_job.state, 'leased'::workflow.pipeline_job_state,
+    v_job.attempts + 1, v_actor_id, null,
+    'Uttak for import av et eksternt agentsvar.'
+  );
+
+  insert into provenance.agent_runs (
+    agent_identity_id, actor_id, agent_role,
+    provider, model, model_version, model_version_disclosure,
+    semantic_provider, semantic_model, semantic_model_version,
+    semantic_model_version_disclosure,
+    prompt_template_version, pipeline_version,
+    status, input_manifest, input_source_version_id
+  )
+  values (
+    v_agent_identity.id, v_agent_actor_id, v_job.agent_role,
+    v_registration.provider, v_registration.model, v_registration.model_version,
+    v_registration.model_version_disclosure,
+    v_provider, v_model, v_model_version, v_disclosure,
+    v_task ->> 'prompt_template_version', 'antidep-evidence/1',
+    'running',
+    jsonb_build_object('handoff', jsonb_build_object(
+      'task_version', v_task ->> 'task_version',
+      'answer_version', v_task ->> 'answer_version',
+      'request_digest', v_task ->> 'request_digest',
+      'output_schema_version', v_task ->> 'output_schema_version',
+      'answer_digest', v_answer_digest,
+      'answered_at', v_answered_at,
+      'imported_by_actor_id', v_actor_id,
+      'binding', v_binding
+    )),
+    case when v_job.agent_role = 'evidence_extraction'
+         then (v_input ->> 'source_version_id')::uuid end
+  )
+  returning id into v_run_id;
+
+  insert into workflow.pipeline_job_runs (agent_run_id, pipeline_job_id, lease_token, attempt)
+  values (v_run_id, v_job.id, v_lease, v_job.attempts + 1);
+
+  -- ------------------------------------------------------------------
+  -- Arbeidet, gjennom de samme skriveveiene som agentkjørerne bruker
+  -- ------------------------------------------------------------------
+  if v_job.agent_role = 'evidence_extraction' then
+    v_extraction := v_result -> 'extraction';
+    if v_extraction is null or jsonb_typeof(v_extraction) <> 'object' then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret har ingen extraction som er et JSON-objekt.';
+    end if;
+
+    -- Katalogen er redaktørens avgrensning, og modellen velger innenfor den.
+    -- En id utenfor oppgaven ville flyttet funnet til et annet virkestoff eller
+    -- et naboendepunkt, og den ordrette kontrollen kontrollerer utdrag — ikke
+    -- avgrensning.
+    v_ids := workflow.manifest_uuids(v_input, 'drug_ids');
+    v_id := workflow.manifest_uuid(v_extraction, 'intervention_drug_id');
+    if v_id is null or not (v_id = any (v_ids)) then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret oppgir et virkestoff som ikke står blant virkestoffene i oppgaven.';
+    end if;
+    v_id := workflow.manifest_uuid(v_extraction, 'comparator_drug_id');
+    if v_extraction ->> 'comparator_drug_id' is not null and (v_id is null or not (v_id = any (v_ids))) then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret oppgir et komparatorvirkestoff som ikke står blant virkestoffene i oppgaven.';
+    end if;
+    v_ids := workflow.manifest_uuids(v_input, 'outcome_concept_ids');
+    v_id := workflow.manifest_uuid(v_extraction, 'outcome_concept_id');
+    if v_id is null or not (v_id = any (v_ids)) then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret oppgir et endepunkt som ikke står blant endepunktene i oppgaven.';
+    end if;
+    v_ids := coalesce(workflow.manifest_uuids(v_input, 'population_ids'), array[]::uuid[]);
+    v_id := workflow.manifest_uuid(v_extraction, 'population_id');
+    if v_extraction ->> 'population_id' is not null and (v_id is null or not (v_id = any (v_ids))) then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret oppgir en populasjon som ikke står blant populasjonene i oppgaven.';
+    end if;
+
+    v_evidence_item_id := knowledge.record_evidence_item(
+      (v_input ->> 'source_id')::uuid,
+      v_extraction ->> 'design_code',
+      v_extraction ->> 'population_availability',
+      v_extraction ->> 'population_detail',
+      v_extraction ->> 'sample_size_availability',
+      (v_extraction ->> 'intervention_drug_id')::uuid,
+      v_extraction ->> 'comparator_kind',
+      (v_extraction ->> 'outcome_concept_id')::uuid,
+      v_extraction ->> 'outcome_detail',
+      v_extraction ->> 'timepoint_availability',
+      v_extraction ->> 'reported_direction',
+      v_extraction ->> 'estimate_availability',
+      v_extraction ->> 'confidence_interval_availability',
+      v_extraction ->> 'source_locator',
+      (v_input ->> 'source_version_id')::uuid,
+      workflow.manifest_uuid(v_extraction, 'population_id'),
+      (v_extraction ->> 'sample_size')::integer,
+      v_extraction ->> 'intervention_detail',
+      workflow.manifest_uuid(v_extraction, 'comparator_drug_id'),
+      v_extraction ->> 'comparator_detail',
+      v_extraction ->> 'timepoint_min',
+      v_extraction ->> 'timepoint_max',
+      v_extraction ->> 'effect_measure',
+      (v_extraction ->> 'estimate')::numeric,
+      v_extraction ->> 'estimate_unit',
+      (v_extraction ->> 'ci_lower')::numeric,
+      (v_extraction ->> 'ci_upper')::numeric,
+      (v_extraction ->> 'ci_level_percent')::numeric,
+      v_extraction ->> 'limitations_text',
+      v_extraction ->> 'source_quote',
+      v_result -> 'field_groundings',
+      'ai_assisted',
+      v_agent_actor_id,
+      v_run_id
+    );
+
+    perform workflow.assert_extraction_fully_grounded(v_evidence_item_id);
+    v_outcome := jsonb_build_object('evidence_item_id', v_evidence_item_id);
+
+  elsif v_job.agent_role = 'claim_synthesis' then
+    v_claim := v_result -> 'claim';
+    if v_claim is null or jsonb_typeof(v_claim) <> 'object' then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret har ingen claim som er et JSON-objekt.';
+    end if;
+
+    -- Evidenssettet er oppgavens, ikke svarets. En lenke til et funn utenfor
+    -- oppgaven ville gitt en påstand som hvilte på noe ingen hadde avgrenset.
+    if exists (
+      select 1
+      from jsonb_array_elements(coalesce(v_result -> 'evidence_links', '[]'::jsonb)) as link(value)
+      where workflow.manifest_uuid(link.value, 'evidence_item_id') is null
+         or not (workflow.manifest_uuid(link.value, 'evidence_item_id') = any (
+              select (e.value ->> 'evidence_item_id')::uuid
+              from jsonb_array_elements(v_input -> 'evidence') as e(value)))
+    ) then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret lenker til et evidensfunn som ikke står i oppgaven.',
+        hint = 'Hvilke funn en syntese kan bygge på, er en faglig avgrensning som ligger i oppgaven. En modell som fikk velge fritt, ville kunnet bygge påstanden på noe ingen hadde tatt stilling til.';
+    end if;
+
+    v_outcome := knowledge.record_agent_claim_synthesis(
+      v_run_id,
+      v_agent_actor_id,
+      (v_input ->> 'topic_concept_id')::uuid,
+      (v_input ->> 'subject_drug_id')::uuid,
+      v_claim ->> 'statement',
+      v_claim ->> 'scope',
+      v_claim ->> 'comparator_kind',
+      v_claim ->> 'uncertainty_summary',
+      v_result -> 'evidence_links',
+      workflow.manifest_uuid(v_input, 'claim_id'),
+      workflow.manifest_uuid(v_claim, 'population_id'),
+      v_claim ->> 'timeframe_min',
+      v_claim ->> 'timeframe_max',
+      workflow.manifest_uuid(v_claim, 'comparator_drug_id'),
+      v_claim ->> 'direction',
+      v_claim ->> 'magnitude_measure',
+      (v_claim ->> 'magnitude_value')::numeric,
+      v_claim ->> 'magnitude_unit',
+      v_claim ->> 'qualifiers'
+    );
+
+  else
+    v_assessment := v_result -> 'assessment';
+    if v_assessment is null or jsonb_typeof(v_assessment) <> 'object' then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Svaret har ingen assessment som er et JSON-objekt.';
+    end if;
+
+    v_outcome := knowledge.record_evidence_assessment_row(
+      v_run_id,
+      v_agent_actor_id,
+      (v_input ->> 'claim_revision_id')::uuid,
+      -- Avtrykket av evidenssettet er oppgavens eget, ikke svarets: oppgaven
+      -- viste nøyaktig det settet, og request_digest dekker det allerede. En
+      -- verdi fra svaret ville vært en påstand om hva agenten så.
+      v_input ->> 'evidence_set_digest',
+      v_assessment ->> 'framework',
+      v_assessment ->> 'certainty_level',
+      v_assessment ->> 'rationale',
+      v_assessment ->> 'risk_of_bias',
+      v_assessment ->> 'inconsistency',
+      v_assessment ->> 'indirectness',
+      v_assessment ->> 'imprecision',
+      v_assessment ->> 'publication_bias',
+      v_assessment ->> 'other_considerations',
+      v_assessment ->> 'evidence_gap'
+    );
+  end if;
+
+  -- ------------------------------------------------------------------
+  -- Utfallet
+  -- ------------------------------------------------------------------
+  update provenance.agent_runs
+  set status = 'succeeded', completed_at = now(), output_manifest = v_outcome
+  where id = v_run_id;
+
+  update workflow.pipeline_jobs
+  set state = 'succeeded',
+      agent_run_id = v_run_id,
+      output_manifest = v_outcome,
+      completed_at = now(),
+      failure_reason = null
+  where id = v_job.id;
+
+  perform workflow.record_pipeline_job_event(
+    v_job.id, 'leased'::workflow.pipeline_job_state, 'succeeded'::workflow.pipeline_job_state,
+    v_job.attempts + 1, v_actor_id, null,
+    'Eksternt agentsvar importert og registrert.'
+  );
+
+  insert into workflow.agent_handoff_imports (
+    pipeline_job_id, agent_role, request_digest, answer_digest,
+    agent_run_id, imported_by_actor_id, answered_at, outcome
+  )
+  values (
+    v_job.id, v_job.agent_role, v_task ->> 'request_digest', v_answer_digest,
+    v_run_id, v_actor_id, v_answered_at, v_outcome
+  );
+
+  return jsonb_build_object(
+    'imported', true,
+    'already_imported', false,
+    'pipeline_job_id', v_job.id,
+    'agent_role', v_job.agent_role::text,
+    'agent_run_id', v_run_id,
+    'request_digest', v_task ->> 'request_digest',
+    'model', jsonb_build_object(
+      'provider', v_provider, 'model', v_model,
+      'model_version', v_model_version,
+      'model_version_disclosure', v_disclosure::text),
+    'outcome', v_outcome
+  );
+end;
+$$;
+
+comment on function api.import_agent_answer(uuid, jsonb) is
+  'Tar imot ett eksternt agentsvar på én agentoppgave og registrerer resultatet gjennom de samme interne skriveveiene agentkjørerne bruker (ANTIDEP_CONSTITUTION.md regel 3, 4, 7). Svaret er data: ukjente felter avvises, bindingen kontrolleres mot oppgaven slik databasen bygger den nå, og verdiene hentes ut av svaret selv — kalleren kan ikke bytte dem ut underveis. Et svar avgitt på en oppgave som siden har fått et annet grunnlag, har et annet request_digest og avvises. Modellidentiteten registreres på kjøringen og kontrolleres mot rollens registrerte semantiske modell; to roller kan strukturelt ikke dele modell, så det samme modellsvaret kan ikke både lage innholdet og kontrollere det. Importen er idempotent på jobben: det samme svaret sendt inn igjen svarer med det som allerede ble registrert, og et annet svar på en besvart jobb avvises — retries gir aldri doble kliniske artefakter. Den ordrette kontrollen av hvert kildeutdrag ligger der den alltid har ligget: i Antideps egen deterministiske kode før importen, og i den uavhengige ekstraksjonskontrollen etterpå. Krever editor-mandat. SECURITY DEFINER fordi knowledge, workflow og provenance har RLS med default deny; kalleren valideres på funksjonens eget kall (§50).';
+
+revoke execute on function api.import_agent_answer(uuid, jsonb) from public;
+grant execute on function api.import_agent_answer(uuid, jsonb) to authenticated;

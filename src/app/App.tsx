@@ -1,17 +1,21 @@
 import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router'
 
+import { AgentWorkPage } from './AgentWorkPage'
 import { CandidatePage } from './CandidatePage'
 import { CandidateQueuePage } from './CandidateQueuePage'
 import { PublishedClaimPage } from './PublishedClaimPage'
 import { PublishedIndexPage } from './PublishedIndexPage'
+import { createAgentWorkGateway, type AgentWorkGateway } from './agent-work-gateway'
 import { createCandidateGateway, type CandidateGateway } from './candidate-gateway'
 import { createPublicationGateway, type PublicationGateway } from './publication-gateway'
 import {
+  AGENT_WORK_PATH,
   CANDIDATE_PATH,
   CANDIDATE_QUEUE_PATH,
   HOME_PATH,
   PUBLISHED_CLAIM_PATH,
   PUBLISHED_PATH,
+  agentWorkPath,
   candidateQueuePath,
   publishedPath,
 } from './routes'
@@ -39,6 +43,10 @@ export function ResetHome() {
         <p>
           <Link to={candidateQueuePath()}>Kandidater til sluttkontroll</Link> — krever mandat, og
           viser eksperimentelt, upublisert innhold.
+        </p>
+        <p>
+          <Link to={agentWorkPath()}>Agentarbeid</Link> — oppgavene som venter på en KI-agent, med
+          nedlasting og opplasting. Krever mandat.
         </p>
       </section>
     </main>
@@ -83,6 +91,11 @@ function QueueRoute({ gateway }: { readonly gateway: CandidateGateway | undefine
   return <CandidateQueuePage gateway={gateway ?? createCandidateGateway()} />
 }
 
+/** Agentarbeidet, med klienten opprettet først når ruten faktisk vises. */
+function AgentWorkRoute({ gateway }: { readonly gateway: AgentWorkGateway | undefined }) {
+  return <AgentWorkPage gateway={gateway ?? createAgentWorkGateway()} />
+}
+
 /** Den publiserte katalogen, med klienten opprettet først når ruten vises. */
 function PublishedRoute({ gateway }: { readonly gateway: PublicationGateway | undefined }) {
   return <PublishedIndexPage gateway={gateway ?? createPublicationGateway()} />
@@ -113,14 +126,17 @@ export interface AppLayoutProps {
   readonly gateway?: CandidateGateway | undefined
   /** Veien til det publiserte innholdet, injisert av samme grunn som over. */
   readonly publication?: PublicationGateway | undefined
+  /** Veien til agentarbeidet, injisert av samme grunn som over. */
+  readonly agentWork?: AgentWorkGateway | undefined
 }
 
-export function AppLayout({ gateway, publication }: AppLayoutProps = {}) {
+export function AppLayout({ gateway, publication, agentWork }: AppLayoutProps = {}) {
   return (
     <Routes>
       <Route element={<ResetHome />} path={HOME_PATH} />
       <Route element={<QueueRoute gateway={gateway} />} path={CANDIDATE_QUEUE_PATH} />
       <Route element={<CandidateRoute gateway={gateway} />} path={CANDIDATE_PATH} />
+      <Route element={<AgentWorkRoute gateway={agentWork} />} path={AGENT_WORK_PATH} />
       <Route element={<PublishedRoute gateway={publication} />} path={PUBLISHED_PATH} />
       <Route element={<PublishedClaimRoute gateway={publication} />} path={PUBLISHED_CLAIM_PATH} />
       <Route element={<NotFound />} path="*" />

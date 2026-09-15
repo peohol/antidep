@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_WORK_PATH,
   CANDIDATE_PATH,
   CANDIDATE_QUEUE_PATH,
   HOME_PATH,
   PUBLISHED_CLAIM_PATH,
   PUBLISHED_PATH,
+  agentWorkPath,
   candidatePath,
   candidateQueuePath,
   homePath,
@@ -22,6 +24,15 @@ describe('routes', () => {
     expect(publishedPath()).toBe('/publisert')
     expect(PUBLISHED_PATH).toBe('/publisert')
     expect(PUBLISHED_CLAIM_PATH).toBe('/publisert/:claimId')
+    expect(AGENT_WORK_PATH).toBe('/agentarbeid')
+    expect(agentWorkPath()).toBe('/agentarbeid')
+  })
+
+  // Agentarbeid og sluttkontroll er to forskjellige handlinger med hvert sitt
+  // mandat, og de har hver sin adresse.
+  it('holder agentarbeidet fra kandidatflaten og det publiserte innholdet', () => {
+    expect(AGENT_WORK_PATH.startsWith(CANDIDATE_QUEUE_PATH)).toBe(false)
+    expect(AGENT_WORK_PATH.startsWith(PUBLISHED_PATH)).toBe(false)
   })
 
   // Kandidaten og det publiserte innholdet er to forskjellige ting, og de har
@@ -41,6 +52,7 @@ describe('routes', () => {
       CANDIDATE_PATH,
       PUBLISHED_PATH,
       PUBLISHED_CLAIM_PATH,
+      AGENT_WORK_PATH,
     ]) {
       expect(path).not.toContain('/review')
       expect(path).not.toContain('/extraction-review')

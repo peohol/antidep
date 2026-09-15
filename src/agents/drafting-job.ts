@@ -2,8 +2,8 @@
 // Kjøremappa: modell-leddet som to kommandoer med en tilstand imellom
 //
 // Modell-leddet kan ikke være én kommando. Selve modellarbeidet gjøres av en
-// aktør Antidep ikke kaller — i dag en Claude Code Routine, i går ChatGPT i et
-// nettleservindu — og en kommando som ventet på den, ville vært en kommando som
+// aktør Antidep ikke kaller — en KI-agent i et chatvindu, et menneske, en
+// teknisk agent — og en kommando som ventet på den, ville vært en kommando som
 // aldri returnerte. Arbeidet er derfor delt i to kjøringer med en fil imellom:
 //
 //   open    henter kildeversjonen, bygger den versjonerte forespørselen, og
@@ -21,11 +21,19 @@
 // Hva mappa *ikke* er
 //
 // Den er ikke en arbeidsflytmotor, og den skal ikke bli det. Orkestreringen —
-// hvilket oppdrag som kjøres når, hva som skjer etterpå, hvem som varsles — er
-// Claude Code Routines sitt ansvar, ikke Antideps (`docs/ROUTINE_EXTRACTION.md`).
-// Det som ligger her, er de tilstandene *Antidep* må kunne skille fra hverandre
-// for at et svar skal kunne kontrolleres: venter på svar, fikk et gyldig svar,
-// fikk et svar som ikke holdt mål.
+// hvilket oppdrag som kjøres når, hva som skjer etterpå, hvem som varsles —
+// ligger utenfor denne modulen. Det som ligger her, er de tilstandene *Antidep*
+// må kunne skille fra hverandre for at et svar skal kunne kontrolleres: venter
+// på svar, fikk et gyldig svar, fikk et svar som ikke holdt mål.
+//
+// ----------------------------------------------------------------------------
+// Hvor mappa står i dag
+//
+// Den er et utviklings- og prøvegrensesnitt, og den er ryggraden i
+// kjedeprøven: hele veien fra en privat PDF til publisert innhold kan kjøres om
+// igjen uten en eneste modell, fordi svaret ligger i en fil. Produktflyten er
+// den samme mekanismen uten filer — agentflaten bygger oppgaven av databasen og
+// tar imot svaret der (`agent-task.ts`, migrasjon 010c).
 //
 // ----------------------------------------------------------------------------
 // Hvorfor avtrykket er nøkkelen mellom de to kjøringene
@@ -60,7 +68,11 @@ import {
 import { parseAssignmentJson } from './extraction-assignment.ts'
 import { serializeExtractionProposal, type ExtractionProposal } from './extraction-proposal.ts'
 import { MODEL_ANSWER_VERSION, parseModelAnswer } from './model-answer.ts'
-import { PLACEHOLDER_PREFIX, PLACEHOLDER_IDENTITY } from './model-identity.ts'
+import {
+  PLACEHOLDER_PREFIX,
+  PLACEHOLDER_IDENTITY,
+  serializeModelIdentity,
+} from './model-identity.ts'
 import {
   createRecordedModelClient,
   MODEL_RECORDING_VERSION,
@@ -469,11 +481,7 @@ export interface CloseJobReport {
 function serializeRecording(recording: ModelRecording): unknown {
   return {
     recording_version: recording.recordingVersion,
-    identity: {
-      provider: recording.identity.provider,
-      model: recording.identity.model,
-      model_version: recording.identity.modelVersion,
-    },
+    identity: serializeModelIdentity(recording.identity),
     entries: recording.entries.map((entry) => ({
       request_digest: entry.requestDigest,
       prompt_template_version: entry.promptTemplateVersion,
@@ -572,11 +580,7 @@ export async function closeDraftingJob(options: CloseJobOptions): Promise<CloseJ
 
   const recording = parseModelRecording({
     recording_version: MODEL_RECORDING_VERSION,
-    identity: {
-      provider: answer.identity.provider,
-      model: answer.identity.model,
-      model_version: answer.identity.modelVersion,
-    },
+    identity: serializeModelIdentity(answer.identity),
     entries: [
       {
         request_digest: job.requestDigest,

@@ -1,5 +1,5 @@
 // ============================================================================
-// Kjøremappa: grensesnittet en Claude Code Routine faktisk kjører
+// Kjøremappa: det filbaserte grensesnittet en teknisk agent faktisk kjører
 //
 // Det som prøves her, er de tilstandene en autonom kjøring kan komme i, og at
 // ingen av dem kan ende med et forslag som ikke er lest ut av den registrerte
@@ -363,6 +363,7 @@ describe('closeDraftingJob — den lykkede stien', () => {
       provider: 'anthropic',
       model: 'claude-code',
       model_version: 'opus-5',
+      model_version_disclosure: 'exact',
     })
     const entries = recording.entries as { request_digest: string }[]
     expect(entries[0]?.request_digest).toBe(report.job.requestDigest)

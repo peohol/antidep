@@ -438,6 +438,38 @@ export type Database = {
         Args: Record<string, never>
         Returns: unknown
       }
+      // Agentarbeidet. Alle tre krever editor-mandat: oppgaven inneholder hele
+      // den kontrollerte kildeteksten, og den skal bare forlate databasen til
+      // den som faktisk skal utføre agentarbeidet (migrasjon 010c).
+      agent_work_queue: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      // Innleggingen utleder jobbnøkkelen av hva oppgaven handler om, slik at
+      // den samme oppgaven lagt inn to ganger er én rad.
+      enqueue_agent_task: {
+        Args: {
+          p_agent_role: string
+          p_input_manifest: Record<string, unknown>
+        }
+        Returns: unknown
+      }
+      agent_task_payload: {
+        Args: {
+          p_pipeline_job_id: Uuid
+        }
+        Returns: unknown
+      }
+      // Svaret sendes ordrett. Databasen kontrollerer bindingen mot oppgaven
+      // slik den bygger den nå, og henter de registrerte verdiene ut av svaret
+      // selv — en flate kan ikke bytte dem ut underveis.
+      import_agent_answer: {
+        Args: {
+          p_pipeline_job_id: Uuid
+          p_answer: Record<string, unknown>
+        }
+        Returns: unknown
+      }
       // `p_seen_candidate_digest` er avtrykket flaten faktisk viste, sendt
       // tilbake uendret. Databasen krever at det er kandidatens eget *og* at
       // innholdet fortsatt bygger til det: en godkjenning avgitt mot ett innhold

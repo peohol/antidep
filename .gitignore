@@ -10,6 +10,20 @@ coverage/
 !.env.example
 *.local
 
+# Eksterne agentoppgaver og agentsvar.
+#
+# En oppgavefil kan inneholde hele forskningsartikkelen, ordrett. Den lastes ned
+# fra agentflaten, går rett inn i en KI-tjeneste, og skal aldri bli en del av
+# repoet — Antidep har ikke rett til å redistribuere kildematerialet
+# (documents/README.md). Svarfilen skal heller ikke ligge her: et agentsvar
+# hører hjemme i en registrert rad med proveniens, ikke som en fil.
+#
+# Reglene her er et ekstra lag. Nedlastingen skjer i nettleseren og rører aldri
+# arbeidstreet, og `scripts/verify-repo.sh` avviser en sporet fil som likevel
+# bærer en oppgave eller et svar.
+antidep-oppgave-*.md
+svar*.json
+
 # Verktøy og OS
 .claude/worktrees/
 .vercel/

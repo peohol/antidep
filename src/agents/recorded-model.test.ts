@@ -56,6 +56,7 @@ describe('parseModelRecording', () => {
       provider: 'antidep',
       model: 'opptaksmodell',
       modelVersion: '1',
+      modelVersionDisclosure: 'exact',
     })
     expect(parsed.entries).toHaveLength(1)
   })

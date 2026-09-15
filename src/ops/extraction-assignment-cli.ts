@@ -17,6 +17,19 @@
 // strengheten som en fil, og skrives til `assignments/`.
 //
 // ----------------------------------------------------------------------------
+// Kommandoen legger også oppgaven i agentkøen
+//
+// Den redaksjonelle avgrensningen — hvilken artikkel, hvilke virkestoff, hvilke
+// endepunkt — er nøyaktig det en agentoppgave trenger, og den er allerede tatt
+// her. Kommandoen legger derfor oppgaven inn med `api.enqueue_agent_task(...)`,
+// slik at den dukker opp på agentflaten med én gang fullteksten er registrert.
+// Uten det måtte noen lagt den inn i et andre steg, og det steget ville vært et
+// sted å glemme.
+//
+// Innleggingen er idempotent på hva oppgaven handler om: den samme artikkelen
+// med den samme avgrensningen registrert om igjen, er én oppgave.
+//
+// ----------------------------------------------------------------------------
 // Legitimasjonen er redaktørens egen
 //
 // Kommandoen skriver en kildeversjon og leser den redaksjonelle lesemodellen.
@@ -307,6 +320,27 @@ async function main(): Promise<number> {
       )
     await writeFile(out, `${JSON.stringify(report.json, null, 2)}\n`, 'utf8')
 
+    // Agentoppgaven, slik at fullteksten faktisk blir noe som venter på en
+    // KI-agent framfor en fil ingen ser.
+    const enqueued = await client.rpc('enqueue_agent_task', {
+      p_agent_role: 'evidence_extraction',
+      p_input_manifest: {
+        source_version_id: report.sourceVersionId,
+        drug_ids: report.assignment.drugs.map((choice) => choice.id),
+        outcome_concept_ids: report.assignment.outcomes.map((choice) => choice.id),
+        population_ids: report.assignment.populations.map((choice) => choice.id),
+      },
+    })
+    if (enqueued.error !== null) {
+      console.error(
+        `\nOppdrag skrevet: ${out}\n` +
+          `Men agentoppgaven ble ikke lagt inn: ${enqueued.error.message}\n` +
+          'Fullteksten er registrert. Kjør kommandoen om igjen når årsaken er rettet; ' +
+          'innleggingen er idempotent.',
+      )
+      return 1
+    }
+
     console.log(
       `\nOppdrag skrevet: ${out}\n` +
         `  kilde              ${report.source.title}\n` +
@@ -318,6 +352,11 @@ async function main(): Promise<number> {
           report.assignment.populations.length === 0
             ? 'ingen — forslaget må si hvorfor i population_availability'
             : report.assignment.populations.map((choice) => choice.label).join(', ')
+        }\n` +
+        `  agentoppgave       ${
+          (enqueued.data as { enqueued?: boolean } | null)?.enqueued === true
+            ? 'lagt i køen — den venter nå på agentflaten (/agentarbeid)'
+            : 'fantes allerede i køen — den venter på agentflaten (/agentarbeid)'
         }`,
     )
     return 0
