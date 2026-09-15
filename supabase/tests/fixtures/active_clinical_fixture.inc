@@ -14,6 +14,75 @@ create function pg_temp.assessment_actor_id() returns uuid language sql stable a
   select id from provenance.actors where actor_key = 'agent:evidence-assessment'
 $$;
 
+-- From migration 009a a clinical full-text version must have its original file
+-- in knowledge.source_documents, and that table computes the digest from the
+-- bytes themselves. A synthetic fixture can therefore no longer invent a
+-- document digest: it must derive the digest from bytes it actually has. These
+-- helpers are the smallest possible stand-in for a real PDF — the production
+-- rules that matter here are the PDF signature, the digest identity and the
+-- publication binding, none of which need a real article.
+create function pg_temp.synthetic_pdf(p_seed text) returns bytea language sql immutable as $$
+  select convert_to('%PDF-1.7' || E'\n' || p_seed || E'\n%%EOF' || E'\n', 'UTF8')
+$$;
+create function pg_temp.synthetic_pdf_digest(p_seed text) returns text language sql stable as $$
+  select knowledge.source_document_fingerprint(pg_temp.synthetic_pdf(p_seed))
+$$;
+
+-- Put the synthetic file in the library, bind it to its publication and record
+-- the readability check — the three rows migration 009a requires under every
+-- clinical full-text version. The trigger only ever fires for rows whose
+-- document digest is exactly the digest of this fixture's own synthetic bytes,
+-- so a version registered through a real document path is never touched.
+create function pg_temp.store_synthetic_full_text_document() returns trigger language plpgsql as $$
+declare
+  v_bytes bytea;
+  v_document_id uuid;
+begin
+  if new.representation is distinct from 'full_text'::knowledge.source_representation
+     or new.document_sha256 is null then
+    return null;
+  end if;
+
+  v_bytes := pg_temp.synthetic_pdf(new.id::text);
+  if knowledge.source_document_fingerprint(v_bytes) is distinct from new.document_sha256 then
+    return null;
+  end if;
+
+  select d.id into v_document_id
+  from knowledge.source_documents d
+  where d.sha256 = new.document_sha256;
+
+  if v_document_id is null then
+    insert into knowledge.source_documents
+      (sha256, byte_size, media_type, content, stored_by_actor_id)
+    values (new.document_sha256, octet_length(v_bytes), 'application/pdf', v_bytes,
+            new.retrieved_by_actor_id)
+    returning id into v_document_id;
+  end if;
+
+  insert into knowledge.source_document_publications
+    (source_document_id, source_id, binding_basis, binding_evidence, bound_by_actor_id)
+  values (v_document_id, new.source_id, 'title', 'syntetisk testbinding',
+          new.retrieved_by_actor_id)
+  on conflict on constraint source_document_publications_pairing_key do nothing;
+
+  -- Tallene er over hver terskel i knowledge.full_text_readability_problem.
+  -- Fiksturet påstår ikke at en syntetisk PDF er lesbar; det står for at
+  -- kontrollen er gjort, som er nøyaktig det gaten leser.
+  insert into knowledge.full_text_readability_checks (
+    source_version_id, source_document_id, character_count, letter_count,
+    line_count, table_row_count, table_declaration_count
+  )
+  values (new.id, v_document_id, 20000, 15000, 400, 12, 3)
+  on conflict on constraint full_text_readability_checks_source_version_key do nothing;
+
+  return null;
+end;
+$$;
+create trigger source_versions_store_synthetic_test_document
+  after insert on knowledge.source_versions
+  for each row execute function pg_temp.store_synthetic_full_text_document();
+
 insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
 values
   ('f2000000-0000-4000-8000-000000000001', 'journal_article', 'Syntetisk fulltekstkilde A for databasetest', 'Testforfatter', pg_temp.extraction_actor_id()),
@@ -25,8 +94,8 @@ insert into knowledge.source_versions (
   document_byte_size, document_media_type, text_extraction_tool,
   text_extraction_tool_version, text_extraction_arguments, text_extraction_transform
 ) values
-  ('f2000000-0000-4000-8000-000000000002', 'f2000000-0000-4000-8000-000000000001', now(), 'file:///syntetisk-a.pdf', 'synthetic-v1', 'sha256:' || repeat('1', 64), 'private://syntetisk-a.pdf', 'full_text', pg_temp.extraction_actor_id(), 'sha256:' || repeat('2', 64), 2048, 'application/pdf', 'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'),
-  ('f2000000-0000-4000-8000-000000000004', 'f2000000-0000-4000-8000-000000000003', now(), 'file:///syntetisk-b.pdf', 'synthetic-v1', 'sha256:' || repeat('3', 64), 'private://syntetisk-b.pdf', 'full_text', pg_temp.extraction_actor_id(), 'sha256:' || repeat('4', 64), 2048, 'application/pdf', 'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2');
+  ('f2000000-0000-4000-8000-000000000002', 'f2000000-0000-4000-8000-000000000001', now(), 'file:///syntetisk-a.pdf', 'synthetic-v1', 'sha256:' || repeat('1', 64), 'private://syntetisk-a.pdf', 'full_text', pg_temp.extraction_actor_id(), pg_temp.synthetic_pdf_digest('f2000000-0000-4000-8000-000000000002'), octet_length(pg_temp.synthetic_pdf('f2000000-0000-4000-8000-000000000002')), 'application/pdf', 'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'),
+  ('f2000000-0000-4000-8000-000000000004', 'f2000000-0000-4000-8000-000000000003', now(), 'file:///syntetisk-b.pdf', 'synthetic-v1', 'sha256:' || repeat('3', 64), 'private://syntetisk-b.pdf', 'full_text', pg_temp.extraction_actor_id(), pg_temp.synthetic_pdf_digest('f2000000-0000-4000-8000-000000000004'), octet_length(pg_temp.synthetic_pdf('f2000000-0000-4000-8000-000000000004')), 'application/pdf', 'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2');
 
 insert into knowledge.evidence_items (
   id, source_id, source_version_id, design_code, population_id,
@@ -124,16 +193,20 @@ begin
     new.text_extraction_transform := 'antidep-reading-order@2';
   end if;
 
-  if v_prefix in ('340','400','440','460','470','480','490','580','590','600','610','620','630','660','670','680','690','700','710')
-     or v_title in ('Immutabilitetstestkilde', 'Upublisert testkilde for 400') then
+  if v_prefix in ('340','400','440','460','470','480','490','580','590','600','610','620','630','660','670','680','690','700','710','760')
+     or v_title in ('Immutabilitetstestkilde', 'Upublisert testkilde for 400',
+                    'Serialiseringstestkilde') then
     new.representation := 'full_text';
     new.content_hash := coalesce(new.content_hash,
       'sha256:' || encode(extensions.digest(convert_to(new.id::text || ':text', 'UTF8'), 'sha256'), 'hex'));
     new.storage_reference := coalesce(new.storage_reference,
       'private://syntetisk-testoppsett/' || new.id::text || '/original.pdf');
-    new.document_sha256 := coalesce(new.document_sha256,
-      'sha256:' || encode(extensions.digest(convert_to(new.id::text || ':pdf', 'UTF8'), 'sha256'), 'hex'));
-    new.document_byte_size := coalesce(new.document_byte_size, 1024);
+    -- Digesten er avledet av bytene fiksturet faktisk legger i biblioteket
+    -- etterpå, og overstyrer en oppdiktet verdi: fra migrasjon 009a *er*
+    -- fingeravtrykket innholdet, og en syntetisk rad som påsto noe annet,
+    -- kunne ikke lenger bære et evidensfunn.
+    new.document_sha256 := pg_temp.synthetic_pdf_digest(new.id::text);
+    new.document_byte_size := octet_length(pg_temp.synthetic_pdf(new.id::text));
     new.document_media_type := coalesce(new.document_media_type, 'application/pdf');
     new.text_extraction_tool := coalesce(new.text_extraction_tool, 'pdftotext');
     new.text_extraction_tool_version := coalesce(new.text_extraction_tool_version, '24.02.0');
@@ -153,6 +226,7 @@ create trigger source_versions_complete_legacy_test_fulltext
 create function pg_temp.bind_test_evidence_to_full_text() returns trigger language plpgsql as $$
 declare
   v_version uuid;
+  v_new_id uuid;
 begin
   if new.source_version_id is not null then
     return new;
@@ -170,23 +244,39 @@ begin
     and nullif(btrim(sv.text_extraction_tool_version), '') is not null
     and sv.text_extraction_arguments = '-bbox-layout -enc UTF-8 -eol unix'
     and sv.text_extraction_transform = 'antidep-reading-order@2'
+    -- Fra migrasjon 009a holder det ikke at bindingen er komplett: filen skal
+    -- ligge i biblioteket, være bundet til publikasjonen og ha bestått
+    -- lesbarhetskontrollen. Gjenbruk derfor bare en versjon som har alt tre.
+    and exists (
+      select 1
+      from knowledge.source_documents d
+      join knowledge.source_document_publications dp
+        on dp.source_document_id = d.id and dp.source_id = sv.source_id
+      join knowledge.full_text_readability_checks rc on rc.source_version_id = sv.id
+      where d.sha256 = sv.document_sha256
+    )
   order by sv.created_at, sv.id
   limit 1;
 
   if v_version is null then
+    -- Id-en genereres her og ikke av kolonnens default, fordi dokumentets
+    -- fingeravtrykk må avledes av bytene fiksturet legger i biblioteket for
+    -- nettopp denne versjonen.
+    v_new_id := gen_random_uuid();
     insert into knowledge.source_versions (
-      source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
+      id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
       representation, retrieved_by_actor_id, document_sha256, document_byte_size,
       document_media_type, text_extraction_tool, text_extraction_tool_version,
       text_extraction_arguments, text_extraction_transform
     ) values (
-      new.source_id, now(),
+      v_new_id, new.source_id, now(),
       'file:///syntetisk-testoppsett-' || new.source_id::text || '.pdf',
       'sha256:' || encode(extensions.digest(convert_to(new.source_id::text || ':test-fulltext', 'UTF8'), 'sha256'), 'hex'),
       'private://syntetisk-testoppsett/' || new.source_id::text || '/original.pdf',
       'full_text', coalesce(new.created_by_actor_id, pg_temp.extraction_actor_id()),
-      'sha256:' || encode(extensions.digest(convert_to(new.source_id::text || ':test-document', 'UTF8'), 'sha256'), 'hex'),
-      1024, 'application/pdf', 'pdftotext', '24.02.0',
+      pg_temp.synthetic_pdf_digest(v_new_id::text),
+      octet_length(pg_temp.synthetic_pdf(v_new_id::text)),
+      'application/pdf', 'pdftotext', '24.02.0',
       '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
     ) returning id into v_version;
   end if;

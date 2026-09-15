@@ -187,7 +187,7 @@ $$;
 set local role anon;
 insert into run select 'r', api.begin_agent_run(
   'agent-identity:citation-support-verification-01', (select secret from cred where label = 'claim'),
-  'citation_support_verification', 'testleverandør', 'testmodell', '2026-09-08',
+  'citation_support_verification', 'antidep', 'deterministic-claim-check', '1.0.0',
   'claim-verification/1', 'antidep-evidence/1', '{"mode": "test-490"}'::jsonb);
 reset role;
 

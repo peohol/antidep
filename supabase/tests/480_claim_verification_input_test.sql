@@ -185,15 +185,15 @@ grant insert, select on answer to anon;
 set local role anon;
 insert into run select 'claim-open', api.begin_agent_run(
   'agent-identity:citation-support-verification-01', (select secret from cred where label = 'claim'),
-  'citation_support_verification', 'testleverandør', 'testmodell', '2026-09-08',
+  'citation_support_verification', 'antidep', 'deterministic-claim-check', '1.0.0',
   'claim-verification/1', 'antidep-evidence/1', '{"mode": "test-480"}'::jsonb);
 insert into run select 'claim-closed', api.begin_agent_run(
   'agent-identity:citation-support-verification-01', (select secret from cred where label = 'claim'),
-  'citation_support_verification', 'testleverandør', 'testmodell', '2026-09-08',
+  'citation_support_verification', 'antidep', 'deterministic-claim-check', '1.0.0',
   'claim-verification/1', 'antidep-evidence/1', '{"mode": "test-480"}'::jsonb);
 insert into run select 'extraction-open', api.begin_agent_run(
   'agent-identity:extraction-verification-01', (select secret from cred where label = 'extraction'),
-  'extraction_verification', 'testleverandør', 'testmodell', '2026-09-08',
+  'extraction_verification', 'antidep', 'deterministic-extraction-check', '1.0.0',
   'extraction-verification/1', 'antidep-evidence/1', '{"mode": "test-480"}'::jsonb);
 select api.complete_agent_run(
   'agent-identity:citation-support-verification-01', (select secret from cred where label = 'claim'),

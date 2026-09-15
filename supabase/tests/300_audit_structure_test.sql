@@ -174,9 +174,13 @@ select enum_has_labels(
     'evidence_verification_registered', 'source_version_registered',
     'claim_verification_registered', 'review_decision_registered',
     'evidence_field_grounding_recorded', 'extraction_artifact_discarded',
-    'claim_artifact_discarded', 'claim_revision_created'
+    'claim_artifact_discarded', 'claim_revision_created',
+    -- Migrasjon 009: fulltekstbiblioteket (009a), modellregisteret (009c) og
+    -- kandidaten med sin sluttkontroll (009d).
+    'source_document_stored', 'role_model_assignment_registered',
+    'candidate_built', 'candidate_final_control_recorded'
   ],
-  'audit.event_operation dekker publiseringshandlingene, rolleforvaltningen, kildeopprettelse (migrasjon 008a), evidensregistrering (008b), agentidentitetenes livssyklus (008c), ekstraksjonsverifikasjon (008d), kildeversjoner (008e), claim-verifikasjon (008f), den menneskelige reviewbeslutningen (008g), kildeforankringen per kontrollfelt (008h), fjerningen av et evidensfunn (008i), fjerningen av en påstand (008j) og en ny påstandsrevisjon (008k)'
+  'audit.event_operation dekker publiseringshandlingene, rolleforvaltningen, kildeopprettelse (migrasjon 008a), evidensregistrering (008b), agentidentitetenes livssyklus (008c), ekstraksjonsverifikasjon (008d), kildeversjoner (008e), claim-verifikasjon (008f), den menneskelige reviewbeslutningen (008g), kildeforankringen per kontrollfelt (008h), fjerningen av et evidensfunn (008i), fjerningen av en påstand (008j) og en ny påstandsrevisjon (008k), fulltekstbiblioteket (009a), modellregisteret (009c) og kandidaten med sin sluttkontroll (009d)'
 );
 
 -- De fire publiseringsverdiene skal svare én-til-én til

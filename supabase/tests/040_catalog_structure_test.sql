@@ -53,8 +53,12 @@ select set_eq(
   $$values ('sources'), ('source_identifiers'), ('source_versions'), ('evidence_items'),
            ('evidence_field_groundings'),
            ('claims'), ('claim_revisions'), ('claim_evidence_links'),
-           ('evidence_assessments'), ('publication_events')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006 og 005u'
+           ('evidence_assessments'), ('publication_events'),
+           -- Migrasjon 009a: det private fulltekstbiblioteket, publikasjons-
+           -- bindingen og lesbarhetskontrollen. 009d: den forseglede kandidaten.
+           ('source_documents'), ('source_document_publications'),
+           ('full_text_readability_checks'), ('candidates')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a og 009d'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
@@ -70,8 +74,11 @@ select set_eq(
       and c.relkind in ('r', 'p', 'v', 'm')
   $$,
   $$values ('user_roles'), ('evidence_verifications'), ('claim_verifications'),
-           ('claim_verification_citations'), ('review_decisions')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, med kontrollradene fra 005j'
+           ('claim_verification_citations'), ('review_decisions'),
+           -- Migrasjon 009b: den varige jobbtilstanden med sitt append-only
+           -- spor. 009d: den kandidatbundne sluttkontrollen.
+           ('pipeline_jobs'), ('pipeline_job_events'), ('candidate_final_controls')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b og 009d'
 );
 select set_eq(
   $$
@@ -81,8 +88,11 @@ select set_eq(
     where n.nspname = 'provenance'
       and c.relkind in ('r', 'p', 'v', 'm')
   $$,
-  $$values ('actors'), ('agent_identities'), ('agent_runs')$$,
-  'provenance inneholder nøyaktig aktørtabellen fra migrasjon 005 og de to agenttabellene fra 005e'
+  $$values ('actors'), ('agent_identities'), ('agent_runs'),
+           -- Migrasjon 009c: registeret over hvilken modellidentitet hver
+           -- agentrolle handler som.
+           ('role_model_assignments')$$,
+  'provenance inneholder nøyaktig aktørtabellen fra migrasjon 005, de to agenttabellene fra 005e og modellregisteret fra 009c'
 );
 
 -- provenance.agent_runs var bevisst utsatt til det fantes en faktisk skrivevei

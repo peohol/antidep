@@ -89,6 +89,13 @@ select throws_ok(
   'the private reset snapshot cannot be deleted even by its owner'
 );
 
+-- A source version is immutable once written, so the document digest has to be
+-- right at INSERT time. From migration 009a the digest IS the bytes, so the
+-- test needs real bytes to hash rather than an invented value.
+create function pg_temp.reset_test_pdf() returns bytea language sql immutable as $$
+  select convert_to('%PDF-1.7' || E'\n72000000-0000-4000-8000-000000000001' || E'\n%%EOF' || E'\n', 'UTF8')
+$$;
+
 insert into knowledge.source_versions (
   id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
   representation, document_sha256, document_byte_size, document_media_type,
@@ -98,11 +105,39 @@ insert into knowledge.source_versions (
 select '72000000-0000-4000-8000-000000000001', s.id, now(),
        'file:///synthetic-antidep2-test.pdf', 'sha256:' || repeat('a', 64),
        'private://synthetic-antidep2-test.pdf', 'full_text',
-       'sha256:' || repeat('b', 64), 1024, 'application/pdf',
+       knowledge.source_document_fingerprint(pg_temp.reset_test_pdf()),
+       octet_length(pg_temp.reset_test_pdf()), 'application/pdf',
        'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
        'antidep-reading-order@2',
        (select id from provenance.actors where actor_key = 'agent:evidence-extraction')
 from knowledge.sources s order by s.id limit 1;
+
+-- From migration 009a the gate also requires the original file to be in the
+-- private library, bound to this publication, and to have passed the
+-- readability check. Put those three rows in place with real bytes: the
+-- library computes the digest from the content itself, so a synthetic fixture
+-- can no longer invent one.
+insert into knowledge.source_documents
+  (sha256, byte_size, media_type, content, stored_by_actor_id)
+select knowledge.source_document_fingerprint(pg_temp.reset_test_pdf()),
+       octet_length(pg_temp.reset_test_pdf()), 'application/pdf', pg_temp.reset_test_pdf(),
+       (select id from provenance.actors where actor_key = 'agent:evidence-extraction');
+
+insert into knowledge.source_document_publications
+  (source_document_id, source_id, binding_basis, binding_evidence, bound_by_actor_id)
+select d.id, sv.source_id, 'title', 'synthetic reset-test binding',
+       (select id from provenance.actors where actor_key = 'agent:evidence-extraction')
+from knowledge.source_versions sv
+join knowledge.source_documents d on d.sha256 = sv.document_sha256
+where sv.id = '72000000-0000-4000-8000-000000000001';
+
+insert into knowledge.full_text_readability_checks
+  (source_version_id, source_document_id, character_count, letter_count,
+   line_count, table_row_count, table_declaration_count)
+select sv.id, d.id, 20000, 15000, 400, 12, 3
+from knowledge.source_versions sv
+join knowledge.source_documents d on d.sha256 = sv.document_sha256
+where sv.id = '72000000-0000-4000-8000-000000000001';
 
 select lives_ok(
   $$select knowledge.assert_clinical_full_text(
