@@ -31,7 +31,7 @@
 -- ----------------------------------------------------------------------------
 insert into auth.users (id, instance_id, aud, role, email)
 values ('7b000000-0000-4000-8000-0000000000a0',
-        '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+        '00000000-0000-0000-8000-000000000000', 'authenticated', 'authenticated',
         'samtidighetsprove@antidep.test')
 on conflict (id) do nothing;
 
@@ -75,7 +75,7 @@ select '7b000000-0000-4000-8000-000000000002', '7b000000-0000-4000-8000-00000000
        now(), 'file:///syntetisk-samtidighetsprove-review.pdf',
        'sha256:' || repeat('b', 64), 'private://syntetisk-samtidighetsprove-review.pdf',
        'full_text', a.id, 'sha256:' || repeat('d', 64), 1024, 'application/pdf',
-       'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@1'
+       'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
 from provenance.actors a
 where a.actor_key = 'human:peder-holman'
   and not exists (select 1 from knowledge.source_versions v
