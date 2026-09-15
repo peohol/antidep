@@ -325,16 +325,59 @@ export type Database = {
         }
         Returns: Uuid
       }
-      // Migrasjon 006h: den redaksjonelle publiseringshandlingen. Publisher-
-      // aktøren er ikke en parameter — den utledes av databasen fra den
-      // innloggede brukerens egen aktørrad — og hele publiseringsgaten kjøres
-      // inne i transaksjonen som skriver hendelsen.
-      publish_claim_revision: {
+      // Migrasjon 009f: publiseringen, tilbaketrekkingen og rollbacken.
+      //
+      // Det som publiseres er et forseglet kandidatinnhold, ikke en revisjon:
+      // `p_seen_candidate_digest` er avtrykket flaten faktisk viste, sendt
+      // tilbake uendret. Databasen stoler ikke på det — den krever at det er
+      // kandidatens eget, og at kandidaten fortsatt er den gjeldende.
+      // Publisher-aktøren er ikke en parameter; den utledes av den innloggede
+      // brukerens egen aktørrad, og hele publiseringsgaten kjøres inne i
+      // transaksjonen som skriver hendelsen.
+      //
+      // Alle tre svarer jsonb, lest av `lib/published-claim.ts`.
+      publish_candidate: {
         Args: {
-          p_claim_revision_id: Uuid
+          p_candidate_id: Uuid
+          p_seen_candidate_digest: string
           p_reason: string
         }
-        Returns: Uuid
+        Returns: unknown
+      }
+      withdraw_claim_publication: {
+        Args: {
+          p_claim_id: Uuid
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      rollback_claim_publication: {
+        Args: {
+          p_claim_id: Uuid
+          p_target_candidate_id: Uuid
+          p_seen_candidate_digest: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      // Klinikerflaten: det som faktisk er publisert, og historikken bak det.
+      // `published_claim` svarer med den forseglede raden ordrett, ikke med en
+      // gjenoppbygging — se `lib/published-claim.ts`.
+      published_claim: {
+        Args: {
+          p_claim_id: Uuid
+        }
+        Returns: unknown
+      }
+      published_claim_index: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      claim_publication_history: {
+        Args: {
+          p_claim_id: Uuid
+        }
+        Returns: unknown
       }
       // 009a: veien inn i det private fulltekstbiblioteket. Kalleren sender
       // **bytene** som base64 og den uttrukne teksten; filidentiteten,

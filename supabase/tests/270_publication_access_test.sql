@@ -39,10 +39,17 @@ values ('human', 'human:publisher-270', 'Testpublisher',
         'Menneskelig aktør for tilgangstestene i 270.',
         'dddddddd-0000-0000-0000-000000000001');
 
+-- Fra migrasjon 009e navngir en publiseringshendelse også det forseglede
+-- innholdet og sluttkontrollen den hviler på. Fiksturet gir dem, framfor å
+-- skrive en hendelse uten innhold — som databasen nå riktignok ikke tillater.
 insert into knowledge.publication_events
   (claim_id, action, revision_id, revision_number,
+   candidate_id, candidate_digest, final_control_id, final_control_decision,
    published_by_actor_id, published_by_actor_type, reason, published_at)
-select r.claim_id, 'publish', r.id, r.revision_number, a.id, 'human',
+select r.claim_id, 'publish', r.id, r.revision_number,
+       pg_temp.sealed_candidate_id(r.id), pg_temp.sealed_candidate_digest(r.id),
+       pg_temp.sealed_final_control_id(r.id), 'approved',
+       a.id, 'human',
        'Hendelse opprettet for tilgangstestene.', now()
 from knowledge.claim_revisions r, provenance.actors a
 join catalog.drugs d on true

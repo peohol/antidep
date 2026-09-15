@@ -17,6 +17,7 @@
 
 import { getAntidepClient } from '../lib/supabase'
 import { parseCandidateView, type CandidateView } from '../lib/candidate-view'
+import { parsePublicationOutcome, type PublicationOutcome } from '../lib/published-claim'
 
 /** Én rad i køen: nok til å velge én kandidat, ikke nok til å vurdere den. */
 export interface CandidateQueueEntry {
@@ -39,6 +40,18 @@ export interface CandidateGateway {
     readonly decision: string
     readonly rationale: string
   }): Promise<void>
+  /**
+   * Publiseringen av nøyaktig denne kandidaten.
+   *
+   * En egen, eksplisitt handling etter sluttkontrollen, med et annet mandat. Den
+   * ligger på den samme grenseflaten fordi den utføres fra den samme siden —
+   * ikke fordi den er den samme handlingen.
+   */
+  publish(input: {
+    readonly candidateId: string
+    readonly seenCandidateDigest: string
+    readonly reason: string
+  }): Promise<PublicationOutcome>
 }
 
 function queueEntry(value: unknown, index: number): CandidateQueueEntry {
@@ -109,6 +122,18 @@ export function createCandidateGateway(): CandidateGateway {
       if (error !== null) {
         throw rejected('Sluttkontrollen ble ikke registrert', error.message)
       }
+    },
+
+    async publish(input) {
+      const { data, error } = await client.rpc('publish_candidate', {
+        p_candidate_id: input.candidateId,
+        p_seen_candidate_digest: input.seenCandidateDigest,
+        p_reason: input.reason,
+      })
+      if (error !== null) {
+        throw rejected('Publiseringen ble ikke registrert', error.message)
+      }
+      return parsePublicationOutcome(data)
     },
   }
 }

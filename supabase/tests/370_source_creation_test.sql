@@ -129,12 +129,6 @@ select is_empty(
         -- 550_extraction_review_workspace_test.sql.
         'api.register_human_extraction_verification(uuid,text,text,text,text[],text,text)',
         'api.extraction_review_workspace(uuid)',
-        -- Migrasjon 006h. Den redaksjonelle publiseringshandlingen. Bare
-        -- authenticated, og hele publiseringsgaten pluss publisher-rollen
-        -- avgjøres av knowledge.publish_claim_revision(uuid, uuid, text) inne i
-        -- transaksjonen som skriver hendelsen. Hvilke roller som faktisk har
-        -- EXECUTE, kontrolleres i 560_publication_action_test.sql.
-        'api.publish_claim_revision(uuid,text)',
         -- Migrasjon 005v. Ekstraksjonsagentens skrivevei. Som de øvrige
         -- agentendepunktene er den kjørbar for anon og authenticated, fordi en
         -- agent ikke har en brukerkonto: kontrollen er legitimasjonen og den
@@ -194,7 +188,20 @@ select is_empty(
         'api.build_candidate(uuid)',
         'api.record_candidate_final_control(uuid,text,text,text)',
         'api.candidate_for_control(uuid)',
-        'api.candidate_control_queue()'
+        'api.candidate_control_queue()',
+        -- Migrasjon 009e og 009f. Publiseringen, tilbaketrekkingen og
+        -- rollbacken, og den publiserte klinikerflaten. Alle seks er
+        -- authenticated og ingen av dem anon: de tre handlingene krever en
+        -- navngitt menneskelig aktør med publisher-mandat, og det publiserte
+        -- innholdet bærer ordrette kildeutdrag hvis offentlige
+        -- gjengivelsesrett er vurdert separat. Kontrolleres i
+        -- 770_candidate_publication_test.sql.
+        'api.publish_candidate(uuid,text,text)',
+        'api.withdraw_claim_publication(uuid,text)',
+        'api.rollback_claim_publication(uuid,uuid,text,text)',
+        'api.claim_publication_history(uuid)',
+        'api.published_claim(uuid)',
+        'api.published_claim_index()'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

@@ -2,8 +2,19 @@ import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router'
 
 import { CandidatePage } from './CandidatePage'
 import { CandidateQueuePage } from './CandidateQueuePage'
+import { PublishedClaimPage } from './PublishedClaimPage'
+import { PublishedIndexPage } from './PublishedIndexPage'
 import { createCandidateGateway, type CandidateGateway } from './candidate-gateway'
-import { CANDIDATE_PATH, CANDIDATE_QUEUE_PATH, HOME_PATH, candidateQueuePath } from './routes'
+import { createPublicationGateway, type PublicationGateway } from './publication-gateway'
+import {
+  CANDIDATE_PATH,
+  CANDIDATE_QUEUE_PATH,
+  HOME_PATH,
+  PUBLISHED_CLAIM_PATH,
+  PUBLISHED_PATH,
+  candidateQueuePath,
+  publishedPath,
+} from './routes'
 
 export function ResetHome() {
   return (
@@ -21,6 +32,10 @@ export function ResetHome() {
           fulltekst, og ferdige produkter skal vurderes av en navngitt fagperson før publisering.
         </p>
         <p className="notice">Ingen klinisk veiledning er tilgjengelig i denne versjonen.</p>
+        <p>
+          <Link to={publishedPath()}>Publisert klinikerinnhold</Link> — det Antidep faktisk sier nå,
+          slik en navngitt fagperson godkjente det. Krever innlogging.
+        </p>
         <p>
           <Link to={candidateQueuePath()}>Kandidater til sluttkontroll</Link> — krever mandat, og
           viser eksperimentelt, upublisert innhold.
@@ -68,6 +83,25 @@ function QueueRoute({ gateway }: { readonly gateway: CandidateGateway | undefine
   return <CandidateQueuePage gateway={gateway ?? createCandidateGateway()} />
 }
 
+/** Den publiserte katalogen, med klienten opprettet først når ruten vises. */
+function PublishedRoute({ gateway }: { readonly gateway: PublicationGateway | undefined }) {
+  return <PublishedIndexPage gateway={gateway ?? createPublicationGateway()} />
+}
+
+/**
+ * Én publisert påstand.
+ *
+ * En adresse uten id er ikke en påstand, og skal ikke bli til et kall med en tom
+ * streng: da ville avvisningen kommet fra databasen, om noe som aldri ble bedt om.
+ */
+function PublishedClaimRoute({ gateway }: { readonly gateway: PublicationGateway | undefined }) {
+  const { claimId } = useParams()
+  if (claimId === undefined || claimId.length === 0) {
+    return <NotFound />
+  }
+  return <PublishedClaimPage claimId={claimId} gateway={gateway ?? createPublicationGateway()} />
+}
+
 export interface AppLayoutProps {
   /**
    * Veien til databasen.
@@ -77,14 +111,18 @@ export interface AppLayoutProps {
    * svarte, også når den svarte noe galt.
    */
   readonly gateway?: CandidateGateway | undefined
+  /** Veien til det publiserte innholdet, injisert av samme grunn som over. */
+  readonly publication?: PublicationGateway | undefined
 }
 
-export function AppLayout({ gateway }: AppLayoutProps = {}) {
+export function AppLayout({ gateway, publication }: AppLayoutProps = {}) {
   return (
     <Routes>
       <Route element={<ResetHome />} path={HOME_PATH} />
       <Route element={<QueueRoute gateway={gateway} />} path={CANDIDATE_QUEUE_PATH} />
       <Route element={<CandidateRoute gateway={gateway} />} path={CANDIDATE_PATH} />
+      <Route element={<PublishedRoute gateway={publication} />} path={PUBLISHED_PATH} />
+      <Route element={<PublishedClaimRoute gateway={publication} />} path={PUBLISHED_CLAIM_PATH} />
       <Route element={<NotFound />} path="*" />
     </Routes>
   )

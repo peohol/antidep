@@ -253,13 +253,13 @@ select r.id, r.knowledge_type, 'grade', 'low',
 from knowledge.claim_revisions r
 where r.id = (select id from fixture where name = 'rev1');
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Gjennomgått mot kilden.', rg.id, 'human', now() - interval '2 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'rev1') and rg.name = 'reviewer';
+-- Fra migrasjon 009e er godkjenningen hendelsen hviler på, en sluttkontroll av
+-- et forseglet kandidatinnhold. Datoen settes bakover i tid med vilje: hele
+-- poenget under er at godkjenningstidspunktet ikke er publiseringstidspunktet.
+select pg_temp.approve_candidate(
+  (select id from fixture where name = 'rev1'), now() - interval '2 days',
+  'Gjennomgått mot kilden.');
+
 
 select set_config('request.jwt.claims',
                   '{"sub":"33330000-0000-0000-0000-000000000002"}', true);
@@ -279,11 +279,11 @@ select is(
   (select pe.approval_decided_at
    from knowledge.publication_events pe
    where pe.revision_id = (select id from fixture where name = 'rev1')),
-  (select rd.decided_at
-   from workflow.review_decisions rd
-   where rd.claim_revision_id = (select id from fixture where name = 'rev1')
-     and rd.review_type = 'publication_approval'),
-  'hendelsen bærer nøyaktig godkjenningens decided_at, ikke publiseringstidspunktet');
+  (select fc.decided_at
+   from workflow.candidate_final_controls fc
+   join knowledge.candidates c on c.id = fc.candidate_id
+   where c.claim_revision_id = (select id from fixture where name = 'rev1')),
+  'hendelsen bærer nøyaktig sluttkontrollens decided_at, ikke publiseringstidspunktet');
 
 select isnt(
   (select pe.approval_decided_at from knowledge.publication_events pe
@@ -355,14 +355,10 @@ select r.id, r.created_by_actor_id, v.id, 'verified', 'original_source',
 from knowledge.claim_revisions r, fixture v
 where r.id = (select id from fixture where name = 'fact_rev') and v.name = 'verifier';
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Faktumet kontrollert mot autoritativ kilde.', rg.id, 'human',
-       now() - interval '6 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'fact_rev') and rg.name = 'reviewer';
+select pg_temp.approve_candidate(
+  (select id from fixture where name = 'fact_rev'), now() - interval '6 days',
+  'Faktumet kontrollert mot autoritativ kilde.');
+
 
 select set_config('request.jwt.claims',
                   '{"sub":"33330000-0000-0000-0000-000000000002"}', true);
@@ -375,8 +371,10 @@ select lives_ok(
 select set_config('request.jwt.claims', '', true);
 
 insert into expected_ts (name, at)
-select 'fact_approval', rd.decided_at from workflow.review_decisions rd
-where rd.claim_revision_id = (select id from fixture where name = 'fact_rev');
+select 'fact_approval', fc.decided_at
+from workflow.candidate_final_controls fc
+join knowledge.candidates c on c.id = fc.candidate_id
+where c.claim_revision_id = (select id from fixture where name = 'fact_rev');
 insert into expected_ts (name, at)
 select 'synthesis_published', pe.published_at from knowledge.publication_events pe
 where pe.revision_id = (select id from fixture where name = 'rev1');
@@ -470,13 +468,10 @@ reset role;
 -- de bærer ULIK approval_decided_at. En «siste hendelse»-rekkefølge som faller
 -- tilbake på id — en tilfeldig uuid — plukket den gamle godkjenningen omtrent
 -- annenhver gang. Viewet aggregerer derfor med max() framfor å sortere.
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Ny gjennomgang før republisering.', rg.id, 'human', now() - interval '2 hours'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'fact_rev') and rg.name = 'reviewer';
+select pg_temp.approve_candidate(
+  (select id from fixture where name = 'fact_rev'), now() - interval '2 hours',
+  'Ny gjennomgang før republisering.');
+
 
 select set_config('request.jwt.claims',
                   '{"sub":"33330000-0000-0000-0000-000000000002"}', true);
@@ -512,9 +507,11 @@ select is(
   'men de bærer to ulike godkjenningsdatoer, så det er mulig å plukke feil');
 
 insert into expected_ts (name, at)
-select 'fact_ny_godkjenning', max(rd.decided_at) from workflow.review_decisions rd
-where rd.claim_revision_id = (select id from fixture where name = 'fact_rev')
-  and rd.review_type = 'publication_approval' and rd.decision = 'approved';
+select 'fact_ny_godkjenning', max(fc.decided_at)
+from workflow.candidate_final_controls fc
+join knowledge.candidates c on c.id = fc.candidate_id
+where c.claim_revision_id = (select id from fixture where name = 'fact_rev')
+  and fc.decision = 'approved';
 
 set local role anon;
 select is(
@@ -556,23 +553,27 @@ with inserted as (
 )
 insert into fixture (name, id) select 'direct_rev', id from inserted;
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Godkjent, men se den senere beslutningen.', rg.id, 'human',
-       now() - interval '5 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'direct_rev') and rg.name = 'reviewer';
+select pg_temp.approve_candidate(
+  (select id from fixture where name = 'direct_rev'), now() - interval '5 days',
+  'Godkjent for triggerprøven.');
+
 
 select lives_ok(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at,
        approval_decided_at)
     select (select id from fixture where name = 'direct_claim'), 'publish',
            (select id from fixture where name = 'direct_rev'), 1,
+           pg_temp.sealed_candidate_id(
+             (select id from fixture where name = 'direct_rev')),
+           pg_temp.sealed_candidate_digest(
+             (select id from fixture where name = 'direct_rev')),
+           pg_temp.sealed_final_control_id(
+             (select id from fixture where name = 'direct_rev')),
+           'approved',
            (select id from fixture where name = 'publisher'), 'human',
            'Hendelse skrevet direkte for å teste triggeren.', now(),
            timestamptz '1999-01-01 00:00:00+00'
@@ -582,9 +583,10 @@ select lives_ok(
 select is(
   (select pe.approval_decided_at from knowledge.publication_events pe
    where pe.revision_id = (select id from fixture where name = 'direct_rev')),
-  (select rd.decided_at from workflow.review_decisions rd
-   where rd.claim_revision_id = (select id from fixture where name = 'direct_rev')),
-  'triggeren overskriver kallerens dato med godkjenningens: verdien eies av databasen');
+  (select fc.decided_at from workflow.candidate_final_controls fc
+   join knowledge.candidates c on c.id = fc.candidate_id
+   where c.claim_revision_id = (select id from fixture where name = 'direct_rev')),
+  'triggeren overskriver kallerens dato med sluttkontrollens: verdien eies av databasen');
 
 -- En senere beslutning som ikke er «approved» gjør den gjeldende beslutningen
 -- ugyldig. Speiler publiseringsgaten G12: en godkjenningsdato skal ikke bli
@@ -613,40 +615,54 @@ with inserted as (
 )
 insert into fixture (name, id) select 'stale_rev', id from inserted;
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Godkjent, men se den senere beslutningen.', rg.id, 'human',
-       now() - interval '5 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'stale_rev') and rg.name = 'reviewer';
+select pg_temp.approve_candidate(
+  (select id from fixture where name = 'stale_rev'), now() - interval '5 days',
+  'Godkjent, men se den senere sluttkontrollen.');
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'changes_requested',
-       'Formuleringen må presiseres likevel.', rg.id, 'human', now() - interval '1 day'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'stale_rev') and rg.name = 'reviewer';
+-- Omgjøringen. Den er en ny rad på den samme kandidaten, og den gjeldende er den
+-- med det høyeste registreringsnummeret.
+insert into workflow.candidate_final_controls
+  (candidate_id, candidate_digest, decision, rationale, decided_at,
+   reviewer_actor_id, reviewer_actor_type)
+select c.id, c.candidate_digest, 'changes_requested',
+       'Formuleringen må presiseres likevel.', now() - interval '1 day',
+       rg.id, 'human'
+from knowledge.candidates c, fixture rg
+where c.id = pg_temp.sealed_candidate_id(
+        (select id from fixture where name = 'stale_rev'))
+  and rg.name = 'reviewer';
 
-select lives_ok(
+-- Fra migrasjon 009e er dette ikke lenger en hendelse med en tom
+-- godkjenningsdato: den kan ikke skrives i det hele tatt. Fremmednøkkelen krever
+-- en approved sluttkontroll på nøyaktig denne kandidaten, og triggeren krever at
+-- den er den gjeldende. En publisering som hviler på en godkjenning noen har
+-- gjort om, finnes ikke som rad.
+select throws_like(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at)
     select (select id from fixture where name = 'stale_claim'), 'publish',
            (select id from fixture where name = 'stale_rev'), 1,
+           c.id, c.candidate_digest,
+           (select fc.id from workflow.candidate_final_controls fc
+            where fc.candidate_id = c.id and fc.decision = 'approved'
+            order by fc.registration_ordinal desc limit 1),
+           'approved',
            (select id from fixture where name = 'publisher'), 'human',
-           'Hendelse skrevet etter at reviewer ba om endringer.', now()
+           'Hendelse skrevet etter at fagpersonen ba om endringer.', now()
+    from knowledge.candidates c
+    where c.claim_revision_id = (select id from fixture where name = 'stale_rev')
   $$,
-  'en hendelse kan skrives for en revisjon der gjeldende beslutning ikke er approved');
+  '%men den gjeldende for kandidaten%',
+  'en hendelse kan ikke skrives når den gjeldende sluttkontrollen ikke er approved (speiler gaten G12)');
 
 select is(
-  (select pe.approval_decided_at from knowledge.publication_events pe
+  (select count(*) from knowledge.publication_events pe
    where pe.claim_id = (select id from fixture where name = 'stale_claim')),
-  null::timestamptz,
-  'godkjenningsdatoen er NULL når den gjeldende beslutningen ikke er approved (speiler gaten G12)');
+  0::bigint,
+  'og ingen hendelse ble registrert for den påstanden');
 
 -- Regelen som gjør en godkjenningsdato uten publisert revisjon umulig. Triggeren
 -- setter alltid NULL på en avpublisering, så regelen er utilgjengelig gjennom

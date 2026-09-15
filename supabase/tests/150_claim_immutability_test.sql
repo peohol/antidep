@@ -24,7 +24,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(30);
+select plan(31);
 
 -- ---------------------------------------------------------------------------
 -- Testdata som bare finnes inne i denne transaksjonen
@@ -371,15 +371,34 @@ select throws_ok(
 
 -- Vernet skal ikke overblokkere: publiseringspeker og tilbaketrekking er
 -- livssyklus, ikke identitet.
+--
+-- Fra migrasjon 009e er pekeren to kolonner og ikke én: revisjonen og det
+-- forseglede innholdet som faktisk ble publisert. De settes sammen, og
+-- claims_published_candidate_pairing_check gjør at de ikke kan settes hver for
+-- seg — en peker som navnga en revisjon uten å navngi innholdet, ville ikke
+-- sagt hva klinikeren fikk se.
 select lives_ok(
   $$
     update knowledge.claims
     set current_published_revision_id =
-      (select r.id from knowledge.claim_revisions r
-       where r.claim_id = pg_temp.test_claim() and r.revision_number = 2)
+          (select r.id from knowledge.claim_revisions r
+           where r.claim_id = pg_temp.test_claim() and r.revision_number = 2),
+        current_published_candidate_id = pg_temp.seal_and_approve_candidate(
+          (select r.id from knowledge.claim_revisions r
+           where r.claim_id = pg_temp.test_claim() and r.revision_number = 2))
     where id = pg_temp.test_claim()
   $$,
   'publiseringspekeren kan flyttes uten at identiteten endres'
+);
+-- Halv peker er ingen peker (23514 = check_violation).
+select throws_ok(
+  $$
+    update knowledge.claims
+    set current_published_candidate_id = null
+    where id = pg_temp.test_claim()
+  $$,
+  '23514', null,
+  'publiseringspekeren kan ikke navngi en revisjon uten å navngi innholdet'
 );
 -- DATABASE_ARCHITECTURE.md §58: pekeren må peke på en revisjon av riktig
 -- identitet. Regelen håndheves av den sammensatte fremmednøkkelen, ikke av
@@ -388,10 +407,15 @@ select throws_ok(
   $$
     update knowledge.claims
     set current_published_revision_id =
-      (select r.id from knowledge.claim_revisions r
-       join knowledge.claims c2 on c2.id = r.claim_id
-       join catalog.clinical_concepts cc on cc.id = c2.topic_concept_id
-       where cc.canonical_label = 'vektendring' limit 1)
+          (select r.id from knowledge.claim_revisions r
+           join knowledge.claims c2 on c2.id = r.claim_id
+           join catalog.clinical_concepts cc on cc.id = c2.topic_concept_id
+           where cc.canonical_label = 'vektendring' limit 1),
+        current_published_candidate_id = pg_temp.seal_and_approve_candidate(
+          (select r.id from knowledge.claim_revisions r
+           join knowledge.claims c2 on c2.id = r.claim_id
+           join catalog.clinical_concepts cc on cc.id = c2.topic_concept_id
+           where cc.canonical_label = 'vektendring' limit 1))
     where id = pg_temp.test_claim()
   $$,
   '23503', null,

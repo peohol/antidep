@@ -89,8 +89,10 @@ select throws_like(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'publish', null, null, p.id, 'human', 'Uten revisjon.', now()
+    select f.id, 'publish', null, null, null, null, null, null,
+           p.id, 'human', 'Uten revisjon.', now()
     from fixture f, fixture p where f.name = 'claim' and p.name = 'publisher'
   $$,
   '%publication_events_action_pointer_check%',
@@ -101,8 +103,14 @@ select throws_like(
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
        previous_revision_id, previous_revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
+       previous_candidate_id, previous_candidate_digest,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'publish', r2.id, 2, r1.id, 1, p.id, 'human', 'Med forgjenger.', now()
+    select f.id, 'publish', r2.id, 2, r1.id, 1,
+           pg_temp.sealed_candidate_id(r2.id), pg_temp.sealed_candidate_digest(r2.id),
+           pg_temp.sealed_final_control_id(r2.id), 'approved',
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           p.id, 'human', 'Med forgjenger.', now()
     from fixture f, fixture r1, fixture r2, fixture p
     where f.name = 'claim' and r1.name = 'rev1' and r2.name = 'rev2' and p.name = 'publisher'
   $$,
@@ -114,8 +122,14 @@ select throws_like(
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
        previous_revision_id, previous_revision_number, previous_event_id,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
+       previous_candidate_id, previous_candidate_digest,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'replace', r1.id, 1, r2.id, 2, null, p.id, 'human', 'Bakover.', now()
+    select f.id, 'replace', r1.id, 1, r2.id, 2, null,
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           pg_temp.sealed_final_control_id(r1.id), 'approved',
+           pg_temp.sealed_candidate_id(r2.id), pg_temp.sealed_candidate_digest(r2.id),
+           p.id, 'human', 'Bakover.', now()
     from fixture f, fixture r1, fixture r2, fixture p
     where f.name = 'claim' and r1.name = 'rev1' and r2.name = 'rev2' and p.name = 'publisher'
   $$,
@@ -127,8 +141,14 @@ select throws_like(
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
        previous_revision_id, previous_revision_number, previous_event_id,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
+       previous_candidate_id, previous_candidate_digest,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'rollback', r2.id, 2, r1.id, 1, null, p.id, 'human', 'Framover.', now()
+    select f.id, 'rollback', r2.id, 2, r1.id, 1, null,
+           pg_temp.sealed_candidate_id(r2.id), pg_temp.sealed_candidate_digest(r2.id),
+           pg_temp.sealed_final_control_id(r2.id), 'approved',
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           p.id, 'human', 'Framover.', now()
     from fixture f, fixture r1, fixture r2, fixture p
     where f.name = 'claim' and r1.name = 'rev1' and r2.name = 'rev2' and p.name = 'publisher'
   $$,
@@ -140,8 +160,14 @@ select throws_like(
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
        previous_revision_id, previous_revision_number, previous_event_id,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
+       previous_candidate_id, previous_candidate_digest,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'withdraw', r1.id, 1, r2.id, 2, null, p.id, 'human', 'Med ny revisjon.', now()
+    select f.id, 'withdraw', r1.id, 1, r2.id, 2, null,
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           pg_temp.sealed_final_control_id(r1.id), 'approved',
+           pg_temp.sealed_candidate_id(r2.id), pg_temp.sealed_candidate_digest(r2.id),
+           p.id, 'human', 'Med ny revisjon.', now()
     from fixture f, fixture r1, fixture r2, fixture p
     where f.name = 'claim' and r1.name = 'rev1' and r2.name = 'rev2' and p.name = 'publisher'
   $$,
@@ -153,8 +179,13 @@ select throws_like(
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
        previous_revision_id, previous_revision_number, previous_event_id,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
+       previous_candidate_id, previous_candidate_digest,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'withdraw', null, null, r1.id, 1, null, p.id, 'human', 'Først av alt.', now()
+    select f.id, 'withdraw', null, null, r1.id, 1, null,
+           null, null, null, null,
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           p.id, 'human', 'Først av alt.', now()
     from fixture f, fixture r1, fixture p
     where f.name = 'claim' and r1.name = 'rev1' and p.name = 'publisher'
   $$,
@@ -167,8 +198,12 @@ select throws_like(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'publish', r1.id, 7, p.id, 'human', 'Feil speil.', now()
+    select f.id, 'publish', r1.id, 7,
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           pg_temp.sealed_final_control_id(r1.id), 'approved',
+           p.id, 'human', 'Feil speil.', now()
     from fixture f, fixture r1, fixture p
     where f.name = 'claim' and r1.name = 'rev1' and p.name = 'publisher'
   $$,
@@ -180,8 +215,12 @@ select throws_like(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'publish', o.id, 1, p.id, 'human', 'Feil påstand.', now()
+    select f.id, 'publish', o.id, 1,
+           pg_temp.sealed_candidate_id(o.id), pg_temp.sealed_candidate_digest(o.id),
+           pg_temp.sealed_final_control_id(o.id), 'approved',
+           p.id, 'human', 'Feil påstand.', now()
     from fixture f, fixture o, fixture p
     where f.name = 'claim' and o.name = 'other_rev' and p.name = 'publisher'
   $$,
@@ -196,8 +235,12 @@ select throws_like(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'publish', r1.id, 1, a.id, 'agent', 'Agentpublisering.', now()
+    select f.id, 'publish', r1.id, 1,
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           pg_temp.sealed_final_control_id(r1.id), 'approved',
+           a.id, 'agent', 'Agentpublisering.', now()
     from fixture f, fixture r1, fixture a
     where f.name = 'claim' and r1.name = 'rev1' and a.name = 'synthesis_actor'
   $$,
@@ -209,8 +252,12 @@ select throws_like(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'publish', r1.id, 1, a.id, 'human', 'Agent utgir seg for menneske.', now()
+    select f.id, 'publish', r1.id, 1,
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           pg_temp.sealed_final_control_id(r1.id), 'approved',
+           a.id, 'human', 'Agent utgir seg for menneske.', now()
     from fixture f, fixture r1, fixture a
     where f.name = 'claim' and r1.name = 'rev1' and a.name = 'synthesis_actor'
   $$,
@@ -225,8 +272,12 @@ select throws_like(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'publish', r1.id, 1, p.id, 'human', '   ', now()
+    select f.id, 'publish', r1.id, 1,
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           pg_temp.sealed_final_control_id(r1.id), 'approved',
+           p.id, 'human', '   ', now()
     from fixture f, fixture r1, fixture p
     where f.name = 'claim' and r1.name = 'rev1' and p.name = 'publisher'
   $$,
@@ -237,8 +288,12 @@ select throws_like(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'publish', r1.id, 1, p.id, 'human', 'Framtidsdatert.',
+    select f.id, 'publish', r1.id, 1,
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           pg_temp.sealed_final_control_id(r1.id), 'approved',
+           p.id, 'human', 'Framtidsdatert.',
            now() + interval '1 hour'
     from fixture f, fixture r1, fixture p
     where f.name = 'claim' and r1.name = 'rev1' and p.name = 'publisher'
@@ -257,8 +312,12 @@ select throws_like(
 -- triggeren den eneste regelen i spill.
 insert into knowledge.publication_events
   (claim_id, action, revision_id, revision_number,
+   candidate_id, candidate_digest, final_control_id, final_control_decision,
    published_by_actor_id, published_by_actor_type, reason, published_at, created_at)
-select f.id, 'publish', r1.id, 1, p.id, 'human', 'Første publisering i testfixturen.',
+select f.id, 'publish', r1.id, 1,
+       pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+       pg_temp.sealed_final_control_id(r1.id), 'approved',
+       p.id, 'human', 'Første publisering i testfixturen.',
        now(), now() + interval '10 years'
 from fixture f, fixture r1, fixture p
 where f.name = 'claim' and r1.name = 'rev1' and p.name = 'publisher';
@@ -280,8 +339,12 @@ select throws_like(
   $$
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'publish', r2.id, 2, p.id, 'human', 'Andre samtidige publisering.', now()
+    select f.id, 'publish', r2.id, 2,
+           pg_temp.sealed_candidate_id(r2.id), pg_temp.sealed_candidate_digest(r2.id),
+           pg_temp.sealed_final_control_id(r2.id), 'approved',
+           p.id, 'human', 'Andre samtidige publisering.', now()
     from fixture f, fixture r2, fixture p
     where f.name = 'claim' and r2.name = 'rev2' and p.name = 'publisher'
   $$,
@@ -296,8 +359,14 @@ select lives_ok(
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
        previous_revision_id, previous_revision_number, previous_event_id,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
+       previous_candidate_id, previous_candidate_digest,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'replace', r2.id, 2, r1.id, 1, first_event.id, p.id, 'human',
+    select f.id, 'replace', r2.id, 2, r1.id, 1, first_event.id,
+           pg_temp.sealed_candidate_id(r2.id), pg_temp.sealed_candidate_digest(r2.id),
+           pg_temp.sealed_final_control_id(r2.id), 'approved',
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           p.id, 'human',
            'Legitim erstatning.', now()
     from fixture f, fixture r1, fixture r2, fixture p,
          (select e.id from knowledge.publication_events e
@@ -318,8 +387,13 @@ select throws_like(
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
        previous_revision_id, previous_revision_number, previous_event_id,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
+       previous_candidate_id, previous_candidate_digest,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select f.id, 'withdraw', null, null, r1.id, 1, first_event.id, p.id, 'human',
+    select f.id, 'withdraw', null, null, r1.id, 1, first_event.id,
+           null, null, null, null,
+           pg_temp.sealed_candidate_id(r1.id), pg_temp.sealed_candidate_digest(r1.id),
+           p.id, 'human',
            'Andre hendelse fra samme tilstand.', now()
     from fixture f, fixture r1, fixture p,
          (select e.id from knowledge.publication_events e
@@ -336,8 +410,13 @@ select throws_like(
     insert into knowledge.publication_events
       (claim_id, action, revision_id, revision_number,
        previous_revision_id, previous_revision_number, previous_event_id,
+       candidate_id, candidate_digest, final_control_id, final_control_decision,
+       previous_candidate_id, previous_candidate_digest,
        published_by_actor_id, published_by_actor_type, reason, published_at)
-    select o.id, 'withdraw', null, null, orv.id, 1, other_event.id, p.id, 'human',
+    select o.id, 'withdraw', null, null, orv.id, 1, other_event.id,
+           null, null, null, null,
+           pg_temp.sealed_candidate_id(orv.id), pg_temp.sealed_candidate_digest(orv.id),
+           p.id, 'human',
            'Kjede på tvers av påstander.', now()
     from fixture o, fixture orv, fixture p,
          (select e.id from knowledge.publication_events e
@@ -420,8 +499,12 @@ select is(
 
 insert into knowledge.publication_events
   (claim_id, action, revision_id, revision_number,
+   candidate_id, candidate_digest, final_control_id, final_control_decision,
    published_by_actor_id, published_by_actor_type, reason, published_at)
-select fc.id, 'publish', fr.id, 1, p.id, 'human', 'Publisering av testfaktumet.', now()
+select fc.id, 'publish', fr.id, 1,
+       pg_temp.sealed_candidate_id(fr.id), pg_temp.sealed_candidate_digest(fr.id),
+       pg_temp.sealed_final_control_id(fr.id), 'approved',
+       p.id, 'human', 'Publisering av testfaktumet.', now()
 from fixture fc, fixture fr, fixture p
 where fc.name = 'fact_claim' and fr.name = 'fact_rev' and p.name = 'publisher';
 

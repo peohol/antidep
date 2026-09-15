@@ -337,18 +337,16 @@ where r.id = (select id from fixture where name = 'rev');
 select throws_like(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'rev'))$$,
-  '%ikke godkjent av en kvalifisert redaktør%',
-  'gaten avviser publisering uten menneskelig faglig godkjenning (ANTIDEP_CONSTITUTION.md §12)'
+  '%har ingen gjeldende kandidat%',
+  'gaten avviser publisering uten et forseglet, sluttkontrollert kandidatinnhold (ANTIDEP_CONSTITUTION.md regel 5)'
 );
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Gjennomgått mot kilden; formuleringen holder.',
-       rg.id, 'human', now() - interval '10 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'rev') and rg.name = 'reviewer_global';
+-- Fra migrasjon 009e er den menneskelige beslutningen gaten leser, en
+-- sluttkontroll av et forseglet kandidatinnhold — ikke en publication_approval
+-- mot en revisjon. Hver gang grunnlaget endres, er det et nytt innhold, og det
+-- må godkjennes på nytt.
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'rev'));
 
 -- Den positive kontrollen: gaten slipper gjennom når alt faktisk er på plass.
 -- Uten denne ville hver enkelt negative assertion over kunne passert fordi gaten
@@ -399,6 +397,12 @@ select e.id, e.created_by_actor_id, v.id, 'verified', 'original_source',
        'Fortegnet var riktig ved fornyet kontroll mot kilden.', now() - interval '8 days'
 from knowledge.evidence_items e, fixture v
 where e.id = (select id from fixture where name = 'evidence_a') and v.name = 'verifier';
+
+-- Grunnlaget er endret over, så kandidaten som ble godkjent, ikke lenger er
+-- den gjeldende. Det endrede innholdet forsegles og sluttkontrolleres på nytt,
+-- som er nøyaktig det gaten krever (migrasjon 009e, G11 og G12).
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'rev'));
 
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
@@ -470,6 +474,12 @@ select e.id, e.created_by_actor_id, v.id, 'verified', 'original_source',
 from knowledge.evidence_items e, fixture v
 where e.id = (select id from fixture where name = 'evidence_a') and v.name = 'verifier';
 
+-- Grunnlaget er endret over, så kandidaten som ble godkjent, ikke lenger er
+-- den gjeldende. Det endrede innholdet forsegles og sluttkontrolleres på nytt,
+-- som er nøyaktig det gaten krever (migrasjon 009e, G11 og G12).
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'rev'));
+
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'rev'))$$,
@@ -503,6 +513,12 @@ select e.id, e.created_by_actor_id, 'extraction_withdrawal', 'extraction_upheld'
 from knowledge.evidence_items e, fixture rg
 where e.id = (select id from fixture where name = 'evidence_a') and rg.name = 'reviewer_global';
 
+-- Grunnlaget er endret over, så kandidaten som ble godkjent, ikke lenger er
+-- den gjeldende. Det endrede innholdet forsegles og sluttkontrolleres på nytt,
+-- som er nøyaktig det gaten krever (migrasjon 009e, G11 og G12).
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'rev'));
+
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'rev'))$$,
@@ -528,6 +544,12 @@ update knowledge.sources
 set source_status = 'active', status_note = null
 where id = (select e.source_id from knowledge.evidence_items e
             where e.id = (select id from fixture where name = 'evidence_a'));
+
+-- Grunnlaget er endret over, så kandidaten som ble godkjent, ikke lenger er
+-- den gjeldende. Det endrede innholdet forsegles og sluttkontrolleres på nytt,
+-- som er nøyaktig det gaten krever (migrasjon 009e, G11 og G12).
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'rev'));
 
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
@@ -566,6 +588,12 @@ select r.id, r.created_by_actor_id, v.id, 'verified', 'original_source',
 from knowledge.claim_revisions r, fixture v
 where r.id = (select id from fixture where name = 'rev') and v.name = 'verifier';
 
+-- Grunnlaget er endret over, så kandidaten som ble godkjent, ikke lenger er
+-- den gjeldende. Det endrede innholdet forsegles og sluttkontrolleres på nytt,
+-- som er nøyaktig det gaten krever (migrasjon 009e, G11 og G12).
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'rev'));
+
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'rev'))$$,
@@ -573,14 +601,18 @@ select lives_ok(
 );
 
 -- En senere reviewbeslutning gjelder foran den tidligere godkjenningen.
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'changes_requested',
+-- En omgjøring er en ny sluttkontroll på den samme kandidaten, og den gjeldende
+-- er den med det høyeste registreringsnummeret — ikke den med den nyeste klokka.
+insert into workflow.candidate_final_controls
+  (candidate_id, candidate_digest, decision, rationale,
+   reviewer_actor_id, reviewer_actor_type)
+select c.id, c.candidate_digest, 'changes_requested',
        'Forbeholdet om at grunnlaget er armspesifikt må stå i selve formuleringen.',
-       rg.id, 'human', now() - interval '3 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'rev') and rg.name = 'reviewer_global';
+       rg.id, 'human'
+from knowledge.candidates c, fixture rg
+where c.id = pg_temp.seal_and_approve_candidate(
+        (select id from fixture where name = 'rev'))
+  and rg.name = 'reviewer_global';
 
 select throws_like(
   $$select knowledge.assert_claim_revision_publishable(
@@ -589,14 +621,12 @@ select throws_like(
   'en senere omgjøring gjelder foran den tidligere godkjenningen'
 );
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Forbeholdet står nå i formuleringen; godkjennes.',
-       rg.id, 'human', now() - interval '2 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'rev') and rg.name = 'reviewer_global';
+-- Fra migrasjon 009e er den menneskelige beslutningen gaten leser, en
+-- sluttkontroll av et forseglet kandidatinnhold — ikke en publication_approval
+-- mot en revisjon. Hver gang grunnlaget endres, er det et nytt innhold, og det
+-- må godkjennes på nytt.
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'rev'));
 
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
@@ -677,13 +707,12 @@ select r.id, r.created_by_actor_id, v.id, 'verified', 'original_source',
 from knowledge.claim_revisions r, fixture v
 where r.id = (select id from fixture where name = 'fact_rev') and v.name = 'verifier';
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Faktumet stemmer med kilden.', rg.id, 'human', now() - interval '10 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'fact_rev') and rg.name = 'reviewer_global';
+-- Fra migrasjon 009e er den menneskelige beslutningen gaten leser, en
+-- sluttkontroll av et forseglet kandidatinnhold — ikke en publication_approval
+-- mot en revisjon. Hver gang grunnlaget endres, er det et nytt innhold, og det
+-- må godkjennes på nytt.
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'fact_rev'));
 
 -- Et deterministisk faktum har ingen evidensvurdering, og skal likevel kunne
 -- publiseres. Uten denne assertionen kunne kravet om evidensvurdering ha vært
@@ -721,18 +750,16 @@ select pg_temp.verify_claim(
 select throws_like(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'fact_rev'))$$,
-  '%er endret etter godkjenningen%',
+  '%har ingen gjeldende kandidat%',
   'en revisjon som har fått nytt evidensgrunnlag etter godkjenningen kan ikke publiseres uten nytt review (MVP_IMPLEMENTATION_PLAN.md §42)'
 );
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Det utvidede grunnlaget er gjennomgått og godkjent.',
-       rg.id, 'human', now()
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'fact_rev') and rg.name = 'reviewer_global';
+-- Fra migrasjon 009e er den menneskelige beslutningen gaten leser, en
+-- sluttkontroll av et forseglet kandidatinnhold — ikke en publication_approval
+-- mot en revisjon. Hver gang grunnlaget endres, er det et nytt innhold, og det
+-- må godkjennes på nytt.
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'fact_rev'));
 
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
@@ -807,13 +834,12 @@ select r.id, r.created_by_actor_id, v.id, 'verified', 'original_source',
 from knowledge.claim_revisions r, fixture v
 where r.id = (select id from fixture where name = 'race_rev') and v.name = 'verifier';
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Godkjent på grunnlag av lenke A.', rg.id, 'human', now() - interval '10 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'race_rev') and rg.name = 'reviewer_global';
+-- Fra migrasjon 009e er den menneskelige beslutningen gaten leser, en
+-- sluttkontroll av et forseglet kandidatinnhold — ikke en publication_approval
+-- mot en revisjon. Hver gang grunnlaget endres, er det et nytt innhold, og det
+-- må godkjennes på nytt.
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'race_rev'));
 
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
@@ -860,19 +886,17 @@ select pg_temp.verify_claim(
 select throws_like(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'race_rev'))$$,
-  '%er endret etter godkjenningen%',
+  '%har ingen gjeldende kandidat%',
   'gaten nekter likevel, fordi den sammenligner avtrykket av evidenssettet og ikke tidspunkter'
 );
 
 -- ... og en ny godkjenning som dekker det utvidede settet åpner den igjen.
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Det utvidede grunnlaget er gjennomgått og godkjent.',
-       rg.id, 'human', now()
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'race_rev') and rg.name = 'reviewer_global';
+-- Fra migrasjon 009e er den menneskelige beslutningen gaten leser, en
+-- sluttkontroll av et forseglet kandidatinnhold — ikke en publication_approval
+-- mot en revisjon. Hver gang grunnlaget endres, er det et nytt innhold, og det
+-- må godkjennes på nytt.
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'race_rev'));
 
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
@@ -920,7 +944,7 @@ select pg_temp.verify_claim(
 select throws_like(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'race_rev'))$$,
-  '%er endret etter godkjenningen%',
+  '%har ingen gjeldende kandidat%',
   'avtrykket fanger et utskiftet evidenssett selv når antallet er det samme'
 );
 
@@ -1001,14 +1025,12 @@ select r.id, r.knowledge_type, 'grade', 'low',
 from knowledge.claim_revisions r
 where r.id = (select id from fixture where name = 'rec_rev');
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Godkjent av redaktør med generell reviewer-rolle.',
-       rg.id, 'human', now() - interval '10 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'rec_rev') and rg.name = 'reviewer_global';
+-- Fra migrasjon 009e er den menneskelige beslutningen gaten leser, en
+-- sluttkontroll av et forseglet kandidatinnhold — ikke en publication_approval
+-- mot en revisjon. Hver gang grunnlaget endres, er det et nytt innhold, og det
+-- må godkjennes på nytt.
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'rec_rev'));
 
 select lives_ok(
   $$select knowledge.assert_claim_revision_publishable(
@@ -1063,15 +1085,12 @@ select r.id, r.created_by_actor_id, v.id, 'verified', 'original_source',
 from knowledge.claim_revisions r, fixture v
 where r.id = (select id from fixture where name = 'rec_rev_uten_vurdering') and v.name = 'verifier';
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Godkjent av redaktør med generell reviewer-rolle.',
-       rg.id, 'human', now() - interval '10 days'
-from knowledge.claim_revisions r, fixture rg
-where r.id = (select id from fixture where name = 'rec_rev_uten_vurdering')
-  and rg.name = 'reviewer_global';
+-- Fra migrasjon 009e er den menneskelige beslutningen gaten leser, en
+-- sluttkontroll av et forseglet kandidatinnhold — ikke en publication_approval
+-- mot en revisjon. Hver gang grunnlaget endres, er det et nytt innhold, og det
+-- må godkjennes på nytt.
+select pg_temp.seal_and_approve_candidate(
+  (select id from fixture where name = 'rec_rev_uten_vurdering'));
 
 -- ... og en anbefaling er ikke unntatt noen av de øvrige kravene. Uten denne
 -- assertionen kunne «like streng» vært en påstand uten dekning: en gate som

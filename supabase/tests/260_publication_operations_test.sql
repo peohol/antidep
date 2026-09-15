@@ -234,14 +234,14 @@ from knowledge.claim_revisions r
 where r.claim_id = (select id from fixture where name = 'claim')
   and r.revision_number in (1, 3);
 
-insert into workflow.review_decisions
-  (claim_revision_id, claim_revision_creator_actor_id, review_type, decision,
-   rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
-select r.id, r.created_by_actor_id, 'publication_approval', 'approved',
-       'Gjennomgått mot kilden.', rv.id, 'human', now()
-from knowledge.claim_revisions r, fixture rv
+-- Fra migrasjon 009e er publisering en handling på et forseglet kandidatinnhold
+-- som en navngitt fagperson har godkjent, og ikke på en revisjon alene.
+-- Publiseringsgatens G11 og G12 leser nettopp de to radene, og fiksturet gir dem
+-- her — bygget av de samme funksjonene produksjonskoden bruker.
+select pg_temp.seal_and_approve_candidate(r.id)
+from knowledge.claim_revisions r
 where r.claim_id = (select id from fixture where name = 'claim')
-  and r.revision_number in (1, 3) and rv.name = 'reviewer';
+  and r.revision_number in (1, 3);
 
 -- ---------------------------------------------------------------------------
 -- Publiseringsretten (DATABASE_ARCHITECTURE.md §46, §50)

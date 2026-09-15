@@ -42,10 +42,16 @@ select has_table(
   'knowledge.publication_events finnes; publiseringsgaten leser beslutningene fra denne migrasjonen'
 );
 -- Gaten er to funksjoner fra migrasjon 006e: forutsetningene før den
--- menneskelige godkjenningen (G1-G10) er flyttet ut i
+-- menneskelige beslutningen (G1-G10) ligger i
 -- knowledge.assert_claim_revision_ready_for_approval(uuid), slik at skriveveien
--- for godkjenningen kan kreve nøyaktig de samme vilkårene uten å kopiere dem.
+-- for den kan kreve nøyaktig de samme vilkårene uten å kopiere dem.
 -- Kravet er derfor på de to til sammen: gaten skal fortsatt lese hver av dem.
+--
+-- Fra migrasjon 009e er G11 og G12 kandidaten og sluttkontrollen, ikke
+-- prototypens publication_approval i workflow.review_decisions: det et menneske
+-- faktisk vurderer, er et forseglet innhold. Tilbaketrekkingsbeslutningen om en
+-- ekstraksjon leses fortsatt fra workflow.review_decisions, og står derfor igjen
+-- i listen.
 select is_empty(
   $$
     select t.needle
@@ -53,15 +59,15 @@ select is_empty(
                  ('workflow.claim_verifications'),
                  ('workflow.review_decisions'),
                  ('extraction_withdrawal'),
-                 ('publication_approval'),
-                 ('approved_evidence_set_digest')) as t(needle)
+                 ('candidate_final_control'),
+                 ('current_candidate')) as t(needle)
     where position(t.needle in
            (select string_agg(p.prosrc, ' ')
             from pg_proc p
             where p.oid in ('knowledge.assert_claim_revision_publishable(uuid)'::regprocedure,
                             'knowledge.assert_claim_revision_ready_for_approval(uuid)'::regprocedure))) = 0
   $$,
-  'publiseringsgaten leser verifikasjonene, godkjenningen og tilbaketrekkingsbeslutningen fra workflow'
+  'publiseringsgaten leser verifikasjonene, sluttkontrollen og tilbaketrekkingsbeslutningen fra de tabellene som faktisk bærer dem'
 );
 -- ... og forutsetningene skal faktisk kalles av gaten. Uten denne assertionen
 -- kunne G1-G10 blitt liggende igjen som en frittstående funksjon ingen leser,

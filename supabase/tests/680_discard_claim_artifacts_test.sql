@@ -23,7 +23,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(38);
+select plan(39);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten og stengslene
@@ -459,9 +459,13 @@ select is(
 -- Del 4 — En publisert påstand fjernes ikke
 -- ===========================================================================
 -- Publiseringen settes direkte, fordi det som prøves er kontrollen i
--- fjerningen — ikke publiseringsgaten, som har sine egne prøver.
+-- fjerningen — ikke publiseringsgaten, som har sine egne prøver. Fra migrasjon
+-- 009e er pekeren to kolonner: revisjonen og det forseglede innholdet som ble
+-- publisert. Begge settes, fordi en halv peker ikke er en peker.
 update knowledge.claims
-set current_published_revision_id = '68000000-0000-4000-8000-000000000041'
+set current_published_revision_id = '68000000-0000-4000-8000-000000000041',
+    current_published_candidate_id = pg_temp.seal_candidate(
+      '68000000-0000-4000-8000-000000000041')
 where id = '68000000-0000-4000-8000-000000000031';
 
 select throws_ok(
@@ -473,7 +477,8 @@ select throws_ok(
 );
 
 update knowledge.claims
-set current_published_revision_id = null
+set current_published_revision_id = null,
+    current_published_candidate_id = null
 where id = '68000000-0000-4000-8000-000000000031';
 
 -- ===========================================================================
@@ -657,6 +662,22 @@ select throws_ok(
     where id = '68000000-0000-4000-8000-000000000042'$$,
   '23001', null,
   'en vanlig DELETE avvises fortsatt: vernet gjelder alle andre skriveveier'
+);
+
+-- Migrasjon 009e: en sluttkontrollert kandidat er en faglig beslutning med en
+-- ansvarlig bak, og stopper fjerningen slik en menneskelig kontroll gjør det.
+-- Kandidaten uten sluttkontroll gjorde det ikke: den ble fjernet med resten i
+-- den lykkede stien over.
+select pg_temp.seal_and_approve_candidate(
+  (select r.id from knowledge.claim_revisions r
+   where r.claim_id = (select id from fixture where name = 'menneskelig')));
+
+select throws_ok(
+  format(
+    $$select knowledge.discard_unpublished_claim_artifacts(array['%s']::uuid[], 'Prøve.')$$,
+    (select id from fixture where name = 'menneskelig')),
+  '23001', null,
+  'en påstand med en sluttkontrollert kandidat fjernes ikke'
 );
 
 -- Uten redaktørrolle er veien stengt, selv for en registrert aktør.
