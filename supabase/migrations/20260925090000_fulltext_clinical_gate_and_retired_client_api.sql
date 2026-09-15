@@ -43,10 +43,13 @@ begin
      or v.document_byte_size is null or v.document_byte_size <= 0
      or v.document_media_type is distinct from 'application/pdf'
      or v.content_hash is null or v.content_hash !~ '^sha256:[0-9a-f]{64}$'
-     or nullif(btrim(v.text_extraction_tool), '') is null
+     or v.text_extraction_tool is distinct from 'pdftotext'
      or nullif(btrim(v.text_extraction_tool_version), '') is null
-     or nullif(btrim(v.text_extraction_arguments), '') is null then
-    raise exception using errcode = '23001', message = 'Fulltekstversjonen mangler komplett dokument- eller tekstuttrekksbinding.';
+     or v.text_extraction_arguments is distinct from '-bbox-layout -enc UTF-8 -eol unix'
+     or v.text_extraction_transform is distinct from 'antidep-reading-order@2' then
+    raise exception using
+      errcode = '23001',
+      message = 'Fulltekstversjonen mangler komplett dokumentbinding eller gjeldende tillatt tekstuttrekksoppskrift.';
   end if;
 end;
 $$;
