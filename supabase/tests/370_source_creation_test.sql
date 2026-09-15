@@ -212,6 +212,12 @@ select is_empty(
         'api.agent_task_payload(uuid)',
         'api.import_agent_answer(uuid,jsonb)',
         'api.enqueue_agent_task(text,jsonb)',
+        -- Tildelingen og avslutningen av leddets semantiske modell. Tildelingen
+        -- er en attestert avgjørelse en redaktør tar FØR oppgaven hentes ut:
+        -- modellidentiteten kan ikke etableres av agentsvaret selv, og derfor
+        -- finnes den som en egen redaktørvei framfor som en registrering ved
+        -- første svar (ANTIDEP_CONSTITUTION.md regel 3).
+        'api.assign_agent_role_model(text,text,text,text,text,text,text)',
         'api.release_agent_role_model(text,text)'
       )
   $$,

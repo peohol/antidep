@@ -190,9 +190,9 @@ export function answerBindingProblem(task: AgentTask, answer: AgentAnswer): stri
       task.registeredModel.modelVersion !== answer.identity.modelVersion)
   ) {
     return (
-      `Denne oppgaven skal utføres av ${task.registeredModel.model} ` +
+      `Dette agentleddet er tildelt ${task.registeredModel.model} ` +
       `(${task.registeredModel.provider}), men svaret kom fra ${answer.identity.model} ` +
-      `(${answer.identity.provider}). Bruk den registrerte modellen.`
+      `(${answer.identity.provider}). Bruk den tildelte tjenesten, eller bytt tildelingen først.`
     )
   }
   return null

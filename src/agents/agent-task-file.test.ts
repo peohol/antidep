@@ -86,7 +86,7 @@ describe('oppgavefilen', () => {
     expect(file).toContain('not_exposed')
   })
 
-  it('sier hvilken modell leddet er registrert med, når det er en', () => {
+  it('sier hvilken tjeneste leddet er tildelt', () => {
     const withModel = parseAgentTask(
       taskPayload('evidence_assessment', {
         registered_model: {
@@ -98,9 +98,15 @@ describe('oppgavefilen', () => {
       }),
     )
     expect(renderAgentTaskFile(withModel)).toContain('Claude Opus')
-    expect(renderAgentTaskFile(task('evidence_assessment'))).toContain(
-      'Ingen KI-modell er registrert',
-    )
+  })
+
+  // En oppgave uten tildeling skal ikke kunne hentes ut i det hele tatt. Skjer
+  // det likevel, skal filen si det framfor å invitere modellen til å oppgi sin
+  // egen identitet som leddets (ANTIDEP_CONSTITUTION.md regel 3).
+  it('ber ikke en modell om å tildele seg selv når tildelingen mangler', () => {
+    const file = renderAgentTaskFile(task('evidence_assessment'))
+    expect(file).toContain('oppgir ingen tildelt KI-tjeneste')
+    expect(file).toContain('regn med at importen avvises')
   })
 
   // Den samme oppgaven lastet ned to ganger skal gi den samme filen. Et

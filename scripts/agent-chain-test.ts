@@ -1365,6 +1365,38 @@ async function main(): Promise<void> {
     const handoffJobId = (enqueuedTask.data as { pipeline_job_id?: string } | null)?.pipeline_job_id
     if (handoffJobId === undefined) return
 
+    // Uttaket kommer etter valget av KI-tjeneste. Tildelingen inngår i
+    // bindingen avtrykket er regnet av, og en oppgave bygget uten den ville bedt
+    // om et svar ingen kunne si var uavhengig (ANTIDEP_CONSTITUTION.md regel 3).
+    const beforeAssignment = await editor.rpc('agent_task_payload', {
+      p_pipeline_job_id: handoffJobId,
+    })
+    check(
+      'oppgaven kan ikke hentes ut før en KI-tjeneste er valgt for leddet',
+      beforeAssignment.error !== null,
+      'oppgaven ble bygget uten en modelltildeling',
+    )
+    const blockedQueue = parseAgentWorkQueue((await editor.rpc('agent_work_queue', {})).data)
+    check(
+      'agentkøen sier at tjenesten mangler framfor å vise oppgaven som utførbar',
+      blockedQueue.items.some(
+        (item) => item.pipelineJobId === handoffJobId && item.blockedReason !== null,
+      ),
+    )
+
+    const assignment = await editor.rpc('assign_agent_role_model', {
+      p_agent_role: 'evidence_extraction',
+      p_provider: 'antidep-test',
+      p_model: 'ekstern-kjedeagent',
+      p_model_version_disclosure: 'not_exposed',
+      p_reason: 'Kjedeprøven: tjenesten som utfører ekstraksjonsutkastet.',
+    })
+    check(
+      'KI-tjenesten for leddet velges av redaktøren, før oppgaven hentes ut',
+      assignment.error === null,
+      assignment.error?.message ?? '',
+    )
+
     const queue = parseAgentWorkQueue((await editor.rpc('agent_work_queue', {})).data)
     check(
       'agentkøen viser oppgaven med hva den gjelder, og ingenting som hindrer den',
@@ -1373,6 +1405,7 @@ async function main(): Promise<void> {
           item.pipelineJobId === handoffJobId &&
           item.blockedReason === null &&
           !item.answered &&
+          item.registeredModel?.model === 'ekstern-kjedeagent' &&
           item.subjectLabel.length > 0,
       ),
     )
@@ -1528,15 +1561,90 @@ async function main(): Promise<void> {
       },
     })
     const staleJobId = (staleJob.data as { pipeline_job_id?: string } | null)?.pipeline_job_id ?? ''
+    const staleTask = parseAgentTask(
+      (await editor.rpc('agent_task_payload', { p_pipeline_job_id: staleJobId })).data,
+    )
+
+    // Svaret bindes til nettopp denne oppgaven, og bare avtrykket byttes ut.
+    // Ellers ville avvisningen kommet på oppgavenøkkelen framfor på avtrykket,
+    // og prøven ville sett grønn ut uten å ha prøvd regelen.
+    const answerForStaleJob = (
+      identity: Record<string, unknown>,
+      requestDigest: string,
+    ): Record<string, unknown> => ({
+      answer_version: staleTask.answerVersion,
+      task_version: staleTask.taskVersion,
+      role: staleTask.role,
+      job_key: staleTask.jobKey,
+      request_digest: requestDigest,
+      output_schema_version: staleTask.outputSchemaVersion,
+      identity,
+      result: handoffResult,
+    })
+    const chainIdentity = {
+      provider: 'antidep-test',
+      model: 'ekstern-kjedeagent',
+      model_version_disclosure: 'not_exposed',
+    }
+
     const stale = await editor.rpc('import_agent_answer', {
       p_pipeline_job_id: staleJobId,
-      p_answer: { ...handoffAnswer, request_digest: `sha256:${'a'.repeat(64)}` },
+      p_answer: answerForStaleJob(chainIdentity, `sha256:${'a'.repeat(64)}`),
     })
     check('et svar avgitt på et annet grunnlag avvises', stale.error !== null)
 
     // Separasjonen: den samme eksterne modellen kan ikke gjøre arbeidet i to
-    // agentledd (ANTIDEP_CONSTITUTION.md regel 3).
-    const synthesisJob = await editor.rpc('enqueue_agent_task', {
+    // agentledd, og avvisningen kommer der avgjørelsen tas — før noen har brukt
+    // en økt i en KI-tjeneste (ANTIDEP_CONSTITUTION.md regel 3).
+    const sameModel = await editor.rpc('assign_agent_role_model', {
+      p_agent_role: 'claim_synthesis',
+      p_provider: 'antidep-test',
+      p_model: 'ekstern-kjedeagent',
+      p_model_version_disclosure: 'not_exposed',
+    })
+    check(
+      'den samme eksterne modellen kan ikke tildeles to agentledd',
+      sameModel.error !== null,
+      'separasjonen slo ikke til',
+    )
+
+    const otherModel = await editor.rpc('assign_agent_role_model', {
+      p_agent_role: 'claim_synthesis',
+      p_provider: 'antidep-test',
+      p_model: 'ekstern-kjedeagent-to',
+      p_model_version_disclosure: 'not_exposed',
+      p_reason: 'Kjedeprøven: en annen tjeneste for synteseleddet.',
+    })
+    check(
+      'et annet ledd kan tildeles en annen tjeneste',
+      otherModel.error === null,
+      otherModel.error?.message ?? '',
+    )
+
+    // Og identiteten kan ikke lånes: et svar som utgir seg for å være det andre
+    // leddets modell, avvises. Uten tildelingen på forhånd var dette hullet —
+    // svaret selv etablerte premisset som autoriserte det.
+    const borrowed = await editor.rpc('import_agent_answer', {
+      p_pipeline_job_id: staleJobId,
+      p_answer: answerForStaleJob(
+        {
+          provider: 'antidep-test',
+          model: 'ekstern-kjedeagent-to',
+          model_version_disclosure: 'not_exposed',
+        },
+        staleTask.requestDigest,
+      ),
+    })
+    check(
+      'et svar som utgir seg for å være et annet ledds modell, avvises',
+      borrowed.error !== null,
+    )
+
+    // Forhåndskontrollen i køen er importens egen: funnet handoffen nettopp
+    // registrerte, er ikke kontrollert av noen ennå, og en syntese på det kunne
+    // aldri blitt registrert. Da skal oppgaven heller ikke kunne legges inn
+    // (ANTIDEP_CONSTITUTION.md regel 4).
+    const unverifiedSynthesis = await editor.rpc('enqueue_agent_task', {
       p_agent_role: 'claim_synthesis',
       p_input_manifest: {
         topic_concept_id: outcomeId,
@@ -1544,32 +1652,44 @@ async function main(): Promise<void> {
         evidence_item_ids: [String(importOutcome.outcome['evidence_item_id'])],
       },
     })
-    const synthesisJobId =
-      (synthesisJob.data as { pipeline_job_id?: string } | null)?.pipeline_job_id ?? ''
-    const synthesisTask = parseAgentTask(
-      (await editor.rpc('agent_task_payload', { p_pipeline_job_id: synthesisJobId })).data,
+    check(
+      'en synteseoppgave på et ukontrollert evidensfunn kan ikke legges inn',
+      unverifiedSynthesis.error !== null,
+      'køen godtok en oppgave importen måtte avvist',
     )
-    const sameModel = await editor.rpc('import_agent_answer', {
-      p_pipeline_job_id: synthesisJobId,
-      p_answer: {
-        answer_version: synthesisTask.answerVersion,
-        task_version: synthesisTask.taskVersion,
-        role: synthesisTask.role,
-        job_key: synthesisTask.jobKey,
-        request_digest: synthesisTask.requestDigest,
-        output_schema_version: synthesisTask.outputSchemaVersion,
-        identity: {
-          provider: 'antidep-test',
-          model: 'ekstern-kjedeagent',
-          model_version_disclosure: 'not_exposed',
-        },
-        result: { claim: { statement: 'x' }, evidence_links: [] },
-      },
+
+    // Et bytte av tjeneste ugyldiggjør de utestående oppgavene: tildelingen
+    // inngår i avtrykket, så et svar avgitt under den forrige tildelingen kan
+    // ikke komme tilbake og registrere den gamle modellen på nytt.
+    const digestBefore = staleTask.requestDigest
+    const switched = await editor.rpc('assign_agent_role_model', {
+      p_agent_role: 'evidence_extraction',
+      p_provider: 'antidep-test',
+      p_model: 'ekstern-kjedeagent-tre',
+      p_model_version_disclosure: 'not_exposed',
+      p_reason: 'Kjedeprøven: leddet bytter tjeneste.',
+      p_replaces_reason: 'Kjedeprøven: den forrige tjenesten er ikke i bruk lenger.',
     })
     check(
-      'den samme eksterne modellen kan ikke gjøre arbeidet i to agentledd',
-      sameModel.error !== null,
-      'separasjonen slo ikke til',
+      'et ledd kan bytte tjeneste, med hvem og hvorfor',
+      switched.error === null &&
+        (switched.data as { replaced?: boolean } | null)?.replaced === true,
+      switched.error?.message ?? 'byttet ble ikke registrert som et bytte',
+    )
+    const staleTaskAfter = parseAgentTask(
+      (await editor.rpc('agent_task_payload', { p_pipeline_job_id: staleJobId })).data,
+    )
+    check(
+      'et tjenestebytte gir den utestående oppgaven et nytt avtrykk',
+      staleTaskAfter.requestDigest !== digestBefore,
+    )
+    const afterSwitch = await editor.rpc('import_agent_answer', {
+      p_pipeline_job_id: staleJobId,
+      p_answer: answerForStaleJob(chainIdentity, digestBefore),
+    })
+    check(
+      'et svar avgitt under den forrige tildelingen kan ikke importeres etter byttet',
+      afterSwitch.error !== null,
     )
   } finally {
     rmSync(work, { recursive: true, force: true })

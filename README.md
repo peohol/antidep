@@ -30,10 +30,10 @@ Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset
 
 ## Agentarbeid
 
-Flaten `/agentarbeid` viser hvilke agentoppgaver som venter, hvilket ledd de gjelder, og hvilken KI-modell leddet er registrert med. Oppgaven lastes ned som én fil som inneholder alt agenten trenger — rollen, reglene, grensene, den forventede svarstrukturen og hele den kontrollerte kildeteksten — og svaret lastes opp igjen som én JSON-fil.
+Flaten `/agentarbeid` viser hvilke agentoppgaver som venter, hvilket ledd de gjelder, og hvilken KI-tjeneste leddet er tildelt. Tjenesten velges der, én gang per ledd, før oppgaven kan hentes ut. Oppgaven lastes ned som én fil som inneholder alt agenten trenger — rollen, reglene, grensene, den forventede svarstrukturen og hele den kontrollerte kildeteksten — og svaret lastes opp igjen som én JSON-fil.
 
 Oppgavefilen kan inneholde hele forskningsartikkelen. Den går rett fra flaten og inn i KI-tjenesten, og skal aldri commites, legges i en issue eller havne i en logg.
 
-Generator, kildestøttekontroll og evidensvurdering skal fortsatt være reelt separate. Den modellen som svarer først i et agentledd, blir registrert som leddets modell, og ingen andre ledd kan bruke den samme. Finnes ingen uavhengig modell, stopper kjeden framfor å registrere en kontroll som ikke er uavhengig.
+Generator, kildestøttekontroll og evidensvurdering skal fortsatt være reelt separate. Hvilken KI-tjeneste et agentledd utføres av, velges på forhånd fra agentarbeidsflaten av den som har tilgangen, og ingen andre ledd kan bruke den samme. Valget inngår i oppgavens avtrykk, så et svar kan bekrefte identiteten sin men ikke bestemme den. Finnes ingen uavhengig modell, stopper kjeden framfor å registrere en kontroll som ikke er uavhengig.
 
 Se [roadmap](docs/ROADMAP.md), [evidenskjeden](docs/EVIDENCE_PIPELINE.md) og [styringsreglene](docs/ANTIDEP_CONSTITUTION.md).

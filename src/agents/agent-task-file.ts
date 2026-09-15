@@ -275,16 +275,17 @@ function material(task: AgentTask): string {
 
 function modelSection(task: AgentTask): string {
   if (task.registeredModel === null) {
-    return `Ingen KI-modell er registrert for dette agentleddet ennå. Den modellen som
-svarer først, blir registrert som leddets modell, og senere oppgaver i det samme
-leddet må utføres av nøyaktig den. Skriv derfor sant hvem du er.`
+    return `Denne oppgaven oppgir ingen tildelt KI-tjeneste, og det skal ikke skje:
+Antidep henter ikke ut en oppgave før noen har valgt hvilken tjeneste leddet
+utføres av. Skriv likevel sant hvem du er, og regn med at importen avvises.`
   }
-  return `Dette agentleddet er registrert med ${describeModelIdentity(task.registeredModel)}.
-Er du en annen modell, skriv likevel sant hvem du faktisk er: Antidep avviser da
-importen framfor å registrere en usann proveniens. Generator, kildestøttekontroll
-og evidensvurdering skal være reelt separate ledd, og et svar fra feil modell er
-ikke en formalitet — det ville gjort en kontroll til den samme vurderingen gjort
-to ganger.`
+  return `Dette agentleddet er tildelt ${describeModelIdentity(task.registeredModel)}.
+Tildelingen er gjort på forhånd av den som eier innholdet, og den inngår i
+avtrykket over. Er du en annen modell, skriv likevel sant hvem du faktisk er:
+Antidep avviser da importen framfor å registrere en usann proveniens. Generator,
+kildestøttekontroll og evidensvurdering skal være reelt separate ledd, og et svar
+fra feil modell er ikke en formalitet — det ville gjort en kontroll til den samme
+vurderingen gjort to ganger.`
 }
 
 /**

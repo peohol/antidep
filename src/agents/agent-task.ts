@@ -169,11 +169,12 @@ export interface AgentTask {
   readonly binding: Record<string, unknown>
   readonly subject: AgentTaskSubject
   /**
-   * Modellen rollen allerede er registrert med, eller `null`.
+   * Modellen agentleddet er tildelt.
    *
-   * `null` betyr at ingen ekstern agent har svart i rollen ennå, og at det
-   * første svaret registrerer seg selv (migrasjon 010c). Flaten viser verdien,
-   * slik at den som skal utføre oppgaven, vet hvilken modell den skal velge.
+   * Tildelingen er en attestert avgjørelse tatt av en redaktør med mandat før
+   * oppgaven hentes ut, og den inngår i bindingen avtrykket er regnet av
+   * (migrasjon 010c). Oppgaven kan derfor ikke hentes ut uten den; `null` her
+   * betyr en oppgave lest utenfor den veien, og filen sier det framfor å gjette.
    */
   readonly registeredModel: ModelIdentity | null
   /** Innholdet agenten skal lese. Formen avhenger av rollen. */
@@ -401,6 +402,32 @@ export interface ImportOutcome {
   readonly model: ModelIdentity | null
   /** Det registrerte objektet, slik databasen navngir det. */
   readonly outcome: Record<string, unknown>
+}
+
+/**
+ * Hva en tildeling gjorde.
+ *
+ * `alreadyAssigned` betyr at leddet allerede var tildelt nøyaktig den samme
+ * tjenesten, og at ingenting ble endret. `replaced` betyr at en gjeldende
+ * tildeling ble avsluttet og den nye registrert i den samme transaksjonen.
+ */
+export interface RoleModelAssignment {
+  readonly role: string
+  readonly assigned: boolean
+  readonly alreadyAssigned: boolean
+  readonly replaced: boolean
+  readonly model: ModelIdentity
+}
+
+export function parseRoleModelAssignment(value: unknown): RoleModelAssignment {
+  const fields = fieldsOf(value, 'Modelltildelingen', 'svaret')
+  return {
+    role: asText(fields, 'agent_role'),
+    assigned: asFlag(fields, 'assigned'),
+    alreadyAssigned: asFlag(fields, 'already_assigned'),
+    replaced: asFlag(fields, 'replaced'),
+    model: parseModelIdentity(fields, raw(fields, 'model'), 'model'),
+  }
 }
 
 export function parseImportOutcome(value: unknown): ImportOutcome {

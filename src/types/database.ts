@@ -438,9 +438,9 @@ export type Database = {
         Args: Record<string, never>
         Returns: unknown
       }
-      // Agentarbeidet. Alle tre krever editor-mandat: oppgaven inneholder hele
-      // den kontrollerte kildeteksten, og den skal bare forlate databasen til
-      // den som faktisk skal utføre agentarbeidet (migrasjon 010c).
+      // Agentarbeidet. Alle krever editor-mandat: oppgaven inneholder hele den
+      // kontrollerte kildeteksten, og den skal bare forlate databasen til den
+      // som faktisk skal utføre agentarbeidet (migrasjon 010c).
       agent_work_queue: {
         Args: Record<string, never>
         Returns: unknown
@@ -457,6 +457,24 @@ export type Database = {
       agent_task_payload: {
         Args: {
           p_pipeline_job_id: Uuid
+        }
+        Returns: unknown
+      }
+      // Hvilken KI-tjeneste et agentledd utføres av, er en attestert avgjørelse
+      // en redaktør tar FØR oppgaven hentes ut. Den inngår i oppgavens binding,
+      // og et svar kontrolleres mot den: en modellidentitet som fikk registrere
+      // seg selv ved første svar, ville etablert premisset som autoriserte den.
+      // `p_replaces_reason` er begrunnelsen for et bytte — uten den avvises en
+      // ny tildeling på et ledd som allerede har en.
+      assign_agent_role_model: {
+        Args: {
+          p_agent_role: string
+          p_provider: string
+          p_model: string
+          p_model_version?: string | null
+          p_model_version_disclosure?: string
+          p_reason?: string | null
+          p_replaces_reason?: string | null
         }
         Returns: unknown
       }

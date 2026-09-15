@@ -499,6 +499,7 @@ describe('den publiserte klinikerflaten', () => {
   it('viser agentarbeidet på sin egen adresse, og lenker dit fra forsiden', async () => {
     const agentWork: AgentWorkGateway = {
       listQueue: () => Promise.resolve(parseAgentWorkQueue([])),
+      assignRoleModel: () => Promise.reject(new Error('ingen oppgave')),
       readTask: () => Promise.reject(new Error('ingen oppgave')),
       importAnswer: () => Promise.reject(new Error('ingen oppgave')),
     }

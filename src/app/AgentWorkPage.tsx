@@ -14,6 +14,17 @@
 // skjedde.
 //
 // ----------------------------------------------------------------------------
+// Hvilken tjeneste som gjør hvert ledd, velges her — og først
+//
+// Valget er en attestert avgjørelse, tatt av den som faktisk har tilgangen, før
+// oppgaven hentes ut. Det er ikke en innstilling for ryddighetens skyld: lot vi
+// svaret oppgi sin egen identitet ved første import, ville separasjonen mellom
+// generator og kontroll hvilt på en erklæring modellen avga om seg selv, og et
+// feil navn ville gått klar av regelen om at to ledd ikke deler modell
+// (ANTIDEP_CONSTITUTION.md regel 3). Valget inngår derfor i oppgavens avtrykk,
+// og byttes tjenesten, gjelder ikke de utestående oppgavene lenger.
+//
+// ----------------------------------------------------------------------------
 // «Venter på deg» og «kan ikke kjøres ennå» er to forskjellige tilstander
 //
 // En oppgave hvis grunnlag ikke er på plass, står med sin egen setning om hva
@@ -46,7 +57,7 @@ import { answerBindingProblem, parseAgentAnswer, parseAnswerJson } from '../agen
 import { agentTaskFileName, renderAgentTaskFile } from '../agents/agent-task-file'
 import { handoffResultProblem } from '../agents/handoff-result'
 import { describeModelIdentity } from '../agents/model-identity'
-import type { AgentWorkGateway } from './agent-work-gateway'
+import type { AgentWorkGateway, RoleModelChoice } from './agent-work-gateway'
 
 /** Hvordan en fil havner hos brukeren. Byttes ut i prøver. */
 export type SaveFile = (name: string, text: string) => void
@@ -160,6 +171,41 @@ export function AgentWorkPage({ gateway, saveFile }: AgentWorkPageProps): React.
     setStatuses((current) => ({ ...current, [id]: status }))
   }, [])
 
+  const assign = useCallback(
+    async (item: AgentWorkItem, choice: Omit<RoleModelChoice, 'role' | 'reason'>) => {
+      setBusy(item.pipelineJobId)
+      setStatus(item.pipelineJobId, { tone: 'venter', message: 'Registrerer valget …' })
+      try {
+        const assignment = await gateway.assignRoleModel({
+          ...choice,
+          role: item.role,
+          reason: null,
+        })
+        // Oppgavene som lå i økta, ble bygget for den forrige tjenesten. De har
+        // et annet avtrykk nå, og en oppgave som fortsatt lå der, ville gitt et
+        // svar databasen måtte avvise. Hele hurtiglageret tømmes: tildelingen
+        // gjelder agentleddet, og flere rader kan gjelde det samme leddet.
+        tasks.current.clear()
+        setStatus(item.pipelineJobId, {
+          tone: 'ok',
+          message: assignment.replaced
+            ? `Leddet utføres nå av ${describeModelIdentity(assignment.model)}. Oppgaver som ` +
+              'allerede var lastet ned, gjelder ikke lenger — last dem ned på nytt.'
+            : `Leddet skal utføres av ${describeModelIdentity(assignment.model)}.`,
+        })
+        load()
+      } catch (cause) {
+        setStatus(item.pipelineJobId, {
+          tone: 'feil',
+          message: cause instanceof Error ? cause.message : String(cause),
+        })
+      } finally {
+        setBusy(null)
+      }
+    },
+    [gateway, load, setStatus],
+  )
+
   const download = useCallback(
     async (item: AgentWorkItem) => {
       setBusy(item.pipelineJobId)
@@ -260,6 +306,7 @@ export function AgentWorkPage({ gateway, saveFile }: AgentWorkPageProps): React.
               key={item.pipelineJobId}
               busy={busy === item.pipelineJobId}
               item={item}
+              onAssign={(choice) => void assign(item, choice)}
               onDownload={() => void download(item)}
               onUpload={(file) => void upload(item, file)}
               status={statuses[item.pipelineJobId] ?? null}
@@ -283,6 +330,7 @@ interface AgentWorkRowProps {
   readonly item: AgentWorkItem
   readonly status: ItemStatus | null
   readonly busy: boolean
+  readonly onAssign: (choice: Omit<RoleModelChoice, 'role' | 'reason'>) => void
   readonly onDownload: () => void
   readonly onUpload: (file: File) => void
 }
@@ -291,6 +339,7 @@ function AgentWorkRow({
   item,
   status,
   busy,
+  onAssign,
   onDownload,
   onUpload,
 }: AgentWorkRowProps): React.JSX.Element {
@@ -314,39 +363,42 @@ function AgentWorkRow({
         <strong>{contract.label}.</strong> {contract.summary}
       </p>
 
-      {item.registeredModel === null ? (
-        <p>
-          Ingen KI-modell er registrert for dette leddet ennå. Den som svarer først, blir leddets
-          modell — og ingen andre ledd kan da bruke den samme.
-        </p>
-      ) : (
-        <p>Skal utføres av {describeModelIdentity(item.registeredModel)}.</p>
-      )}
-
       {item.answered ? (
-        <p>Besvart og registrert. Antidep har tatt arbeidet videre.</p>
-      ) : item.blockedReason !== null ? (
-        <p className="notice">Kan ikke utføres ennå: {item.blockedReason}</p>
+        <p>
+          Besvart og registrert. Det neste leddet er en uavhengig kontroll, og den kjøres ennå ikke
+          fra denne siden.
+        </p>
+      ) : item.registeredModel === null ? (
+        <ServicePicker busy={busy} item={item} onAssign={onAssign} />
       ) : (
         <>
-          {item.failureReason !== null ? (
-            <p className="notice">Forrige forsøk stoppet: {item.failureReason}</p>
-          ) : null}
-          <p>
-            <button disabled={busy} onClick={onDownload} type="button">
-              Last ned oppgaven
-            </button>
-          </p>
-          <p>
-            <label htmlFor={uploadId}>Last opp svaret fra KI-tjenesten</label>{' '}
-            <input
-              accept="application/json,.json,.txt"
-              disabled={busy}
-              id={uploadId}
-              onChange={chooseFile}
-              type="file"
-            />
-          </p>
+          <p>Skal utføres av {describeModelIdentity(item.registeredModel)}.</p>
+          <ServicePicker busy={busy} item={item} onAssign={onAssign} />
+
+          {item.blockedReason !== null ? (
+            <p className="notice">Kan ikke utføres ennå: {item.blockedReason}</p>
+          ) : (
+            <>
+              {item.failureReason !== null ? (
+                <p className="notice">Forrige forsøk stoppet: {item.failureReason}</p>
+              ) : null}
+              <p>
+                <button disabled={busy} onClick={onDownload} type="button">
+                  Last ned oppgaven
+                </button>
+              </p>
+              <p>
+                <label htmlFor={uploadId}>Last opp svaret fra KI-tjenesten</label>{' '}
+                <input
+                  accept="application/json,.json,.txt"
+                  disabled={busy}
+                  id={uploadId}
+                  onChange={chooseFile}
+                  type="file"
+                />
+              </p>
+            </>
+          )}
         </>
       )}
 
@@ -356,5 +408,120 @@ function AgentWorkRow({
         </p>
       ) : null}
     </li>
+  )
+}
+
+interface ServicePickerProps {
+  readonly item: AgentWorkItem
+  readonly busy: boolean
+  readonly onAssign: (choice: Omit<RoleModelChoice, 'role' | 'reason'>) => void
+}
+
+/**
+ * Valget av KI-tjeneste for ett agentledd.
+ *
+ * Ingen liste over leverandører er hardkodet. Antidep kan ikke vite hvilke
+ * tjenester eieren faktisk har tilgang til, og en liste ville enten utelatt den
+ * ene som fantes eller foreslått en som ikke gjorde det. Feltene er derfor fri
+ * tekst, og navnet skal være det tjenesten selv viser.
+ *
+ * Versjonsfeltet er valgfritt med vilje: de fleste chattjenester oppgir ingen
+ * eksakt build, og «vet ikke» registreres da som nettopp det framfor som en
+ * oppdiktet versjon (ANTIDEP_CONSTITUTION.md regel 4).
+ */
+function ServicePicker({ item, busy, onAssign }: ServicePickerProps): React.JSX.Element {
+  const [provider, setProvider] = useState('')
+  const [model, setModel] = useState('')
+  const [version, setVersion] = useState('')
+  const [why, setWhy] = useState('')
+
+  const switching = item.registeredModel !== null
+  const field = (name: string): string => `${name}-${item.pipelineJobId}`
+  const ready = provider.trim() !== '' && model.trim() !== '' && (!switching || why.trim() !== '')
+
+  const submit = (event: React.FormEvent): void => {
+    event.preventDefault()
+    if (!ready) {
+      return
+    }
+    onAssign({
+      provider: provider.trim(),
+      model: model.trim(),
+      modelVersion: version.trim() === '' ? null : version.trim(),
+      replacesReason: switching ? why.trim() : null,
+    })
+  }
+
+  const fields = (
+    <form onSubmit={submit}>
+      <p>
+        <label htmlFor={field('tjeneste')}>Tjeneste</label>{' '}
+        <input
+          disabled={busy}
+          id={field('tjeneste')}
+          onChange={(event) => setProvider(event.target.value)}
+          placeholder="for eksempel openai"
+          value={provider}
+        />
+      </p>
+      <p>
+        <label htmlFor={field('modell')}>Modellnavn, slik tjenesten viser det</label>{' '}
+        <input
+          disabled={busy}
+          id={field('modell')}
+          onChange={(event) => setModel(event.target.value)}
+          value={model}
+        />
+      </p>
+      <p>
+        <label htmlFor={field('versjon')}>Eksakt versjon, dersom tjenesten oppgir en</label>{' '}
+        <input
+          disabled={busy}
+          id={field('versjon')}
+          onChange={(event) => setVersion(event.target.value)}
+          value={version}
+        />
+      </p>
+      {switching ? (
+        <p>
+          <label htmlFor={field('hvorfor')}>Hvorfor byttes tjenesten</label>{' '}
+          <input
+            disabled={busy}
+            id={field('hvorfor')}
+            onChange={(event) => setWhy(event.target.value)}
+            value={why}
+          />
+        </p>
+      ) : null}
+      <p>
+        <button disabled={busy || !ready} type="submit">
+          {switching ? 'Bytt tjeneste' : 'Velg tjeneste'}
+        </button>
+      </p>
+    </form>
+  )
+
+  if (switching) {
+    return (
+      <details>
+        <summary>Bytt KI-tjeneste for dette agentleddet</summary>
+        <p>
+          Byttet blir stående med hvem og hvorfor, og oppgaver som allerede er lastet ned, gjelder
+          ikke lenger. Den samme tjenesten kan ikke gjøre to av leddene i kjeden.
+        </p>
+        {fields}
+      </details>
+    )
+  }
+
+  return (
+    <>
+      <p>
+        Velg hvilken KI-tjeneste dette agentleddet skal utføres av. Valget må gjøres før oppgaven
+        kan hentes ut, og den samme tjenesten kan ikke gjøre to av leddene i kjeden: da ville en
+        kontroll vært den samme vurderingen gjort to ganger.
+      </p>
+      {fields}
+    </>
   )
 }

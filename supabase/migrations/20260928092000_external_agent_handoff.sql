@@ -52,19 +52,25 @@
 -- og to kontroller som er uenige er verre enn én.
 --
 -- ----------------------------------------------------------------------------
--- 3. Modellen registrerer seg selv, én gang, og kan aldri gjøre to jobber
+-- 3. Modellen tildeles på forhånd, og kan aldri gjøre to jobber
 --
--- Hvilken ekstern KI-agent en rolle handler som, kan ikke settes på forhånd av
--- noen som ikke vet hvilke modeller eieren faktisk har. Første svar i en rolle
--- registrerer derfor identiteten sin, med hvem som importerte og hvorfor, og
--- alle senere svar i rollen må være fra nøyaktig den.
+-- Hvilken ekstern KI-agent en rolle handler som, avgjøres av den redaktøren som
+-- faktisk har tilgangen — før oppgaven hentes ut, med hvem og hvorfor. Svaret
+-- bekrefter identiteten sin, men etablerer den ikke: en erklæring som fikk
+-- registrere seg selv, ville etablert premisset som autoriserte den, og en
+-- oppgitt identitet kunnet gå klar av regelen om at to ledd ikke deler modell.
 --
--- Separasjonen er uendret og strukturell: exclusion-regelen på registeret gjør
--- at ingen to roller kan dele modellidentitet. Forsøker eieren å la den samme
--- ChatGPT-modellen både lage innholdet og vurdere det, blir det andre svaret
--- avvist med en setning som sier hva som må gjøres — bytte modell — framfor at
--- kjeden later som om kontrollen var uavhengig (ANTIDEP_CONSTITUTION.md regel
--- 3, 4).
+-- Tildelingen står i oppgavens binding og dermed i request_digest. Byttes
+-- modellen, får hver utestående oppgave et nytt avtrykk, og et svar avgitt under
+-- den gamle tildelingen kan ikke komme tilbake og registrere den gamle modellen
+-- på nytt.
+--
+-- Separasjonen er strukturell: exclusion-regelen på registeret gjør at ingen to
+-- roller kan dele modellidentitet. Forsøker eieren å la den samme
+-- ChatGPT-modellen både lage innholdet og vurdere det, blir tildelingen avvist
+-- med en setning som sier hva som må gjøres — velge en annen tjeneste — framfor
+-- at kjeden later som om kontrollen var uavhengig, og avvisningen kommer FØR
+-- arbeidet gjøres framfor etter (ANTIDEP_CONSTITUTION.md regel 3, 4).
 --
 -- Styrende dokumenter:
 --   docs/ANTIDEP_CONSTITUTION.md regel 1-7
@@ -131,91 +137,319 @@ comment on function workflow.agent_task_contract(provenance.agent_role) is
 revoke execute on function workflow.agent_task_contract(provenance.agent_role) from public;
 
 -- ----------------------------------------------------------------------------
--- 2. Den semantiske modellidentiteten registrerer seg selv, én gang
+-- 2. Den semantiske modellidentiteten er en attestert avgjørelse
+--
+-- Hvilken KI-tjeneste som utfører et agentledd, avgjøres av redaktøren som
+-- faktisk har tilgangen — før oppgaven hentes ut, og utenfor svaret. Et svar kan
+-- bekrefte identiteten sin, men det kan ikke etablere premisset som autoriserer
+-- det selv: en erklæring som fikk registrere seg selv, ville gjort separasjonen
+-- mellom leddene til noe modellen påsto om seg selv, og en oppgitt identitet
+-- ville kunnet gå klar av regelen om at to ledd ikke deler modell
+-- (ANTIDEP_CONSTITUTION.md regel 3).
+--
+-- Tildelingen inngår i oppgavens binding og dermed i request_digest. Byttes
+-- modellen, får hver utestående oppgave et nytt avtrykk, og et svar avgitt under
+-- den gamle tildelingen kan ikke komme tilbake og registrere den gamle modellen
+-- på nytt.
 -- ----------------------------------------------------------------------------
-create function provenance.ensure_semantic_model_assignment(
-  p_agent_role provenance.agent_role,
+
+-- Identiteten lest med de samme reglene overalt.
+--
+-- Tildelingen og importen leser den samme formen, og ville ellers kunnet bli
+-- uenige om hva «samme modell» betyr — nettopp den uenigheten separasjonen ikke
+-- tåler. Kanoniseringen av en versjon tjenesten ikke oppgir, er regelen som gjør
+-- to ukjente versjoner av den samme modellen til én identitet.
+create function provenance.canonical_model_identity(
   p_provider text,
   p_model text,
   p_model_version text,
-  p_disclosure provenance.model_version_disclosure,
-  p_actor_id uuid
+  p_model_version_disclosure text
+)
+  returns jsonb
+  language plpgsql
+  immutable
+  set search_path = ''
+as $$
+declare
+  v_provider text := nullif(btrim(coalesce(p_provider, '')), '');
+  v_model text := nullif(btrim(coalesce(p_model, '')), '');
+  v_version text := nullif(btrim(coalesce(p_model_version, '')), '');
+  v_disclosure text := coalesce(
+    nullif(btrim(coalesce(p_model_version_disclosure, '')), ''), 'exact');
+begin
+  if v_provider is null or v_model is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Modellidentiteten mangler leverandør eller modellnavn.',
+      hint = 'Skriv tjenesten og det modellnavnet tjenesten selv viser. Antidep finner ikke på et navn på vegne av en leverandør.';
+  end if;
+  if v_disclosure not in ('exact', 'not_exposed') then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('model_version_disclosure er %L, som ikke er exact eller not_exposed.', v_disclosure);
+  end if;
+
+  if v_disclosure = 'not_exposed' then
+    -- En oppgitt versjon under not_exposed er en selvmotsigelse, og den skal
+    -- ikke forsvinne stille: proveniensen ville da sagt «ikke eksponert» mens
+    -- svaret faktisk oppga en versjon, og ingen ville fått vite at den ble
+    -- forkastet (ANTIDEP_CONSTITUTION.md regel 4).
+    if v_version is not null and v_version <> provenance.unexposed_model_version() then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format(
+          'model_version_disclosure er not_exposed, men model_version er oppgitt som %L.', v_version),
+        hint = 'Oppgir tjenesten faktisk en eksakt versjon, sett model_version_disclosure = exact. Gjør den ikke det, la model_version stå tom.';
+    end if;
+    -- Den kanoniske verdien, og ikke den frie teksten noen måtte ha skrevet. To
+    -- ukjente versjoner av den samme modellen skal være den samme identiteten;
+    -- ellers ville separasjonsregelen sluttet å virke.
+    v_version := provenance.unexposed_model_version();
+  elsif v_version is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'model_version_disclosure er exact, men ingen model_version er oppgitt.',
+      hint = 'Oppgir tjenesten ingen versjon, skal model_version_disclosure være not_exposed. En oppdiktet versjon ville sett like troverdig ut som en sann (ANTIDEP_CONSTITUTION.md regel 4).';
+  elsif v_version = provenance.unexposed_model_version() then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('model_version er %L, som er den kanoniske verdien for en versjon tjenesten ikke oppgir.', v_version),
+      hint = 'Sett model_version_disclosure = not_exposed og la model_version stå tom.';
+  end if;
+
+  return jsonb_build_object(
+    'provider', v_provider,
+    'model', v_model,
+    'model_version', v_version,
+    'model_version_disclosure', v_disclosure
+  );
+end;
+$$;
+
+comment on function provenance.canonical_model_identity(text, text, text, text) is
+  'Modellidentiteten lest og kanonisert med de samme reglene overalt: leverandør og modellnavn må finnes, eksponeringsgraden må være exact eller not_exposed, en exact-identitet må ha en versjon, og en versjon tjenesten ikke oppgir, får den kanoniske verdien provenance.unexposed_model_version() framfor en fri tekst. Kanoniseringen er selve separasjonsregelen: to ukjente versjoner av den samme modellen skal være den samme identiteten, ellers ville regelen om at to agentledd ikke deler modell, sluttet å virke (ANTIDEP_CONSTITUTION.md regel 3, 4). Tildelingen og importen leser den samme formen gjennom denne funksjonen og kan derfor ikke bli uenige om hva samme modell betyr.';
+
+revoke execute on function provenance.canonical_model_identity(text, text, text, text) from public;
+
+-- Kontrollen ved import: svaret må komme fra den tildelte modellen.
+--
+-- Registrerer ingenting. En rolle uten tildeling er ikke et tomrom svaret kan
+-- fylle — det er en oppgave som ikke skulle vært hentet ut, og importen sier det
+-- framfor å la svaret bestemme.
+create function provenance.require_semantic_model_assignment(
+  p_agent_role provenance.agent_role,
+  p_identity jsonb
 )
   returns provenance.role_model_assignments
   language plpgsql
+  stable
   set search_path = ''
 as $$
 declare
   v_current provenance.role_model_assignments;
-  v_holder text;
 begin
   v_current := provenance.current_semantic_model(p_agent_role);
 
-  if v_current.id is not null then
-    if v_current.provider is distinct from p_provider
-       or v_current.model is distinct from p_model
-       or v_current.model_version is distinct from p_model_version then
-      raise exception using
-        errcode = 'invalid_parameter_value',
-        message = format(
-          'Rollen %L er registrert med den eksterne modellen %s/%s (%s), men svaret kom fra %s/%s (%s).',
-          p_agent_role, v_current.provider, v_current.model, v_current.model_version,
-          p_provider, p_model, p_model_version
-        ),
-        hint = 'Hvilken KI-agent en rolle handler som, er en registrert avgjørelse og ikke noe svaret bestemmer. Bruk den registrerte modellen, eller avslutt tildelingen med api.release_agent_role_model(...) og registrer en ny — den avslutningen er en synlig hendelse med hvem og hvorfor.';
-    end if;
-    return v_current;
+  if v_current.id is null then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format(
+        'Ingen KI-tjeneste er tildelt agentleddet %L, og et svar kan ikke registreres.',
+        p_agent_role
+      ),
+      hint = 'Hvilken modell et ledd handler som, er en avgjørelse den som har tilgangen tar på forhånd — ikke noe svaret bestemmer om seg selv. Velg tjenesten for leddet med api.assign_agent_role_model(...) og hent oppgaven på nytt (ANTIDEP_CONSTITUTION.md regel 3).';
   end if;
 
-  -- Ingen tildeling ennå: den første modellen som svarer i rollen, registrerer
-  -- seg selv. Erklæringen kommer fra svaret og ikke fra en verdi noen har
-  -- gjettet på forhånd — det er den eneste måten proveniensen kan være sann.
-  begin
-    insert into provenance.role_model_assignments (
-      agent_role, capacity, provider, model, model_version, model_version_disclosure,
-      registered_by_actor_id, reason
-    )
-    values (
-      p_agent_role, 'semantic', p_provider, p_model, p_model_version, p_disclosure,
-      p_actor_id,
-      format(
-        'Registrert av det første importerte eksterne agentsvaret i rollen. Modellidentiteten er agentens egen erklæring, ikke en verdi Antidep har gjettet.'
-      )
-    )
-    returning * into v_current;
-  exception
-    when exclusion_violation then
-      select string_agg(distinct a.agent_role::text, ', ' order by a.agent_role::text)
-        into v_holder
-      from provenance.role_model_assignments a
-      where a.provider = p_provider and a.model = p_model
-        and a.model_version = p_model_version
-        and a.valid_from <= statement_timestamp()
-        and (a.valid_to is null or a.valid_to > statement_timestamp());
-
-      raise exception using
-        errcode = 'restrict_violation',
-        message = format(
-          'Modellen %s/%s (%s) er allerede registrert for rollen %s, og kan ikke også gjøre arbeidet i rollen %s.',
-          p_provider, p_model, p_model_version, coalesce(v_holder, 'en annen rolle'), p_agent_role
-        ),
-        hint = 'Generator, kildestøttekontroll og evidensvurdering skal være reelt separate (ANTIDEP_CONSTITUTION.md regel 3). Utfør denne oppgaven med en annen KI-modell du allerede har tilgang til. Finnes ingen, skal kjeden stoppe her framfor å registrere en vurdering som ikke er uavhengig.';
-  end;
+  if v_current.provider is distinct from (p_identity ->> 'provider')
+     or v_current.model is distinct from (p_identity ->> 'model')
+     or v_current.model_version is distinct from (p_identity ->> 'model_version') then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format(
+        'Agentleddet %L er tildelt %s/%s (%s), men svaret kom fra %s/%s (%s).',
+        p_agent_role, v_current.provider, v_current.model, v_current.model_version,
+        p_identity ->> 'provider', p_identity ->> 'model', p_identity ->> 'model_version'
+      ),
+      hint = 'Oppgaven ble bygget for den tildelte modellen, og avtrykket dekker tildelingen. Utfør oppgaven med den modellen leddet er tildelt, eller bytt tildeling med api.release_agent_role_model(...) og api.assign_agent_role_model(...) og hent oppgaven på nytt — byttet er en synlig hendelse med hvem og hvorfor.';
+  end if;
 
   return v_current;
 end;
 $$;
 
-comment on function provenance.ensure_semantic_model_assignment(provenance.agent_role, text, text, text, provenance.model_version_disclosure, uuid) is
-  'Krever at et eksternt agentsvar kommer fra den modellen rollen er registrert med, og registrerer tildelingen første gang rollen tar imot et svar (ANTIDEP_CONSTITUTION.md regel 3). Første svar registrerer seg selv fordi ingen kan vite på forhånd hvilke KI-modeller eieren faktisk har — en verdi gjettet i en migrasjon ville enten blokkert arbeidet eller blitt en usann proveniens. Separasjonen er uendret og strukturell: exclusion-regelen på registeret gjør at ingen to roller kan dele modellidentitet, og et forsøk avvises her med en setning som sier hva som må gjøres.';
+comment on function provenance.require_semantic_model_assignment(provenance.agent_role, jsonb) is
+  'Krever at et eksternt agentsvar kommer fra den modellen agentleddet er tildelt, og registrerer ingenting (ANTIDEP_CONSTITUTION.md regel 3). Skiller seg fra en tildeling som registrerte seg selv ved første svar: der ville svaret etablert sitt eget premiss, og en oppgitt identitet kunnet gå klar av regelen om at to ledd ikke deler modell. En rolle uten tildeling avvises her, og meldingen sier hva som må gjøres.';
 
-revoke execute on function provenance.ensure_semantic_model_assignment(provenance.agent_role, text, text, text, provenance.model_version_disclosure, uuid) from public;
+revoke execute on function provenance.require_semantic_model_assignment(provenance.agent_role, jsonb) from public;
+
+-- Tildelingen, tatt av den som har tilgangen.
+create function api.assign_agent_role_model(
+  p_agent_role text,
+  p_provider text,
+  p_model text,
+  p_model_version text default null,
+  p_model_version_disclosure text default 'not_exposed',
+  p_reason text default null,
+  p_replaces_reason text default null
+)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+  v_role provenance.agent_role;
+  v_identity jsonb;
+  v_current provenance.role_model_assignments;
+  v_holder text;
+  v_valid_from timestamptz;
+  v_replaced boolean := false;
+  v_assignment provenance.role_model_assignments;
+begin
+  v_actor_id := knowledge.assert_editor_authorized();
+
+  begin
+    v_role := p_agent_role::provenance.agent_role;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format('%L er ikke en kjent agentrolle.', p_agent_role);
+  end;
+
+  if workflow.agent_task_contract(v_role) is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format(
+        'Rollen %L utføres av Antideps egen deterministiske kode, og har ingen ekstern KI-modell å tildele.',
+        p_agent_role),
+      hint = 'De uavhengige kontrolleddene er Antideps egen kode. En ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en modellvurdering (ANTIDEP_CONSTITUTION.md regel 3).';
+  end if;
+
+  v_identity := provenance.canonical_model_identity(
+    p_provider, p_model, p_model_version, p_model_version_disclosure);
+
+  v_current := provenance.current_semantic_model(v_role);
+  if v_current.id is not null then
+    if v_current.provider = (v_identity ->> 'provider')
+       and v_current.model = (v_identity ->> 'model')
+       and v_current.model_version = (v_identity ->> 'model_version') then
+      return jsonb_build_object(
+        'agent_role', p_agent_role,
+        'assigned', false,
+        'already_assigned', true,
+        'replaced', false,
+        'model', v_identity
+      );
+    end if;
+    -- Byttet er lovlig, men det er en endring av kjedens mest sikkerhetskritiske
+    -- innstilling, og det krever derfor en begrunnelse. Uten den ville et bytte
+    -- vært en endring uten ansvar — og avslutningen og den nye tildelingen skjer
+    -- i den samme transaksjonen, slik at leddet aldri står uten en modell fordi
+    -- den nye viste seg å tilhøre et annet ledd.
+    if nullif(btrim(coalesce(p_replaces_reason, '')), '') is null then
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format(
+          'Agentleddet %L er allerede tildelt %s/%s (%s).',
+          p_agent_role, v_current.provider, v_current.model, v_current.model_version),
+        hint = 'En tildeling skrives aldri om. Skal leddet bytte tjeneste, oppgi hvorfor: da avsluttes den gjeldende tildelingen med hvem og hvorfor, og den nye registreres i samme transaksjon. Utestående oppgaver får et nytt avtrykk, slik at et svar avgitt under den gamle tildelingen ikke kan registreres på den nye.';
+    end if;
+
+    update provenance.role_model_assignments
+    set valid_to = statement_timestamp(),
+        closed_by_actor_id = v_actor_id,
+        close_reason = btrim(p_replaces_reason)
+    where id = v_current.id;
+    v_replaced := true;
+  end if;
+
+  -- Perioden begynner der den forrige sluttet, og aldri før.
+  --
+  -- Standardverdien for valid_from er now(), altså transaksjonens starttid. En
+  -- avslutning og en ny tildeling i den samme transaksjonen ville derfor fått
+  -- overlappende perioder, og exclusion-regelen ville avvist en tildeling som er
+  -- helt legitim. Perioden regnes derfor av den siste avslutningen som finnes —
+  -- både for dette leddet og for denne modellidentiteten.
+  select greatest(
+           statement_timestamp(),
+           coalesce(max(a.valid_to), statement_timestamp()))
+    into v_valid_from
+  from provenance.role_model_assignments a
+  where (a.agent_role = v_role and a.capacity = 'semantic')
+     or (a.provider = (v_identity ->> 'provider')
+         and a.model = (v_identity ->> 'model')
+         and a.model_version = (v_identity ->> 'model_version'));
+
+  begin
+    insert into provenance.role_model_assignments (
+      agent_role, capacity, provider, model, model_version, model_version_disclosure,
+      valid_from, registered_by_actor_id, reason
+    )
+    values (
+      v_role, 'semantic',
+      v_identity ->> 'provider', v_identity ->> 'model', v_identity ->> 'model_version',
+      (v_identity ->> 'model_version_disclosure')::provenance.model_version_disclosure,
+      coalesce(v_valid_from, statement_timestamp()),
+      v_actor_id,
+      coalesce(
+        nullif(btrim(coalesce(p_reason, '')), ''),
+        'Valgt av en redaktør med mandat, som den KI-tjenesten dette agentleddet skal utføres av.')
+    )
+    returning * into v_assignment;
+  exception
+    when exclusion_violation then
+      -- Hvilken av de to reglene som svarte, avgjør hva som må gjøres. En
+      -- melding som gjettet, ville sendt eieren etter feil årsak.
+      select string_agg(distinct a.agent_role::text, ', ' order by a.agent_role::text)
+        into v_holder
+      from provenance.role_model_assignments a
+      where a.provider = (v_identity ->> 'provider')
+        and a.model = (v_identity ->> 'model')
+        and a.model_version = (v_identity ->> 'model_version')
+        and a.agent_role <> v_role
+        and (a.valid_to is null or a.valid_to > statement_timestamp());
+
+      if v_holder is not null then
+        raise exception using
+          errcode = 'restrict_violation',
+          message = format(
+            'Modellen %s/%s (%s) er allerede tildelt agentleddet %s, og kan ikke også gjøre arbeidet i %s.',
+            v_identity ->> 'provider', v_identity ->> 'model', v_identity ->> 'model_version',
+            v_holder, p_agent_role),
+          hint = 'Generator, kildestøttekontroll og evidensvurdering skal være reelt separate (ANTIDEP_CONSTITUTION.md regel 3). Velg en annen KI-tjeneste du allerede har tilgang til for dette leddet. Finnes ingen, skal kjeden stoppe her framfor å registrere en vurdering som ikke er uavhengig.';
+      end if;
+
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format(
+          'Agentleddet %L har en gjeldende modelltildeling i den perioden den nye ville dekket.',
+          p_agent_role),
+        hint = 'Avslutt den gjeldende tildelingen med api.release_agent_role_model(text, text) før en ny registreres. Én gyldig tildeling per ledd om gangen er regelen som gjør «hvilken modell handler dette leddet som» til et spørsmål med ett svar.';
+  end;
+
+  return jsonb_build_object(
+    'agent_role', p_agent_role,
+    'assigned', true,
+    'already_assigned', false,
+    'replaced', v_replaced,
+    'model', v_identity
+  );
+end;
+$$;
+
+comment on function api.assign_agent_role_model(text, text, text, text, text, text, text) is
+  'Velger hvilken ekstern KI-tjeneste et semantisk agentledd skal utføres av (ANTIDEP_CONSTITUTION.md regel 3). Tildelingen er en attestert avgjørelse tatt av en redaktør med mandat, FØR oppgaven hentes ut, og den inngår i oppgavens binding og dermed i request_digest. Registrerer aldri en modell på grunnlag av et agentsvar: en identitet som fikk registrere seg selv, ville etablert sitt eget premiss, og en oppgitt identitet kunnet gå klar av regelen om at to ledd ikke deler modell. Skriver aldri om en gjeldende tildeling: et bytte krever en begrunnelse, og avslutter da den gjeldende med hvem og hvorfor og registrerer den nye i den samme transaksjonen, slik at leddet aldri står uten modell fordi den nye viste seg å tilhøre et annet ledd. Et forsøk på å gi to ledd den samme modellen avvises av exclusion-regelen på registeret, med en setning som navngir leddet som allerede har den. Krever editor-mandat. SECURITY DEFINER fordi provenance har RLS med default deny; kalleren valideres på funksjonens eget kall.';
+
+revoke execute on function api.assign_agent_role_model(text, text, text, text, text, text, text) from public;
+grant execute on function api.assign_agent_role_model(text, text, text, text, text, text, text) to authenticated;
 
 -- Avslutningen, slik at en feilregistrert modell ikke blir en blindvei.
 --
 -- Avslutter, og skriver aldri om: tildelingen som gjaldt, blir stående med sin
 -- periode, og auditsporet får sin egen rad fra triggeren på tabellen. En ny
--- modell registreres av det neste svaret.
+-- modell tildeles av api.assign_agent_role_model(...).
 create function api.release_agent_role_model(p_agent_role text, p_reason text)
   returns jsonb
   language plpgsql
@@ -267,7 +501,7 @@ end;
 $$;
 
 comment on function api.release_agent_role_model(text, text) is
-  'Avslutter den gjeldende semantiske modelltildelingen for en agentrolle, slik at neste importerte svar kan registrere en ny (ANTIDEP_CONSTITUTION.md regel 3, 7). Finnes for at en feilregistrert modell ikke skal bli en blindvei som krever en migrasjon. Skriver aldri om: tildelingen som gjaldt, blir stående med sin periode, og triggeren på tabellen skriver auditraden over avslutningen med hvem og hvorfor. Krever editor-mandat og en begrunnelse. SECURITY DEFINER fordi provenance har RLS med default deny; kalleren valideres på funksjonens eget kall.';
+  'Avslutter den gjeldende semantiske modelltildelingen for en agentrolle, slik at en ny kan tildeles med api.assign_agent_role_model(text, text, text, text, text, text, text) (ANTIDEP_CONSTITUTION.md regel 3, 7). Skal leddet bytte tjeneste framfor å slutte å ha en, gjør den funksjonen begge delene i én transaksjon. Finnes for at en feiltildelt modell ikke skal bli en blindvei som krever en migrasjon. Skriver aldri om: tildelingen som gjaldt, blir stående med sin periode, og triggeren på tabellen skriver auditraden over avslutningen med hvem og hvorfor. Utestående oppgaver får et nytt avtrykk av byttet, slik at et svar avgitt under den gamle tildelingen ikke kan registreres etterpå. Krever editor-mandat og en begrunnelse. SECURITY DEFINER fordi provenance har RLS med default deny; kalleren valideres på funksjonens eget kall.';
 
 revoke execute on function api.release_agent_role_model(text, text) from public;
 grant execute on function api.release_agent_role_model(text, text) to authenticated;
@@ -908,13 +1142,61 @@ comment on function workflow.agent_task_digest(jsonb) is
 
 revoke execute on function workflow.agent_task_digest(jsonb) from public;
 
--- Hva som eventuelt hindrer at oppgaven kan bygges eller besvares.
+-- Skriveveienes egne vilkår, lest som en setning framfor som et kast.
 --
--- Returnerer én setning på norsk, eller NULL. Den står i køen ved siden av
--- oppgaven, fordi «venter på deg» og «kan ikke kjøres ennå» er to forskjellige
--- tilstander, og en flate som viste dem likt, ville bedt noen gjøre noe som
--- ikke går (ANTIDEP_CONSTITUTION.md regel 4).
-create function workflow.agent_task_problem(p_job workflow.pipeline_jobs)
+-- De to funksjonene under kaller nøyaktig de assertene registreringen kaller.
+-- Alternativet — å skrive om vilkårene i en mildere forhåndskontroll — ville
+-- gitt to regelsett som kunne bli uenige, og uenigheten ville kostet den som
+-- utførte oppgaven en hel økt i en KI-tjeneste (ANTIDEP_CONSTITUTION.md regel 4).
+create function workflow.evidence_usable_problem(p_evidence_item_ids uuid[], p_lead text)
+  returns text
+  language plpgsql
+  stable
+  set search_path = ''
+as $$
+begin
+  perform workflow.assert_evidence_usable_for_synthesis(p_evidence_item_ids);
+  return null;
+exception
+  when others then
+    return format('%s: %s', p_lead, sqlerrm);
+end;
+$$;
+
+comment on function workflow.evidence_usable_problem(uuid[], text) is
+  'Kontrollnivået evidensen må ha nådd, lest som én setning framfor som et kast. Kaller workflow.assert_evidence_usable_for_synthesis(uuid[]) — den samme funksjonen skriveveiene kaller — slik at forhåndskontrollen i agentkøen ikke kan bli mildere enn den virkelige.';
+
+revoke execute on function workflow.evidence_usable_problem(uuid[], text) from public;
+
+create function workflow.claim_verified_problem(p_claim_revision_id uuid, p_lead text)
+  returns text
+  language plpgsql
+  stable
+  set search_path = ''
+as $$
+begin
+  perform workflow.assert_claim_verified_before_assessment(p_claim_revision_id);
+  return null;
+exception
+  when others then
+    return format('%s: %s', p_lead, sqlerrm);
+end;
+$$;
+
+comment on function workflow.claim_verified_problem(uuid, text) is
+  'Kildestøttekontrollen en påstandsrevisjon må ha vært gjennom, lest som én setning framfor som et kast. Kaller workflow.assert_claim_verified_before_assessment(uuid) — den samme funksjonen skriveveien kaller — slik at forhåndskontrollen i agentkøen ikke kan bli mildere enn den virkelige.';
+
+revoke execute on function workflow.claim_verified_problem(uuid, text) from public;
+
+
+-- Hva som eventuelt hindrer at oppgaven kan bygges, sett fra grunnlaget.
+--
+-- Vilkårene er de samme fail-closed vilkårene skriveveiene leser når svaret
+-- kommer tilbake, lest med de samme funksjonene framfor med en svakere kopi. En
+-- forhåndskontroll som var mildere enn den virkelige, ville latt noen bruke en
+-- hel økt i en KI-tjeneste på et svar importen uansett måtte avvise
+-- (ANTIDEP_CONSTITUTION.md regel 4).
+create function workflow.agent_task_input_problem(p_job workflow.pipeline_jobs)
   returns text
   language plpgsql
   stable
@@ -926,22 +1208,9 @@ declare
   v_revision_id uuid;
   v_ids uuid[];
   v_count integer;
+  v_knowledge_type knowledge.knowledge_type;
+  v_retired_at timestamptz;
 begin
-  if workflow.agent_task_contract(p_job.agent_role) is null then
-    return format(
-      'Rollen %s utføres av Antideps egen deterministiske kode, og kan ikke settes ut til en ekstern KI-agent.',
-      p_job.agent_role
-    );
-  end if;
-
-  -- En oppbrukt oppgave kan ikke ta imot et svar, og skal derfor ikke kunne
-  -- hentes ut heller. Uten dette ville noen kunnet bruke en hel økt i en
-  -- KI-tjeneste på et svar importen uansett måtte avvise, og «venter på deg»
-  -- ville sett likt ut som «blir stående» (ANTIDEP_CONSTITUTION.md regel 4).
-  if p_job.state <> 'succeeded' and p_job.attempts >= p_job.max_attempts then
-    return 'Oppgaven har brukt opp forsøkene sine og blir stående. Arbeidet må legges inn som en ny oppgave for å kunne gjøres om igjen.';
-  end if;
-
   if p_job.agent_role = 'evidence_extraction' then
     v_source_version_id := workflow.manifest_uuid(v_manifest, 'source_version_id');
     if v_source_version_id is null then
@@ -1007,11 +1276,13 @@ begin
     if v_ids is null or cardinality(v_ids) = 0 then
       return 'Oppgaven sier ikke hvilke evidensfunn syntesen skal bygge på.';
     end if;
-    select count(*) into v_count from knowledge.evidence_items e where e.id = any (v_ids);
-    if v_count <> cardinality(v_ids) then
-      return 'Ett av evidensfunnene i oppgaven finnes ikke.';
-    end if;
-    return null;
+
+    -- Kontrollnivået evidensen må ha nådd, lest med skriveveiens egen funksjon.
+    -- Et funn uten bekreftet ekstraksjonskontroll — eller med et senere åpent
+    -- avvik — kan ikke bære en påstand, og det er like sant før oppgaven hentes
+    -- ut som etter at svaret er skrevet.
+    return workflow.evidence_usable_problem(
+      v_ids, 'Evidensgrunnlaget er ikke klart for en syntese ennå');
   end if;
 
   if p_job.agent_role = 'evidence_assessment' then
@@ -1019,27 +1290,122 @@ begin
     if v_revision_id is null then
       return 'Oppgaven sier ikke hvilken påstandsrevisjon den gjelder.';
     end if;
-    if not exists (select 1 from knowledge.claim_revisions r where r.id = v_revision_id) then
+
+    select r.knowledge_type, c.retired_at into v_knowledge_type, v_retired_at
+    from knowledge.claim_revisions r
+    join knowledge.claims c on c.id = r.claim_id
+    where r.id = v_revision_id;
+
+    if not found then
       return 'Påstandsrevisjonen oppgaven gjelder, finnes ikke.';
     end if;
-    -- Databasen krever en gjeldende, bekreftet kildestøttekontroll før en
-    -- vurdering kan registreres. Køen sier det på forhånd framfor å la svaret
-    -- bli avvist etter at arbeidet er gjort.
+    if v_knowledge_type <> 'evidence_synthesis' then
+      return 'Påstanden er ikke en evidenssyntese, og skal ikke graderes. En klinisk anbefaling og et deterministisk faktum har ingen evidensvurdering.';
+    end if;
+    if v_retired_at is not null then
+      return 'Påstanden er trukket tilbake, og skal ikke vurderes.';
+    end if;
+    if exists (
+      select 1 from knowledge.evidence_assessments a
+      where a.claim_revision_id = v_revision_id
+    ) then
+      return 'Påstanden er allerede vurdert. En endret vurdering av det samme grunnlaget er en ny påstandsformulering, ikke en overskriving.';
+    end if;
     if not exists (
       select 1 from workflow.claim_verifications v
       where v.claim_revision_id = v_revision_id
     ) then
       return 'Påstanden er ikke kildestøttekontrollert ennå. Evidensvurderingen kommer etter den kontrollen.';
     end if;
-    return null;
+
+    select array_agg(distinct l.evidence_item_id) into v_ids
+    from knowledge.claim_evidence_links l
+    where l.claim_revision_id = v_revision_id;
+
+    if v_ids is null then
+      return 'Påstanden har ingen evidenslenker, og det finnes ikke noe grunnlag å vurdere.';
+    end if;
+
+    -- De samme to vilkårene skriveveien leser på vurderingstidspunktet, i den
+    -- samme rekkefølgen: grunnlaget må fortsatt kunne bære påstanden, og
+    -- kildestøttekontrollen må være gjeldende, bekreftet og gjort av noen med
+    -- mandat — på nøyaktig det evidenssettet som ligger der nå.
+    return coalesce(
+      workflow.evidence_usable_problem(
+        v_ids, 'Evidensgrunnlaget bak påstanden er ikke lenger brukbart'),
+      workflow.claim_verified_problem(
+        v_revision_id, 'Kildestøttekontrollen av påstanden holder ikke'));
   end if;
 
   return format('Rollen %s har ingen oppgaveform ennå.', p_job.agent_role);
 end;
 $$;
 
+comment on function workflow.agent_task_input_problem(workflow.pipeline_jobs) is
+  'Én setning om hva i grunnlaget som hindrer at oppgaven kan bygges, eller NULL. Vilkårene er de samme fail-closed vilkårene skriveveiene leser når svaret kommer tilbake, lest med de samme funksjonene framfor med en svakere kopi: en forhåndskontroll som var mildere enn den virkelige, ville latt noen bruke en hel økt i en KI-tjeneste på et svar importen uansett måtte avvise (ANTIDEP_CONSTITUTION.md regel 4). Sier ingenting om jobbens tilstand eller om modelltildelingen — det er workflow.agent_task_problem(workflow.pipeline_jobs) som legger dem til, og api.enqueue_agent_task(text, jsonb) som bare spør om grunnlaget.';
+
+revoke execute on function workflow.agent_task_input_problem(workflow.pipeline_jobs) from public;
+
+
+-- Hva som eventuelt hindrer at oppgaven kan besvares nå.
+--
+-- Returnerer én setning på norsk, eller NULL. Den står i køen ved siden av
+-- oppgaven, fordi «venter på deg» og «kan ikke kjøres ennå» er to forskjellige
+-- tilstander, og en flate som viste dem likt, ville bedt noen gjøre noe som
+-- ikke går (ANTIDEP_CONSTITUTION.md regel 4).
+--
+-- Køen, uttaket og importen leser denne ene funksjonen. Uten den ene regelen
+-- kunne flaten vist nedlasting og opplasting for en jobb importen uansett måtte
+-- avvise — og det er nettopp den differansen som koster noen en hel økt.
+create function workflow.agent_task_problem(p_job workflow.pipeline_jobs)
+  returns text
+  language plpgsql
+  stable
+  set search_path = ''
+as $$
+declare
+  v_model provenance.role_model_assignments;
+begin
+  if workflow.agent_task_contract(p_job.agent_role) is null then
+    return format(
+      'Rollen %s utføres av Antideps egen deterministiske kode, og kan ikke settes ut til en ekstern KI-agent.',
+      p_job.agent_role
+    );
+  end if;
+
+  -- En jobb som allerede har et utfall, er historikk og ikke noe som venter.
+  -- Handoffimporten er ett av utfallene; en fullført kjøring fra et automatisert
+  -- ledd er et annet, og begge gjør jobben ferdig.
+  if exists (
+    select 1 from workflow.agent_handoff_imports i where i.pipeline_job_id = p_job.id
+  ) then
+    return 'Oppgaven har allerede tatt imot et svar. Skal arbeidet gjøres om igjen, er det en ny oppgave.';
+  end if;
+  if p_job.state = 'succeeded' then
+    return 'Oppgaven er allerede fullført. Skal arbeidet gjøres om igjen, er det en ny oppgave.';
+  end if;
+
+  -- En oppbrukt oppgave kan ikke ta imot et svar, og skal derfor ikke kunne
+  -- hentes ut heller.
+  if p_job.attempts >= p_job.max_attempts then
+    return 'Oppgaven har brukt opp forsøkene sine og blir stående. Arbeidet må legges inn som en ny oppgave for å kunne gjøres om igjen.';
+  end if;
+
+  -- Hvilken KI-tjeneste leddet utføres av, avgjøres før oppgaven hentes ut:
+  -- tildelingen inngår i bindingen, og et svar kontrolleres mot den. En oppgave
+  -- bygget uten en tildeling ville bedt om et svar ingen kunne si var uavhengig
+  -- (ANTIDEP_CONSTITUTION.md regel 3).
+  v_model := provenance.current_semantic_model(p_job.agent_role);
+  if v_model.id is null then
+    return 'Ingen KI-tjeneste er valgt for dette agentleddet ennå. Velg tjenesten først, slik at oppgaven bindes til den og svaret kan kontrolleres mot den.';
+  end if;
+
+  return workflow.agent_task_input_problem(p_job);
+end;
+$$;
+
 comment on function workflow.agent_task_problem(workflow.pipeline_jobs) is
-  'Én setning om hva som hindrer at oppgaven kan bygges eller besvares, eller NULL. Står i køen ved siden av oppgaven fordi «venter på deg» og «kan ikke kjøres ennå» er to forskjellige tilstander, og en flate som viste dem likt, ville bedt noen gjøre noe som ikke går (ANTIDEP_CONSTITUTION.md regel 4).';
+  'Én setning om hva som hindrer at oppgaven kan besvares nå, eller NULL. Køen (api.agent_work_queue()), uttaket (api.agent_task_payload(uuid)) og importen (api.import_agent_answer(uuid, jsonb)) leser denne ene funksjonen, slik at de tre ikke kan bli uenige om hvilke jobber som faktisk er utførbare handoff-oppgaver: en jobb som allerede har et utfall — et importert svar eller en fullført kjøring fra et automatisert ledd — er historikk og ikke noe som venter, og en flate som viste den med nedlasting og opplasting, ville bedt noen gjøre noe importen uansett måtte avvise. Legger jobbtilstanden, forsøkene og modelltildelingen til vilkårene i workflow.agent_task_input_problem(workflow.pipeline_jobs) (ANTIDEP_CONSTITUTION.md regel 3, 4).';
 
 revoke execute on function workflow.agent_task_problem(workflow.pipeline_jobs) from public;
 
@@ -1242,6 +1608,9 @@ begin
     ) x;
   end if;
 
+  v_subject := workflow.agent_task_subject(p_job);
+  v_model := provenance.current_semantic_model(p_job.agent_role);
+
   v_binding := jsonb_build_object(
     'task_version', workflow.agent_handoff_task_version(),
     'role', p_job.agent_role::text,
@@ -1249,12 +1618,21 @@ begin
     'pipeline_job_id', p_job.id,
     'prompt_template_version', v_contract ->> 'prompt_template_version',
     'output_schema_version', v_contract ->> 'output_schema_version',
+    -- Tildelingen er en del av det som binder svaret. Byttes modellen, får hver
+    -- utestående oppgave et nytt avtrykk, og et svar avgitt under den gamle
+    -- tildelingen kan ikke komme tilbake og registrere den gamle modellen på
+    -- nytt (ANTIDEP_CONSTITUTION.md regel 3). Tildelingens id står med, fordi to
+    -- tildelinger av den samme modellen er to avgjørelser.
+    'semantic_model', case when v_model.id is null then null else jsonb_build_object(
+      'assignment_id', v_model.id,
+      'provider', v_model.provider,
+      'model', v_model.model,
+      'model_version', v_model.model_version,
+      'model_version_disclosure', v_model.model_version_disclosure::text
+    ) end,
     'input', v_binding,
     'prior_runs', v_prior
   );
-
-  v_subject := workflow.agent_task_subject(p_job);
-  v_model := provenance.current_semantic_model(p_job.agent_role);
 
   return jsonb_build_object(
     'task_version', workflow.agent_handoff_task_version(),
@@ -1279,7 +1657,7 @@ end;
 $$;
 
 comment on function workflow.agent_task(workflow.pipeline_jobs) is
-  'Hele agentoppgaven, bygget av rader som allerede finnes (ANTIDEP_CONSTITUTION.md regel 2, 4). binding er nøyaktig de opplysningene som binder svaret — rollen, oppgavenøkkelen, promptmalversjonen, outputschemaversjonen, inndataens versjon og de tidligere agentkjøringene rollen hviler på — og request_digest er avtrykket av den. Den semantiske modellen står IKKE i bindingen: den registreres av det første importerte svaret i rollen, og et avtrykk som endret seg ved den registreringen, ville gjort alle utestående oppgaver ugyldige i samme øyeblikk. input er innholdet agenten skal lese, inkludert hele den kontrollerte kildeteksten der rollen leser en kilde.';
+  'Hele agentoppgaven, bygget av rader som allerede finnes (ANTIDEP_CONSTITUTION.md regel 2, 4). binding er nøyaktig de opplysningene som binder svaret — rollen, oppgavenøkkelen, promptmalversjonen, outputschemaversjonen, den tildelte KI-modellen, inndataens versjon og de tidligere agentkjøringene rollen hviler på — og request_digest er avtrykket av den. Modelltildelingen står MED i bindingen fordi den er attestert på forhånd av en redaktør med mandat og ikke etableres av svaret: byttes modellen, får hver utestående oppgave et nytt avtrykk, og et svar avgitt under den gamle tildelingen kan ikke komme tilbake og registrere den gamle modellen på nytt (regel 3). input er innholdet agenten skal lese, inkludert hele den kontrollerte kildeteksten der rollen leser en kilde.';
 
 revoke execute on function workflow.agent_task(workflow.pipeline_jobs) from public;
 
@@ -1318,18 +1696,14 @@ begin
       (i.id is not null) as answered,
       i.created_at as answered_at,
       coalesce(workflow.agent_task_subject(j) ->> 'label', j.job_key) as subject_label,
-      (
-        select jsonb_build_object(
-                 'provider', a.provider, 'model', a.model,
-                 'model_version', a.model_version,
-                 'model_version_disclosure', a.model_version_disclosure::text)
-        from provenance.role_model_assignments a
-        where a.agent_role = j.agent_role and a.capacity = 'semantic'
-          and a.valid_from <= statement_timestamp()
-          and (a.valid_to is null or a.valid_to > statement_timestamp())
-      ) as registered_model
+      case when m.id is null then null else jsonb_build_object(
+        'provider', m.provider, 'model', m.model,
+        'model_version', m.model_version,
+        'model_version_disclosure', m.model_version_disclosure::text) end as registered_model
     from workflow.pipeline_jobs j
     left join workflow.agent_handoff_imports i on i.pipeline_job_id = j.id
+    -- Den samme tildelingen kontrollen leser, lest med den samme funksjonen.
+    left join lateral provenance.current_semantic_model(j.agent_role) m on true
     where workflow.agent_task_contract(j.agent_role) is not null
   ) q;
 
@@ -1438,7 +1812,10 @@ begin
   from workflow.pipeline_jobs j
   where j.id = (v_result ->> 'pipeline_job_id')::uuid;
 
-  v_problem := workflow.agent_task_problem(v_job);
+  -- Bare grunnlaget. At ingen KI-tjeneste er valgt for leddet ennå, er ikke en
+  -- grunn til å nekte å legge inn oppgaven — det er noe køen ber om, og valget
+  -- hører hjemme der og ikke i en innlegging.
+  v_problem := workflow.agent_task_input_problem(v_job);
   if v_problem is not null then
     raise exception using
       errcode = 'invalid_parameter_value',
@@ -1488,7 +1865,6 @@ declare
   v_model text;
   v_model_version text;
   v_disclosure provenance.model_version_disclosure;
-  v_disclosure_text text;
   v_answered_at timestamptz;
   v_result jsonb;
   v_unknown text;
@@ -1662,44 +2038,26 @@ begin
       message = format('identity har felter denne kontrakten ikke kjenner: %s.', v_unknown);
   end if;
 
-  v_provider := nullif(btrim(coalesce(v_identity ->> 'provider', '')), '');
-  v_model := nullif(btrim(coalesce(v_identity ->> 'model', '')), '');
-  v_disclosure_text := coalesce(nullif(btrim(coalesce(v_identity ->> 'model_version_disclosure', '')), ''), 'exact');
-  v_model_version := nullif(btrim(coalesce(v_identity ->> 'model_version', '')), '');
-
-  if v_provider is null or v_model is null then
-    raise exception using
-      errcode = 'invalid_parameter_value',
-      message = 'identity mangler leverandør eller modellnavn.',
-      hint = 'Skriv tjenesten og det modellnavnet tjenesten selv viser. Antidep finner ikke på et navn på vegne av en leverandør.';
-  end if;
-  if v_disclosure_text not in ('exact', 'not_exposed') then
-    raise exception using
-      errcode = 'invalid_parameter_value',
-      message = format('model_version_disclosure er %L, som ikke er exact eller not_exposed.', v_disclosure_text);
-  end if;
-  v_disclosure := v_disclosure_text::provenance.model_version_disclosure;
-
-  if v_disclosure = 'not_exposed' then
-    -- Den kanoniske verdien, og ikke den frie teksten svaret måtte ha skrevet.
-    -- To ukjente versjoner av den samme modellen skal være den samme
-    -- identiteten; ellers ville separasjonsregelen sluttet å virke.
-    v_model_version := provenance.unexposed_model_version();
-  elsif v_model_version is null then
-    raise exception using
-      errcode = 'invalid_parameter_value',
-      message = 'identity oppgir model_version_disclosure = exact, men ingen model_version.',
-      hint = 'Oppgir tjenesten ingen versjon, skal model_version_disclosure være not_exposed. En oppdiktet versjon ville sett like troverdig ut som en sann (ANTIDEP_CONSTITUTION.md regel 4).';
-  elsif v_model_version = provenance.unexposed_model_version() then
-    raise exception using
-      errcode = 'invalid_parameter_value',
-      message = format('model_version er %L, som er den kanoniske verdien for en versjon tjenesten ikke oppgir.', v_model_version),
-      hint = 'Sett model_version_disclosure = not_exposed og la model_version stå tom.';
-  end if;
-
-  v_semantic := provenance.ensure_semantic_model_assignment(
-    v_job.agent_role, v_provider, v_model, v_model_version, v_disclosure, v_actor_id
+  -- Den samme lesningen tildelingen ble gjort med, slik at «samme modell» betyr
+  -- det samme begge steder.
+  v_identity := provenance.canonical_model_identity(
+    v_identity ->> 'provider',
+    v_identity ->> 'model',
+    v_identity ->> 'model_version',
+    v_identity ->> 'model_version_disclosure'
   );
+  v_provider := v_identity ->> 'provider';
+  v_model := v_identity ->> 'model';
+  v_model_version := v_identity ->> 'model_version';
+  v_disclosure := (v_identity ->> 'model_version_disclosure')::provenance.model_version_disclosure;
+
+  -- Svaret bekrefter identiteten sin; det etablerer den ikke. Tildelingen er
+  -- tatt på forhånd av en redaktør med mandat, den står i bindingen avtrykket er
+  -- regnet av, og et svar fra en annen modell avvises her — før noe skrives. Et
+  -- svar som fikk registrere sin egen identitet, ville etablert premisset som
+  -- autoriserte det selv, og separasjonen mellom leddene ville hvilt på en
+  -- erklæring modellen avga om seg selv (ANTIDEP_CONSTITUTION.md regel 3).
+  v_semantic := provenance.require_semantic_model_assignment(v_job.agent_role, v_identity);
 
   if p_answer ->> 'answered_at' is not null then
     begin
