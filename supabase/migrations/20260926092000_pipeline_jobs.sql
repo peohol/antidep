@@ -517,6 +517,23 @@ begin
       hint = 'Kjøringen knytter jobben til premissene arbeidet faktisk ble gjort under. En kjøring fra en annen identitet eller en annen rolle ville vært en usann kobling.';
   end if;
 
+  -- En åpen kjøring har ikke konkludert, og en som feilet eller ble stoppet,
+  -- har konkludert med noe annet enn suksess. Uten denne kontrollen kunne køen
+  -- meldt vellykket agentarbeid mens kjøringen bak fortsatt sto som `running`
+  -- — og «ferdig» ville vært en påstand køen skrev om seg selv, ikke et utfall
+  -- proveniensen bærer (ANTIDEP_CONSTITUTION.md regel 4).
+  if not exists (
+    select 1
+    from provenance.agent_runs r
+    where r.id = p_agent_run_id
+      and r.status = 'succeeded'
+  ) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Agentkjøringen er ikke avsluttet med et vellykket utfall.',
+      hint = 'En jobb er ikke vellykket før arbeidet bak den er det. Avslutt kjøringen med api.complete_agent_run før utfallet meldes; en kjøring som fortsatt står som running, failed eller aborted, kan ikke bære en fullført jobb (ANTIDEP_CONSTITUTION.md regel 4).';
+  end if;
+
   v_from := v_job.state;
 
   update workflow.pipeline_jobs j
@@ -544,7 +561,7 @@ end;
 $$;
 
 comment on function api.complete_pipeline_job(text, text, uuid, uuid, jsonb, uuid) is
-  'Melder et vellykket utfall på det uttaket p_lease_token navngir (DATABASE_ARCHITECTURE.md §33, §43). Idempotent: en allerede fullført jobb skriver ingenting og svarer med det registrerte utdatamanifestet, slik at en kjører som mistet svaret sitt, kan spørre igjen med den samme nøkkelen. Nøkkelen og ikke identiteten er kontrollen: agentidentiteten er per rolle og deles av alle kjørere i den, så uten en nøkkel per uttak kunne en kjører hvis leie var løpt ut, skrevet sitt foreldede resultat over det uttaket en annen nettopp hadde tatt. p_agent_run_id er påkrevd og må tilhøre den samme identiteten og rollen: uten kjøringen ville køen rapportert utført agentarbeid uten premisser og uten spor. EXECUTE går til anon av samme grunn som api.claim_pipeline_job(text, text, text, integer).';
+  'Melder et vellykket utfall på det uttaket p_lease_token navngir (DATABASE_ARCHITECTURE.md §33, §43). Idempotent: en allerede fullført jobb skriver ingenting og svarer med det registrerte utdatamanifestet, slik at en kjører som mistet svaret sitt, kan spørre igjen med den samme nøkkelen. Nøkkelen og ikke identiteten er kontrollen: agentidentiteten er per rolle og deles av alle kjørere i den, så uten en nøkkel per uttak kunne en kjører hvis leie var løpt ut, skrevet sitt foreldede resultat over det uttaket en annen nettopp hadde tatt. p_agent_run_id er påkrevd, må tilhøre den samme identiteten og rollen, og må være avsluttet med status succeeded: uten kjøringen ville køen rapportert utført agentarbeid uten premisser og uten spor, og med en kjøring som fortsatt står som running, ville «ferdig» vært en påstand køen skrev om seg selv framfor et utfall proveniensen bærer. EXECUTE går til anon av samme grunn som api.claim_pipeline_job(text, text, text, integer).';
 
 revoke execute on function api.complete_pipeline_job(text, text, uuid, uuid, jsonb, uuid) from public;
 grant execute on function api.complete_pipeline_job(text, text, uuid, uuid, jsonb, uuid) to anon, authenticated;

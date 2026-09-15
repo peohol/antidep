@@ -81,11 +81,27 @@ create table provenance.role_model_assignments (
     references provenance.actors (id) on update restrict on delete restrict,
   reason text not null,
 
+  -- Avslutningen har sin egen attribusjon og sin egen begrunnelse. Den som
+  -- registrerte tildelingen, er ikke nødvendigvis den som avsluttet den, og en
+  -- auditrad som førte avslutningen på registranten ville sagt noe usant om
+  -- hvem som endret kjedens mest sikkerhetskritiske innstilling.
+  closed_by_actor_id uuid
+    references provenance.actors (id) on update restrict on delete restrict,
+  close_reason text,
+
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
 
   constraint role_model_assignments_validity_check
     check (valid_to is null or valid_to > valid_from),
+  -- De tre feltene som utgjør avslutningen, settes sammen eller ikke i det hele
+  -- tatt. En valid_to uten hvem og hvorfor ville vært en endring uten ansvar.
+  constraint role_model_assignments_closure_pairing_check
+    check ((valid_to is null) = (closed_by_actor_id is null)
+           and (valid_to is null) = (close_reason is null)),
+  constraint role_model_assignments_close_reason_shape_check
+    check (close_reason is null
+           or (close_reason = btrim(close_reason) and length(close_reason) between 1 and 2000)),
   constraint role_model_assignments_provider_shape_check
     check (provider = btrim(provider) and length(provider) between 1 and 200),
   constraint role_model_assignments_model_shape_check
@@ -113,6 +129,10 @@ comment on column provenance.role_model_assignments.validity is
   'Gyldighetsperioden som et intervall, generert av valid_from og valid_to. Finnes fordi de to exclusion-reglene trenger en venstreside å overlappe på; den er aldri en verdi kalleren oppgir.';
 comment on column provenance.role_model_assignments.reason is
   'Hvorfor rollen fikk denne modellen. En modellbytte er en pipelinekonfigurasjonsendring og skal kunne leses tilbake; en tildeling uten begrunnelse ville vært en endring uten grunn.';
+comment on column provenance.role_model_assignments.closed_by_actor_id is
+  'Hvem som avsluttet tildelingen. Egen kolonne og ikke registered_by_actor_id: den som registrerte tildelingen, er ikke nødvendigvis den som avsluttet den, og auditraden over avslutningen skal navngi den som faktisk gjorde det.';
+comment on column provenance.role_model_assignments.close_reason is
+  'Hvorfor tildelingen ble avsluttet. Settes sammen med valid_to og closed_by_actor_id, eller ikke i det hele tatt: at en rolle sluttet å handle som en modell, er en pipelinekonfigurasjonsendring på linje med at den begynte.';
 
 alter table provenance.role_model_assignments enable row level security;
 
@@ -161,7 +181,10 @@ begin
       hint = 'Hvilken modell en rolle handlet som i en periode, er et historisk faktum kjøringene i perioden hviler på. Sett valid_to og registrer en ny tildeling for den nye modellen; en omskriving ville gjort de gamle kjøringene uforklarlige (ANTIDEP_CONSTITUTION.md regel 3, 7).';
   end if;
 
-  if old.valid_to is not null and new.valid_to is distinct from old.valid_to then
+  if old.valid_to is not null
+     and (new.valid_to is distinct from old.valid_to
+          or new.closed_by_actor_id is distinct from old.closed_by_actor_id
+          or new.close_reason is distinct from old.close_reason) then
     raise exception using
       errcode = 'restrict_violation',
       message = 'En avsluttet modelltildeling kan ikke avsluttes på nytt eller gjenåpnes.',
@@ -173,7 +196,7 @@ end;
 $$;
 
 comment on function provenance.freeze_role_model_assignment() is
-  'Fryser alt ved en modelltildeling bortsett fra at den kan avsluttes én gang (ANTIDEP_CONSTITUTION.md regel 3, 7). Uten den kunne en UPDATE skrevet om leverandør, modell, modellversjon, starttidspunkt, begrunnelse eller attribusjon i etterkant, slik at raden sa noe annet enn det kjøringene i perioden faktisk kjørte under — mens auditraden fra innsettingen fortsatt bar det opprinnelige øyeblikksbildet. Sletting er stengt av sin egen trigger; dette er den andre halvdelen av den samme regelen.';
+  'Fryser alt ved en modelltildeling bortsett fra at den kan avsluttes én gang, med valid_to, closed_by_actor_id og close_reason satt sammen (ANTIDEP_CONSTITUTION.md regel 3, 7). Uten den kunne en UPDATE skrevet om leverandør, modell, modellversjon, starttidspunkt, begrunnelse eller attribusjon i etterkant, slik at raden sa noe annet enn det kjøringene i perioden faktisk kjørte under — mens auditraden fra innsettingen fortsatt bar det opprinnelige øyeblikksbildet. Sletting er stengt av sin egen trigger; dette er den andre halvdelen av den samme regelen.';
 
 revoke execute on function provenance.freeze_role_model_assignment() from public;
 
@@ -213,6 +236,51 @@ revoke execute on function audit.record_role_model_assignment_event() from publi
 create trigger role_model_assignments_record_audit_event
   after insert on provenance.role_model_assignments
   for each row execute function audit.record_role_model_assignment_event();
+
+-- At en rolle *sluttet* å handle som en modell, er like sikkerhetskritisk som
+-- at den begynte: det er øyeblikket separasjonen mellom to ledd kan endre seg.
+-- Uten denne raden ville registeret båret avslutningen mens auditsporet var
+-- stille akkurat der endringen ble gjort, og en logg som er stille der
+-- avgjørelsen ble tatt, ser ut som en logg uten å være det.
+--
+-- Begge øyeblikksbildene føres, slik at avslutningen kan leses som det den er:
+-- en overgang fra en åpen tildeling til en avsluttet.
+create function audit.record_role_model_assignment_closure_event()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  if new.valid_to is null or old.valid_to is not null then
+    return null;
+  end if;
+
+  insert into audit.events (
+    operation, object_id, actor_id,
+    old_revision_or_snapshot, new_revision_or_snapshot, reason, occurred_at
+  )
+  values (
+    'role_model_assignment_closed'::audit.event_operation,
+    new.id,
+    new.closed_by_actor_id,
+    to_jsonb(old),
+    to_jsonb(new),
+    new.close_reason,
+    now()
+  );
+
+  return null;
+end;
+$$;
+
+comment on function audit.record_role_model_assignment_closure_event() is
+  'Auditskriver over avsluttede modelltildelinger (DATABASE_ARCHITECTURE.md §35). Fryseren tillater nøyaktig én endring på en tildeling — at den avsluttes — og dette er sporet over den. At en rolle sluttet å handle som en modell, er øyeblikket separasjonen mellom to ledd kan endre seg, og et auditspor som bare dekket innsettingen ville vært stille akkurat der. Ligger på tabellen og ikke på en skrivevei, slik at ingen avslutning kan skje uten spor, og fører begge øyeblikksbildene, slik at overgangen kan leses.';
+
+revoke execute on function audit.record_role_model_assignment_closure_event() from public;
+
+create trigger role_model_assignments_record_closure_audit_event
+  after update on provenance.role_model_assignments
+  for each row execute function audit.record_role_model_assignment_closure_event();
 
 -- ----------------------------------------------------------------------------
 -- 2. Oppslaget, brukt av både gaten og kontrollene

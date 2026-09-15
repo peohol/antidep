@@ -2,7 +2,7 @@
 -- Migrasjon 009 — audit.event_operation får verdiene fulltekstbiblioteket,
 --                 modellrollene og kandidaten trenger
 --
--- Fire skriveveier kommer i migrasjonene 009a, 009c og 009d, og alle fire lager
+-- Fem skriveveier kommer i migrasjonene 009a, 009c og 009d, og alle fem lager
 -- eller avgjør noe DATABASE_ARCHITECTURE.md §35 krever et spor av:
 --
 --   source_document_stored             en originalfil er lagt i det private
@@ -10,6 +10,9 @@
 --   role_model_assignment_registered   hvilken modell en agentrolle får handle
 --                                      som — den mest sikkerhetskritiske
 --                                      innstillingen i kjeden etter rolletildeling
+--   role_model_assignment_closed       den samme tildelingen er avsluttet, og
+--                                      rollen handler ikke lenger som den
+--                                      modellen
 --   candidate_built                    et agentferdig kandidatinnhold er forseglet
 --   candidate_final_control_recorded   en navngitt fagperson har sluttkontrollert
 --                                      nøyaktig den kandidaten
@@ -36,5 +39,6 @@
 
 alter type audit.event_operation add value 'source_document_stored';
 alter type audit.event_operation add value 'role_model_assignment_registered';
+alter type audit.event_operation add value 'role_model_assignment_closed';
 alter type audit.event_operation add value 'candidate_built';
 alter type audit.event_operation add value 'candidate_final_control_recorded';

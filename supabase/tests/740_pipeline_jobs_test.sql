@@ -15,7 +15,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(29);
+select plan(30);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -154,27 +154,42 @@ select ok(
   'uttaket får sin egen leienøkkel, som utfallet meldes med'
 );
 
--- Kjøringen arbeidet faktisk ble gjort under. Den andre er i en annen rolle, og
--- skal ikke kunne stå som premisset bak dette utfallet.
+-- Kjøringen arbeidet faktisk ble gjort under, avsluttet med et vellykket utfall.
+-- Den andre er i en annen rolle, og den tredje står fortsatt åpen; ingen av dem
+-- skal kunne stå som premisset bak dette utfallet.
 insert into provenance.agent_runs
   (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
-   prompt_template_version, pipeline_version, input_manifest)
+   prompt_template_version, pipeline_version, input_manifest,
+   status, completed_at, output_manifest)
 select '74000000-0000-4000-8000-0000000000a1', ai.id, ai.actor_id, 'evidence_extraction',
        'antidep', 'proposal-grounded-extraction', '1.1.0',
        'evidence-extraction/proposal/1', 'antidep-evidence/1',
-       '{"mode": "test-740"}'::jsonb
+       '{"mode": "test-740"}'::jsonb,
+       'succeeded', now(), '{"registered": true}'::jsonb
 from provenance.agent_identities ai
 where ai.identity_key = 'agent-identity:evidence-extraction-01';
 
 insert into provenance.agent_runs
   (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
-   prompt_template_version, pipeline_version, input_manifest)
+   prompt_template_version, pipeline_version, input_manifest,
+   status, completed_at, output_manifest)
 select '74000000-0000-4000-8000-0000000000a2', ai.id, ai.actor_id, 'extraction_verification',
        'antidep', 'deterministic-extraction-check', '1.0.0',
        'extraction-verification/check/1', 'antidep-evidence/1',
-       '{"mode": "test-740"}'::jsonb
+       '{"mode": "test-740"}'::jsonb,
+       'succeeded', now(), '{"registered": true}'::jsonb
 from provenance.agent_identities ai
 where ai.identity_key = 'agent-identity:extraction-verification-01';
+
+insert into provenance.agent_runs
+  (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
+   prompt_template_version, pipeline_version, input_manifest)
+select '74000000-0000-4000-8000-0000000000a3', ai.id, ai.actor_id, 'evidence_extraction',
+       'antidep', 'proposal-grounded-extraction', '1.1.0',
+       'evidence-extraction/proposal/1', 'antidep-evidence/1',
+       '{"mode": "test-740-fortsatt-apen"}'::jsonb
+from provenance.agent_identities ai
+where ai.identity_key = 'agent-identity:evidence-extraction-01';
 
 set local role anon;
 
@@ -218,6 +233,22 @@ select throws_ok(
   ),
   '22023', 'Agentkjøringen tilhører ikke identiteten og rollen som melder utfallet.',
   'en kjøring fra en annen rolle kan ikke stå som premisset bak utfallet'
+);
+
+-- En åpen kjøring har ikke konkludert. Meldte køen jobben fullført likevel,
+-- ville «ferdig» vært en påstand køen skrev om seg selv, ikke et utfall
+-- proveniensen bærer (ANTIDEP_CONSTITUTION.md regel 4).
+select throws_ok(
+  format(
+    $$select api.complete_pipeline_job(
+        'agent-identity:evidence-extraction-01', %L, %L, %L, '{"ok": true}'::jsonb,
+        '74000000-0000-4000-8000-0000000000a3')$$,
+    (select secret from cred where label = 'extractor'),
+    (select payload ->> 'pipeline_job_id' from result where label = 'claimed'),
+    (select payload ->> 'lease_token' from result where label = 'claimed')
+  ),
+  '22023', 'Agentkjøringen er ikke avsluttet med et vellykket utfall.',
+  'en kjøring som fortsatt står som running, kan ikke bære en fullført jobb'
 );
 
 select lives_ok(

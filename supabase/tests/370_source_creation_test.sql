@@ -44,7 +44,7 @@ select enum_has_labels(
     'claim_revision_created',
     -- Migrasjon 009: fulltekstbiblioteket (009a), modellregisteret (009c) og
     -- kandidaten med sin sluttkontroll (009d).
-    'source_document_stored', 'role_model_assignment_registered',
+    'source_document_stored', 'role_model_assignment_registered', 'role_model_assignment_closed',
     'candidate_built', 'candidate_final_control_recorded'
   ],
   'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt, de to fjerningene av testartefakter og opprettelsen av en påstandsrevisjon, samt fulltekstbiblioteket, modellregisteret og kandidaten med sin sluttkontroll'

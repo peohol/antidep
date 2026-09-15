@@ -20,7 +20,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(19);
+select plan(24);
 
 -- ===========================================================================
 -- Del 1 — Registeret
@@ -105,10 +105,23 @@ select throws_ok(
   'heller ikke begrunnelsen bak tildelingen kan skrives om'
 );
 
--- Den ene endringen som er lov, er å avslutte den — én gang.
-select lives_ok(
+-- En avslutning uten hvem og hvorfor ville vært en endring uten ansvar.
+select throws_ok(
   $$update provenance.role_model_assignments
       set valid_to = now()
+    where agent_role = 'claim_synthesis' and valid_to is null$$,
+  '23514', null,
+  'en avslutning uten attribusjon og begrunnelse avvises'
+);
+
+-- Den ene endringen som er lov, er å avslutte den — én gang, med hvem og
+-- hvorfor.
+select lives_ok(
+  $$update provenance.role_model_assignments
+      set valid_to = now(),
+          closed_by_actor_id =
+            (select id from provenance.actors where actor_key = 'human:peder-holman'),
+          close_reason = 'Prøve i 750: rollen skal handle som en annen modell.'
     where agent_role = 'claim_synthesis' and valid_to is null$$,
   'en tildeling kan avsluttes'
 );
@@ -118,6 +131,36 @@ select throws_ok(
     where agent_role = 'claim_synthesis' and valid_to is not null$$,
   '23001', 'En avsluttet modelltildeling kan ikke avsluttes på nytt eller gjenåpnes.',
   'en avsluttet tildeling kan verken avsluttes på nytt eller gjenåpnes'
+);
+
+-- At en rolle sluttet å handle som en modell, er øyeblikket separasjonen mellom
+-- to ledd kan endre seg. Et auditspor som bare dekket innsettingen, ville vært
+-- stille akkurat der.
+select is(
+  (select count(*)::int from audit.events e
+   where e.operation = 'role_model_assignment_closed'),
+  1,
+  'avslutningen etterlot sin egen auditrad'
+);
+select is(
+  (select e.actor_id from audit.events e
+   where e.operation = 'role_model_assignment_closed'),
+  (select id from provenance.actors where actor_key = 'human:peder-holman'),
+  'auditraden navngir den som avsluttet tildelingen, ikke den som registrerte den'
+);
+-- Begge øyeblikksbildene, slik at overgangen kan leses: hva som ble avsluttet,
+-- og hva raden ble.
+select ok(
+  (select e.old_revision_or_snapshot ->> 'valid_to' is null
+          and e.new_revision_or_snapshot ->> 'valid_to' is not null
+   from audit.events e where e.operation = 'role_model_assignment_closed'),
+  'auditraden bærer både den åpne og den avsluttede tildelingen'
+);
+select is(
+  (select e.object_schema || '.' || e.object_table from audit.events e
+   where e.operation = 'role_model_assignment_closed'),
+  'provenance.role_model_assignments',
+  'auditraden over avslutningen peker på registeret'
 );
 
 -- Og når den er avsluttet, kan rollen få en ny modell — men ikke en modell en

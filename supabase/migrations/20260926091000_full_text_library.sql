@@ -127,6 +127,7 @@ alter table audit.events add column object_schema text not null generated always
     when 'claim_revision_created' then 'knowledge'
     when 'source_document_stored' then 'knowledge'
     when 'role_model_assignment_registered' then 'provenance'
+    when 'role_model_assignment_closed' then 'provenance'
     when 'candidate_built' then 'knowledge'
     when 'candidate_final_control_recorded' then 'workflow'
     else null
@@ -156,6 +157,7 @@ alter table audit.events add column object_table text not null generated always 
     when 'claim_revision_created' then 'claim_revisions'
     when 'source_document_stored' then 'source_documents'
     when 'role_model_assignment_registered' then 'role_model_assignments'
+    when 'role_model_assignment_closed' then 'role_model_assignments'
     when 'candidate_built' then 'candidates'
     when 'candidate_final_control_recorded' then 'candidate_final_controls'
     else null
@@ -206,6 +208,10 @@ alter table audit.events add constraint events_snapshot_shape_check
       -- biblioteksfil bærer med vilje ikke bytene; se auditskriveren under.
       when 'source_document_stored' then old_revision_or_snapshot is null and new_revision_or_snapshot is not null
       when 'role_model_assignment_registered' then old_revision_or_snapshot is null and new_revision_or_snapshot is not null
+      -- Avslutningen er en endring av en rad som allerede fantes, så begge
+      -- øyeblikksbildene skal være der: uten det gamle kunne ingen se hva som
+      -- ble avsluttet.
+      when 'role_model_assignment_closed' then old_revision_or_snapshot is not null and new_revision_or_snapshot is not null
       when 'candidate_built' then old_revision_or_snapshot is null and new_revision_or_snapshot is not null
       when 'candidate_final_control_recorded' then old_revision_or_snapshot is null and new_revision_or_snapshot is not null
       else false
