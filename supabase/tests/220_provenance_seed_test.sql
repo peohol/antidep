@@ -36,6 +36,7 @@
 -- noe, og den positive ved å opprette kontoen inne i en transaksjon som rulles
 -- tilbake.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

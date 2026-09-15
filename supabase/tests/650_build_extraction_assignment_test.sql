@@ -13,6 +13,7 @@
 -- SQLSTATE P0002 = no_data_found, 22023 = invalid_parameter_value,
 -- 42501 = insufficient_privilege.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

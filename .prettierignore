@@ -15,3 +15,6 @@ supabase/.temp/
 # skrevet den om, og den dokumenterte kommandoen ville da produsert en fil som
 # feiler formatkontrollen.
 proposals/extraction-proposal.schema.json
+
+# SQL include fixtures are formatted manually; Prettier has no parser for .inc.
+supabase/tests/fixtures/*.inc

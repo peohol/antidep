@@ -12,10 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Hele historikken: verify-counts.sh kontrollerer at hver PR-rad ført
-          # som «merget» i §74.2 har sin commit. En grunn klone ville gjort hver
-          # rad til et avvik, og kontrollen sier fra framfor å slå seg av.
-          fetch-depth: 0
+          fetch-depth: 1
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -32,8 +29,8 @@ jobs:
         run: npm run lint
       - name: Formatkontroll
         run: npm run format:check
-      - name: Tallpåstander i styringsdokumentene
-        run: ./scripts/verify-counts.sh
+      - name: Repository invariants
+        run: npm run verify:repo
       - name: Typecheck
         run: npm run typecheck
       - name: Tester
@@ -60,7 +57,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Start lokal Supabase-stack
         run: npx supabase start
+      # Fersk installasjon kan ikke bevise at engangsresetten er trygg på en
+      # database som allerede inneholder prototypeinnhold. Denne prøven går
+      # tilbake til siste legacy-migrasjon, legger inn syntetisk aktivt innhold
+      # og tester både vellykket oppgradering, publiseringsstopp, åpen agentjobb
+      # og at migrasjonen ikke kan slette nytt innhold ved en senere omkjøring.
+      - name: Oppgraderingsprøve for Antidep 2-reset
+        run: npm run db:test:upgrade
       - name: Kjør migrasjonene fra bunnen av
+        if: always()
         run: npx supabase db reset
       - name: Databasetester (pgTAP)
         run: npm run db:test
@@ -69,12 +74,15 @@ jobs:
       # reelle forbindelser mot hverandre og kontrollerer at kontrollen av «det
       # du faktisk så» holder revisjonslåsen (migrasjon 006f).
       - name: Samtidighetsprøve (to forbindelser)
+        if: always()
         run: npm run db:test:lock
       # pgTAP prøver SQL, og vitest prøver TypeScript med doble for databasen.
       # Grensen mellom dem — at parameternavnene agentporten sender, er nøyaktig
       # de api-funksjonene tar imot — er ikke prøvd av noen av dem. Denne kjører
-      # de ekte kjørerne mot den ekte stacken, hele veien til publisering.
+      # de ekte kjørerne mot den ekte stacken fram til et dokumentbundet
+      # EvidenceItem med uavhengig maskinkontroll. Publisering prøves ikke her.
       - name: Kjedeprøve (ekte kjørere mot ekte database)
+        if: always()
         run: npm run db:test:chain
       - name: Stopp stacken
         if: always()

@@ -14,6 +14,7 @@
 -- SQLSTATE 42501 = insufficient_privilege, 22023 = invalid_parameter_value,
 -- 23001 = restrict_violation, 23505 = unique_violation, 23514 = check_violation.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

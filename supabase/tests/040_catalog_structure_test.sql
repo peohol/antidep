@@ -113,13 +113,12 @@ select set_eq(
   'provenance.agent_runs bærer rolle, identitet, modell- og pipelineversjon, input, output og tidspunkter (DATABASE_ARCHITECTURE.md §33)'
 );
 
--- audit fikk auditloggen i migrasjon 008, og ikke noe mer. Vaktposten er derfor
--- snevret framfor fjernet: den påstod at schemaet var tomt, og påstår nå at det
--- inneholder nøyaktig én relasjon. Et view eller en tabell som sniker seg inn i
--- audit uten en migrasjon som forklarer den, fanges fortsatt. Innholdet i
--- audit.events er en egen kontrakt i 300_audit_structure_test.sql.
+-- audit har både den varige hendelsesloggen og Antidep 2-resetens private,
+-- uforanderlige gjenopprettingssnapshot. Listen er fortsatt uttømmende.
+-- Innholdet i audit.events er en egen kontrakt i 300_audit_structure_test.sql,
+-- mens reset-snapshotet prøves i 720_antidep2_reset_test.sql.
 --
--- api fikk sine tre lesemodell-views i migrasjon 007; inventaret der er en egen
+-- api fikk sine lesemodell-views i migrasjon 007; inventaret der er en egen
 -- kontrakt i 290_api_read_model_access_test.sql og hører ikke hjemme i en test
 -- av katalogstrukturen.
 select set_eq(
@@ -130,8 +129,8 @@ select set_eq(
     where n.nspname = 'audit'
       and c.relkind in ('r', 'p', 'v', 'm')
   $$,
-  array['events'],
-  'audit inneholder nøyaktig auditloggen fra migrasjon 008'
+  array['events', 'prototype_resets'],
+  'audit inneholder hendelsesloggen og det private Antidep 2-reset-snapshotet'
 );
 
 -- ---------------------------------------------------------------------------

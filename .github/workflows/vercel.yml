@@ -1,26 +1,22 @@
 # Produksjonsdeploy til Vercel.
 #
 # ----------------------------------------------------------------------------
-# Hvorfor denne ikke kjører på pull requests lenger
+# Hvorfor denne ikke kjører på pull requests
 #
-# `VERCEL_TOKEN` ligger i jobbens miljø, og jobben sjekker ut den utsjekkede
-# koden og kjører `vercel build` — altså byggskriptene fra den branchen. En pull
-# request fra en branch i *samme* repo får repository-secrets, i motsetning til
-# en fra en fork. Kode på en PR-branch kunne derfor kjøre med deploy-tokenet
-# tilgjengelig.
+# `VERCEL_TOKEN` ligger i jobbens miljø, og jobben sjekker ut koden og kjører
+# `vercel build` — altså byggskriptene fra branchen. En pull request fra en
+# branch i samme repo kan få repository-secrets. Kode på en PR-branch skal
+# derfor ikke få en produksjonsdeploy-token tilgjengelig.
 #
-# Det var en åpen eskaleringsvei for enhver aktør med pushetilgang, og en aktør
-# som leser eksternt kildemateriale, skal ikke ha den (EVIDENCE_PIPELINE.md §63,
-# docs/ROUTINE_EXTRACTION.md §3.5). En instruks om «ikke push» er ingen grense
-# når poenget er å tåle promptinjeksjon; veien måtte stenges der den fantes.
+# Dette er en minste-privilegium-grense for samme trusselmodell som agentene
+# bruker: kode og modellledd som behandler eksternt innhold skal ikke samtidig
+# få unødvendige skrivekapable hemmeligheter eller verktøy. Se AGENTS.md og
+# ANTIDEP_CONSTITUTION.md regel 7.
 #
 # Forhåndsvisninger forsvinner ikke av det. Vercels egen Git-integrasjon deployer
 # hver branch og hver pull request selv, og det er den som gir lenken i
-# PR-kommentaren (`antidep-git-<branch>-…`). Denne arbeidsflyten laget en *andre*
-# deploy av det samme, uten branch-alias — se `README.md`.
-#
-# Produksjonsdeployen står igjen: den kjører bare på `main`, som er kode noen har
-# reviewet og merget.
+# PR-kommentaren. Denne arbeidsflyten skal bare produsere produksjonsdeploy fra
+# reviewet kode på `main`.
 # ----------------------------------------------------------------------------
 
 name: Deploy to Vercel

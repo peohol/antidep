@@ -21,7 +21,8 @@
     "db:status": "supabase status",
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
-    "db:test:lock": "./scripts/db-lock-test.sh",
+    "db:test:upgrade": "bash ./scripts/db-upgrade-antidep2.sh",
+    "db:test:lock": "./scripts/db-lock-antidep2.sh",
     "db:test:chain": "node scripts/agent-chain-test.ts",
     "agent:verify-extraction": "node --env-file-if-exists=.env.agent.local src/agents/verify-extraction-cli.ts",
     "agent:verify-claims": "node --env-file-if-exists=.env.agent.local src/agents/verify-claims-cli.ts",
@@ -31,7 +32,8 @@
     "agent:assess-evidence": "node --env-file-if-exists=.env.agent.local src/agents/assess-evidence-cli.ts",
     "agent:propose-extraction": "node src/agents/propose-extraction-cli.ts",
     "agent:draft-extraction": "node src/agents/draft-extraction-cli.ts",
-    "editor:assignment": "node --env-file-if-exists=.env.editor.local src/ops/extraction-assignment-cli.ts"
+    "editor:assignment": "node --env-file-if-exists=.env.editor.local src/ops/extraction-assignment-cli.ts",
+    "verify:repo": "./scripts/verify-repo.sh"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
@@ -50,7 +52,7 @@
     "@vitejs/plugin-react": "^6.0.5",
     "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.4",
     "globals": "^17.11.0",
     "jsdom": "^30.0.1",

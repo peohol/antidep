@@ -11,6 +11,7 @@
 -- SQLSTATE 42501 = insufficient_privilege, 23001 = restrict_violation,
 -- 22023 = invalid_parameter_value.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 
@@ -203,8 +204,8 @@ where r.claim_id = (select id from fixture where name = 'claim')
   and r.revision_number in (1, 3)
   and e.id = (select e2.id
               from knowledge.evidence_items e2
-              join knowledge.sources s on s.id = e2.source_id
-              where s.title like 'Fluoxetine versus sertraline%');
+              join catalog.drugs d on d.id = e2.intervention_drug_id
+              where d.canonical_name = 'sertralin');
 
 insert into workflow.claim_verifications
   (claim_revision_id, verified_revision_creator_actor_id, verifier_actor_id, outcome,

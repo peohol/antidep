@@ -22,6 +22,7 @@
 -- migrasjonen aldri hadde kjørt. Assertion 1-3 her binder den negative grenen
 -- til funksjonen ved å kalle den og kreve at kallet ikke skriver noe.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

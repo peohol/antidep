@@ -11,6 +11,7 @@
 -- reviewgatene i migrasjon 005 og 006 (ANTIDEP_CONSTITUTION.md §12). At ingen
 -- klientrolle kan nå dem er derfor et innholdskrav, ikke bare et sikkerhetskrav.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 

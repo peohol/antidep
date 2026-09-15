@@ -16,6 +16,7 @@
 --
 -- SQLSTATE 23505 = unique_violation.
 begin;
+\ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 
@@ -34,13 +35,25 @@ $$;
 insert into knowledge.sources (source_type, title, authors_or_issuer, created_by_actor_id)
 values ('journal_article', 'Serialiseringstestkilde', 'Testforfatter S', pg_temp.extraction_actor());
 
+insert into knowledge.source_versions (
+  source_id, retrieved_at, retrieved_from, content_hash, storage_reference, representation,
+  document_sha256, document_byte_size, document_media_type, text_extraction_tool,
+  text_extraction_tool_version, text_extraction_arguments, text_extraction_transform,
+  retrieved_by_actor_id
+)
+select id, now(), 'file:///syntetisk-serialiseringstest.pdf', 'sha256:' || repeat('7', 64),
+       'private://syntetisk-serialiseringstest.pdf', 'full_text', 'sha256:' || repeat('8', 64),
+       1024, 'application/pdf', 'pdftotext', '24.02.0',
+       '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@1', pg_temp.extraction_actor()
+from knowledge.sources where title = 'Serialiseringstestkilde';
+
 -- To fritekstfelter som ligger ved siden av hverandre i kanoniseringen.
 -- Alle andre felter er like, slik at forskjellen mellom radene er nøyaktig der
 -- testen påstår den er.
 create function pg_temp.insert_evidence(limits text, locator text)
   returns uuid language sql as $$
   insert into knowledge.evidence_items (
-    source_id, design_code, population_id, population_availability,
+    source_id, source_version_id, design_code, population_id, population_availability,
     population_detail, sample_size, sample_size_availability, intervention_drug_id,
     comparator_kind, outcome_concept_id, outcome_detail,
     timepoint_min, timepoint_max, timepoint_availability,
@@ -49,13 +62,14 @@ create function pg_temp.insert_evidence(limits text, locator text)
     extraction_method, created_by_actor_id
   )
   select
-    s.id, 'randomized_controlled_trial', p.id, 'reported_value',
+    s.id, sv.id, 'randomized_controlled_trial', p.id, 'reported_value',
     'Voksne med depressiv lidelse i testdata', 100, 'reported_value', d.id,
     'none', c.id, 'Gjennomsnittlig vektendring i testdata',
     interval '8 weeks', interval '8 weeks', 'reported_value',
     'increase', 'mean_change', 1.5, 'kg', 'reported_value',
     'not_reported', limits, locator, 'ai_assisted', pg_temp.extraction_actor()
   from knowledge.sources s
+  join knowledge.source_versions sv on sv.source_id = s.id
   join catalog.drugs d on d.canonical_name = 'sertralin'
   join catalog.clinical_concepts c on c.canonical_label = 'vektendring'
   join catalog.populations p on p.canonical_label = 'voksne med depressiv lidelse'

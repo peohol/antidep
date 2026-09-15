@@ -1,42 +1,39 @@
 // ============================================================================
-// Kjøreren en Claude Code Routine bruker for modell-leddet
+// Lokal utviklingskjører for modell-leddet
 //
 //   npm run agent:draft-extraction -- --assignment <fil> --open
-//   (aktøren leser prompt.txt og skriver svaret sitt i svar.json)
+//   (en modellaktør leser prompt.txt og skriver svaret sitt i svar.json)
 //   npm run agent:draft-extraction -- --assignment <fil> --close
 //   npm run agent:draft-extraction -- --assignment <fil> --status
 //
-// Ett argument, og ett steg om gangen. Kjøremappa utledes av oppdragsfilen, og
-// filnavnene i den er faste (`drafting-job.ts`). Det er med hensikt: en Routine
-// som måtte velge en katalog, et filnavn, et modelladapter eller en
-// promptmalversjon, ville hatt fire ting å ta feil av — og hver av dem ville
-// vært en teknisk avgjørelse den ikke har grunnlag for å ta.
+// Dette er et beholdt utviklings- og testgrensesnitt, ikke den framtidige live
+// semantiske runtimen. Ett argument og ett steg om gangen gjør at en manuell
+// eller isolert modellaktør kan brukes uten å velge tekniske detaljer som
+// kjørekatalog, filnavn, adapter eller promptmalversjon.
 //
 // ----------------------------------------------------------------------------
 // Forholdet til `agent:propose-extraction`
 //
 // Den kjøreren er den samme kjeden i én kommando, med opptaket som inndata. Den
 // er beholdt fordi den er den korteste veien til å se prompten, spille av en
-// kjøring om igjen og undersøke en avvisning uten en modell
-// (`propose-extraction-cli.ts`). Den er ikke veien en Routine går: den krever at
-// noen limer et svar inn i et opptak, og det er nettopp det leddet som skal bort.
+// kjøring om igjen og undersøke en avvisning uten en live modell
+// (`propose-extraction-cli.ts`). Ingen av disse filbaserte veiene er målbildet
+// for den varige jobbkjeden.
 //
 // ----------------------------------------------------------------------------
 // Hva kjøreren ikke har
 //
-// Ingen databasetilgang, ingen agentidentitet, ingen skrivevei. Den henter en
-// kilde over nett og skriver filer i en katalog. Forslaget den lager, blir en
-// rad først når `npm run agent:extract-evidence` registrerer det — en egen
-// kommando, med sin egen legitimasjon, som kjører hele den deterministiske
-// kontrollen på nytt (EVIDENCE_PIPELINE.md §63).
+// Ingen databasetilgang, ingen agentidentitet og ingen skrivevei. Den leser det
+// dokumentet oppdraget er bundet til fra den lokale dokumentkatalogen og skriver
+// bare arbeidsfiler. Forslaget blir en rad først når
+// `npm run agent:extract-evidence` registrerer det — en egen kommando med egen
+// rolle og legitimasjon som kjører de deterministiske kontrollene på nytt.
 //
-// Vakten i `model-step-guard.ts` fanger det vanligste uhellet: står en
-// skrivekapabel legitimasjon i miljøet til denne prosessen, kjører ikke
-// modell-leddet. Den er et lag i dybden og ikke *den* grensen — den kan ikke se
-// sesjonen som startet kjøringen, og heller ikke verktøyene den sesjonen har.
-// Den egentlige grensen er at Routinen som kjører leddet, har sitt eget
-// kjøremiljø uten skrivekapable hemmeligheter og uten skrivekapable connectorer
-// (`docs/ROUTINE_EXTRACTION.md` §3).
+// Vakten i `model-step-guard.ts` fanger skrivekapable legitimasjoner i denne
+// prosessens miljø. Den er bare et ekstra lag: den framtidige live-runtimen må
+// også isolere modell-leddet fra skrivekapable hemmeligheter, verktøy og
+// connectorer. Se AGENTS.md, ANTIDEP_CONSTITUTION.md regel 7 og
+// docs/EVIDENCE_PIPELINE.md.
 //
 // Filen importeres aldri av appen og havner derfor ikke i klientbunten.
 // ============================================================================
