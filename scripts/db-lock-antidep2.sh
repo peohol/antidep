@@ -36,6 +36,41 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Probe 4 in the durable legacy race script creates its own source version with
+# a now-retired reading-order recipe. Antidep 2 correctly refuses to create new
+# clinical evidence from that recipe. Pre-create the same fixed test identity
+# with the current safe recipe; the legacy script uses ON CONFLICT DO NOTHING
+# for these rows and therefore exercises the same race without weakening the
+# production full-text gate.
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+select '7a000000-0000-4000-8000-000000000001', 'journal_article',
+       'Samtidighetsprøve for registreringsrekkefølgen',
+       'scripts/db-lock-test.sh', a.id
+from provenance.actors a where a.actor_key = 'human:peder-holman'
+on conflict (id) do nothing;
+
+insert into knowledge.source_versions
+  (id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference, representation,
+   retrieved_by_actor_id, document_sha256, document_byte_size, document_media_type,
+   text_extraction_tool, text_extraction_tool_version, text_extraction_arguments,
+   text_extraction_transform)
+select '7a000000-0000-4000-8000-000000000002',
+       '7a000000-0000-4000-8000-000000000001', now(),
+       'file:///syntetisk-samtidighetsprove.pdf', 'sha256:' || repeat('7', 64),
+       'private://syntetisk-samtidighetsprove.pdf', 'full_text', a.id,
+       'sha256:' || repeat('8', 64), 1024, 'application/pdf', 'pdftotext', '24.02.0',
+       '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
+from provenance.actors a where a.actor_key = 'human:peder-holman'
+on conflict (id) do nothing;
+SQL
+
+if [ "$(psql "$DB_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c \
+  "select text_extraction_transform from knowledge.source_versions where id = '7a000000-0000-4000-8000-000000000002'")" != "antidep-reading-order@2" ]; then
+  printf 'Samtidighetsfiksturen har ikke gjeldende sikker PDF-oppskrift.\n' >&2
+  exit 1
+fi
+
 psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
   "grant execute on function api.register_publication_approval(uuid,text,text,text) to authenticated"
 
