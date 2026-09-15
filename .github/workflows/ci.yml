@@ -57,7 +57,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Start lokal Supabase-stack
         run: npx supabase start
+      # Fersk installasjon kan ikke bevise at engangsresetten er trygg på en
+      # database som allerede inneholder prototypeinnhold. Denne prøven går
+      # tilbake til siste legacy-migrasjon, legger inn syntetisk aktivt innhold
+      # og tester både vellykket oppgradering, publiseringsstopp, åpen agentjobb
+      # og at migrasjonen ikke kan slette nytt innhold ved en senere omkjøring.
+      - name: Oppgraderingsprøve for Antidep 2-reset
+        run: npm run db:test:upgrade
       - name: Kjør migrasjonene fra bunnen av
+        if: always()
         run: npx supabase db reset
       - name: Databasetester (pgTAP)
         run: npm run db:test
