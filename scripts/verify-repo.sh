@@ -42,6 +42,12 @@ operational_docs=(
   supabase/README.md
   supabase/seed.sql
 )
+for file in "${operational_docs[@]}"; do
+  [[ -f $file ]] || {
+    echo "Forventet operativ instruks mangler: $file" >&2
+    exit 1
+  }
+done
 if grep -n -E \
   'MVP_IMPLEMENTATION_PLAN|ROUTINE_EXTRACTION|/extraction-review|/review' \
   "${operational_docs[@]}"; then
