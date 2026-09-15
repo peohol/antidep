@@ -151,7 +151,7 @@ assert_eq "$(scalar 'select count(*) from knowledge.evidence_items')" "$before_e
 assert_eq "$(scalar 'select count(*) from knowledge.claims')" "$before_claims" 'publiseringsstopp etterlot delvis slettede påstander'
 assert_eq "$(scalar "select coalesce(to_regclass('audit.prototype_resets')::text, '')")" '' 'publiseringsstopp etterlot et snapshot fra en rullet tilbake reset'
 
-# 3. An open agent run likewise aborts without partial deletion.
+# 3. An open, structurally valid agent run likewise aborts without partial deletion.
 reset_legacy
 before_evidence=$(scalar 'select count(*) from knowledge.evidence_items')
 before_claims=$(scalar 'select count(*) from knowledge.claims')
@@ -163,7 +163,7 @@ insert into provenance.agent_runs (
 )
 select ai.id, ai.actor_id, ai.agent_role,
        'antidep-test', 'upgrade-blocker', '1', 'test', 'test',
-       'running', '{}'::jsonb
+       'running', '{"evidence_item_ids":["upgrade-blocker"]}'::jsonb
 from provenance.agent_identities ai
 where ai.identity_key = 'agent-identity:extraction-verification-01';
 SQL
@@ -172,5 +172,31 @@ expect_upgrade_failure open-agent-run
 assert_eq "$(scalar 'select count(*) from knowledge.evidence_items')" "$before_evidence" 'agentstopp etterlot delvis slettet evidens'
 assert_eq "$(scalar 'select count(*) from knowledge.claims')" "$before_claims" 'agentstopp etterlot delvis slettede påstander'
 assert_eq "$(scalar "select coalesce(to_regclass('audit.prototype_resets')::text, '')")" '' 'agentstopp etterlot et snapshot fra en rullet tilbake reset'
+
+# 4. Any additional clinical root is outside the owner-authorized reset scope.
+# The migration must fail closed rather than silently treating it as prototype data.
+reset_legacy
+before_evidence=$(scalar 'select count(*) from knowledge.evidence_items')
+before_claims=$(scalar 'select count(*) from knowledge.claims')
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
+insert into knowledge.claims (
+  knowledge_type, topic_concept_id, subject_drug_id, created_by_actor_id
+)
+select 'evidence_synthesis', c.id, d.id, a.id
+from catalog.drugs d
+cross join catalog.clinical_concepts c
+cross join provenance.actors a
+where d.canonical_name = 'sertralin'
+  and c.canonical_label <> 'vektendring'
+  and a.actor_key = 'agent:claim-synthesis'
+order by c.id
+limit 1;
+SQL
+unexpected_claims=$(scalar 'select count(*) from knowledge.claims')
+assert_eq "$unexpected_claims" "$((before_claims + 1))" 'klarte ikke å etablere uventet klinisk rot for scope-testen'
+expect_upgrade_failure unexpected-scope
+assert_eq "$(scalar 'select count(*) from knowledge.evidence_items')" "$before_evidence" 'scope-stopp etterlot delvis slettet evidens'
+assert_eq "$(scalar 'select count(*) from knowledge.claims')" "$unexpected_claims" 'scope-stopp slettet uventet klinisk innhold'
+assert_eq "$(scalar "select coalesce(to_regclass('audit.prototype_resets')::text, '')")" '' 'scope-stopp etterlot et snapshot fra en rullet tilbake reset'
 
 printf 'Antidep 2-oppgraderingsprøven gikk gjennom.\n'
