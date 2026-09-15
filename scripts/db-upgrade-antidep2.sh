@@ -49,14 +49,6 @@ reset_legacy() {
   npx --no-install supabase db reset --version "$LAST_LEGACY" --no-seed >/dev/null
 }
 
-seed_active_prototype() {
-  {
-    printf 'begin;\n'
-    cat supabase/tests/fixtures/active_clinical_fixture.inc
-    printf '\ncommit;\n'
-  } | psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 >/dev/null
-}
-
 expect_upgrade_failure() {
   local label=$1
   if npx --no-install supabase migration up --local >"$TMP_DIR/$label.log" 2>&1; then
@@ -67,9 +59,9 @@ expect_upgrade_failure() {
 
 printf 'Antidep 2: oppgraderingsprøve fra legacy-baseline.\n'
 
-# 1. A real pre-reset database with active derived content is snapshotted and emptied.
+# 1. The actual pre-reset legacy database already contains the prototype graph.
+# Upgrade that real state, snapshot it, and empty only the derived clinical layer.
 reset_legacy
-seed_active_prototype
 before_evidence=$(scalar 'select count(*) from knowledge.evidence_items')
 before_claims=$(scalar 'select count(*) from knowledge.claims')
 before_sources=$(scalar 'select count(*) from knowledge.sources')
@@ -84,8 +76,27 @@ assert_eq "$(scalar "select jsonb_array_length(snapshot -> 'evidence_items') fro
 assert_eq "$(scalar "select jsonb_array_length(snapshot -> 'claims') from audit.prototype_resets")" "$before_claims" 'snapshotet dekker ikke alle påstandene'
 assert_eq "$(scalar 'select count(*) from knowledge.sources')" "$before_sources" 'resetten endret kildebiblioteket'
 
-# A second migration-up is a no-op and must not delete new Antidep 2 content.
+# Create genuinely new Antidep 2 content after the reset. A literal rerun of the
+# one-time migration must fail before touching it.
 psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
+insert into knowledge.source_versions (
+  id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
+  representation, retrieved_by_actor_id, document_sha256, document_byte_size,
+  document_media_type, text_extraction_tool, text_extraction_tool_version,
+  text_extraction_arguments, text_extraction_transform
+)
+select
+  'fa200000-0000-4000-8000-000000000002'::uuid,
+  s.id, now(), 'file:///antidep2-rerun-guard.pdf',
+  'sha256:' || repeat('a', 64), 'private://antidep2-rerun-guard.pdf',
+  'full_text', a.id, 'sha256:' || repeat('b', 64), 1024, 'application/pdf',
+  'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
+  'antidep-reading-order@2'
+from knowledge.sources s
+join provenance.actors a on a.actor_key = 'agent:evidence-extraction'
+order by s.id
+limit 1;
+
 insert into knowledge.evidence_items (
   id, source_id, source_version_id, design_code, population_availability,
   population_detail, sample_size_availability, intervention_drug_id,
@@ -103,18 +114,19 @@ from knowledge.source_versions sv
 join catalog.drugs d on d.canonical_name = 'sertralin'
 join catalog.clinical_concepts c on c.canonical_label = 'vektendring'
 join provenance.actors a on a.actor_key = 'agent:evidence-extraction'
-where sv.representation = 'full_text'
-  and sv.document_sha256 ~ '^sha256:[0-9a-f]{64}$'
-order by sv.created_at, sv.id
-limit 1;
+where sv.id = 'fa200000-0000-4000-8000-000000000002';
 SQL
 assert_eq "$(scalar "select count(*) from knowledge.evidence_items where id = 'fa200000-0000-4000-8000-000000000001'")" '1' 'klarte ikke å opprette nytt Antidep 2-funn etter reset'
-npx --no-install supabase migration up --local >"$TMP_DIR/rerun.log" 2>&1
+if psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260925091000_reset_active_prototype_content.sql \
+  >"$TMP_DIR/rerun.log" 2>&1; then
+  cat "$TMP_DIR/rerun.log" >&2
+  fail 'engangsresetten lot seg kjøre bokstavelig en gang til'
+fi
 assert_eq "$(scalar "select count(*) from knowledge.evidence_items where id = 'fa200000-0000-4000-8000-000000000001'")" '1' 'en omkjøring slettet nytt Antidep 2-innhold'
 
 # 2. Any publication history aborts the reset transaction without partial deletion.
 reset_legacy
-seed_active_prototype
 before_evidence=$(scalar 'select count(*) from knowledge.evidence_items')
 before_claims=$(scalar 'select count(*) from knowledge.claims')
 psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
@@ -141,7 +153,6 @@ assert_eq "$(scalar "select coalesce(to_regclass('audit.prototype_resets')::text
 
 # 3. An open agent run likewise aborts without partial deletion.
 reset_legacy
-seed_active_prototype
 before_evidence=$(scalar 'select count(*) from knowledge.evidence_items')
 before_claims=$(scalar 'select count(*) from knowledge.claims')
 psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
