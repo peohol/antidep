@@ -16,10 +16,10 @@
 //
 // **Den primære grensen er kjøremiljøet og verktøytilgangen**, ikke koden her.
 // Modell-leddet skal kjøres uten skrivekapable hemmeligheter og uten
-// skrivekapable eksterne verktøy. Vakten under er et ekstra lag som fanger det
-// vanligste uhellet: at kommandoen kjøres i et skall der en hemmelighet allerede
-// er eksportert. Den framtidige live semantiske runtimen er fortsatt et
-// eksplisitt manglende produktledd i docs/EVIDENCE_PIPELINE.md.
+// skrivekapable eksterne verktøy eller connectorer. Vakten under er et ekstra
+// lag som fanger det vanligste uhellet: at kommandoen kjøres i et skall der en
+// hemmelighet allerede er eksportert. Den framtidige live semantiske runtimen
+// er fortsatt et eksplisitt manglende produktledd i docs/EVIDENCE_PIPELINE.md.
 //
 // ----------------------------------------------------------------------------
 // Hvilke navn den kjenner
@@ -100,7 +100,8 @@ export function assertNoWriteCapableCredentials(env: ProcessEnv, command: string
       'rolle og legitimasjon.\n\n' +
       `Kjør modell-leddet uten dem:\n\n  env ${unset} ${command}\n\n` +
       'Merk at dette bare dekker miljøet til denne prosessen. Den egentlige grensen må også ' +
-      'etableres i kjøremiljøet ved å utelate skrivekapable hemmeligheter og verktøy. Den ' +
-      'varige live-runtimen er ennå ikke implementert (docs/EVIDENCE_PIPELINE.md).',
+      'etableres i kjøremiljøet ved å utelate skrivekapable hemmeligheter, verktøy og ' +
+      'connectorer. Den varige live-runtimen er ennå ikke implementert ' +
+      '(docs/EVIDENCE_PIPELINE.md).',
   )
 }
