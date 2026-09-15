@@ -1085,6 +1085,162 @@ revoke execute on function knowledge.record_evidence_assessment_row(
 ) from public;
 
 -- ----------------------------------------------------------------------------
+-- 3c. Hvilke pipelinejobber som er eksterne agentoppgaver
+--
+-- Utførelsesmåten er en strukturell egenskap ved raden, og ikke noe som utledes
+-- av agentrollen eller av jobbnøkkelen. Uten den ville en helt vanlig
+-- pipelinejobb i en semantisk rolle dukket opp på agentflaten — og en ekte
+-- handoff-jobb kunnet blitt tatt av den automatiserte kjøreren. Rollen sier hva
+-- arbeidet er; denne raden sier hvem som utfører det.
+--
+-- Raden skrives bare av api.enqueue_agent_task, og bare i det samme kallet som
+-- oppretter jobben. Den er append-only av samme grunn som resten av sporet: en
+-- utførelsesmåte som kunne flyttes i ettertid, ville ikke vært noen beskyttelse
+-- i det hele tatt.
+-- ----------------------------------------------------------------------------
+create table workflow.agent_handoff_jobs (
+  id uuid primary key default gen_random_uuid(),
+
+  -- Én rad per jobb. Unikheten ligger i en egen constraint framfor i
+  -- primærnøkkelen, slik at tabellen følger den samme radidentiteten som resten
+  -- av skjemaet (030_conventions_test.sql).
+  pipeline_job_id uuid not null
+    references workflow.pipeline_jobs (id) on update restrict on delete restrict
+    constraint agent_handoff_jobs_pipeline_job_key unique,
+  registered_by_actor_id uuid not null
+    references provenance.actors (id) on update restrict on delete restrict,
+  created_at timestamptz not null default now()
+);
+
+comment on table workflow.agent_handoff_jobs is
+  'Én rad per pipelinejobb som er en ekstern agentoppgave, altså som utføres av et menneske med en KI-tjeneste framfor av en automatisert kjører (ANTIDEP_CONSTITUTION.md regel 3, 4, 7). Utførelsesmåten er en strukturell egenskap ved jobben og ikke noe som utledes av agentrollen eller av jobbnøkkelen: uten raden ville en vanlig pipelinejobb i en semantisk rolle dukket opp på agentflaten, og en ekte handoff-jobb kunnet blitt tatt av api.claim_pipeline_job(text, text, text, integer). Skrives bare av api.enqueue_agent_task(text, jsonb), i det samme kallet som oppretter jobben, og er append-only: en utførelsesmåte som kunne flyttes i ettertid, ville ikke vært noen beskyttelse.';
+comment on column workflow.agent_handoff_jobs.registered_by_actor_id is
+  'Redaktøren som la oppgaven inn som en ekstern agentoppgave. At arbeidet skal ut av Antidep er en avgjørelse, og en avgjørelse har en avsender.';
+
+alter table workflow.agent_handoff_jobs enable row level security;
+
+create trigger agent_handoff_jobs_set_created_at
+  before insert on workflow.agent_handoff_jobs
+  for each row execute function catalog.set_created_at();
+
+create trigger agent_handoff_jobs_are_append_only
+  before update or delete on workflow.agent_handoff_jobs
+  for each row execute function knowledge.reject_append_only_mutation(
+    'Utførelsesmåten til en pipelinejobb avgjøres når jobben legges inn. En måte som kunne flyttes i ettertid, ville ikke vært noen beskyttelse mot at det samme arbeidet ble gjort to ganger.'
+  );
+
+-- ----------------------------------------------------------------------------
+-- 3d. Den gamle kjøreren tar ikke en ekstern agentoppgave
+--
+-- `api.claim_pipeline_job` valgte enhver ledig jobb i rollen legitimasjonen var
+-- autentisert for. Etter at handoff-jobbene finnes som en egen form, ville den
+-- dermed kunnet ta ut en jobb et menneske allerede hadde lastet ned og gitt til
+-- en KI-tjeneste. Utvalget utelater dem nå eksplisitt.
+--
+-- Funksjonen gjenskapes her framfor å endres i migrasjon 009b: den er anvendt,
+-- og en historisk migrasjon skrives ikke om.
+-- ----------------------------------------------------------------------------
+create or replace function api.claim_pipeline_job(
+  p_identity_key text,
+  p_secret text,
+  p_agent_role text,
+  p_lease_seconds integer default 900
+)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_role provenance.agent_role;
+  v_identity_id uuid;
+  v_job workflow.pipeline_jobs;
+  v_from workflow.pipeline_job_state;
+begin
+  begin
+    v_role := p_agent_role::provenance.agent_role;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format('%L er ikke en kjent agentrolle.', p_agent_role),
+        hint = 'Gyldige roller er de eksplisitte agentrollene i EVIDENCE_PIPELINE.md.';
+  end;
+
+  v_identity_id := provenance.authenticate_agent_identity(p_identity_key, p_secret, v_role);
+
+  if p_lease_seconds is null or p_lease_seconds < 30 or p_lease_seconds > 86400 then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('Leietiden %s sekunder er utenfor 30–86400.', coalesce(p_lease_seconds::text, 'NULL')),
+      hint = 'En leie som er for kort, utløper mens arbeidet pågår og lar to kjørere ta det samme oppdraget. En som er for lang, holder et oppdrag utilgjengelig lenge etter at kjøreren er borte.';
+  end if;
+
+  -- `skip locked` framfor å vente: to kjørere som spør samtidig, skal få hver
+  -- sin jobb, ikke stå i kø bak hverandre. En utløpt leie regnes som ledig —
+  -- det er nettopp den tilstanden som skal overleve at en prosess døde.
+  select j.* into v_job
+  from workflow.pipeline_jobs j
+  where j.agent_role = v_role
+    and (
+      j.state = 'ready'
+      or (j.state = 'leased' and j.lease_expires_at <= now())
+    )
+    and j.attempts < j.max_attempts
+    -- En ekstern agentoppgave er ikke denne kjørerens arbeid. Uten dette kunne
+    -- en automatisert kjører tatt ut en jobb et menneske allerede hadde lastet
+    -- ned, og det samme arbeidet blitt gjort to ganger — i to modellidentiteter,
+    -- med to utfall, og med ett av dem uten proveniens for hvem som ba om det
+    -- (ANTIDEP_CONSTITUTION.md regel 4, 7).
+    and not exists (
+      select 1 from workflow.agent_handoff_jobs h where h.pipeline_job_id = j.id
+    )
+  order by j.enqueued_at, j.id
+  for update skip locked
+  limit 1;
+
+  if not found then
+    return jsonb_build_object('claimed', false);
+  end if;
+
+  v_from := v_job.state;
+
+  update workflow.pipeline_jobs j
+  set state = 'leased',
+      attempts = j.attempts + 1,
+      leased_by_agent_identity_id = v_identity_id,
+      -- Ny nøkkel for hvert uttak. Den forrige slutter å gjelde i det samme
+      -- øyeblikket, så et utfall fra en utløpt leie treffer ingenting.
+      lease_token = gen_random_uuid(),
+      lease_expires_at = now() + make_interval(secs => p_lease_seconds)
+  where j.id = v_job.id
+  returning * into v_job;
+
+  perform workflow.record_pipeline_job_event(
+    v_job.id, v_from, 'leased'::workflow.pipeline_job_state, v_job.attempts,
+    null, v_identity_id,
+    case when v_from = 'leased' then 'Forrige leie var utløpt.' else null end
+  );
+
+  return jsonb_build_object(
+    'claimed', true,
+    'pipeline_job_id', v_job.id,
+    'job_key', v_job.job_key,
+    'agent_role', v_job.agent_role::text,
+    'input_manifest', v_job.input_manifest,
+    'attempt', v_job.attempts,
+    'max_attempts', v_job.max_attempts,
+    'lease_token', v_job.lease_token,
+    'lease_expires_at', v_job.lease_expires_at,
+    'last_failure_reason', v_job.failure_reason
+  );
+end;
+$$;
+
+comment on function api.claim_pipeline_job(text, text, text, integer) is
+  'Tar ut én jobb for rollen legitimasjonen er autentisert for, og gir den en leie med utløpstid (DATABASE_ARCHITECTURE.md §33, §43). Bruker FOR UPDATE SKIP LOCKED, slik at to kjørere som spør samtidig får hver sin jobb framfor å stå i kø. En jobb med utløpt leie regnes som ledig: en kjører som forsvant, skal ikke blokkere køen for alltid. attempts økes ved uttaket og ikke ved feilen, slik at en kjører som dør uten å melde fra, også telles — ellers ville nettopp den feilformen kunnet prøves i det uendelige. Fra migrasjon 010c utelates de eksterne agentoppgavene (workflow.agent_handoff_jobs) eksplisitt: de utføres av et menneske med en KI-tjeneste, og en automatisert kjører som tok en av dem, ville gjort det samme arbeidet en gang til under en annen modellidentitet. Svarer {claimed: false} når køen er tom; det er ikke en feil. EXECUTE går til anon fordi en agent ikke har brukerkonto — legitimasjonen og ikke Data API-rollen er kontrollen.';
+
+-- ----------------------------------------------------------------------------
 -- 4. Oppgaven, bygget av rader som allerede finnes
 --
 -- Tre små lesere først. De finnes for at en feilskrevet id i et inndatamanifest
@@ -1158,13 +1314,18 @@ begin
   perform workflow.assert_evidence_usable_for_synthesis(p_evidence_item_ids);
   return null;
 exception
-  when others then
+  -- Bare de feilklassene kontrollen faktisk reiser. Et `when others` ville
+  -- gjort en programmeringsfeil eller en databasefeil til setningen «grunnlaget
+  -- er ikke klart», og konstitusjonen skiller uttrykkelig en teknisk feil fra en
+  -- manglende kontroll: en teknisk feil skal boble opp og bli synlig som det den
+  -- er (ANTIDEP_CONSTITUTION.md regel 4).
+  when restrict_violation or no_data_found or invalid_parameter_value then
     return format('%s: %s', p_lead, sqlerrm);
 end;
 $$;
 
 comment on function workflow.evidence_usable_problem(uuid[], text) is
-  'Kontrollnivået evidensen må ha nådd, lest som én setning framfor som et kast. Kaller workflow.assert_evidence_usable_for_synthesis(uuid[]) — den samme funksjonen skriveveiene kaller — slik at forhåndskontrollen i agentkøen ikke kan bli mildere enn den virkelige.';
+  'Kontrollnivået evidensen må ha nådd, lest som én setning framfor som et kast. Kaller workflow.assert_evidence_usable_for_synthesis(uuid[]) — den samme funksjonen skriveveiene kaller — slik at forhåndskontrollen i agentkøen ikke kan bli mildere enn den virkelige. Fanger bare de feilklassene kontrollen faktisk reiser: en teknisk feil skal boble opp framfor å bli presentert som «grunnlaget er ikke klart» (ANTIDEP_CONSTITUTION.md regel 4).';
 
 revoke execute on function workflow.evidence_usable_problem(uuid[], text) from public;
 
@@ -1178,13 +1339,14 @@ begin
   perform workflow.assert_claim_verified_before_assessment(p_claim_revision_id);
   return null;
 exception
-  when others then
+  -- Samme avgrensning som over, og av samme grunn.
+  when restrict_violation or no_data_found or invalid_parameter_value then
     return format('%s: %s', p_lead, sqlerrm);
 end;
 $$;
 
 comment on function workflow.claim_verified_problem(uuid, text) is
-  'Kildestøttekontrollen en påstandsrevisjon må ha vært gjennom, lest som én setning framfor som et kast. Kaller workflow.assert_claim_verified_before_assessment(uuid) — den samme funksjonen skriveveien kaller — slik at forhåndskontrollen i agentkøen ikke kan bli mildere enn den virkelige.';
+  'Kildestøttekontrollen en påstandsrevisjon må ha vært gjennom, lest som én setning framfor som et kast. Kaller workflow.assert_claim_verified_before_assessment(uuid) — den samme funksjonen skriveveien kaller — slik at forhåndskontrollen i agentkøen ikke kan bli mildere enn den virkelige. Fanger bare de feilklassene kontrollen faktisk reiser: en teknisk feil skal boble opp framfor å bli presentert som «kontrollen holder ikke» (ANTIDEP_CONSTITUTION.md regel 4).';
 
 revoke execute on function workflow.claim_verified_problem(uuid, text) from public;
 
@@ -1366,6 +1528,16 @@ as $$
 declare
   v_model provenance.role_model_assignments;
 begin
+  -- Utførelsesmåten først, og som en egenskap ved raden. Rollen sier hva
+  -- arbeidet er, men ikke hvem som gjør det: en helt vanlig pipelinejobb i en
+  -- semantisk rolle er den automatiserte kjørerens, og skal ikke vises på
+  -- agentflaten som noe et menneske venter på å utføre.
+  if not exists (
+    select 1 from workflow.agent_handoff_jobs h where h.pipeline_job_id = p_job.id
+  ) then
+    return 'Denne jobben er ikke lagt inn som en ekstern agentoppgave, og utføres av Antideps egne kjørere.';
+  end if;
+
   if workflow.agent_task_contract(p_job.agent_role) is null then
     return format(
       'Rollen %s utføres av Antideps egen deterministiske kode, og kan ikke settes ut til en ekstern KI-agent.',
@@ -1389,6 +1561,18 @@ begin
   -- hentes ut heller.
   if p_job.attempts >= p_job.max_attempts then
     return 'Oppgaven har brukt opp forsøkene sine og blir stående. Arbeidet må legges inn som en ny oppgave for å kunne gjøres om igjen.';
+  end if;
+
+  -- En leie som fortsatt løper, tilhører den som tok den. Importen tar selv et
+  -- uttak med sin egen nøkkel, og uten denne regelen ville den overtatt jobben
+  -- fra en kjører som holder den — kollisjonen ville først blitt oppdaget da den
+  -- andre kjøreren prøvde å melde utfallet med en nøkkel som ikke gjaldt lenger
+  -- (ANTIDEP_CONSTITUTION.md regel 4, 7). En UTLØPT leie er derimot ledig: det
+  -- er nettopp den tilstanden som skal overleve at en prosess døde.
+  if p_job.state = 'leased'
+     and p_job.lease_expires_at is not null
+     and p_job.lease_expires_at > statement_timestamp() then
+    return 'Oppgaven er tatt ut av en kjøring som fortsatt holder den. Den blir ledig igjen når uttaket er ferdig eller leien løper ut.';
   end if;
 
   -- Hvilken KI-tjeneste leddet utføres av, avgjøres før oppgaven hentes ut:
@@ -1693,18 +1877,25 @@ begin
       j.enqueued_at,
       j.failure_reason,
       workflow.agent_task_problem(j) as blocked_reason,
-      (i.id is not null) as answered,
-      i.created_at as answered_at,
       coalesce(workflow.agent_task_subject(j) ->> 'label', j.job_key) as subject_label,
       case when m.id is null then null else jsonb_build_object(
         'provider', m.provider, 'model', m.model,
         'model_version', m.model_version,
         'model_version_disclosure', m.model_version_disclosure::text) end as registered_model
     from workflow.pipeline_jobs j
-    left join workflow.agent_handoff_imports i on i.pipeline_job_id = j.id
+    -- Bare de jobbene som faktisk ER eksterne agentoppgaver. En innerjoin og
+    -- ikke et rollefilter: utførelsesmåten er en egenskap ved raden.
+    join workflow.agent_handoff_jobs h on h.pipeline_job_id = j.id
     -- Den samme tildelingen kontrollen leser, lest med den samme funksjonen.
     left join lateral provenance.current_semantic_model(j.agent_role) m on true
     where workflow.agent_task_contract(j.agent_role) is not null
+      -- Køen er det som venter. En jobb med et registrert utfall er historikk,
+      -- og en flate som lot den stå, ville vokst med noe ingen skal gjøre noe
+      -- med (ANTIDEP_CONSTITUTION.md regel 4).
+      and j.state <> 'succeeded'
+      and not exists (
+        select 1 from workflow.agent_handoff_imports i where i.pipeline_job_id = j.id
+      )
   ) q;
 
   return v_rows;
@@ -1712,7 +1903,7 @@ end;
 $$;
 
 comment on function api.agent_work_queue() is
-  'Agentoppgavene som finnes, slik en operativ flate trenger dem: rolle, hva oppgaven gjelder, tilstand, om den allerede er besvart, hvilken ekstern modell rollen er registrert med, og én setning om hva som eventuelt hindrer at den kan kjøres. Inneholder ikke kildeteksten — den ligger i api.agent_task_payload(uuid), som hentes når oppgaven faktisk skal utføres. Krever editor-mandat. SECURITY DEFINER fordi workflow og provenance har RLS med default deny; kalleren valideres på funksjonens eget kall.';
+  'De eksterne agentoppgavene som fortsatt venter, slik en operativ flate trenger dem: rolle, hva oppgaven gjelder, tilstand, hvilken ekstern modell leddet er tildelt, og én setning om hva som eventuelt hindrer at den kan kjøres. Bare jobber som faktisk er lagt inn som eksterne agentoppgaver (workflow.agent_handoff_jobs) — utførelsesmåten er en egenskap ved raden og ikke noe som utledes av agentrollen — og bare de som ikke har et registrert utfall: en besvart eller fullført jobb er historikk, og en flate som lot den stå, ville vokst med noe ingen skal gjøre noe med. Inneholder ikke kildeteksten — den ligger i api.agent_task_payload(uuid), som hentes når oppgaven faktisk skal utføres. Krever editor-mandat. SECURITY DEFINER fordi workflow og provenance har RLS med default deny; kalleren valideres på funksjonens eget kall.';
 
 revoke execute on function api.agent_work_queue() from public;
 grant execute on function api.agent_work_queue() to authenticated;
@@ -1811,6 +2002,23 @@ begin
   select j.* into v_job
   from workflow.pipeline_jobs j
   where j.id = (v_result ->> 'pipeline_job_id')::uuid;
+
+  -- Utførelsesmåten settes i det samme kallet som oppretter jobben, og aldri
+  -- etterpå. Fikk vi tilbake en jobb som allerede fantes, må den ha vært en
+  -- handoff-jobb fra før: en intern pipelinejobb som ble omdøpt til en ekstern
+  -- oppgave i ettertid, ville kunnet stå midt i en kjøring.
+  if (v_result ->> 'enqueued')::boolean then
+    insert into workflow.agent_handoff_jobs (pipeline_job_id, registered_by_actor_id)
+    values (v_job.id, v_job.enqueued_by_actor_id);
+  elsif not exists (
+    select 1 from workflow.agent_handoff_jobs h where h.pipeline_job_id = v_job.id
+  ) then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format(
+        'Jobben %L finnes allerede for rollen %L som en intern pipelinejobb.', v_job_key, p_agent_role),
+      hint = 'Utførelsesmåten avgjøres når jobben legges inn. En intern jobb som ble gjort om til en ekstern agentoppgave i ettertid, kunne stått midt i en kjøring — og det samme arbeidet ville blitt gjort to ganger.';
+  end if;
 
   -- Bare grunnlaget. At ingen KI-tjeneste er valgt for leddet ennå, er ikke en
   -- grunn til å nekte å legge inn oppgaven — det er noe køen ber om, og valget

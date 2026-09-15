@@ -298,7 +298,15 @@ export function parseAgentTask(value: unknown): AgentTask {
 // skal utføre den.
 // ----------------------------------------------------------------------------
 
-/** Én rad i køen over agentoppgaver. */
+/**
+ * Én rad i køen over agentoppgaver.
+ *
+ * Køen er det som venter. En jobb med et registrert utfall står ikke i den —
+ * verken en besvart handoff-oppgave eller en fullført kjøring — og en jobb som
+ * ikke er lagt inn som en ekstern agentoppgave, står der aldri i det hele tatt.
+ * Utfallet av en import vises derfor av flaten selv, og ikke som en rad som blir
+ * liggende (migrasjon 010c).
+ */
 export interface AgentWorkItem {
   readonly pipelineJobId: string
   readonly role: HandoffRole
@@ -312,9 +320,6 @@ export interface AgentWorkItem {
   readonly blockedReason: string | null
   /** Begrunnelsen fra forrige mislykkede forsøk, eller `null`. */
   readonly failureReason: string | null
-  /** Om oppgaven allerede har tatt imot et svar. */
-  readonly answered: boolean
-  readonly answeredAt: string | null
   readonly registeredModel: ModelIdentity | null
 }
 
@@ -374,8 +379,6 @@ export function parseAgentWorkQueue(value: unknown): {
       subjectLabel: asText(fields, 'subject_label'),
       blockedReason: asOptionalText(fields, 'blocked_reason'),
       failureReason: asOptionalText(fields, 'failure_reason'),
-      answered: asFlag(fields, 'answered'),
-      answeredAt: asOptionalText(fields, 'answered_at'),
       registeredModel:
         registered === null || registered === undefined
           ? null

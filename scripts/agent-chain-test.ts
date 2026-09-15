@@ -220,6 +220,11 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
     delete from workflow.agent_handoff_imports where pipeline_job_id in (
       select id from workflow.pipeline_jobs
       where job_key like 'agent-handoff:%' and enqueued_by_actor_id = ${q(EDITOR_ACTOR)});
+    -- Utførelsesmåten er en egen rad med RESTRICT på jobben. Uten dette ville
+    -- slettingen av jobbene under stoppet på fremmednøkkelen.
+    delete from workflow.agent_handoff_jobs where pipeline_job_id in (
+      select id from workflow.pipeline_jobs
+      where job_key like 'agent-handoff:%' and enqueued_by_actor_id = ${q(EDITOR_ACTOR)});
     delete from workflow.pipeline_job_events where pipeline_job_id in (
       select id from workflow.pipeline_jobs
       where job_key like 'agent-handoff:%' and enqueued_by_actor_id = ${q(EDITOR_ACTOR)});
@@ -1404,7 +1409,6 @@ async function main(): Promise<void> {
         (item) =>
           item.pipelineJobId === handoffJobId &&
           item.blockedReason === null &&
-          !item.answered &&
           item.registeredModel?.model === 'ekstern-kjedeagent' &&
           item.subjectLabel.length > 0,
       ),
@@ -1656,6 +1660,102 @@ async function main(): Promise<void> {
       'en synteseoppgave på et ukontrollert evidensfunn kan ikke legges inn',
       unverifiedSynthesis.error !== null,
       'køen godtok en oppgave importen måtte avvist',
+    )
+
+    // ------------------------------------------------------------------
+    // En leie tilhører den som tok den
+    //
+    // Hvert RPC-kall under er sin egen commitede transaksjon, så dette er en
+    // ekte samtidighetsprøve på tvers av forbindelser — og den kan ikke gjøres
+    // i pgTAP, der alt ligger i én transaksjon som rulles tilbake.
+    //
+    // Først: en vanlig kjører får ikke ta ut en ekstern agentoppgave i det hele
+    // tatt. Uten det ville det samme arbeidet blitt gjort to ganger, i to
+    // modellidentiteter (ANTIDEP_CONSTITUTION.md regel 4, 7).
+    // ------------------------------------------------------------------
+    const claimAttempt = await agent.rpc('claim_pipeline_job', {
+      p_identity_key: 'agent-identity:evidence-extraction-01',
+      p_secret: secret,
+      p_agent_role: 'evidence_extraction',
+    })
+    check(
+      'en automatisert kjører tar ikke ut en ekstern agentoppgave',
+      claimAttempt.error === null &&
+        (claimAttempt.data as { claimed?: boolean } | null)?.claimed === false,
+      claimAttempt.error?.message ?? 'kjøreren tok en handoff-jobb',
+    )
+
+    // Og motsatt: en vanlig pipelinejobb i den samme rollen kan tas. Uten dette
+    // paret kunne regelen over vært oppfylt av en kø som var tom.
+    psql(
+      config,
+      `insert into workflow.pipeline_jobs
+         (agent_role, job_key, input_manifest, enqueued_by_actor_id)
+       values ('evidence_extraction', 'antidep2-kjede:intern-jobb',
+               '{"mode":"antidep2-kjede"}'::jsonb, ${q(EDITOR_ACTOR)})
+       returning id`,
+    )
+    const internalClaim = await agent.rpc('claim_pipeline_job', {
+      p_identity_key: 'agent-identity:evidence-extraction-01',
+      p_secret: secret,
+      p_agent_role: 'evidence_extraction',
+    })
+    check(
+      'en vanlig pipelinejobb i den samme rollen kan tas av kjøreren',
+      internalClaim.error === null &&
+        (internalClaim.data as { claimed?: boolean; job_key?: string } | null)?.job_key ===
+          'antidep2-kjede:intern-jobb',
+      internalClaim.error?.message ?? 'kjøreren fikk ingen jobb',
+    )
+
+    // Så: en leie som løper, kan ikke overtas av importen. Uttaket settes
+    // direkte, fordi kjøreren nettopp ble nektet å ta oppgaven — og det er
+    // nøyaktig den tilstanden en gammel kjøring ville etterlatt.
+    psql(
+      config,
+      `update workflow.pipeline_jobs
+       set state = 'leased', attempts = 1,
+           leased_by_agent_identity_id = (select id from provenance.agent_identities
+                                          where identity_key = 'agent-identity:evidence-extraction-01'),
+           lease_token = gen_random_uuid(),
+           lease_expires_at = now() + interval '15 minutes'
+       where id = ${q(staleJobId)}`,
+    )
+    const heldBefore = psql(
+      config,
+      `select format('%s|%s', j.attempts, j.lease_token)
+       from workflow.pipeline_jobs j where j.id = ${q(staleJobId)}`,
+    )
+    const stolen = await editor.rpc('import_agent_answer', {
+      p_pipeline_job_id: staleJobId,
+      p_answer: answerForStaleJob(chainIdentity, staleTask.requestDigest),
+    })
+    check(
+      'en oppgave med en løpende leie kan ikke overtas av importen',
+      stolen.error !== null &&
+        psql(
+          config,
+          `select format('%s|%s', j.attempts, j.lease_token)
+           from workflow.pipeline_jobs j where j.id = ${q(staleJobId)}`,
+        ) === heldBefore,
+      'importen tok over uttaket fra en kjøring som holdt det',
+    )
+
+    // Leien løper ut, og oppgaven er ledig igjen. Uten dette ville en kjører som
+    // døde, låst oppgaven for alltid — og regelen over vært trivielt oppfylt.
+    psql(
+      config,
+      `update workflow.pipeline_jobs
+       set lease_expires_at = now() - interval '1 minute'
+       where id = ${q(staleJobId)}`,
+    )
+    check(
+      'en utløpt leie gjør oppgaven ledig igjen',
+      psql(
+        config,
+        `select coalesce(workflow.agent_task_problem(j), 'ledig')
+         from workflow.pipeline_jobs j where j.id = ${q(staleJobId)}`,
+      ) === 'ledig',
     )
 
     // Et bytte av tjeneste ugyldiggjør de utestående oppgavene: tildelingen

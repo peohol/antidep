@@ -18,7 +18,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(49);
+select plan(54);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -803,6 +803,14 @@ reset role;
 -- en jobb som alt hadde et utfall — for eksempel en kjøring fra et automatisert
 -- ledd — stått i flaten med nedlasting og opplasting, mens importen uansett
 -- måtte avvise svaret (ANTIDEP_CONSTITUTION.md regel 4).
+-- En vanlig pipelinejobb i en semantisk rolle er den automatiserte kjørerens, og
+-- skal aldri vises som en agentoppgave. Utførelsesmåten er en egenskap ved raden
+-- og ikke noe som utledes av rollen. Den legges inn FØR køen leses, ellers ville
+-- prøven under lest en kø som ikke kunne inneholdt den uansett.
+insert into workflow.pipeline_jobs (agent_role, job_key, input_manifest, enqueued_by_actor_id)
+values ('evidence_extraction', 'antidep-intern:780', '{"mode":"780"}'::jsonb,
+        'ac780000-0000-4000-8000-00000000000e');
+
 select set_config('request.jwt.claims',
                   '{"sub":"78000000-0000-4000-8000-00000000000e"}', true);
 set local role authenticated;
@@ -841,16 +849,86 @@ select matches(
   'en fullført pipelinejobb er ikke en utførbar agentoppgave'
 );
 
--- Og den oppgaven som faktisk tok imot et svar, står som blokkert i køen framfor
--- som noe som venter på et menneske.
-select isnt(
-  (select q.value ->> 'blocked_reason'
-   from res, jsonb_array_elements(res.payload) as q(value)
-   where res.label = 'queue'
-     and q.value ->> 'pipeline_job_id'
-         = (select payload ->> 'pipeline_job_id' from res r2 where r2.label = 'enqueued')),
+-- Og den oppgaven som faktisk tok imot et svar, står ikke i køen i det hele
+-- tatt: køen er det som venter, og en besvart oppgave er historikk.
+select is_empty(
+  format(
+    $$select q.value ->> 'pipeline_job_id'
+      from (select %L::jsonb as payload) k,
+           jsonb_array_elements(k.payload) as q(value)
+      where q.value ->> 'pipeline_job_id' = %L$$,
+    (select payload::text from res where label = 'queue'),
+    (select payload ->> 'pipeline_job_id' from res where label = 'enqueued')
+  ),
+  'en besvart oppgave står ikke i køen'
+);
+
+select is(
+  (select workflow.agent_task_problem(j)
+   from workflow.pipeline_jobs j where j.job_key = 'antidep-intern:780'),
+  'Denne jobben er ikke lagt inn som en ekstern agentoppgave, og utføres av Antideps egne kjørere.',
+  'en vanlig pipelinejobb i en semantisk rolle er ingen agentoppgave'
+);
+
+select is_empty(
+  format(
+    $$select q.value ->> 'pipeline_job_id'
+      from (select %L::jsonb as payload) k,
+           jsonb_array_elements(k.payload) as q(value)
+      where q.value ->> 'pipeline_job_id' = %L$$,
+    (select payload::text from res where label = 'queue'),
+    (select j.id::text from workflow.pipeline_jobs j where j.job_key = 'antidep-intern:780')
+  ),
+  'en vanlig pipelinejobb står ikke i agentkøen'
+);
+
+-- Og motsatt: den handoff-jobben som venter, STÅR i den samme køen. Uten dette
+-- paret kunne regelen over vært oppfylt av en kø som var tom.
+select isnt_empty(
+  format(
+    $$select q.value ->> 'pipeline_job_id'
+      from (select %L::jsonb as payload) k,
+           jsonb_array_elements(k.payload) as q(value)
+      where q.value ->> 'pipeline_job_id' = %L$$,
+    (select payload::text from res where label = 'queue'),
+    (select payload ->> 'pipeline_job_id' from res where label = 'done_job')
+  ),
+  'den handoff-oppgaven som venter, står i den samme køen'
+);
+
+-- En aktiv leie tilhører den som tok den. Importen tar selv et uttak, og uten
+-- denne regelen ville den overtatt jobben fra en kjøring som holder den.
+update workflow.pipeline_jobs
+set state = 'leased',
+    attempts = 1,
+    leased_by_agent_identity_id = (select id from provenance.agent_identities
+                                   where identity_key = 'agent-identity:evidence-extraction-01'),
+    lease_token = '78000000-0000-4000-8000-0000000000d1',
+    lease_expires_at = now() + interval '15 minutes'
+where id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'done_job');
+
+select matches(
+  (select workflow.agent_task_problem(j)
+   from workflow.pipeline_jobs j
+   where j.id = (select (payload ->> 'pipeline_job_id')::uuid
+                 from res where label = 'done_job')),
+  'fortsatt holder den',
+  'en oppgave med en løpende leie kan ikke overtas av importen'
+);
+
+-- Og motsatt: en UTLØPT leie er ledig igjen. Uten denne ville en kjører som døde
+-- låst oppgaven for alltid, og regelen over vært trivielt oppfylt.
+update workflow.pipeline_jobs
+set lease_expires_at = now() - interval '1 minute'
+where id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'done_job');
+
+select is(
+  (select workflow.agent_task_problem(j)
+   from workflow.pipeline_jobs j
+   where j.id = (select (payload ->> 'pipeline_job_id')::uuid
+                 from res where label = 'done_job')),
   null,
-  'køen viser en besvart oppgave som blokkert framfor som utførbar'
+  'en oppgave med utløpt leie er ledig igjen'
 );
 
 -- En oppbrukt oppgave skal ikke kunne hentes ut heller: alternativet er en hel

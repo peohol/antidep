@@ -8,6 +8,8 @@ Antidep eier oppgavekontrakten, integritetskontrollene og lagringen. Oppgaven by
 
 Hvilken KI-tjeneste hvert agentledd utføres av, velges på forhånd fra flaten av den som har tilgangen. Valget er ikke en innstilling for ryddighetens skyld: lot vi svaret oppgi sin egen identitet ved første import, ville separasjonen mellom generator og kontroll hvilt på en erklæring modellen avga om seg selv. To agentledd kan derfor strukturelt ikke dele modell — den modellen som laget innholdet, kan ikke også vurdere det — og et forsøk avvises når tjenesten velges, før noen har brukt en økt på et svar som uansett ikke kunne registreres.
 
+Agentkøen er det som venter: en oppgave som er besvart, forsvinner fra den, og en jobb Antideps egne kjørere skal gjøre, står der aldri. Hva som ble registrert, sier flaten selv.
+
 Hele veien betjenes fra Antidep-flaten. Den som skal gjøre agentarbeidet, ser hva som venter, laster ned oppgaven, gir den til KI-tjenesten og laster opp svaret — uten å åpne repoet, redigere JSON, håndtere oppdragsfiler, kjøre terminalkommandoer, kjenne database-ID-er eller konfigurere en modell-API.
 
 ## Det som fortsatt krever en terminal

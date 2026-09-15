@@ -52,7 +52,8 @@ interface Identity {
  * to ledd kan ikke dele modell, tildelingen inngår i oppgavens avtrykk, og et
  * svar må komme fra den tildelte modellen.
  */
-function fakeDatabase() {
+function fakeDatabase(options: { readonly blocked?: readonly string[] } = {}) {
+  const blocked = new Set(options.blocked ?? [])
   const semanticModels = new Map<string, Identity>()
   const imports = new Map<string, { answer: string; outcome: Record<string, unknown> }>()
 
@@ -114,29 +115,37 @@ function fakeDatabase() {
     pipeline_job_id: jobId,
     agent_role: role,
     job_key: String(payloads[jobId]?.['job_key'] ?? ''),
-    state: imports.has(jobId) ? 'succeeded' : 'ready',
-    attempts: imports.has(jobId) ? 1 : 0,
+    state: 'ready',
+    attempts: 0,
     max_attempts: 3,
     enqueued_at: '2026-09-15T09:00:00Z',
     failure_reason: null,
-    blocked_reason: imports.has(jobId)
-      ? 'Oppgaven har allerede tatt imot et svar. Skal arbeidet gjøres om igjen, er det en ny oppgave.'
-      : semanticModels.has(role)
-        ? null
-        : 'Ingen KI-tjeneste er valgt for dette agentleddet ennå.',
-    answered: imports.has(jobId),
-    answered_at: imports.has(jobId) ? '2026-09-15T10:12:00Z' : null,
+    blocked_reason: !semanticModels.has(role)
+      ? 'Ingen KI-tjeneste er valgt for dette agentleddet ennå.'
+      : blocked.has(jobId)
+        ? 'Påstanden er ikke kildestøttekontrollert ennå.'
+        : null,
     subject_label: label,
     registered_model: modelOf(role),
   })
 
   const gateway: AgentWorkGateway = {
+    // Køen er det som venter. En besvart oppgave står ikke i den — akkurat som i
+    // databasen, der utfallet gjør jobben til historikk.
     listQueue: () =>
       Promise.resolve(
-        parseAgentWorkQueue([
-          queueRow(EXTRACTION_JOB, 'evidence_extraction', 'Syntetisk testkilde'),
-          queueRow(ASSESSMENT_JOB, 'evidence_assessment', 'Syntetisk testpåstand.'),
-        ]),
+        parseAgentWorkQueue(
+          [
+            [EXTRACTION_JOB, 'evidence_extraction' as HandoffRole, 'Syntetisk testkilde'] as const,
+            [
+              ASSESSMENT_JOB,
+              'evidence_assessment' as HandoffRole,
+              'Syntetisk testpåstand.',
+            ] as const,
+          ]
+            .filter(([jobId]) => !imports.has(jobId))
+            .map(([jobId, role, label]) => queueRow(jobId, role, label)),
+        ),
       ),
 
     // Tildelingen, med de samme to reglene databasen håndhever: en gjeldende
@@ -404,6 +413,19 @@ describe('Agentarbeid', () => {
     ).toBeInTheDocument()
   })
 
+  // Byttet av tjeneste gjelder agentleddet, og en rad som ikke kan utføres, er
+  // ikke stedet å ta den avgjørelsen: byttet ville ikke gjort den utførbar.
+  it('tilbyr verken uttak eller tjenestebytte på en oppgave som ikke kan utføres', async () => {
+    const { gateway } = fakeDatabase({ blocked: [ASSESSMENT_JOB] })
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    await chooseService('Syntetisk testpåstand.', CLAUDE)
+    const row = await rowFor('Syntetisk testpåstand.')
+    expect(await within(row).findByText(/ikke kildestøttekontrollert/)).toBeInTheDocument()
+    expect(within(row).queryByRole('button', { name: 'Last ned oppgaven' })).not.toBeInTheDocument()
+    expect(within(row).queryByRole('button', { name: 'Bytt tjeneste' })).not.toBeInTheDocument()
+  })
+
   it('laster ned en oppgavefil som bærer artikkelen og bindingen', async () => {
     const { gateway } = fakeDatabase()
     const sink = collector()
@@ -436,8 +458,17 @@ describe('Agentarbeid', () => {
       await rowFor('Syntetisk testkilde'),
       answerFromTaskFile(extraction, CHATGPT, resultFor('evidence_extraction')),
     )
+    expect(await screen.findByText(/Ett evidensfunn er registrert/)).toBeInTheDocument()
+
+    // Køen er det som venter, så den besvarte oppgaven forsvinner fra den —
+    // men setningen om hva den ble til, gjør det ikke.
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('heading', { level: 2, name: 'Syntetisk testkilde' }),
+      ).not.toBeInTheDocument()
+    })
     expect(
-      await within(await rowFor('Syntetisk testkilde')).findByText(/Ett evidensfunn er registrert/),
+      screen.getByRole('heading', { level: 2, name: 'Nettopp registrert' }),
     ).toBeInTheDocument()
 
     const assessment = await downloadFor('Syntetisk testpåstand.', sink.files)
@@ -445,11 +476,7 @@ describe('Agentarbeid', () => {
       await rowFor('Syntetisk testpåstand.'),
       answerFromTaskFile(assessment, CLAUDE, resultFor('evidence_assessment')),
     )
-    expect(
-      await within(await rowFor('Syntetisk testpåstand.')).findByText(
-        /Evidensvurderingen er registrert/,
-      ),
-    ).toBeInTheDocument()
+    expect(await screen.findByText(/Evidensvurderingen er registrert/)).toBeInTheDocument()
 
     expect(semanticModels.get('evidence_extraction')).toEqual(CHATGPT)
     expect(semanticModels.get('evidence_assessment')).toEqual(CLAUDE)
@@ -490,11 +517,12 @@ describe('Agentarbeid', () => {
     const file = await downloadFor('Syntetisk testkilde', sink.files)
     const answer = answerFromTaskFile(file, CHATGPT, resultFor('evidence_extraction'))
     upload(await rowFor('Syntetisk testkilde'), answer)
-    await within(await rowFor('Syntetisk testkilde')).findByText(/Ett evidensfunn er registrert/)
+    await screen.findByText(/Ett evidensfunn er registrert/)
 
-    // Raden står nå som besvart, så opplastingsfeltet er borte — som det skal
-    // være. Den samme filen sendt inn igjen gjennom porten, svarer med det som
-    // allerede ble registrert framfor å lage et nytt evidensfunn.
+    // Raden er borte fra køen, så det finnes ikke noe opplastingsfelt å sende
+    // den samme filen inn i igjen — som det skal være. Den samme filen sendt inn
+    // gjennom porten, svarer med det som allerede ble registrert framfor å lage
+    // et nytt evidensfunn.
     const outcome = await gateway.importAnswer(
       EXTRACTION_JOB,
       JSON.parse(answer) as Record<string, unknown>,

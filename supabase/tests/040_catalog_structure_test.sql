@@ -82,8 +82,9 @@ select set_eq(
            -- spor. 009d: den kandidatbundne sluttkontrollen.
            ('pipeline_jobs'), ('pipeline_job_events'), ('pipeline_job_runs'),
            ('candidate_final_controls'),
-           -- Migrasjon 010c: ett importert eksternt agentsvar per oppgave.
-           ('agent_handoff_imports')$$,
+           -- Migrasjon 010c: hvilke pipelinejobber som er eksterne
+           -- agentoppgaver, og ett importert agentsvar per oppgave.
+           ('agent_handoff_jobs'), ('agent_handoff_imports')$$,
   'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d og 010c'
 );
 select set_eq(

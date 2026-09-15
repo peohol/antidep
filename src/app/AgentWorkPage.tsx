@@ -279,6 +279,13 @@ export function AgentWorkPage({ gateway, saveFile }: AgentWorkPageProps): React.
     [gateway, load, setStatus],
   )
 
+  // Køen er det som venter, så en oppgave som er besvart, forsvinner fra den.
+  // Setningen om hva som faktisk ble registrert, skal ikke forsvinne med raden:
+  // den som nettopp lastet opp et svar, skal få vite hva det ble til
+  // (ANTIDEP_CONSTITUTION.md regel 4).
+  const waiting = new Set((items ?? []).map((item) => item.pipelineJobId))
+  const finished = items === null ? [] : Object.entries(statuses).filter(([id]) => !waiting.has(id))
+
   return (
     <main id="hovedinnhold">
       <p className="eyebrow">Agentarbeid</p>
@@ -314,6 +321,17 @@ export function AgentWorkPage({ gateway, saveFile }: AgentWorkPageProps): React.
           ))}
         </ul>
       )}
+
+      {finished.length > 0 ? (
+        <section>
+          <h2>Nettopp registrert</h2>
+          {finished.map(([id, status]) => (
+            <p aria-live="polite" className={status.tone === 'ok' ? undefined : 'notice'} key={id}>
+              {status.message}
+            </p>
+          ))}
+        </section>
+      ) : null}
 
       {unknownRoles > 0 ? (
         <p className="notice">
@@ -363,22 +381,20 @@ function AgentWorkRow({
         <strong>{contract.label}.</strong> {contract.summary}
       </p>
 
-      {item.answered ? (
-        <p>
-          Besvart og registrert. Det neste leddet er en uavhengig kontroll, og den kjøres ennå ikke
-          fra denne siden.
-        </p>
-      ) : item.registeredModel === null ? (
+      {item.registeredModel === null ? (
         <ServicePicker busy={busy} item={item} onAssign={onAssign} />
       ) : (
         <>
           <p>Skal utføres av {describeModelIdentity(item.registeredModel)}.</p>
-          <ServicePicker busy={busy} item={item} onAssign={onAssign} />
 
           {item.blockedReason !== null ? (
+            // Ingen «bytt tjeneste» her. Byttet gjelder agentleddet, og en rad
+            // som ikke kan utføres, er ikke stedet å ta den avgjørelsen —
+            // byttet ville ikke gjort den utførbar.
             <p className="notice">Kan ikke utføres ennå: {item.blockedReason}</p>
           ) : (
             <>
+              <ServicePicker busy={busy} item={item} onAssign={onAssign} />
               {item.failureReason !== null ? (
                 <p className="notice">Forrige forsøk stoppet: {item.failureReason}</p>
               ) : null}
