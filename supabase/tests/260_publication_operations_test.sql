@@ -243,6 +243,31 @@ from knowledge.claim_revisions r
 where r.claim_id = (select id from fixture where name = 'claim')
   and r.revision_number in (1, 3);
 
+-- Fra migrasjon 009h navngir en rollback et *innhold* og ikke en revisjon:
+-- den samme revisjonen kan ha vært publisert som flere forskjellige kandidater,
+-- og «tilbake til revisjonen» ville da vært tvetydig. Kandidat-ID-ene hentes
+-- derfor opp her, slik at kallene under leser som det de er.
+insert into fixture (name, id)
+select 'cand_rev1', pg_temp.candidate_id_for((select id from fixture where name = 'rev1'));
+insert into fixture (name, id)
+select 'cand_rev3', pg_temp.candidate_id_for((select id from fixture where name = 'rev3'));
+
+-- Revisjon 2 er bevisst ikke bygget ut, men kravet «denne revisjonen har aldri
+-- vært publisert» kan bare prøves gjennom en kandidat. Den forsegles derfor,
+-- men godkjennes ikke: kontrollen ligger foran gaten, og en godkjenning ville
+-- skjult hvilken av dem som stopper kallet.
+insert into fixture (name, id)
+select 'cand_rev2', pg_temp.seal_candidate((select id from fixture where name = 'rev2'));
+
+-- Et innhold som hører til en helt annen påstand, til kontrollen av at
+-- publiseringspekeren ikke kan flyttes på tvers av påstander.
+insert into fixture (name, id)
+select 'cand_annen_paastand', pg_temp.seal_candidate(
+  (select r.id from knowledge.claim_revisions r
+   join knowledge.claims c on c.id = r.claim_id
+   join catalog.drugs d on d.id = c.subject_drug_id
+   where d.canonical_name = 'mirtazapin'));
+
 -- ---------------------------------------------------------------------------
 -- Publiseringsretten (DATABASE_ARCHITECTURE.md §46, §50)
 -- ---------------------------------------------------------------------------
@@ -560,7 +585,7 @@ select set_config('request.jwt.claims',
 select throws_like(
   $$select knowledge.rollback_claim_publication(
       (select id from fixture where name = 'claim'),
-      (select id from fixture where name = 'rev1'),
+      (select id from fixture where name = 'cand_rev1'),
       (select id from fixture where name = 'reviewer'),
       'Reviewer ruller tilbake.')$$,
   '%ikke gyldig publisher-rolle%',
@@ -572,7 +597,7 @@ select set_config('request.jwt.claims',
 select throws_like(
   $$select knowledge.rollback_claim_publication(
       (select id from fixture where name = 'claim'),
-      (select id from fixture where name = 'rev2'),
+      (select id from fixture where name = 'cand_rev2'),
       (select id from fixture where name = 'publisher'),
       'Ruller tilbake til noe vi aldri har sagt.')$$,
   '%aldri vært publisert%',
@@ -581,7 +606,7 @@ select throws_like(
 select throws_like(
   $$select knowledge.rollback_claim_publication(
       (select id from fixture where name = 'claim'),
-      (select id from fixture where name = 'rev3'),
+      (select id from fixture where name = 'cand_rev3'),
       (select id from fixture where name = 'publisher'),
       'Rollback til den gjeldende.')$$,
   '%er allerede den publiserte%',
@@ -602,7 +627,7 @@ where id = (select e.source_id from knowledge.evidence_items e
 select throws_like(
   $$select knowledge.rollback_claim_publication(
       (select id from fixture where name = 'claim'),
-      (select id from fixture where name = 'rev1'),
+      (select id from fixture where name = 'cand_rev1'),
       (select id from fixture where name = 'publisher'),
       'Rollback til en revisjon som ikke lenger holder.')$$,
   '%retracted eller withdrawn%',
@@ -616,7 +641,7 @@ where source_status = 'retracted';
 select lives_ok(
   $$select knowledge.rollback_claim_publication(
       (select id from fixture where name = 'claim'),
-      (select id from fixture where name = 'rev1'),
+      (select id from fixture where name = 'cand_rev1'),
       (select id from fixture where name = 'publisher'),
       'Den nye formuleringen overtolket grunnlaget.')$$,
   'pekeren kan rulles tilbake til en tidligere publisert revisjon'
@@ -639,10 +664,7 @@ select is(
 select throws_like(
   $$select knowledge.rollback_claim_publication(
       (select id from fixture where name = 'claim'),
-      (select r.id from knowledge.claim_revisions r
-       join knowledge.claims c on c.id = r.claim_id
-       join catalog.drugs d on d.id = c.subject_drug_id
-       where d.canonical_name = 'mirtazapin'),
+      (select id from fixture where name = 'cand_annen_paastand'),
       (select id from fixture where name = 'publisher'),
       'Rollback til en annen påstands revisjon.')$$,
   '%tilhører en annen påstand%',
@@ -651,7 +673,7 @@ select throws_like(
 select throws_like(
   $$select knowledge.rollback_claim_publication(
       (select id from fixture where name = 'claim'),
-      (select id from fixture where name = 'rev3'),
+      (select id from fixture where name = 'cand_rev3'),
       (select id from fixture where name = 'publisher'),
       'Rollback framover.')$$,
   '%nyere enn den publiserte revisjonen%',
@@ -683,7 +705,7 @@ select throws_like(
 select throws_like(
   $$select knowledge.rollback_claim_publication(
       (select id from fixture where name = 'claim'),
-      (select id from fixture where name = 'rev1'),
+      (select id from fixture where name = 'cand_rev1'),
       (select id from fixture where name = 'publisher'),
       'Rollback uten noe publisert.')$$,
   '%ingen publisert revisjon å rulle tilbake fra%',

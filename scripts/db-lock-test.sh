@@ -127,6 +127,14 @@
 #       kildestøttekontroll må vente, fordi den er en del av det forseglede
 #       innholdet.
 #
+#   14  Rollbacken holder de samme grunnlagslåsene, på *målrevisjonen*. Fra
+#       migrasjon 009h krever den at kandidaten kalleren navnga fortsatt er det
+#       gjeldende innholdet der, og den kontrollen er bare en garanti hvis
+#       grunnlaget står stille fram til hendelsen.
+#
+#   15  Og den holder radlåsen på påstanden: en samtidig tilbaketrekking må
+#       vente, som i prøve 8.
+#
 # Fiksturen er egen (scripts/publication-race-fixture.sql). Prøve 10 må commite
 # en publisering for å kunne vise det den viser, og fiksturen trekker den tilbake
 # før neste kjøring — gjennom den kontrollerte operasjonen, aldri ved å slette
@@ -1046,5 +1054,42 @@ proev 'en samtidig kildestøttekontroll må vente på sluttkontrollen (55P03)' \
           'Samtidighetsprøve; rulles tilbake.', now()
    from knowledge.claim_revisions r where r.id = '$pub_rev1';" \
   'Uten låsen på revisjonen kan en kildestøttekontroll commite mellom regningen av avtrykket og sluttkontrollen, og godkjenningen ville gjaldt et innhold som allerede var et annet (migrasjon 009g).'
+
+# Prøve 14 og 15 — rollbacken holder de samme låsene som publiseringen
+#
+# Fra migrasjon 009h navngir en rollback et innhold og ikke en revisjon, og
+# krever at nettopp den kandidaten fortsatt er det gjeldende innholdet. Den
+# kontrollen er bare en garanti dersom grunnlaget under målrevisjonen står
+# stille fra kontrollen til hendelsen: ellers kunne en kildestøttekontroll
+# commite i vinduet, og rollbacken ville tatt i bruk et innhold som ikke lenger
+# var det som lå der. Økt A publiserer først revisjon 2, slik at revisjon 1 blir
+# et gyldig og eldre rollback-mål, og ruller deretter tilbake til kandidaten sin.
+proev 'en samtidig kildestøttekontroll må vente på rollbacken (55P03)' \
+  "$pub_sesjon
+   select knowledge.publish_claim_revision('$pub_rev2', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');
+   select knowledge.rollback_claim_publication('$pub_paastand', '$pub_kandidat1',
+     '$pub_publisher_aktor', 'Samtidighetsprøve; rulles tilbake.');" \
+  "insert into workflow.claim_verifications
+     (claim_revision_id, verified_revision_creator_actor_id, verifier_actor_id, outcome,
+      source_access, source_support, population_match, comparator_match, timeframe_match,
+      direction_and_magnitude, qualifiers_complete, contradictory_evidence_represented,
+      rationale, verified_at)
+   select r.id, r.created_by_actor_id, '7d000000-0000-4000-8000-0000000000a1',
+          'uncertain', 'original_source', 'ok', 'not_assessable', 'ok', 'ok', 'ok', 'ok', 'ok',
+          'Samtidighetsprøve; rulles tilbake.', now()
+   from knowledge.claim_revisions r where r.id = '$pub_rev1';" \
+  'Uten grunnlagslåsen på målrevisjonen kan en kildestøttekontroll commite mellom kontrollen av at kandidaten er den gjeldende og rollbackhendelsen, og rollbacken ville gjenopprettet et innhold som allerede var foreldet (migrasjon 009g, 009h).'
+
+proev 'en samtidig tilbaketrekking må vente på rollbacken (55P03)' \
+  "$pub_sesjon
+   select knowledge.publish_claim_revision('$pub_rev2', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');
+   select knowledge.rollback_claim_publication('$pub_paastand', '$pub_kandidat1',
+     '$pub_publisher_aktor', 'Samtidighetsprøve; rulles tilbake.');" \
+  "$pub_sesjon
+   select knowledge.withdraw_claim_publication('$pub_paastand', '$pub_publisher_aktor',
+     'Samtidighetsprøve; rulles tilbake.');" \
+  'Uten radlåsen på påstanden kan en rollback og en tilbaketrekking lese den samme tilstanden, og etterlate to gjeldende sannheter (migrasjon 009e).'
 
 printf '\nAlle samtidighetsprøvene passerte.\n'

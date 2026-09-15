@@ -24,7 +24,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(49);
+select plan(62);
 
 create temporary table fixture (name text primary key, id uuid not null) on commit drop;
 -- Fiksturtabellen leses fra kall som kjører som `authenticated` og `anon`.
@@ -802,6 +802,215 @@ select throws_ok(
     (select id from fixture where name = 'claim')),
   '23514', null,
   'en revisjonspeker uten innholdspeker avvises: to gjeldende sannheter kan ikke oppstå'
+);
+
+-- ===========================================================================
+-- Del 10 — Mandatet gjelder også når handlingen allerede er utført
+-- ===========================================================================
+-- De tre handlingene svarer `changed: false` når det ikke er noe å endre.
+-- Svaret er formet som et vellykket utfall, og skal derfor ikke kunne hentes av
+-- en kaller uten publisher-mandat: da ville «handlingen krever mandat» vært
+-- usant for nettopp det tilfellet (migrasjon 009h).
+--
+-- Kliniker 0003 har ingen publisher-rolle. Påstanden er tilbaketrukket her, så
+-- kallet under ville ellers vært den idempotente no-op-en.
+select set_config('request.jwt.claims',
+                  '{"sub":"77000000-0000-4000-8000-000000000003"}', true);
+set local role authenticated;
+select throws_ok(
+  format($$select api.withdraw_claim_publication(%L, 'Gjentatt tilbaketrekking uten mandat.')$$,
+         (select id from fixture where name = 'claim')),
+  '42501', null,
+  'en gjentatt tilbaketrekking uten publisher-mandat avvises, den er ikke en gratis no-op'
+);
+reset role;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"77000000-0000-4000-8000-000000000001"}', true);
+set local role authenticated;
+insert into utfall (label, payload)
+select 'publisert_paa_nytt', api.publish_candidate(
+  (select id from fixture where name = 'cand1'),
+  (select value from avtrykk where label = 'cand1'),
+  'Publiseres på nytt etter tilbaketrekkingen.');
+reset role;
+
+select is(
+  (select payload ->> 'action' from utfall where label = 'publisert_paa_nytt'),
+  'publish',
+  'en tilbaketrukket påstand kan publiseres på nytt, og det er en ny publish'
+);
+
+select set_config('request.jwt.claims',
+                  '{"sub":"77000000-0000-4000-8000-000000000003"}', true);
+set local role authenticated;
+select throws_ok(
+  format(
+    $$select api.publish_candidate(%L, %L, 'Gjentatt publisering uten mandat.')$$,
+    (select id from fixture where name = 'cand1'),
+    (select value from avtrykk where label = 'cand1')),
+  '42501', null,
+  'en gjentatt publisering uten publisher-mandat avvises, selv om den ikke ville endret noe'
+);
+select throws_ok(
+  format(
+    $$select api.rollback_claim_publication(%L, %L, %L, 'Gjentatt rollback uten mandat.')$$,
+    (select id from fixture where name = 'claim'),
+    (select id from fixture where name = 'cand1'),
+    (select value from avtrykk where label = 'cand1')),
+  '42501', null,
+  'og en rollback til det som allerede står, avvises på samme måte'
+);
+reset role;
+
+select is(
+  (select count(*) from knowledge.publication_events
+   where claim_id = (select id from fixture where name = 'claim')),
+  5::bigint,
+  'ingen av de avviste kallene rørte historikken'
+);
+
+-- ===========================================================================
+-- Del 11 — To historisk publiserte innhold av den samme eldre revisjonen
+-- ===========================================================================
+-- Regresjonen fra migrasjon 009h. En revisjon kan ha vært publisert som flere
+-- forskjellige kandidater: A publiseres, grunnlaget endres, den bygges om til B,
+-- og B publiseres. Begge har vært vist, og begge står i historikken flaten
+-- tilbyr som rollback-mål. Tar den kontrollerte operasjonen bare revisjonen,
+-- ender en rollback mot A med å publisere B — et annet innhold enn det som ble
+-- valgt.
+--
+-- Grunnlaget under revisjon 1 endres, slik det ble gjort for revisjon 2 over.
+insert into workflow.claim_verifications
+  (claim_revision_id, verified_revision_creator_actor_id, verifier_actor_id, outcome,
+   source_access, source_support, population_match, comparator_match, timeframe_match,
+   direction_and_magnitude, qualifiers_complete, contradictory_evidence_represented,
+   rationale, verified_at)
+select r.id, r.created_by_actor_id, v.id, 'verified', 'original_source',
+       'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok',
+       'Revisjon 1 kontrollert på nytt etter at innholdet var publisert.', now()
+from knowledge.claim_revisions r, fixture v
+where r.id = (select id from fixture where name = 'rev1') and v.name = 'claim_verifier';
+
+select set_config('request.jwt.claims',
+                  '{"sub":"77000000-0000-4000-8000-000000000004"}', true);
+set local role authenticated;
+insert into built (label, payload)
+select 'rev1_ny', api.build_candidate((select id from fixture where name = 'rev1'));
+reset role;
+
+insert into fixture (name, id)
+select 'cand1_ny', (payload ->> 'candidate_id')::uuid from built where label = 'rev1_ny';
+insert into avtrykk (label, value)
+select 'cand1_ny', payload ->> 'candidate_digest' from built where label = 'rev1_ny';
+
+select isnt(
+  (select id from fixture where name = 'cand1_ny'),
+  (select id from fixture where name = 'cand1'),
+  'det endrede grunnlaget under revisjon 1 gir et nytt innhold med sitt eget avtrykk'
+);
+
+select set_config('request.jwt.claims',
+                  '{"sub":"77000000-0000-4000-8000-000000000002"}', true);
+set local role authenticated;
+select api.record_candidate_final_control(
+  (select id from fixture where name = 'cand1_ny'),
+  (select value from avtrykk where label = 'cand1_ny'),
+  'approved', 'Det endrede innholdet av revisjon 1 er lest på nytt.');
+reset role;
+
+-- Et nytt innhold av den revisjonen som *står* publisert, tas i bruk ved at
+-- den tilbaketrekkes og publiseres på nytt: revisjonen er versjoneringsenheten,
+-- og en publisering av den samme revisjonen er ingen tilstandsendring.
+select set_config('request.jwt.claims',
+                  '{"sub":"77000000-0000-4000-8000-000000000001"}', true);
+set local role authenticated;
+select api.withdraw_claim_publication(
+  (select id from fixture where name = 'claim'),
+  'Tas ut mens det nye innholdet av revisjon 1 settes i drift.');
+insert into utfall (label, payload)
+select 'publisert_b', api.publish_candidate(
+  (select id from fixture where name = 'cand1_ny'),
+  (select value from avtrykk where label = 'cand1_ny'),
+  'Det nye innholdet av revisjon 1.');
+reset role;
+
+select is(
+  (select count(distinct e.candidate_id) from knowledge.publication_events e
+   where e.revision_id = (select id from fixture where name = 'rev1')
+     and e.candidate_id is not null),
+  2::bigint,
+  'revisjon 1 er nå publisert som to forskjellige innhold, og begge står i historikken'
+);
+
+-- En nyere revisjon erstatter den, slik at revisjon 1 blir det eldre målet en
+-- rollback kan peke på.
+select set_config('request.jwt.claims',
+                  '{"sub":"77000000-0000-4000-8000-000000000001"}', true);
+set local role authenticated;
+insert into utfall (label, payload)
+select 'erstattet_igjen', api.publish_candidate(
+  (select id from fixture where name = 'cand2_ny'),
+  (select value from avtrykk where label = 'cand2_ny'),
+  'Den nyere revisjonen tas i bruk igjen.');
+
+select is(
+  (select payload ->> 'action' from utfall where label = 'erstattet_igjen'),
+  'replace',
+  'den nyere revisjonen erstatter den publiserte'
+);
+
+-- Kjernen: kandidat A har vært publisert for revisjon 1, men er ikke lenger
+-- innholdet der. En rollback som navngir A, skal avvises — ikke stille
+-- gjenopprette B.
+select throws_like(
+  format(
+    $$select api.rollback_claim_publication(%L, %L, %L, 'Rollback til det gamle innholdet.')$$,
+    (select id from fixture where name = 'claim'),
+    (select id from fixture where name = 'cand1'),
+    (select value from avtrykk where label = 'cand1')),
+  '%ikke det gjeldende innholdet%',
+  'en rollback til et innhold som har vært publisert, men ikke lenger er det gjeldende, avvises'
+);
+
+insert into utfall (label, payload)
+select 'rullet_b', api.rollback_claim_publication(
+  (select id from fixture where name = 'claim'),
+  (select id from fixture where name = 'cand1_ny'),
+  (select value from avtrykk where label = 'cand1_ny'),
+  'Tilbake til det innholdet av revisjon 1 som faktisk gjelder.');
+reset role;
+
+select is(
+  (select payload ->> 'action' from utfall where label = 'rullet_b'),
+  'rollback',
+  'rollbacken til det gjeldende innholdet av den eldre revisjonen går igjennom'
+);
+select is(
+  (select c.current_published_candidate_id from knowledge.claims c
+   where c.id = (select id from fixture where name = 'claim')),
+  (select id from fixture where name = 'cand1_ny'),
+  'og pekeren står på nøyaktig det innholdet kalleren navnga'
+);
+
+select set_config('request.jwt.claims',
+                  '{"sub":"77000000-0000-4000-8000-000000000003"}', true);
+set local role authenticated;
+insert into utfall (label, payload)
+select 'etter_rollback_b', api.published_claim((select id from fixture where name = 'claim'));
+reset role;
+
+select is(
+  (select payload -> 'content' from utfall where label = 'etter_rollback_b'),
+  (select c.content from knowledge.candidates c
+   where c.id = (select id from fixture where name = 'cand1_ny')),
+  'klinikerflaten viser det innholdet rollbacken navnga'
+);
+select isnt(
+  (select payload -> 'content' from utfall where label = 'etter_rollback_b'),
+  (select c.content from knowledge.candidates c
+   where c.id = (select id from fixture where name = 'cand1')),
+  'og ikke det eldre innholdet av den samme revisjonen'
 );
 
 select * from finish();
