@@ -1,5 +1,87 @@
--- Antidep 2: one structural full-text gate used by every EvidenceItem write.
+-- Antidep 2: preflight, structural full-text gate and retirement of the old browser workflow.
 begin;
+
+-- This PR contains two migrations because the structural gate and the one-time
+-- data reset are separate concerns. The reset can intentionally fail closed.
+-- Run the same reviewed preconditions here *before* changing grants or write
+-- rules, so a database that is already outside the owner-authorized legacy
+-- state does not get stranded with only the first half of the rollout applied.
+-- The reset migration calls the function again after taking ACCESS EXCLUSIVE
+-- locks, which closes the race between these two migration transactions.
+create function knowledge.assert_antidep2_reset_preconditions() returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_root_counts jsonb;
+begin
+  if exists (select 1 from knowledge.publication_events)
+     or exists (select 1 from knowledge.claims where current_published_revision_id is not null) then
+    raise exception using errcode = '23001', message = 'Antidep 2-resetten stoppet: publiseringshistorikk finnes.';
+  end if;
+
+  if exists (select 1 from provenance.agent_runs where status = 'running') then
+    raise exception using errcode = '23001', message = 'Antidep 2-resetten stoppet: en agentkjøring er fortsatt åpen.';
+  end if;
+
+  v_root_counts := jsonb_build_object(
+    'evidence_items', (select count(*) from knowledge.evidence_items),
+    'claims', (select count(*) from knowledge.claims),
+    'claim_revisions', (select count(*) from knowledge.claim_revisions),
+    'claim_evidence_links', (select count(*) from knowledge.claim_evidence_links),
+    'evidence_assessments', (select count(*) from knowledge.evidence_assessments)
+  );
+  if v_root_counts <> jsonb_build_object(
+       'evidence_items', 2,
+       'claims', 2,
+       'claim_revisions', 2,
+       'claim_evidence_links', 2,
+       'evidence_assessments', 2
+     ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: aktivt klinisk innhold avviker fra den autoriserte legacy-baselinen.',
+      detail = 'Observerte rotantall: ' || v_root_counts::text;
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join knowledge.sources s on s.id = e.source_id
+    join catalog.drugs d on d.id = e.intervention_drug_id
+    join catalog.clinical_concepts c on c.id = e.outcome_concept_id
+    where c.canonical_label <> 'vektendring'
+       or (d.canonical_name = 'sertralin'
+           and s.title <> 'Fluoxetine versus sertraline and paroxetine in major depressive disorder: changes in weight with long-term treatment')
+       or (d.canonical_name = 'mirtazapin'
+           and s.title <> 'Comparison of the effects of mirtazapine and fluoxetine in severely depressed patients')
+       or d.canonical_name not in ('sertralin', 'mirtazapin')
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: evidensrøttene er ikke den autoriserte legacy-prototypen.';
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.claims cl
+    join catalog.drugs d on d.id = cl.subject_drug_id
+    join catalog.clinical_concepts c on c.id = cl.topic_concept_id
+    where cl.knowledge_type <> 'evidence_synthesis'
+       or c.canonical_label <> 'vektendring'
+       or d.canonical_name not in ('sertralin', 'mirtazapin')
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: påstandsrøttene er ikke den autoriserte legacy-prototypen.';
+  end if;
+end;
+$$;
+revoke execute on function knowledge.assert_antidep2_reset_preconditions()
+  from public, anon, authenticated, service_role;
+
+select knowledge.assert_antidep2_reset_preconditions();
 
 create function knowledge.assert_clinical_full_text(
   p_source_id uuid,
