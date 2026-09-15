@@ -45,8 +45,8 @@ select throws_ok(
       p_identity_key := 'agent-identity:extraction-verification-01',
       p_secret := 'feil-hemmelighet',
       p_agent_role := 'extraction_verification',
-      p_provider := 'testleverandør', p_model := 'testmodell',
-      p_model_version := '1', p_prompt_template_version := '1',
+      p_provider := 'antidep', p_model := 'deterministic-extraction-check',
+      p_model_version := '1.0.0', p_prompt_template_version := '1',
       p_pipeline_version := '1',
       p_input_manifest := '{"evidence_item_ids": []}'::jsonb)
   $$,
@@ -61,8 +61,8 @@ select throws_ok(
       p_identity_key := 'agent-identity:extraction-verification-01',
       p_secret := (select secret from cred where label = 'verifier'),
       p_agent_role := 'evidence_extraction',
-      p_provider := 'testleverandør', p_model := 'testmodell',
-      p_model_version := '1', p_prompt_template_version := '1',
+      p_provider := 'antidep', p_model := 'proposal-grounded-extraction',
+      p_model_version := '1.1.0', p_prompt_template_version := '1',
       p_pipeline_version := '1',
       p_input_manifest := '{"source_ids": []}'::jsonb)
   $$,
@@ -93,8 +93,8 @@ select throws_ok(
       p_identity_key := 'agent-identity:extraction-verification-01',
       p_secret := (select secret from cred where label = 'verifier'),
       p_agent_role := 'extraction_verification',
-      p_provider := 'testleverandør', p_model := 'testmodell',
-      p_model_version := '1', p_prompt_template_version := '1',
+      p_provider := 'antidep', p_model := 'deterministic-extraction-check',
+      p_model_version := '1.0.0', p_prompt_template_version := '1',
       p_pipeline_version := '1',
       p_input_manifest := '{}'::jsonb)
   $$,
@@ -109,9 +109,9 @@ select 'first', api.begin_agent_run(
   p_identity_key := 'agent-identity:extraction-verification-01',
   p_secret := (select secret from cred where label = 'verifier'),
   p_agent_role := 'extraction_verification',
-  p_provider := 'testleverandør',
-  p_model := 'testmodell',
-  p_model_version := '2026-09-01',
+  p_provider := 'antidep',
+  p_model := 'deterministic-extraction-check',
+  p_model_version := '1.0.0',
   p_prompt_template_version := 'extraction-verification/1',
   p_pipeline_version := 'antidep-evidence/1',
   p_input_manifest := '{"evidence_item_ids": ["prøve"]}'::jsonb
@@ -132,8 +132,8 @@ select results_eq(
     join provenance.actors actor on actor.id = ar.actor_id
   $$,
   $$values ('running', 'extraction_verification', 'agent:extraction-verification',
-            'agent-identity:extraction-verification-01', 'testleverandør',
-            '2026-09-01', 'extraction-verification/1', 'antidep-evidence/1',
+            'agent-identity:extraction-verification-01', 'antidep',
+            '1.0.0', 'extraction-verification/1', 'antidep-evidence/1',
             true, true)$$,
   'kjøringen bærer rolle, aktør, identitet og alle fire versjonsfeltene, og er åpen'
 );

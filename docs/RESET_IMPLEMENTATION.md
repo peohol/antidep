@@ -7,4 +7,4 @@
 - E fullført: gammel frontend og review-wizards er fjernet; det minimale skallet viser ingen kliniske resultater.
 - F verifiseres av CI: lint, format, repoinvarianter, typecheck, hele Vitest-løpet, produksjonsbygg, oppgraderingsprøve, migrasjoner, pgTAP, samtidighetsprøve og den dokumentbundne PDF → ekstraksjon → uavhengig kontroll-kjeden skal alle være grønne på samme PR-head før denne leveransen kan regnes som teknisk ferdig.
 
-Ingen hostet database er lest eller endret. Permanent PDF-lagring, live modellruntime, kandidatbundet sluttkontroll og klinikerflate er neste produktleveranse.
+Ingen hostet database er lest eller endret. Permanent privat PDF-lagring, kandidatbundet sluttkontroll og klinikerflate kom med den etterfølgende leveransen (migrasjon 009–009d). Live modellruntime og publisering gjenstår; se [roadmap](ROADMAP.md).

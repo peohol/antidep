@@ -62,13 +62,36 @@ import {
   parseExtractionAssignment,
   type ExtractionAssignment,
 } from '../agents/extraction-assignment.ts'
+import { readabilityProblem } from '../agents/full-text-readability.ts'
 import { loadDocumentFile, type LoadedDocument } from '../agents/source-document.ts'
+import {
+  describeUpload,
+  parseFullTextUploadResult,
+  type FullTextUploadResult,
+} from './full-text-upload.ts'
 import type { EditorSourceRow, EditorSourceVersionRow, Uuid } from '../types/api.ts'
 
 /** Hva kommandoen trenger av databasen, som en injiserbar grenseflate. */
 export interface EditorCatalogApi {
   listSources(): Promise<readonly EditorSourceRow[]>
   listSourceVersions(sourceId: Uuid): Promise<readonly EditorSourceVersionRow[]>
+  /**
+   * Veien inn i det private fulltekstbiblioteket (migrasjon 009a).
+   *
+   * Brukes for `full_text`, som er den ene representasjonen kliniske funn kan
+   * bygge på. Den gjør filen varig tilgjengelig, kontrollerer at fullteksten
+   * bærer publikasjonens identitet, og prøver lesbarheten — alt i den samme
+   * transaksjonen som registrerer kildeversjonen.
+   */
+  uploadFullTextDocument(input: DocumentVersionInput): Promise<unknown>
+  /**
+   * Den eldre dokumentveien, uten biblioteket (migrasjon 003e).
+   *
+   * Står igjen for de representasjonene som *ikke* er fulltekst — et
+   * regulatorisk sammendrag, en sekundærrapport. De er discovery, og bærer
+   * ingen kliniske funn, så biblioteket og lesbarhetskontrollen gjelder dem
+   * ikke.
+   */
   createSourceVersionFromDocument(input: DocumentVersionInput): Promise<Uuid>
   buildAssignment(input: BuildAssignmentInput): Promise<unknown>
 }
@@ -214,6 +237,8 @@ export interface AssignmentBuildReport {
   readonly versionOutcome: 'registered' | 'reused' | 'selected'
   /** Dokumentet, når oppdraget gjelder en dokumentutledet versjon. */
   readonly document?: { readonly digest: string; readonly storedAt: string | null }
+  /** Opplastingen, når fullteksten gikk gjennom biblioteket (migrasjon 009a). */
+  readonly upload?: FullTextUploadResult
 }
 
 /**
@@ -317,6 +342,7 @@ async function registerFromDocument(
       readonly representation: string
       readonly outcome: 'registered' | 'reused'
       readonly document: LoadedDocument
+      readonly upload?: FullTextUploadResult
     }
   | { readonly error: string }
 > {
@@ -372,13 +398,19 @@ async function registerFromDocument(
           'representasjonen du faktisk mangler.',
       }
     }
-    log(`Kildeversjonen er allerede registrert: ${existing.source_version_id}.`)
-    return {
-      sourceVersionId: existing.source_version_id,
-      representation: existing.representation ?? representation,
-      outcome: 'reused',
-      document,
+    if (representation !== 'full_text') {
+      log(`Kildeversjonen er allerede registrert: ${existing.source_version_id}.`)
+      return {
+        sourceVersionId: existing.source_version_id,
+        representation: existing.representation ?? representation,
+        outcome: 'reused',
+        document,
+      }
     }
+    // En fulltekst faller *ikke* ut her. Se kommentaren over opplastingen: en
+    // kildeversjon registrert før migrasjon 009a har ingen rader i biblioteket,
+    // og bare opplastingen kan gi den dem.
+    log(`Kildeversjonen er allerede registrert: ${existing.source_version_id}.`)
   }
 
   const retrievedFrom = options.retrievedFrom?.trim()
@@ -391,20 +423,63 @@ async function registerFromDocument(
     }
   }
 
-  const sourceVersionId = await options.catalog.createSourceVersionFromDocument({
+  const input: DocumentVersionInput = {
     sourceId: source.source_id,
     retrievedAt: (options.now ?? (() => new Date().toISOString()))(),
     retrievedFrom,
     // Bytene sendes, ikke fingeravtrykket: databasen skal eie hashen
-    // (migrasjon 003e). Dokumentet lagres ikke.
+    // (migrasjon 003e, 009a).
     documentBase64: Buffer.from(document.bytes).toString('base64'),
     extractedText: extracted.extracted.text,
     representation,
     recipe: recipe.recipe,
     externalVersion: options.externalVersion ?? null,
-  })
-  log(`Kildeversjon registrert: ${sourceVersionId} (${representation}).`)
-  return { sourceVersionId, representation, outcome: 'registered', document }
+  }
+
+  if (representation !== 'full_text') {
+    // Ikke en fulltekst, og dermed ikke noe kliniske funn kan bygge på.
+    // Biblioteket, publikasjonsbindingen og lesbarhetskontrollen gjelder den
+    // ene representasjonen de er til for.
+    const sourceVersionId = await options.catalog.createSourceVersionFromDocument(input)
+    log(`Kildeversjon registrert: ${sourceVersionId} (${representation}).`)
+    return { sourceVersionId, representation, outcome: 'registered', document }
+  }
+
+  // Lesbarheten prøves her først, mot nøyaktig de samme reglene databasen
+  // bruker. Avvisningen er den samme; den kommer bare før filen er sendt, som
+  // er forskjellen på en beskjed og en opplasting på tjue megabyte som
+  // mislyktes (`full-text-readability.ts`).
+  const unreadable = readabilityProblem(extracted.extracted.text)
+  if (unreadable !== null) {
+    return {
+      error:
+        `${unreadable} Fullteksten er derfor ikke registrert. Kliniske funn krever en ` +
+        'fulltekst som faktisk lar seg lese, tabellene inkludert ' +
+        '(ANTIDEP_CONSTITUTION.md regel 1).',
+    }
+  }
+
+  // Opplastingen kalles også når kildeversjonen allerede finnes, og det er
+  // ikke sløsing: den er idempotent *og* etterfyllende. En kildeversjon
+  // registrert før migrasjon 009a — eller av en kjøring som ble avbrutt mellom
+  // de fire skrivingene — har ingen fil i biblioteket, ingen
+  // publikasjonsbinding og ingen lesbarhetskontroll, og uten dem kan den ikke
+  // bære et klinisk funn. Falt kommandoen ut på gjenbruk, ville oppdraget blitt
+  // bygget mot en versjon ekstraksjonen aldri kunne registreres på, og en ny
+  // `--pdf` ville tatt den samme gjenbruksveien om igjen uten å reparere noe.
+  //
+  // At den samme teksten peker på et *annet* originaldokument, er allerede
+  // avvist over — og databasen avviser det uansett, så etterfyllingen kan ikke
+  // knytte en ny fil til en gammel rad.
+  const upload = parseFullTextUploadResult(await options.catalog.uploadFullTextDocument(input))
+  log(describeUpload(upload))
+  return {
+    sourceVersionId: upload.sourceVersionId,
+    representation,
+    outcome: upload.sourceVersionCreated ? 'registered' : 'reused',
+    document,
+    upload,
+  }
 }
 
 /**
@@ -429,6 +504,7 @@ export async function buildAssignmentFromCatalog(
   let representation: string
   let versionOutcome: AssignmentBuildReport['versionOutcome']
   let document: LoadedDocument | null = null
+  let upload: FullTextUploadResult | null = null
 
   if (options.documentPath === undefined) {
     const chosen = chooseSourceVersion(
@@ -453,6 +529,7 @@ export async function buildAssignmentFromCatalog(
     representation = registered.representation
     versionOutcome = registered.outcome
     document = registered.document
+    upload = registered.upload ?? null
   }
 
   const json = await options.catalog.buildAssignment({
@@ -481,5 +558,6 @@ export async function buildAssignmentFromCatalog(
     representation,
     versionOutcome,
     ...(document === null ? {} : { document: { digest: document.digest, storedAt } }),
+    ...(upload === null ? {} : { upload }),
   }
 }

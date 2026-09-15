@@ -51,7 +51,7 @@
 // ============================================================================
 
 import type { Uuid } from '../types/api.ts'
-import type { EvidenceExtractionApi } from './agent-api.ts'
+import type { EvidenceExtractionApi, PipelineJobLease } from './agent-api.ts'
 import { collidingEvidenceItemId, isUniqueViolation } from './agent-api.ts'
 import type { TextExtractionRecipe } from './document-binding.ts'
 import { assignmentMismatch, type ExtractionAssignment } from './extraction-assignment.ts'
@@ -117,6 +117,18 @@ export interface ExtractionRunOptions extends ResolvePorts {
    * gjorde en av dem.
    */
   readonly mode: RegistrationMode
+  /**
+   * Uttaket fra den varige køen kjøringen gjøres for, når arbeidet er køarbeid.
+   *
+   * Oppgitt, åpnes kjøringen gjennom `api.begin_pipeline_job_run`, som
+   * kontrollerer leien og binder kjøringen til nettopp det uttaket. Uten
+   * bindingen kunne et utfall meldt på jobb B vist til kjøringen fra jobb A, og
+   * raden ville bare bevist at identiteten en gang hadde en vellykket kjøring i
+   * rollen.
+   *
+   * Utelatt, er dette en direkte kjøring uten kø, og den åpnes som før.
+   */
+  readonly job?: PipelineJobLease
   /** Kontroller og rapporter, men registrer ingenting. */
   readonly dryRun?: boolean
   readonly log?: (line: string) => void
@@ -429,8 +441,12 @@ export async function runEvidenceExtraction(
       dry_run: dryRun,
     },
     proposal.sourceVersionId,
+    options.job ?? null,
   )
-  log(`Kjøring ${agentRunId} åpnet for kildeversjon ${proposal.sourceVersionId}.`)
+  log(
+    `Kjøring ${agentRunId} åpnet for kildeversjon ${proposal.sourceVersionId}` +
+      (options.job === undefined ? '.' : ` og jobb ${options.job.pipelineJobId}.`),
+  )
 
   try {
     const verdict = await fetchAndJudge(proposal, options, options.assignment)

@@ -78,12 +78,43 @@ insert into knowledge.source_versions
 select '7c000000-0000-4000-8000-000000000002', '7c000000-0000-4000-8000-000000000001',
        now(), 'file:///syntetisk-fjerningsprove.pdf',
        'sha256:' || repeat('c', 64), 'private://syntetisk-fjerningsprove.pdf',
-       'full_text', a.id, 'sha256:' || repeat('e', 64), 1024, 'application/pdf',
+       'full_text', a.id, knowledge.source_document_fingerprint(convert_to('%PDF-1.7' || E'\nfjerningsprove\n%%EOF\n', 'UTF8')),
+       octet_length(convert_to('%PDF-1.7' || E'\nfjerningsprove\n%%EOF\n', 'UTF8')), 'application/pdf',
        'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
 from provenance.actors a
 where a.actor_key = 'human:peder-holman'
   and not exists (select 1 from knowledge.source_versions v
                   where v.id = '7c000000-0000-4000-8000-000000000002');
+
+-- Fra migrasjon 009a må originalfilen ligge i det private biblioteket, være
+-- bundet til publikasjonen og ha bestått lesbarhetskontrollen. Biblioteket
+-- beregner fingeravtrykket av bytene, så fiksturen må ha ekte bytes framfor en
+-- oppdiktet verdi.
+insert into knowledge.source_documents
+  (sha256, byte_size, media_type, content, stored_by_actor_id)
+select knowledge.source_document_fingerprint(g.bytes), octet_length(g.bytes),
+       'application/pdf', g.bytes, a.id
+from (select convert_to('%PDF-1.7' || E'\nfjerningsprove\n%%EOF\n', 'UTF8') as bytes) g
+join provenance.actors a on a.actor_key = 'human:peder-holman'
+on conflict (sha256) do nothing;
+
+insert into knowledge.source_document_publications
+  (source_document_id, source_id, binding_basis, binding_evidence, bound_by_actor_id)
+select d.id, sv.source_id, 'title', 'syntetisk binding for samtidighetsprøven',
+       sv.retrieved_by_actor_id
+from knowledge.source_versions sv
+join knowledge.source_documents d on d.sha256 = sv.document_sha256
+where sv.id = '7c000000-0000-4000-8000-000000000002'
+on conflict on constraint source_document_publications_pairing_key do nothing;
+
+insert into knowledge.full_text_readability_checks
+  (source_version_id, source_document_id, character_count, letter_count,
+   line_count, table_row_count, table_declaration_count)
+select sv.id, d.id, 20000, 15000, 400, 12, 3
+from knowledge.source_versions sv
+join knowledge.source_documents d on d.sha256 = sv.document_sha256
+where sv.id = '7c000000-0000-4000-8000-000000000002'
+on conflict on constraint full_text_readability_checks_source_version_key do nothing;
 
 insert into knowledge.evidence_items
   (id, source_id, source_version_id, design_code, population_availability,

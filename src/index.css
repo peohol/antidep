@@ -51,3 +51,14 @@ p {
 a {
   color: #215c39;
 }
+pre {
+  max-width: 100%;
+  max-height: 32rem;
+  overflow: auto;
+  padding: 1rem;
+  background: #f4f6f4;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

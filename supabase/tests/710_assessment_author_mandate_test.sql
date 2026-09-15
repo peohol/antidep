@@ -128,8 +128,8 @@ select 'extraction', api.begin_agent_run(
   p_identity_key := 'agent-identity:evidence-extraction-01',
   p_secret := (select secret from cred where label = 'extractor'),
   p_agent_role := 'evidence_extraction',
-  p_provider := 'testleverandør', p_model := 'testmodell',
-  p_model_version := '2026-09-24', p_prompt_template_version := 'evidence-extraction/1',
+  p_provider := 'antidep', p_model := 'proposal-grounded-extraction',
+  p_model_version := '1.1.0', p_prompt_template_version := 'evidence-extraction/1',
   p_pipeline_version := 'antidep-evidence/1',
   p_input_source_version_id := '71000000-0000-4000-8000-000000000021',
   p_input_manifest := jsonb_build_object('test', 710)
@@ -139,8 +139,8 @@ select 'extraction_verification', api.begin_agent_run(
   p_identity_key := 'agent-identity:extraction-verification-01',
   p_secret := (select secret from cred where label = 'extraction_verifier'),
   p_agent_role := 'extraction_verification',
-  p_provider := 'testleverandør', p_model := 'testmodell',
-  p_model_version := '2026-09-24', p_prompt_template_version := 'extraction-verification/1',
+  p_provider := 'antidep', p_model := 'deterministic-extraction-check',
+  p_model_version := '1.0.0', p_prompt_template_version := 'extraction-verification/1',
   p_pipeline_version := 'antidep-evidence/1',
   p_input_manifest := jsonb_build_object('test', 710)
 );
@@ -149,8 +149,8 @@ select 'synthesis', api.begin_agent_run(
   p_identity_key := 'agent-identity:claim-synthesis-01',
   p_secret := (select secret from cred where label = 'synthesiser'),
   p_agent_role := 'claim_synthesis',
-  p_provider := 'testleverandør', p_model := 'testmodell',
-  p_model_version := '2026-09-24', p_prompt_template_version := 'claim-synthesis/1',
+  p_provider := 'antidep', p_model := 'proposal-registered-synthesis',
+  p_model_version := '1.0.0', p_prompt_template_version := 'claim-synthesis/1',
   p_pipeline_version := 'antidep-evidence/1',
   p_input_manifest := jsonb_build_object('test', 710)
 );
@@ -159,8 +159,8 @@ select 'claim', api.begin_agent_run(
   p_identity_key := 'agent-identity:citation-support-verification-01',
   p_secret := (select secret from cred where label = 'claim'),
   p_agent_role := 'citation_support_verification',
-  p_provider := 'testleverandør', p_model := 'testmodell',
-  p_model_version := '2026-09-24', p_prompt_template_version := 'claim-verification/1',
+  p_provider := 'antidep', p_model := 'deterministic-claim-check',
+  p_model_version := '1.0.0', p_prompt_template_version := 'claim-verification/1',
   p_pipeline_version := 'antidep-evidence/1',
   p_input_manifest := jsonb_build_object('test', 710)
 );
@@ -169,8 +169,8 @@ select 'assessment', api.begin_agent_run(
   p_identity_key := 'agent-identity:evidence-assessment-01',
   p_secret := (select secret from cred where label = 'assessor'),
   p_agent_role := 'evidence_assessment',
-  p_provider := 'testleverandør', p_model := 'testmodell',
-  p_model_version := '2026-09-24', p_prompt_template_version := 'evidence-assessment/1',
+  p_provider := 'antidep', p_model := 'proposal-registered-assessment',
+  p_model_version := '1.0.0', p_prompt_template_version := 'evidence-assessment/1',
   p_pipeline_version := 'antidep-evidence/1',
   p_input_manifest := jsonb_build_object('test', 710)
 );

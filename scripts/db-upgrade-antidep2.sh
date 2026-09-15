@@ -79,6 +79,21 @@ assert_eq "$(scalar "select coalesce(to_regprocedure('knowledge.assert_antidep2_
 # Create genuinely new Antidep 2 content after the reset. A literal rerun of the
 # one-time migration must fail before touching it.
 psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
+-- From migration 009a a clinical full text must have its original file in the
+-- private library, be shown to belong to the publication, and have passed the
+-- readability check. The library computes the digest from the bytes, so this
+-- fixture needs real bytes rather than an invented digest.
+create temporary table rerun_guard_pdf as
+select convert_to('%PDF-1.7' || E'\nantidep2-rerun-guard\n%%EOF\n', 'UTF8') as bytes;
+
+insert into knowledge.source_documents
+  (sha256, byte_size, media_type, content, stored_by_actor_id)
+select knowledge.source_document_fingerprint(g.bytes), octet_length(g.bytes),
+       'application/pdf', g.bytes, a.id
+from rerun_guard_pdf g
+join provenance.actors a on a.actor_key = 'agent:evidence-extraction'
+on conflict (sha256) do nothing;
+
 insert into knowledge.source_versions (
   id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
   representation, retrieved_by_actor_id, document_sha256, document_byte_size,
@@ -89,13 +104,32 @@ select
   'fa200000-0000-4000-8000-000000000002'::uuid,
   s.id, now(), 'file:///antidep2-rerun-guard.pdf',
   'sha256:' || repeat('a', 64), 'private://antidep2-rerun-guard.pdf',
-  'full_text', a.id, 'sha256:' || repeat('b', 64), 1024, 'application/pdf',
+  'full_text', a.id, knowledge.source_document_fingerprint(g.bytes),
+  octet_length(g.bytes), 'application/pdf',
   'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix',
   'antidep-reading-order@2'
 from knowledge.sources s
 join provenance.actors a on a.actor_key = 'agent:evidence-extraction'
+cross join rerun_guard_pdf g
 order by s.id
 limit 1;
+
+insert into knowledge.source_document_publications
+  (source_document_id, source_id, binding_basis, binding_evidence, bound_by_actor_id)
+select d.id, sv.source_id, 'title', 'syntetisk binding for omkjøringsvakten',
+       sv.retrieved_by_actor_id
+from knowledge.source_versions sv
+join knowledge.source_documents d on d.sha256 = sv.document_sha256
+where sv.id = 'fa200000-0000-4000-8000-000000000002'
+on conflict on constraint source_document_publications_pairing_key do nothing;
+
+insert into knowledge.full_text_readability_checks
+  (source_version_id, source_document_id, character_count, letter_count,
+   line_count, table_row_count, table_declaration_count)
+select sv.id, d.id, 20000, 15000, 400, 12, 3
+from knowledge.source_versions sv
+join knowledge.source_documents d on d.sha256 = sv.document_sha256
+where sv.id = 'fa200000-0000-4000-8000-000000000002';
 
 insert into knowledge.evidence_items (
   id, source_id, source_version_id, design_code, population_availability,

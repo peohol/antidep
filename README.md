@@ -4,7 +4,11 @@ Antidep utvikles som et agentstyrt, etterprøvbart kunnskapssystem om antidepres
 
 ## Status
 
-Repoet inneholder et minimalt React-skall, Supabase-skjemaet og en testbar agentmotor. Det finnes foreløpig ingen live semantisk modelladapter, permanent PDF-opplasting eller ferdig klinikerflate. Antidep 2-migrasjonene er laget for å ta den reviewede legacy-prototypen ut av aktiv drift ved utrulling og stoppe dersom databasen har avveket fra det autoriserte scope-et. Denne kodeleveransen har ikke i seg selv endret noen hosted database.
+Repoet inneholder Supabase-skjemaet, en testbar agentmotor og én klinikerflate. Kjeden går nå hele veien fra en privat PDF til en sluttkontrollert kandidat: originalfilen lagres varig og privat med serverberegnet filidentitet, publikasjonstilhørigheten og lesbarheten — tabellene inkludert — kontrolleres før fullteksten registreres, agentarbeidet har varig og idempotent jobbtilstand, hvert agentledd kjører som sin egen registrerte modellidentitet, og kandidatinnholdet forsegles med kildedekningen synlig.
+
+Sluttkontrollen er bundet til nøyaktig den kandidaten som ble lest, og publiserer ingenting: publiserings-API-et er fortsatt stengt for klientrollene. Det finnes heller ingen live semantisk modellruntime; utkastleddene kjøres av et opptak.
+
+Denne kodeleveransen har ikke i seg selv endret noen hosted database.
 
 ## Utvikling
 

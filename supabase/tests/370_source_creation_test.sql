@@ -41,9 +41,13 @@ select enum_has_labels(
     'claim_verification_registered', 'review_decision_registered',
     'evidence_field_grounding_recorded',
     'extraction_artifact_discarded', 'claim_artifact_discarded',
-    'claim_revision_created'
+    'claim_revision_created',
+    -- Migrasjon 009: fulltekstbiblioteket (009a), modellregisteret (009c) og
+    -- kandidaten med sin sluttkontroll (009d).
+    'source_document_stored', 'role_model_assignment_registered', 'role_model_assignment_closed',
+    'candidate_built', 'candidate_final_control_recorded'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt, de to fjerningene av testartefakter og opprettelsen av en påstandsrevisjon'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt, de to fjerningene av testartefakter og opprettelsen av en påstandsrevisjon, samt fulltekstbiblioteket, modellregisteret og kandidaten med sin sluttkontroll'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -167,10 +171,33 @@ select is_empty(
         -- EVIDENCE_PIPELINE.md §61 samtidig skal være en teknisk grense. Hvilke
         -- roller som faktisk har EXECUTE, kontrolleres i
         -- 700_evidence_assessment_write_path_test.sql.
-        'api.register_evidence_assessment(text,text,uuid,uuid,text,text,text,text,text,text,text,text,text,text,text)'
+        'api.register_evidence_assessment(text,text,uuid,uuid,text,text,text,text,text,text,text,text,text,text,text)',
+        -- Migrasjon 009a. Veien inn i det private fulltekstbiblioteket: filen,
+        -- publikasjonsbindingen, lesbarhetskontrollen og kildeversjonen i én
+        -- transaksjon. Bare authenticated, samme autorisasjon som de øvrige
+        -- redaktørveiene. Kontrolleres i 730_full_text_library_test.sql.
+        'api.upload_full_text_document(uuid,timestamp with time zone,text,text,text,text,text,text,text,text)',
+        -- Migrasjon 009b. Den varige jobbkøen. Innleggingen er en redaktørvei
+        -- og bare authenticated; de tre andre er agentveier og kjørbare for
+        -- anon, fordi en agent ikke har brukerkonto. Kontrolleres i
+        -- 740_pipeline_jobs_test.sql.
+        'api.enqueue_pipeline_job(text,text,jsonb)',
+        'api.claim_pipeline_job(text,text,text,integer)',
+        'api.begin_pipeline_job_run(text,text,uuid,uuid,text,text,text,text,text,jsonb,uuid)',
+        'api.complete_pipeline_job(text,text,uuid,uuid,uuid)',
+        'api.fail_pipeline_job(text,text,uuid,uuid,text)',
+        -- Migrasjon 009d. Kandidaten og den kandidatbundne sluttkontrollen,
+        -- med den leseflaten klinikeren og sluttkontrolløren deler. Alle fire
+        -- er authenticated: utkast er tilgangsbegrenset, og sluttkontrollen er
+        -- et menneskes beslutning. Kontrolleres i
+        -- 760_candidate_final_control_test.sql.
+        'api.build_candidate(uuid)',
+        'api.record_candidate_final_control(uuid,text,text,text)',
+        'api.candidate_for_control(uuid)',
+        'api.candidate_control_queue()'
       )
   $$,
-  'ingen annen funksjon i knowledge eller api enn de tjue kontrollerte inngangspunktene er kjørbar for noen klientrolle'
+  'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'
 );
 select is_empty(
   $$

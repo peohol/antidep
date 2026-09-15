@@ -175,6 +175,14 @@ select results_eq(
            ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
            ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
            ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
+           -- Migrasjon 009c registrerte i tillegg én modelltildeling per rolle
+           -- i kjeden. De er migrert tilstand på samme måte som identitetene
+           -- over, og står med av samme grunn: listen skal være uttømmende.
+           ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
+           ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
+           ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
+           ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
+           ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
            ('role_granted', 'workflow', 'user_roles', 'human:peder-holman', 'reviewer')$$,
   'tildelingen legger igjen én auditrad, attribuert til aktøren som tildelte rollen'
 );

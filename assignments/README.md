@@ -9,9 +9,10 @@ Denne katalogen er et internt grensesnitt for agentmotoren og testene. Filene so
 - Dokumentbindingen omfatter dokumentfingeravtrykk, størrelse, medietype, tekstfingeravtrykk og den registrerte uttrekksoppskriften.
 - Oppdraget kommer fra den kontrollerte databaseflaten; agenten skal ikke konstruere kilde-, versjons- eller katalog-ID-er selv.
 - Manglende eller feil dokumentbinding skal stoppe kjeden, ikke falle tilbake til netttekst.
+- Fullteksten registreres gjennom det private biblioteket: originalfilen lagres varig, publikasjonstilhørigheten kontrolleres mot kildens egen identitet, og lesbarheten prøves med tabellene inkludert. `editor:assignment --pdf` går denne veien.
 
 De eksisterende CLI-ene (`editor:assignment` og `agent:draft-extraction`) er beholdte utviklings- og testgrensesnitt. Den filbaserte modelladapteren er ikke en live semantisk runtime og skal ikke beskrives som den ferdige produktflyten.
 
-Menneskelig felt-for-felt-kontroll er ikke målbildet. Agentene gjør mellomarbeidet; en navngitt fagperson skal senere kontrollere den ferdige publiseringskandidaten i klinikerens visning. Kandidatbundet sluttkontroll er ikke implementert ennå.
+Menneskelig felt-for-felt-kontroll er ikke målbildet. Agentene gjør mellomarbeidet; en navngitt fagperson kontrollerer den ferdige kandidaten i klinikerens egen visning, og beslutningen er bundet til nøyaktig det innholdet som ble lest. Publiseringen er fortsatt en egen, stengt handling.
 
 Se [evidenskjeden](../docs/EVIDENCE_PIPELINE.md) og [roadmap](../docs/ROADMAP.md) for gjeldende produktretning.
