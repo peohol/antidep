@@ -25,12 +25,26 @@ for obsolete in \
   }
 done
 
-if grep -R -n -E \
+reject_grep_matches() {
+  local message=$1
+  shift
+  if grep "$@"; then
+    echo "$message" >&2
+    exit 1
+  else
+    local status=$?
+    if [[ $status -ne 1 ]]; then
+      echo "Repokontrollen kunne ikke fullføre grep-søket (exit $status)." >&2
+      exit "$status"
+    fi
+  fi
+}
+
+reject_grep_matches \
+  'Gammel produktflate eller klinisk eksempeltekst finnes i appen.' \
+  -R -n -E \
   --include='*.ts' --include='*.tsx' --exclude='*.test.ts' --exclude='*.test.tsx' \
-  '(/review|/extraction-review|Fava|Versiani)' src/app; then
-  echo 'Gammel produktflate eller klinisk eksempeltekst finnes i appen.' >&2
-  exit 1
-fi
+  '(/review|/extraction-review|Fava|Versiani)' src/app
 
 operational_docs=(
   .env.example
@@ -48,11 +62,10 @@ for file in "${operational_docs[@]}"; do
     exit 1
   }
 done
-if grep -n -E \
+reject_grep_matches \
+  'Foreldet mikroreview- eller ekstraksjonsflyt finnes fortsatt i operative instrukser.' \
+  -n -E \
   'MVP_IMPLEMENTATION_PLAN|ROUTINE_EXTRACTION|/extraction-review|/review' \
-  "${operational_docs[@]}"; then
-  echo 'Foreldet mikroreview- eller ekstraksjonsflyt finnes fortsatt i operative instrukser.' >&2
-  exit 1
-fi
+  "${operational_docs[@]}"
 
 node scripts/verify-doc-links.mjs
