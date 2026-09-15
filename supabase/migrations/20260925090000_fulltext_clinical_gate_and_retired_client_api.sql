@@ -25,15 +25,28 @@ begin
     raise exception using errcode = '23001', message = 'Antidep 2-resetten stoppet: en agentkjøring er fortsatt åpen.';
   end if;
 
+  -- Owner authorization covers the exact reviewed legacy graph, including the
+  -- absence of later review/verification/grounding rows. Every table that the
+  -- reset migration deletes is therefore part of this guard.
   v_root_counts := jsonb_build_object(
+    'claim_verification_citations', (select count(*) from workflow.claim_verification_citations),
+    'claim_verifications', (select count(*) from workflow.claim_verifications),
+    'evidence_verifications', (select count(*) from workflow.evidence_verifications),
+    'review_decisions', (select count(*) from workflow.review_decisions),
     'evidence_items', (select count(*) from knowledge.evidence_items),
+    'evidence_field_groundings', (select count(*) from knowledge.evidence_field_groundings),
     'claims', (select count(*) from knowledge.claims),
     'claim_revisions', (select count(*) from knowledge.claim_revisions),
     'claim_evidence_links', (select count(*) from knowledge.claim_evidence_links),
     'evidence_assessments', (select count(*) from knowledge.evidence_assessments)
   );
   if v_root_counts <> jsonb_build_object(
+       'claim_verification_citations', 0,
+       'claim_verifications', 0,
+       'evidence_verifications', 0,
+       'review_decisions', 0,
        'evidence_items', 2,
+       'evidence_field_groundings', 0,
        'claims', 2,
        'claim_revisions', 2,
        'claim_evidence_links', 2,
@@ -42,7 +55,19 @@ begin
     raise exception using
       errcode = '23001',
       message = 'Antidep 2-resetten stoppet: aktivt klinisk innhold avviker fra den autoriserte legacy-baselinen.',
-      detail = 'Observerte rotantall: ' || v_root_counts::text;
+      detail = 'Observerte rot- og avhengighetsantall: ' || v_root_counts::text;
+  end if;
+
+  -- The set check below is deliberately exact, not merely an allow-list. With
+  -- two rows total, an allow-list alone would also accept two sertraline rows
+  -- and no mirtazapine row.
+  if (select array_agg(d.canonical_name order by d.canonical_name)
+      from knowledge.evidence_items e
+      join catalog.drugs d on d.id = e.intervention_drug_id)
+     is distinct from array['mirtazapin', 'sertralin']::text[] then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: evidensrøttene har ikke nøyaktig de to autoriserte virkestoffidentitetene.';
   end if;
 
   if exists (
@@ -61,6 +86,15 @@ begin
     raise exception using
       errcode = '23001',
       message = 'Antidep 2-resetten stoppet: evidensrøttene er ikke den autoriserte legacy-prototypen.';
+  end if;
+
+  if (select array_agg(d.canonical_name order by d.canonical_name)
+      from knowledge.claims cl
+      join catalog.drugs d on d.id = cl.subject_drug_id)
+     is distinct from array['mirtazapin', 'sertralin']::text[] then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: påstandsrøttene har ikke nøyaktig de to autoriserte virkestoffidentitetene.';
   end if;
 
   if exists (
