@@ -139,6 +139,35 @@
 # en publisering for å kunne vise det den viser, og fiksturen trekker den tilbake
 # før neste kjøring — gjennom den kontrollerte operasjonen, aldri ved å slette
 # historikk.
+#
+# ----------------------------------------------------------------------------
+# Prøve 16 til 18 — den autonome kjøreren (migrasjon 011a)
+#
+# Fra 011a kan en planlagt KI-agent hente arbeid selv. «Det kjøres bare én
+# planlagt oppgave om gangen» er ikke en garanti noen kan gi: en plattform kan
+# starte to kjøringer, en kjøring kan henge og bli startet på nytt, og et
+# menneske kan stå ved agentarbeidsflaten samtidig. Uttaket må derfor holde av
+# seg selv, og det er nettopp det som ikke lar seg prøve i pgTAP: filene der
+# kjører i én transaksjon som rulles tilbake, og en andre forbindelse ville verken
+# sett fiksturen deres eller kunnet kappes mot dem.
+#
+#   16  To planlagte kjøringer kan ikke ta den samme oppgaven. Økt A tar uttaket
+#       og holder transaksjonen åpen; økt B spør om arbeid og skal få «ingen
+#       arbeid» framfor den samme jobben. Uten FOR UPDATE SKIP LOCKED og
+#       lesningen av utførbarheten på nytt etter låsen, ville begge fått den.
+#
+#   17  Den manuelle veien og den autonome kan ikke registrere det samme
+#       arbeidet. Økt A tar uttaket og commiter; økt B laster opp et svar fra
+#       agentarbeidsflaten og skal avvises av at oppgaven er tatt ut.
+#
+#   18  En utløpt leie kan tas på nytt, uten tapt eller dobbelt arbeid. Uttaket
+#       får sin egen nøkkel, så den forrige kjøringen kan ikke levere et svar
+#       over den som nå arbeider — og oppgaven blir ikke stående låst fordi en
+#       planlagt kjøring døde.
+#
+# Fiksturen er egen (scripts/agent-runner-race-fixture.sql) og bygges opp på
+# nytt hver kjøring: uttak teller forsøk, og en jobb som ble stående med
+# oppbrukte forsøk, ville gjort neste kjøring grønn av feil grunn.
 set -euo pipefail
 
 DB_URL=""
@@ -1091,5 +1120,129 @@ proev 'en samtidig tilbaketrekking må vente på rollbacken (55P03)' \
    select knowledge.withdraw_claim_publication('$pub_paastand', '$pub_publisher_aktor',
      'Samtidighetsprøve; rulles tilbake.');" \
   'Uten radlåsen på påstanden kan en rollback og en tilbaketrekking lese den samme tilstanden, og etterlate to gjeldende sannheter (migrasjon 009e).'
+
+# ----------------------------------------------------------------------------
+# Prøve 16 til 18 — den autonome kjøreren
+# ----------------------------------------------------------------------------
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -f "$(dirname "$0")/agent-runner-race-fixture.sql"
+
+kjorer_token='7e00000000000000000000000000000000000000000000000000000000000001'
+kjorer_jobb='7e000000-0000-4000-8000-00000000000a'
+kjorer_redaktor='7e000000-0000-4000-8000-0000000000e0'
+
+# Økt A tar uttaket og HOLDER transaksjonen åpen. Økt B spør om arbeid mens
+# raden er låst, og skal få «ingen arbeid» — ikke den samme jobben.
+kapp_om_uttaket() {
+  local styr="$arbeid/styr-runner.$$" a_log="$arbeid/a-runner.log" b_log="$arbeid/b-runner.log"
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  (
+    printf "begin;\n"
+    printf "select api.claim_agent_task('%s', null, 900);\n" "$kjorer_token"
+    printf "\\\\echo TATT\n"
+    printf "\\\\o /dev/null\n"
+    cat "$styr"
+    printf "rollback;\n"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$a_log" 2>&1 &
+  okt_a_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 100); do
+    grep -q 'TATT' "$a_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  if ! grep -q 'TATT' "$a_log" 2>/dev/null; then
+    printf 'Økt A fikk ikke tatt uttaket:\n' >&2
+    cat "$a_log" >&2
+    exec 9>&-
+    exit 1
+  fi
+
+  set +e
+  psql "$DB_URL" -X -tA > "$b_log" 2>&1 <<SQL
+set lock_timeout = '2s';
+select api.claim_agent_task('$kjorer_token', null, 900);
+SQL
+  set -e
+
+  printf 'exit\n' >&9 || true
+  exec 9>&-
+  wait "$okt_a_pid" 2>/dev/null || true
+  okt_a_pid=""
+  rm -f "$styr"
+
+  if grep -q '"claimed": false' "$b_log" && grep -q '"reason": "no_work"' "$b_log"; then
+    printf 'ok       to planlagte kjøringer kan ikke ta den samme oppgaven\n'
+    return 0
+  fi
+
+  printf 'AVVIK    to planlagte kjøringer kan ikke ta den samme oppgaven\n' >&2
+  printf '         Uten FOR UPDATE SKIP LOCKED og lesningen av utførbarheten etter låsen ville begge fått den samme jobben (migrasjon 011a).\n' >&2
+  printf '         Svaret fra økt B:\n' >&2
+  sed 's/^/         /' "$b_log" >&2
+  exit 1
+}
+
+kapp_om_uttaket
+
+# Prøve 17 — økt A commiter uttaket, og den manuelle importveien avvises.
+handle=$(les "select api.claim_agent_task('$kjorer_token', null, 900) ->> 'task_handle'")
+if [ -z "$handle" ]; then
+  printf 'AVVIK    kjøreren fikk ikke tatt oppgaven etter at prøve 16 rullet tilbake\n' >&2
+  exit 1
+fi
+
+manuell_log="$arbeid/manuell.log"
+set +e
+psql "$DB_URL" -X -tA > "$manuell_log" 2>&1 <<SQL
+\set VERBOSITY verbose
+begin;
+select set_config('request.jwt.claims', '{"sub":"$kjorer_redaktor"}', true);
+set local role authenticated;
+select api.import_agent_answer('$kjorer_jobb', '{}'::jsonb);
+rollback;
+SQL
+set -e
+
+if grep -q '23001' "$manuell_log"; then
+  printf 'ok       den manuelle importen kan ikke registrere en oppgave en kjører holder\n'
+else
+  printf 'AVVIK    den manuelle importen kan ikke registrere en oppgave en kjører holder\n' >&2
+  printf '         Uten den delte leien kunne det samme arbeidet blitt registrert to ganger, i to modellidentiteter (migrasjon 011a).\n' >&2
+  sed 's/^/         /' "$manuell_log" >&2
+  exit 1
+fi
+
+# Prøve 18 — en utløpt leie er ledig igjen, og den forrige nøkkelen treffer
+# ingenting. Tiden flyttes framfor å ventes ut: prøven skal si noe om regelen,
+# ikke om klokka.
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
+  "update workflow.pipeline_jobs
+   set lease_expires_at = now() - interval '1 minute'
+   where id = '$kjorer_jobb'" > /dev/null
+
+nytt_handle=$(les "select api.claim_agent_task('$kjorer_token', null, 900) ->> 'task_handle'")
+if [ -z "$nytt_handle" ] || [ "$nytt_handle" = "$handle" ]; then
+  printf 'AVVIK    en utløpt leie kan tas på nytt med en ny nøkkel\n' >&2
+  printf '         Uttaket fikk ikke sin egen nøkkel, og en kjøring som mistet leien kunne skrevet over den som nå arbeider (DATABASE_ARCHITECTURE.md §33).\n' >&2
+  exit 1
+fi
+printf 'ok       en utløpt leie kan tas på nytt, og uttaket får sin egen nøkkel\n'
+
+foreldet=$(les "select api.submit_agent_answer('$kjorer_token', '$handle'::uuid, '{}'::jsonb) ->> 'reason'")
+if [ "$foreldet" = "stale_task" ]; then
+  printf 'ok       en kjøring med utløpt leie kan ikke levere over uttaket som nå arbeider\n'
+else
+  printf 'AVVIK    en kjøring med utløpt leie kan ikke levere over uttaket som nå arbeider\n' >&2
+  printf '         Svaret var: %s\n' "$foreldet" >&2
+  exit 1
+fi
+
+# Oppgaven gis fra seg igjen, slik at databasen ikke blir stående med en leie
+# fra en prøve som er ferdig.
+les "select api.release_agent_task('$kjorer_token', '$nytt_handle'::uuid, 'could_not_complete')" > /dev/null
 
 printf '\nAlle samtidighetsprøvene passerte.\n'

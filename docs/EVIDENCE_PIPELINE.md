@@ -12,6 +12,27 @@ Abstract og metadata stopper ved discovery. Begrensede representasjoner kan aldr
 - **Privat fulltekstbibliotek.** Originalfilen blir liggende i databasen, utilgjengelig for enhver klientrolle. Fingeravtrykket beregnes av bytene og gjentas av en regel på raden, så filidentiteten er databasens og aldri en påstand kalleren skriver.
 - **Kontrollert publikasjonstilhørighet.** Opplastingen krever at fullteksten bærer kildens egen registrerte identitet — DOI, PMID navngitt som en PMID, eller tittelen — og avviser filen ellers. Et korrekt fingeravtrykk beviser hvilken fil dette er, ikke hvilken artikkel den er.
 - **Lesbarhets- og tabellkontroll.** Fullteksten prøves mot krav til mengde tekst, linjer, bokstavandel og antall datarader, og mot at et dokument som erklærer tabeller, faktisk har innhold under dem. En artikkel der tabellene ble droppet som bilder, ser hel ut i brødteksten samtidig som de kliniske tallene mangler; den registreres ikke.
+- **Autonom kjører over den samme handoffen.** Det semantiske arbeidet kan nå
+  hentes av en planlagt KI-agent framfor av et menneske med en fil. Antidep har
+  en privat MCP-app med fem smale operasjoner — se om det finnes arbeid, ta én
+  oppgave med en leie, les den, lever ett svar, gi oppgaven fra deg — og
+  ingenting annet: ingen SQL, ingen generell databaseadgang, ingen
+  service-nøkkel, ingen HTTP-proxy. Kjøreren er en ny transport og ikke en ny
+  agentarkitektur: oppgaven bygges av de samme radene, avtrykket regnes av den
+  samme funksjonen, og svaret registreres av nøyaktig den samme skriveveien et
+  opplastet `svar.json` går gjennom. Det følger av at de deler funksjon
+  (`workflow.record_agent_handoff_answer`) at MCP-veien strukturelt ikke kan få
+  større faglige skrivefullmakter enn den manuelle. Tilkoblingen er OAuth 2.1
+  med PKCE, bundet til nøyaktig ett agentledd, registrert av en redaktør med
+  mandat og mulig å trekke tilbake med det samme; hele tokenstilstanden ligger
+  hashet i Antideps egen database, og MCP-serveren holder ingen
+  databasehemmelighet av egen kraft. Den samme Workspace Agent-en kan ikke kjøre
+  to agentledd: én konfigurasjon er én modellruntime, og en kjede der den samme
+  agenten både laget innholdet og vurderte det, ville vært egenverifikasjon med
+  et ekstra ledd. Pinner plattformen ikke modellen bak agenten, registreres det
+  som `not_exposed`, og Antidep hevder ikke at separasjonen er bevist av
+  plattformen. Den manuelle nedlast/opplast-veien består som fallback, og de to
+  deler kø, leie og jobb — så de kan ikke gjøre det samme arbeidet to ganger.
 - **Ekstern agent-handoff som arbeidsform.** Det semantiske arbeidet utføres av KI-agenter eieren allerede har tilgang til, gjennom én felles, versjonert oppgavekontrakt. Antidep bygger oppgaven av rader som allerede finnes og beregner et avtrykk over nøyaktig det som binder svaret — rollen, oppgaven, promptmalen, svarformen, inndataens versjon og de tidligere agentkjøringene rollen hviler på. Den eksterne agenten får én selvforklarende fil med hele materialet, og leverer ett svar. Importen kontrollerer bindingen mot oppgaven slik databasen bygger den *da*, avviser ukjente felter, henter de registrerte verdiene ut av svaret selv, og skriver gjennom nøyaktig de samme interne skriveveiene agentkjørerne bruker. Et eksternt modellsvar har ingen databaselegitimasjon og ingen egen skrivevei. Importen er idempotent på oppgaven: det samme svaret sendt inn igjen svarer med det som allerede ble registrert, og et annet svar på en besvart oppgave avvises — gjentatte forsøk gir aldri doble kliniske artefakter.
 - **Sann modellproveniens, også når leverandøren ikke forteller alt.** Kjøringen bærer både registreringsidentiteten — Antideps egen deterministiske kode — og den eksterne KI-agenten som faktisk gjorde arbeidet, som egne kolonner. En tjeneste som ikke eksponerer noen intern build, registreres som «ikke eksponert» med én kanonisk verdi framfor med en oppdiktet versjon: to ukjente versjoner av den samme modellen er dermed den samme identiteten, og separasjonsregelen svekkes ikke av at versjonen mangler.
 - **Handoff-jobbene er en egen form.** Om en pipelinejobb utføres av en ekstern KI-agent eller av Antideps egne kjørere, er en egenskap ved raden (`workflow.agent_handoff_jobs`) og ikke noe som utledes av agentrollen. Agentkøen viser bare de eksterne oppgavene som fortsatt venter; `api.claim_pipeline_job` utelater dem, og en jobb med en løpende leie kan ikke overtas av importen.
@@ -30,10 +51,14 @@ Abstract og metadata stopper ved discovery. Begrensede representasjoner kan aldr
 
 ## Hvem som gjør hva
 
-Antidep eier oppgavekontrakten, integritetskontrollene og lagringen. Eksterne KI-agenter utfører de semantiske oppgavene — ekstraksjonsutkast, synteseutkast og evidensvurdering — og et vanlig chatvindu er en eksplisitt støttet utfører. De uavhengige kontrolleddene er Antideps egen deterministiske kode; en ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en modellvurdering. En teknisk agent kan brukes til orkestrering og utvikling der det passer. Ingen bestemt betalt modell-API er en forutsetning, og ingen modellnøkkel er nødvendig for å kjøre kjeden.
+Antidep eier oppgavekontrakten, integritetskontrollene og lagringen. Eksterne KI-agenter utfører de semantiske oppgavene — ekstraksjonsutkast, synteseutkast og evidensvurdering — og en planlagt ChatGPT Workspace Agent over den private MCP-appen er den primære utføreren. Et vanlig chatvindu med nedlasting og opplasting er fortsatt en eksplisitt støttet utfører, og er fallback når en planlagt kjøring er nede. De uavhengige kontrolleddene er Antideps egen deterministiske kode; en ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en modellvurdering. En teknisk agent kan brukes til orkestrering og utvikling der det passer. Ingen bestemt betalt modell-API er en forutsetning, og ingen modellnøkkel er nødvendig for å kjøre kjeden.
 
 ## Mangler
 
-Kildeinngangen fra flaten: en ny fulltekst registreres fortsatt av en kommando, fordi tekstuttrekket må kjøres med den registrerte oppskriften og en nettleser ikke kan kjøre den. Alt som følger etter registreringen, kan betjenes fra flaten.
+Kildeinngangen fra flaten: en ny fulltekst registreres fortsatt av en kommando, fordi tekstuttrekket må kjøres med den registrerte oppskriften og en nettleser ikke kan kjøre den. Alt som følger etter registreringen, kan betjenes fra flaten — eller av den planlagte kjøreren.
+
+De uavhengige kontrolleddene kjøres fortsatt av kommandoer. Et registrert agentsvar fører derfor ikke kjeden videre av seg selv, uansett om det kom fra en planlagt kjøring eller fra et menneske.
+
+Autonomien har i tillegg én grense som ikke ligger i Antidep: om ChatGPT-workspacet tillater at appens skrivehandlinger utføres uten en godkjenning per kjøring. Antideps side er prøvd ende-til-ende i CI; den siste innstillingen avgjøres i ChatGPT og verifiseres med én planlagt kjøring etter oppsettet (`docs/CHATGPT_WORKSPACE_AGENT.md`).
 
 Et lagringsnavn, en PDF-signatur eller et registrert modellnavn beviser ikke at disse leddene finnes.

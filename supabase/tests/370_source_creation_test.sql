@@ -218,7 +218,35 @@ select is_empty(
         -- finnes den som en egen redaktørvei framfor som en registrering ved
         -- første svar (ANTIDEP_CONSTITUTION.md regel 3).
         'api.assign_agent_role_model(text,text,text,text,text,text,text)',
-        'api.release_agent_role_model(text,text)'
+        'api.release_agent_role_model(text,text)',
+        -- Migrasjon 011a. Den autonome kjøreren over den samme handoffen.
+        --
+        -- Redaktørveiene er authenticated, som resten av handoffen: å registrere
+        -- en kjører, hente en engangs tilkoblingskode og trekke den tilbake er
+        -- avgjørelser om hvem som utfører kjedens arbeid.
+        'api.register_agent_runner(text,text,text,text,text,text)',
+        'api.revoke_agent_runner(text,text)',
+        'api.issue_agent_runner_pairing_code(text)',
+        'api.agent_runner_connections()',
+        -- Kjørerveiene er i tillegg anon, av samme grunn som
+        -- api.claim_pipeline_job(text,text,text,integer): en kjører har ingen
+        -- brukerkonto, så legitimasjonen — her et OAuth-token bundet til en
+        -- registrert tilkobling — og ikke Data API-rollen er kontrollen. Ingen
+        -- av dem gir tilgang uten et token, og ingen av dem kan gi større
+        -- faglige skrivefullmakter enn den manuelle handoffen: de deler
+        -- skrivevei (workflow.record_agent_handoff_answer). Kontrolleres i
+        -- 790_autonomous_agent_runner_test.sql.
+        'api.register_agent_runner_client(text,text[])',
+        'api.authorize_agent_runner(text,text,text,text,text)',
+        'api.exchange_agent_runner_code(text,text,text,text)',
+        'api.refresh_agent_runner_token(text,text)',
+        'api.list_pending_agent_tasks(text)',
+        'api.claim_agent_task(text,text,integer)',
+        'api.agent_task_for_runner(text,uuid)',
+        'api.submit_agent_answer(text,uuid,jsonb)',
+        'api.release_agent_task(text,uuid,text)',
+        'api.agent_runner_identity(text)',
+        'api.record_agent_runner_outcome(text,text,text,uuid)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

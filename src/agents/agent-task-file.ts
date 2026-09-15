@@ -289,14 +289,36 @@ vurderingen gjort to ganger.`
 }
 
 /**
- * Hele oppgaven som én selvforklarende fil.
+ * Hvordan svaret leveres tilbake til Antidep.
  *
- * Rent uttrykk: den samme oppgaven gir den samme filen, hver gang. En fil med et
- * tidspunkt eller et løpenummer i seg ville sett forskjellig ut for den samme
- * oppgaven, og den som lastet den ned to ganger, ville ikke kunnet se at det var
- * den samme.
+ * `file` er nedlast/opplast-veien: den som utfører oppgaven, laster opp én
+ * `svar.json` i agentarbeidsflaten. `mcp` er den autonome kjøreren, som leverer
+ * det samme svaret gjennom `submit_agent_answer`.
+ *
+ * Bare ett avsnitt skiller dem, og det er med vilje: rollen, reglene, grensene,
+ * svarformen og selve materialet er nøyaktig det samme uansett hvordan svaret
+ * kommer tilbake. To tekster ville kunnet komme i utakt om hva som er tillatt,
+ * og den ene som ble glemt, ville bedt om noe den andre forbød.
  */
-export function renderAgentTaskFile(task: AgentTask): string {
+export type AgentTaskDelivery = 'file' | 'mcp'
+
+const DELIVERY_TEXTS: Readonly<Record<AgentTaskDelivery, string>> = {
+  file: `Svar med ÉN JSON-fil, og ingenting annet. Kall den gjerne \`svar.json\`; navnet
+betyr ingenting for Antidep, men innholdet gjør det.`,
+  mcp: `Lever svaret ved å kalle verktøyet \`submit_agent_answer\` med nøyaktig dette
+JSON-objektet som \`answer\`, sammen med oppgavehåndtaket du fikk da du tok
+oppgaven. Ikke skriv svaret som tekst i samtalen, og ikke bruk noe annet verktøy.`,
+}
+
+/**
+ * Hele oppgaven som én selvforklarende tekst.
+ *
+ * Rent uttrykk: den samme oppgaven gir den samme teksten, hver gang. En tekst
+ * med et tidspunkt eller et løpenummer i seg ville sett forskjellig ut for den
+ * samme oppgaven, og den som hentet den to ganger, ville ikke kunnet se at det
+ * var den samme.
+ */
+export function renderAgentTaskFile(task: AgentTask, delivery: AgentTaskDelivery = 'file'): string {
   const contract = HANDOFF_CONTRACTS[task.role]
   const texts = ROLE_TEXTS[task.role]
 
@@ -304,8 +326,8 @@ export function renderAgentTaskFile(task: AgentTask): string {
 
 ${contract.summary}
 
-Denne filen inneholder hele oppgaven. Du trenger ingenting annet, og du skal ikke
-hente noe utenfra.
+${delivery === 'file' ? 'Denne filen' : 'Denne oppgaveteksten'} inneholder hele oppgaven. Du trenger ingenting
+annet, og du skal ikke hente noe utenfra.
 
 Gjelder: ${task.subject.label}
 
@@ -313,8 +335,7 @@ Gjelder: ${task.subject.label}
 
 ## 1. Slik svarer du
 
-Svar med ÉN JSON-fil, og ingenting annet. Kall den gjerne \`svar.json\`; navnet
-betyr ingenting for Antidep, men innholdet gjør det.
+${DELIVERY_TEXTS[delivery]}
 
 Malen under er ferdig utfylt med de verdiene som binder svaret til nettopp denne
 oppgaven. **Kopier dem uendret.** De kan ikke konstrueres, og et svar med en

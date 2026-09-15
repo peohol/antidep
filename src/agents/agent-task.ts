@@ -321,6 +321,41 @@ export interface AgentWorkItem {
   /** Begrunnelsen fra forrige mislykkede forsøk, eller `null`. */
   readonly failureReason: string | null
   readonly registeredModel: ModelIdentity | null
+  /**
+   * Navnet på den autonome kjøreren som holder oppgaven akkurat nå, eller `null`.
+   *
+   * «Blokkert» er feil ord når grunnen er at arbeidet gjøres automatisk i dette
+   * øyeblikket, og en flate som viste de to likt, ville bedt noen gripe inn i
+   * noe som går helt av seg selv (ANTIDEP_CONSTITUTION.md regel 4).
+   */
+  readonly heldByRunner: string | null
+}
+
+/**
+ * Én registrert autonom kjører, slik flaten trenger den.
+ *
+ * Bærer ingen hemmelighet: om tilkoblingen er i bruk, svares det på med ja eller
+ * nei, aldri med et token.
+ */
+export interface AgentRunnerConnection {
+  readonly connectionKey: string
+  readonly displayName: string
+  readonly role: string
+  readonly platformAgentReference: string
+  /** `platform_pinned` eller `not_exposed`. Se `docs/CHATGPT_WORKSPACE_AGENT.md`. */
+  readonly platformModelDisclosure: string
+  readonly connected: boolean
+  readonly lastSeenAt: string | null
+  readonly deliveredAnswers: number
+}
+
+/** Engangskoden en redaktør limer inn når ChatGPT kobler seg til. */
+export interface AgentRunnerPairingCode {
+  readonly connectionKey: string
+  readonly displayName: string
+  readonly role: string
+  readonly pairingCode: string
+  readonly expiresAt: string
 }
 
 const QUEUE_SUBJECT = 'Agentkøen'
@@ -383,6 +418,7 @@ export function parseAgentWorkQueue(value: unknown): {
         registered === null || registered === undefined
           ? null
           : parseModelIdentity(fields, registered, 'registered_model'),
+      heldByRunner: asOptionalText(fields, 'held_by_runner'),
     })
   })
 
@@ -430,6 +466,38 @@ export function parseRoleModelAssignment(value: unknown): RoleModelAssignment {
     alreadyAssigned: asFlag(fields, 'already_assigned'),
     replaced: asFlag(fields, 'replaced'),
     model: parseModelIdentity(fields, raw(fields, 'model'), 'model'),
+  }
+}
+
+/** Leser listen over registrerte autonome kjørere. */
+export function parseAgentRunnerConnections(value: unknown): readonly AgentRunnerConnection[] {
+  if (!Array.isArray(value)) {
+    throw new Error('Listen over autonome kjørere er ugyldig: svaret er ikke en liste.')
+  }
+  return value.map((row, index) => {
+    const fields = fieldsOf(row, 'Kjørertilkoblingen', `raden[${String(index)}]`)
+    return {
+      connectionKey: asText(fields, 'connection_key'),
+      displayName: asText(fields, 'display_name'),
+      role: asText(fields, 'agent_role'),
+      platformAgentReference: asText(fields, 'platform_agent_reference'),
+      platformModelDisclosure: asText(fields, 'platform_model_disclosure'),
+      connected: asFlag(fields, 'connected'),
+      lastSeenAt: asOptionalText(fields, 'last_seen_at'),
+      deliveredAnswers: asCount(fields, 'delivered_answers'),
+    }
+  })
+}
+
+/** Leser den utstedte engangskoden. */
+export function parseAgentRunnerPairingCode(value: unknown): AgentRunnerPairingCode {
+  const fields = fieldsOf(value, 'Tilkoblingskoden', 'svaret')
+  return {
+    connectionKey: asText(fields, 'connection_key'),
+    displayName: asText(fields, 'display_name'),
+    role: asText(fields, 'agent_role'),
+    pairingCode: asText(fields, 'pairing_code'),
+    expiresAt: asText(fields, 'expires_at'),
   }
 }
 
