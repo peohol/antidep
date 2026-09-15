@@ -172,6 +172,10 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
     delete from knowledge.claim_evidence_links where claim_revision_id::text like 'c2000000%';
     delete from knowledge.claim_revisions where id::text like 'c2000000%';
     delete from knowledge.claims where id::text like 'c2000000%';
+    -- Fikstur-kjøringene har faste id-er og ingen input_source_version_id, så
+    -- de dekkes ikke av slettingen over. Uten denne ville en ny kjøring i den
+    -- gjenbrukbare lokale databasen kollidert på primærnøkkelen.
+    delete from provenance.agent_runs where id::text like 'c2000000%';
     delete from workflow.pipeline_job_events where pipeline_job_id in (
       select id from workflow.pipeline_jobs where job_key like 'antidep2-kjede:%');
     delete from workflow.pipeline_jobs where job_key like 'antidep2-kjede:%';
@@ -657,16 +661,108 @@ async function main(): Promise<void> {
     }
 
     // ------------------------------------------------------------------
+    // Den deterministiske kontrollen bekrefter ikke denne raden — og da kan
+    // den ikke bære en kandidat
+    //
+    // Katalogen er norsk og den syntetiske artikkelen engelsk, så
+    // `checkExtraction` finner ikke begrepene ordrett og konkluderer
+    // `uncertain`. Det er ikke et avvik, men det er heller ikke en
+    // bekreftelse — og en ubekreftet ekstraksjon skal ikke kunne forsegles som
+    // et ferdig produkt (ANTIDEP_CONSTITUTION.md regel 4, gate G5 i
+    // knowledge.assert_claim_revision_ready_for_approval).
+    //
+    // Prøven fester den tilstanden framfor å skrive over den: en fabrikkert
+    // `verified`-rad ville gjort kjedeprøven grønn ved å fjerne nettopp det
+    // den skal vise.
+    // ------------------------------------------------------------------
+    check(
+      'den deterministiske kontrollen bekrefter ikke en norsk katalog mot en engelsk kilde',
+      psql(
+        config,
+        `select (ev.outcome <> 'verified')::text
+         from workflow.evidence_verifications ev
+         where ev.evidence_item_id = ${q(evidenceItemId)}
+         order by ev.registration_ordinal desc
+         limit 1`,
+      ) === 'true',
+    )
+
+    // ------------------------------------------------------------------
     // Kandidaten og den kandidatbundne sluttkontrollen
     //
     // Påstandsdannelsen, kildestøttekontrollen og evidensvurderingen har hver
     // sin egen kjører og sin egen prøve; her legges de inn som fikstur, slik at
     // kjedeprøven kan komme fram til det den er til for — grensen mellom
     // TypeScript og de fire nye api-funksjonene.
+    //
+    // Evidensfunnet er også en fikstur, og et *annet* funn enn det kjeden
+    // nettopp laget: en forseglet kandidat krever en bekreftet ekstraksjon, og
+    // den bekreftelsen skal komme av en kontroll som faktisk konkluderte — ikke
+    // av at prøven skrev om utfallet til det den trengte.
     // ------------------------------------------------------------------
     psql(
       config,
       `
+      insert into provenance.agent_runs
+        (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
+         prompt_template_version, pipeline_version, input_manifest, input_source_version_id)
+      select 'c2000000-0000-4000-8000-000000000051', ai.id, ai.actor_id, 'evidence_extraction',
+             'antidep', 'proposal-grounded-extraction', '1.1.0',
+             'evidence-extraction/proposal/1', 'antidep-evidence/1',
+             '{"mode": "antidep2-kjede-fikstur"}'::jsonb, ${q(report.sourceVersionId)}
+      from provenance.agent_identities ai
+      where ai.identity_key = 'agent-identity:evidence-extraction-01';
+
+      insert into knowledge.evidence_items
+        (id, source_id, source_version_id, design_code, population_availability,
+         population_detail, sample_size_availability, intervention_drug_id, comparator_kind,
+         outcome_concept_id, outcome_detail, timepoint_availability, reported_direction,
+         estimate_availability, confidence_interval_availability, source_locator,
+         extraction_method, created_by_actor_id, agent_run_id)
+      select 'c2000000-0000-4000-8000-000000000011', ${q(SOURCE)}, ${q(report.sourceVersionId)},
+             'randomized_controlled_trial', 'not_reported', 'Fikstur i kjedeprøven.',
+             'not_reported', d.id, 'none', c.id, 'Fikstur i kjedeprøven.', 'not_reported',
+             'increase', 'not_reported', 'not_reported', 'Avsnitt 1', 'ai_assisted',
+             (select id from provenance.actors where actor_key = 'agent:evidence-extraction'),
+             'c2000000-0000-4000-8000-000000000051'
+      from catalog.drugs d, catalog.clinical_concepts c
+      where d.canonical_name = 'sertralin' and c.canonical_label = 'vektendring';
+
+      insert into provenance.agent_runs
+        (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
+         prompt_template_version, pipeline_version, input_manifest)
+      select 'c2000000-0000-4000-8000-00000000005a', ai.id, ai.actor_id,
+             'extraction_verification', 'antidep', 'deterministic-extraction-check', '1.0.0',
+             'extraction-verification/deterministic/1', 'antidep-evidence/1',
+             '{"mode": "antidep2-kjede-fikstur"}'::jsonb
+      from provenance.agent_identities ai
+      where ai.identity_key = 'agent-identity:extraction-verification-01';
+
+      insert into workflow.evidence_verifications
+        (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+         source_access, checked_fields, rationale, verified_at, agent_run_id)
+      select e.id, e.created_by_actor_id,
+             (select id from provenance.actors where actor_key = 'agent:extraction-verification'),
+             'verified', 'verifiable_representation',
+             array['source_wide_absence']::workflow.evidence_check_field[],
+             'Fikstur: den kildeomfattende halvdelen av fraværspåstanden.',
+             now() - interval '30 days', 'c2000000-0000-4000-8000-00000000005a'
+      from knowledge.evidence_items e
+      where e.id = 'c2000000-0000-4000-8000-000000000011'
+        and 'source_wide_absence' = any (workflow.required_check_fields(e.id));
+
+      insert into workflow.evidence_verifications
+        (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+         source_access, checked_fields, rationale, verified_at)
+      select e.id, e.created_by_actor_id,
+             (select id from provenance.actors where actor_key = 'agent:extraction-verification'),
+             'verified', 'original_source',
+             array_remove(workflow.required_check_fields(e.id),
+                          'source_wide_absence'::workflow.evidence_check_field),
+             'Fikstur: fullstendig kontrollert ekstraksjon.', now()
+      from knowledge.evidence_items e
+      where e.id = 'c2000000-0000-4000-8000-000000000011';
+
       insert into knowledge.claims (id, knowledge_type, topic_concept_id, subject_drug_id,
                                     created_by_actor_id)
       select 'c2000000-0000-4000-8000-000000000021', 'evidence_synthesis', c.id, d.id,
@@ -688,7 +784,8 @@ async function main(): Promise<void> {
       insert into knowledge.claim_evidence_links
         (claim_revision_id, evidence_item_id, relationship_type, directness, relevance_note,
          created_by_actor_id)
-      values ('c2000000-0000-4000-8000-000000000031', ${q(evidenceItemId)}, 'supports', 'direct',
+      values ('c2000000-0000-4000-8000-000000000031',
+              'c2000000-0000-4000-8000-000000000011', 'supports', 'direct',
               'Eneste lenke i kjedeprøven.',
               (select id from provenance.actors where actor_key = 'agent:claim-synthesis'));
 
