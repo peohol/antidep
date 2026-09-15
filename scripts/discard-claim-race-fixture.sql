@@ -17,8 +17,7 @@
 -- tilbake. Radene står derfor igjen mellom kjøringer, og alt her er idempotent.
 --
 -- Kjøres av scripts/db-lock-test.sh. Ingenting her hører hjemme i en migrasjon:
--- dette er prøvedata, ikke kunnskap (supabase/README.md, «Hvor seed-data hører
--- hjemme»).
+-- dette er prøvedata, ikke kunnskap.
 -- ============================================================================
 \set ON_ERROR_STOP on
 
@@ -80,7 +79,7 @@ select '7c000000-0000-4000-8000-000000000002', '7c000000-0000-4000-8000-00000000
        now(), 'file:///syntetisk-fjerningsprove.pdf',
        'sha256:' || repeat('c', 64), 'private://syntetisk-fjerningsprove.pdf',
        'full_text', a.id, 'sha256:' || repeat('e', 64), 1024, 'application/pdf',
-       'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@1'
+       'pdftotext', '24.02.0', '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
 from provenance.actors a
 where a.actor_key = 'human:peder-holman'
   and not exists (select 1 from knowledge.source_versions v
