@@ -1,4 +1,4 @@
--- Antidep 2 owner-authorized, atomic, one-time removal of derived prototype content.
+-- Antidep 2 owner-authorized, atomic, one-time removal of the known legacy prototype graph.
 begin;
 
 create table audit.prototype_resets (
@@ -23,7 +23,7 @@ comment on column audit.prototype_resets.row_counts is 'Exact before-count for e
 comment on column audit.prototype_resets.snapshot is 'Private recovery payload; never an active clinical evidence source.';
 comment on column audit.prototype_resets.snapshot_sha256 is 'SHA-256 fingerprint of the canonical JSON snapshot payload.';
 alter table audit.prototype_resets enable row level security;
-revoke all on audit.prototype_resets from public, anon, authenticated;
+revoke all on audit.prototype_resets from public, anon, authenticated, service_role;
 
 create trigger prototype_resets_reject_mutation
   before update or delete on audit.prototype_resets
@@ -31,6 +31,9 @@ create trigger prototype_resets_reject_mutation
     'Et reset-snapshot er et uforanderlig gjenopprettingsspor. En rettelse registreres som en ny hendelse; snapshotet endres eller slettes aldri.'
   );
 
+-- Lock every root or dependent table before inspecting the scope. A writer that
+-- committed immediately before the lock is therefore visible to the checks
+-- below; a writer after the lock must wait until this transaction is finished.
 lock table knowledge.publication_events, knowledge.claims, provenance.agent_runs,
   workflow.claim_verification_citations, workflow.claim_verifications,
   workflow.evidence_verifications, workflow.review_decisions,
@@ -39,7 +42,10 @@ lock table knowledge.publication_events, knowledge.claims, provenance.agent_runs
   knowledge.evidence_items in access exclusive mode;
 
 do $$
-declare v_snapshot jsonb; v_counts jsonb;
+declare
+  v_snapshot jsonb;
+  v_counts jsonb;
+  v_root_counts jsonb;
 begin
   if exists (select 1 from knowledge.publication_events)
      or exists (select 1 from knowledge.claims where current_published_revision_id is not null) then
@@ -47,6 +53,62 @@ begin
   end if;
   if exists (select 1 from provenance.agent_runs where status = 'running') then
     raise exception using errcode = '23001', message = 'Antidep 2-resetten stoppet: en agentkjøring er fortsatt åpen.';
+  end if;
+
+  -- The owner authorization covers exactly the two-item golden-slice graph
+  -- present at the reviewed legacy baseline. Never turn this migration into a
+  -- generic "delete all unpublished content" operation: any additional root
+  -- object means the target has diverged and requires a new explicit decision.
+  v_root_counts := jsonb_build_object(
+    'evidence_items', (select count(*) from knowledge.evidence_items),
+    'claims', (select count(*) from knowledge.claims),
+    'claim_revisions', (select count(*) from knowledge.claim_revisions),
+    'claim_evidence_links', (select count(*) from knowledge.claim_evidence_links),
+    'evidence_assessments', (select count(*) from knowledge.evidence_assessments)
+  );
+  if v_root_counts <> jsonb_build_object(
+       'evidence_items', 2,
+       'claims', 2,
+       'claim_revisions', 2,
+       'claim_evidence_links', 2,
+       'evidence_assessments', 2
+     ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: aktivt klinisk innhold avviker fra den autoriserte legacy-baselinen.',
+      detail = 'Observerte rotantall: ' || v_root_counts::text;
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join knowledge.sources s on s.id = e.source_id
+    join catalog.drugs d on d.id = e.intervention_drug_id
+    join catalog.clinical_concepts c on c.id = e.outcome_concept_id
+    where c.canonical_label <> 'vektendring'
+       or (d.canonical_name = 'sertralin'
+           and s.title <> 'Fluoxetine versus sertraline and paroxetine in major depressive disorder: changes in weight with long-term treatment')
+       or (d.canonical_name = 'mirtazapin'
+           and s.title <> 'Comparison of the effects of mirtazapine and fluoxetine in severely depressed patients')
+       or d.canonical_name not in ('sertralin', 'mirtazapin')
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: evidensrøttene er ikke den autoriserte legacy-prototypen.';
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.claims cl
+    join catalog.drugs d on d.id = cl.subject_drug_id
+    join catalog.clinical_concepts c on c.id = cl.topic_concept_id
+    where cl.knowledge_type <> 'evidence_synthesis'
+       or c.canonical_label <> 'vektendring'
+       or d.canonical_name not in ('sertralin', 'mirtazapin')
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: påstandsrøttene er ikke den autoriserte legacy-prototypen.';
   end if;
 
   v_snapshot := jsonb_build_object(
@@ -64,8 +126,15 @@ begin
   v_counts := (select jsonb_object_agg(key, jsonb_array_length(value)) from jsonb_each(v_snapshot));
   insert into audit.prototype_resets(reset_id, baseline_commit, reason, row_counts, snapshot, snapshot_sha256)
   values ('antidep-2-reset-2026-09', 'e1a41469aca0f142da21dff8ba4b41f2cf204806',
-          'Owner-approved removal of derived pre-Antidep-2 prototype content', v_counts, v_snapshot,
+          'Owner-approved removal of the bounded pre-Antidep-2 prototype graph', v_counts, v_snapshot,
           encode(extensions.digest(convert_to(v_snapshot::text, 'UTF8'), 'sha256'), 'hex'));
+
+  if (select snapshot_sha256 from audit.prototype_resets where reset_id = 'antidep-2-reset-2026-09')
+     <> encode(extensions.digest(convert_to(v_snapshot::text, 'UTF8'), 'sha256'), 'hex') then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: snapshotets fingeravtrykk kunne ikke verifiseres.';
+  end if;
 end $$;
 
 -- Only the named append-only guards are suspended, inside this migration transaction.
