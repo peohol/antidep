@@ -25,7 +25,9 @@ for obsolete in \
   }
 done
 
-if rg -n '/review|/extraction-review|Fava|Versiani' src/app --glob '!*.test.tsx'; then
+if grep -R -n -E \
+  --include='*.ts' --include='*.tsx' --exclude='*.test.ts' --exclude='*.test.tsx' \
+  '(/review|/extraction-review|Fava|Versiani)' src/app; then
   echo 'Gammel produktflate eller klinisk eksempeltekst finnes i appen.' >&2
   exit 1
 fi
@@ -40,7 +42,9 @@ operational_docs=(
   supabase/README.md
   supabase/seed.sql
 )
-if rg -n 'MVP_IMPLEMENTATION_PLAN|ROUTINE_EXTRACTION|/extraction-review|/review' "${operational_docs[@]}"; then
+if grep -n -E \
+  'MVP_IMPLEMENTATION_PLAN|ROUTINE_EXTRACTION|/extraction-review|/review' \
+  "${operational_docs[@]}"; then
   echo 'Foreldet mikroreview- eller ekstraksjonsflyt finnes fortsatt i operative instrukser.' >&2
   exit 1
 fi
