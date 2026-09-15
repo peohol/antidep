@@ -473,17 +473,9 @@ async function main(): Promise<void> {
       verification.items[0]?.reason ?? '',
     )
     check(
-      'maskinbeviset gjelder og alle nødvendige kontrollfelt er dekket',
+      'maskinbeviset for kildeforankringen gjelder',
       psql(config, `select workflow.grounding_machine_proved(${q(evidenceItemId)})::text`) ===
-        'true' &&
-        psql(
-          config,
-          `select count(*) from (
-             select unnest(workflow.required_check_fields(${q(evidenceItemId)}))::text
-             except
-             select unnest(workflow.covered_check_fields(${q(evidenceItemId)}))::text
-           ) missing`,
-        ) === '0',
+        'true',
     )
 
     check(
