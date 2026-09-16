@@ -293,9 +293,12 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
       const claimed = await gateway.readTask({
         credentials,
         taskHandle: handle,
-        // Sporet skal navngi kallet som faktisk ble gjort. Uten dette ville hver
-        // levering skrevet en `get_agent_task`-rad ingen klient ba om.
-        calledBy: 'submit_agent_answer',
+        // Egen databasevei, med sitt eget navn i sporet. Lesningen er ikke et
+        // verktøykall, og sporet skal verken kalle den `get_agent_task` — som
+        // ingen klient gjorde — eller `submit_agent_answer`, som ville vært en
+        // andre rad for det ene kallet, og på en avvisning en `ok` foran en
+        // `rejected` for den samme leveringen.
+        calledBy: 'precheck',
       })
       const deterministic = claimed.available ? deterministicProblem(claimed.task, answer) : null
       if (deterministic !== null) {

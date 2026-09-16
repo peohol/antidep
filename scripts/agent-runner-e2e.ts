@@ -524,14 +524,28 @@ async function main(): Promise<void> {
     fabricated.text,
   )
 
+  // Sporet etter ETT verktøykall, mot en ekte database og gjennom hele
+  // sammensetningen: verktøyet, gatewayen og funksjonen.
+  //
   // Leveringen leser oppgaven én gang til for de deterministiske kontrollene.
-  // Den lesningen skal føres under leveringen, ikke som et `get_agent_task`
-  // klienten aldri kalte — og her prøves nettopp sammensetningen, mot en ekte
-  // database: verktøyet, gatewayen og funksjonen.
-  const readsBefore = psql(
-    config,
-    `select count(*)::text from workflow.agent_runner_events where tool_name = 'get_agent_task'`,
-  )
+  // Den lesningen er ikke et verktøykall, og skal verken bli et `get_agent_task`
+  // klienten aldri gjorde eller en andre `submit_agent_answer`-rad for den ene
+  // leveringen — og på en avvisning ikke en `ok` foran en `rejected` for det
+  // samme kallet.
+  const eventCount = (toolName: string, outcome?: string): string =>
+    psql(
+      config,
+      `select count(*)::text from workflow.agent_runner_events
+       where tool_name = ${q(toolName)}` +
+        (outcome === undefined ? '' : ` and outcome = ${q(outcome)}`),
+    )
+
+  const before = {
+    reads: eventCount('get_agent_task'),
+    submits: eventCount('submit_agent_answer'),
+    submitsOk: eventCount('submit_agent_answer', 'ok'),
+    prechecks: eventCount('submit_agent_answer:precheck'),
+  }
 
   const submitted = await callTool(accessToken, 'submit_agent_answer', {
     task_handle: taskHandle,
@@ -545,11 +559,26 @@ async function main(): Promise<void> {
 
   check(
     'leveringen skriver ingen get_agent_task-rad for et kall ingen klient gjorde',
-    psql(
-      config,
-      `select count(*)::text from workflow.agent_runner_events where tool_name = 'get_agent_task'`,
-    ) === readsBefore,
-    `før: ${readsBefore}`,
+    eventCount('get_agent_task') === before.reads,
+    `før: ${before.reads}, etter: ${eventCount('get_agent_task')}`,
+  )
+  check(
+    'ett verktøykall gir nøyaktig én submit_agent_answer-rad, ikke to',
+    Number(eventCount('submit_agent_answer')) === Number(before.submits) + 1,
+    `før: ${before.submits}, etter: ${eventCount('submit_agent_answer')}`,
+  )
+  check(
+    'forhåndslesningen står for seg selv, under sitt eget navn',
+    Number(eventCount('submit_agent_answer:precheck')) === Number(before.prechecks) + 1,
+    `før: ${before.prechecks}, etter: ${eventCount('submit_agent_answer:precheck')}`,
+  )
+
+  // Og den avviste leveringen lenger oppe: den skrev en `rejected` og ingen
+  // `ok`. Et kall skal ikke ende i to motstridende utfall for seg selv.
+  check(
+    'en avvist levering etterlot ingen ok-rad for det samme kallet',
+    Number(before.submitsOk) === 0,
+    `submit_agent_answer/ok før leveringen: ${before.submitsOk}`,
   )
 
   const again = await callTool(accessToken, 'submit_agent_answer', {
@@ -616,6 +645,8 @@ async function main(): Promise<void> {
        where i.pipeline_job_id = ${q(jobId)}`,
     ) === EDITOR_ACTOR,
   )
+  // Forhåndslesningen står som seg selv i den samme listen: sporet skiller den
+  // interne lesningen fra verktøykallene framfor å skjule den blant dem.
   check(
     'sporet sier hvilke verktøy som ble brukt, og med hvilket utfall',
     psql(
@@ -625,7 +656,8 @@ async function main(): Promise<void> {
        join workflow.agent_runner_connections c on c.id = e.connection_id
        where c.connection_key = 'agent-runner:evidence-extraction'
          and c.valid_to is null`,
-    ) === 'claim_agent_task,get_agent_task,list_pending_agent_tasks,submit_agent_answer',
+    ) ===
+      'claim_agent_task,get_agent_task,list_pending_agent_tasks,submit_agent_answer,submit_agent_answer:precheck',
   )
   check(
     'sporet bærer aldri kildetekst',

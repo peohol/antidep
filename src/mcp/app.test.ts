@@ -435,17 +435,35 @@ describe('arbeidsgangen', () => {
   })
 
   // Leveringen leser oppgaven én gang til for de deterministiske kontrollene,
-  // fordi protokollen er tilstandsløs. Den lesningen hører til kallet som ba om
-  // den: et spor som sa `get_agent_task`, ville navngitt et verktøykall klienten
-  // aldri gjorde.
-  it('fører lesningen i leveringen under leveringen, ikke som et get_agent_task', async () => {
+  // fordi protokollen er tilstandsløs. Den lesningen er ikke et verktøykall, og
+  // går derfor sin egen databasevei: et spor som sa `get_agent_task`, ville
+  // navngitt et kall klienten aldri gjorde, og et som sa `submit_agent_answer`,
+  // ville vært en andre rad for det ene kallet.
+  it('leser oppgaven i leveringen gjennom forhåndslesningen, ikke gjennom verktøyveien', async () => {
     const gateway = createFakeGateway()
     await call(gateway, 'claim_agent_task')
     await call(gateway, 'submit_agent_answer', {
       task_handle: FAKE_TASK_HANDLE,
       answer: answerFor('evidence_extraction', { provider: 'antidep-test', model: 'prøvemodell' }),
     })
-    expect(gateway.taskReads).toEqual(['submit_agent_answer'])
+    expect(gateway.taskReads).toEqual(['precheck'])
+  })
+
+  // Også når svaret avvises av de deterministiske kontrollene: det ene kallet
+  // skal ikke ende i både en `ok` og en `rejected` for seg selv.
+  it('går den samme veien når svaret avvises', async () => {
+    const gateway = createFakeGateway()
+    await call(gateway, 'claim_agent_task')
+    const answer = answerFor('evidence_extraction', {
+      provider: 'antidep-test',
+      model: 'prøvemodell',
+    })
+    await call(gateway, 'submit_agent_answer', {
+      task_handle: FAKE_TASK_HANDLE,
+      answer: { ...answer, job_key: 'et-annet-job-key' },
+    })
+    expect(gateway.taskReads).toEqual(['precheck'])
+    expect(gateway.recorded).toEqual(['rejected'])
   })
 
   it('fører et ekte get_agent_task under sitt eget navn', async () => {

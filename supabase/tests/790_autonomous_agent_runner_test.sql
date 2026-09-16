@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(100);
+select plan(101);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -60,7 +60,8 @@ select is_empty(
     from (values
       ('api.list_pending_agent_tasks(text,text)'),
       ('api.claim_agent_task(text,text,text,integer)'),
-      ('api.agent_task_for_runner(text,text,uuid,text)'),
+      ('api.agent_task_for_runner(text,text,uuid)'),
+      ('api.agent_task_precheck(text,text,uuid)'),
       ('api.submit_agent_answer(text,text,uuid,jsonb)'),
       ('api.release_agent_task(text,text,uuid,text)'),
       ('api.agent_runner_identity(text,text)')
@@ -522,23 +523,39 @@ select ok(
 );
 
 -- ---------------------------------------------------------------------------
--- Lesningen føres under verktøyet som forårsaket den
+-- Forhåndslesningen har sitt eget navn, og kalleren kan ikke velge det
 --
 -- MCP-serveren leser oppgaven én gang til inne i `submit_agent_answer`, fordi
 -- de deterministiske kontrollene trenger kildeteksten og protokollen er
--- tilstandsløs. Uten navnet ville hver levering skrevet en `get_agent_task`-rad
--- ingen klient ba om. Klassen er lukket, og sporingen kan ikke slås av.
+-- tilstandsløs. Den lesningen er ikke et verktøykall. Navnet i sporet er
+-- funksjonen som ble kalt, ikke en verdi kalleren sendte med: en etikett
+-- kalleren valgte, ville latt en tokeninnehaver få databasen til å skrive at en
+-- levering fant sted.
 -- ---------------------------------------------------------------------------
 insert into res
 select 'events_before', jsonb_build_object(
   'get_agent_task', (select count(*) from workflow.agent_runner_events
                      where tool_name = 'get_agent_task'),
   'submit_agent_answer', (select count(*) from workflow.agent_runner_events
-                          where tool_name = 'submit_agent_answer'));
+                          where tool_name = 'submit_agent_answer'),
+  'precheck', (select count(*) from workflow.agent_runner_events
+               where tool_name = 'submit_agent_answer:precheck'));
 
 set role anon;
 
 select lives_ok(
+  $$
+    select api.agent_task_precheck(
+      (select payload ->> 'access_token' from res where label = 'tokens'),
+      'https://antidep.example/mcp',
+      (select (payload ->> 'task_handle')::uuid from res where label = 'claim'))
+  $$,
+  'leveringen kan lese oppgaven gjennom sin egen forhåndslesning'
+);
+
+-- Og verktøyveien tar ikke imot et navn i det hele tatt: den har ingen
+-- parameter å spoofe.
+select throws_ok(
   $$
     select api.agent_task_for_runner(
       (select payload ->> 'access_token' from res where label = 'tokens'),
@@ -546,31 +563,27 @@ select lives_ok(
       (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
       'submit_agent_answer')
   $$,
-  'leveringen kan lese oppgaven under sitt eget navn'
-);
-
--- Parameteren velger navn fra en lukket klasse. Den slår ingenting av, og et
--- navn som ikke er et verktøy, er ikke et navn sporet tar imot.
-select throws_ok(
-  $$
-    select api.agent_task_for_runner(
-      (select payload ->> 'access_token' from res where label = 'tokens'),
-      'https://antidep.example/mcp',
-      (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
-      'noe_annet')
-  $$,
-  '22023',
+  '42883',
   null,
-  'et navn utenfor den lukkede klassen avvises'
+  'verktøyveien har ingen etikett en kaller kan sende med'
 );
 
 reset role;
 
 select is(
   (select count(*)::int from workflow.agent_runner_events
+   where tool_name = 'submit_agent_answer:precheck'),
+  (select (payload ->> 'precheck')::int + 1 from res where label = 'events_before'),
+  'forhåndslesningen fører sin egen rad, under sitt eget navn'
+);
+
+-- Den påstår ingenting om at en levering fant sted, og den skygger ikke for
+-- det autoritative utfallet: det står i én rad, skrevet av leveringen selv.
+select is(
+  (select count(*)::int from workflow.agent_runner_events
    where tool_name = 'submit_agent_answer'),
-  (select (payload ->> 'submit_agent_answer')::int + 1 from res where label = 'events_before'),
-  'sporet fikk én rad, og den navngir leveringen'
+  (select (payload ->> 'submit_agent_answer')::int from res where label = 'events_before'),
+  'ingen levering blir påstått av en lesning'
 );
 
 select is(

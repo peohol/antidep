@@ -2585,68 +2585,60 @@ revoke execute on function api.claim_agent_task(text, text, text, integer) from 
 grant execute on function api.claim_agent_task(text, text, text, integer) to anon, authenticated;
 
 -- ----------------------------------------------------------------------------
--- Hvorfor oppgaven kan leses under to navn
+-- Hvorfor oppgaven kan leses to steder fra
 --
 -- MCP-serveren leser oppgaven én gang til inne i `submit_agent_answer`: de
 -- deterministiske kontrollene trenger kildeteksten, og protokollen er
 -- tilstandsløs, så det finnes ingen lesning å huske fra forrige kall.
 --
--- Uten dette ville den lesningen skrevet en `get_agent_task`-rad i sporet som
--- ingen klient hadde bedt om. Sporet skal si hva som faktisk skjedde, og da er
--- navnet på verktøyet som forårsaket lesningen, opplysningen — ikke navnet på
--- funksjonen som utførte den.
+-- Den lesningen er ikke et verktøykall, og sporet skal ikke påstå at den var
+-- det. Den har derfor sitt eget navn — og navnet ER funksjonen kalleren traff,
+-- ikke en verdi hen sendte med. En etikett kalleren valgte, ville latt en
+-- tokeninnehaver få databasen til å skrive at en levering fant sted; en
+-- forhåndslesning påstår ingenting annet enn at noen leste oppgaven, og det er
+-- nøyaktig det som skjedde.
 --
--- Klassen er lukket og kan ikke slås av: en parameter som skrudde AV sporingen,
--- ville vært et hull en kaller kunne lese gjennom uten å etterlate seg noe, og
--- det er nettopp det et append-only spor ikke skal ha. Det verste en kaller kan
--- gjøre her, er å skrive sin egen lesning under det andre av to sanne navn.
+-- Ingen av de to kan lese uten å etterlate seg en rad. En stille lesning ville
+-- vært et sted kildetekst kunne forlate databasen uten at sporet visste det.
+--
+-- Implementasjonen er én, slik at de to aldri kan bli uenige om hvem som får
+-- se hva.
 -- ----------------------------------------------------------------------------
-create function api.agent_task_for_runner(
-  p_access_token text,
-  p_resource text,
+create function workflow.agent_task_for_connection(
+  p_connection workflow.agent_runner_connections,
   p_task_handle uuid,
-  p_tool_name text default 'get_agent_task'
+  p_tool_name text
 )
   returns jsonb
   language plpgsql
-  security definer
+  volatile
   set search_path = ''
 as $$
 declare
-  v_connection workflow.agent_runner_connections;
   v_job workflow.pipeline_jobs;
 begin
-  if p_tool_name is null or p_tool_name not in ('get_agent_task', 'submit_agent_answer') then
-    raise exception using
-      errcode = 'invalid_parameter_value',
-      message = format('%L er ikke et verktøy som leser en oppgave.', coalesce(p_tool_name, '')),
-      hint = 'Gyldige verdier er get_agent_task og submit_agent_answer. Sporet tar ikke imot et navn som ikke er et verktøy.';
-  end if;
-
-  v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
-
   select j.* into v_job
   from workflow.pipeline_jobs j
   where j.lease_token = p_task_handle
     and j.state = 'leased'
     and j.lease_expires_at > statement_timestamp()
-    and j.agent_role = v_connection.agent_role;
+    and j.agent_role = p_connection.agent_role;
 
   if not found then
     perform workflow.record_agent_runner_event(
-      v_connection.id, p_tool_name, 'stale_task'::workflow.agent_runner_outcome,
-      v_connection.agent_role, null,
+      p_connection.id, p_tool_name, 'stale_task'::workflow.agent_runner_outcome,
+      p_connection.agent_role, null,
       'Håndtaket gjaldt ingen oppgave denne kjøreren holder nå.');
     return jsonb_build_object(
       'available', false,
       'reason', 'stale_task',
-      'agent_role', v_connection.agent_role::text
+      'agent_role', p_connection.agent_role::text
     );
   end if;
 
   perform workflow.record_agent_runner_event(
-    v_connection.id, p_tool_name, 'ok'::workflow.agent_runner_outcome,
-    v_connection.agent_role, v_job.id);
+    p_connection.id, p_tool_name, 'ok'::workflow.agent_runner_outcome,
+    p_connection.agent_role, v_job.id);
 
   return jsonb_build_object(
     'available', true,
@@ -2659,11 +2651,58 @@ begin
 end;
 $$;
 
-comment on function api.agent_task_for_runner(text, text, uuid, text) is
-  'Hele agentoppgaven for det uttaket håndtaket navngir — nøyaktig den oppgaven api.agent_task_payload(uuid) bygger, av de samme radene og med det samme avtrykket (ANTIDEP_CONSTITUTION.md regel 2). Leveres bare til den kjøreren som faktisk holder den løpende leien, og bare i tilkoblingens eget agentledd: et håndtak fra en utløpt eller overtatt leie svarer stale_task framfor å gi fra seg en forskningsartikkel. Svarer med en tilstand framfor å kaste, fordi et foreldet håndtak er en normal ting som skjer for en planlagt kjøring og ikke en teknisk feil. p_tool_name sier hvilket verktøy som forårsaket lesningen, av en lukket klasse på to: MCP-serveren leser oppgaven én gang til inne i submit_agent_answer for de deterministiske kontrollene, og sporet skal navngi det kallet som faktisk ble gjort framfor et get_agent_task ingen klient ba om. Sporingen kan ikke slås av.';
+comment on function workflow.agent_task_for_connection(workflow.agent_runner_connections, uuid, text) is
+  'Oppgaven bak ett uttak, ført i sporet under navnet kalleren av api-funksjonen ikke kan velge. Én implementasjon for både lesningen og forhåndslesningen, slik at de to aldri kan bli uenige om hvem som får se hva.';
 
-revoke execute on function api.agent_task_for_runner(text, text, uuid, text) from public;
-grant execute on function api.agent_task_for_runner(text, text, uuid, text) to anon, authenticated;
+revoke execute on function workflow.agent_task_for_connection(workflow.agent_runner_connections, uuid, text) from public;
+
+create function api.agent_task_for_runner(
+  p_access_token text,
+  p_resource text,
+  p_task_handle uuid
+)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+begin
+  return workflow.agent_task_for_connection(
+    workflow.authenticated_runner_connection(p_access_token, p_resource),
+    p_task_handle,
+    'get_agent_task');
+end;
+$$;
+
+comment on function api.agent_task_for_runner(text, text, uuid) is
+  'Hele agentoppgaven for det uttaket håndtaket navngir — nøyaktig den oppgaven api.agent_task_payload(uuid) bygger, av de samme radene og med det samme avtrykket (ANTIDEP_CONSTITUTION.md regel 2). Leveres bare til den kjøreren som faktisk holder den løpende leien, og bare i tilkoblingens eget agentledd: et håndtak fra en utløpt eller overtatt leie svarer stale_task framfor å gi fra seg en forskningsartikkel. Svarer med en tilstand framfor å kaste, fordi et foreldet håndtak er en normal ting som skjer for en planlagt kjøring og ikke en teknisk feil. Fører alltid get_agent_task i sporet: navnet er funksjonen, ikke en verdi kalleren sender med.';
+
+revoke execute on function api.agent_task_for_runner(text, text, uuid) from public;
+grant execute on function api.agent_task_for_runner(text, text, uuid) to anon, authenticated;
+
+create function api.agent_task_precheck(
+  p_access_token text,
+  p_resource text,
+  p_task_handle uuid
+)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+begin
+  return workflow.agent_task_for_connection(
+    workflow.authenticated_runner_connection(p_access_token, p_resource),
+    p_task_handle,
+    'submit_agent_answer:precheck');
+end;
+$$;
+
+comment on function api.agent_task_precheck(text, text, uuid) is
+  'Den samme oppgaven, lest for de deterministiske kontrollene MCP-serveren kjører før en levering. Svarer nøyaktig som api.agent_task_for_runner, men fører submit_agent_answer:precheck i sporet — et navn som sier at noen LESTE oppgaven i forkant av en levering, og aldri at en levering fant sted. Navnet er funksjonen og ikke en parameter, nettopp fordi en etikett kalleren valgte, ville latt en tokeninnehaver få databasen til å skrive at et verktøykall skjedde som ikke skjedde. Det autoritative utfallet for ett MCP-kall står i én rad, skrevet av api.submit_agent_answer.';
+
+revoke execute on function api.agent_task_precheck(text, text, uuid) from public;
+grant execute on function api.agent_task_precheck(text, text, uuid) to anon, authenticated;
 
 create function api.submit_agent_answer(
   p_access_token text,

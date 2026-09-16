@@ -74,7 +74,11 @@ export type RunnerDatabase = {
         p_access_token: string
         p_resource: string
         p_task_handle: string
-        p_tool_name: TaskReadCaller
+      }>
+      agent_task_precheck: RunnerRpc<{
+        p_access_token: string
+        p_resource: string
+        p_task_handle: string
       }>
       submit_agent_answer: RunnerRpc<{
         p_access_token: string
@@ -181,16 +185,23 @@ export const RUNNER_RELEASE_REASONS = [
 export type RunnerReleaseReason = (typeof RUNNER_RELEASE_REASONS)[number]
 
 /**
- * Verktøyene som leser en oppgave, som en lukket klasse.
+ * De to grunnene til å lese en oppgave, og databaseveien hver av dem går.
  *
- * De samme to `api.agent_task_for_runner` godtar. Klassen finnes fordi sporet
- * skal si hva som faktisk skjedde: `submit_agent_answer` leser oppgaven på nytt
- * for de deterministiske kontrollene, og den lesningen hører til kallet som ba
- * om den — ikke til et `get_agent_task` ingen klient gjorde.
+ * `get_agent_task` er verktøykallet. `precheck` er lesningen leveringen gjør
+ * for de deterministiske kontrollene, fordi protokollen er tilstandsløs og det
+ * ikke finnes en lesning å huske fra forrige kall.
+ *
+ * Grunnen er en RUTE og ikke en parameter. En etikett kalleren sendte med,
+ * ville latt en tokeninnehaver få databasen til å skrive at et verktøykall
+ * skjedde som ikke skjedde — og sporet er nettopp det stedet en slik påstand
+ * ikke skal kunne oppstå. Navnet i sporet er funksjonen som ble kalt.
  */
-export const TASK_READ_CALLERS = ['get_agent_task', 'submit_agent_answer'] as const
+export const TASK_READ_ROUTES = {
+  get_agent_task: 'agent_task_for_runner',
+  precheck: 'agent_task_precheck',
+} as const
 
-export type TaskReadCaller = (typeof TASK_READ_CALLERS)[number]
+export type TaskReadCaller = keyof typeof TASK_READ_ROUTES
 
 /**
  * Tokenet og den adressen det gjelder for, som én verdi.
@@ -266,12 +277,10 @@ export interface RunnerGateway {
     readonly credentials: RunnerCredentials
     readonly taskHandle: string
     /**
-     * Verktøyet som forårsaket lesningen.
+     * Hvorfor oppgaven leses — verktøykallet, eller leveringens forhåndslesning.
      *
-     * `submit_agent_answer` leser oppgaven én gang til for de deterministiske
-     * kontrollene, fordi protokollen er tilstandsløs og det ikke finnes en
-     * lesning å huske. Sporet skal navngi det kallet som faktisk ble gjort, og
-     * ikke et `get_agent_task` ingen klient ba om.
+     * Velger databaseveien, og dermed navnet sporet fører. Se
+     * `TASK_READ_ROUTES`.
      */
     readonly calledBy: TaskReadCaller
   }): Promise<TaskResult>
@@ -520,13 +529,13 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
     },
 
     async readTask(input) {
-      const where = 'api.agent_task_for_runner'
+      const route = TASK_READ_ROUTES[input.calledBy]
+      const where = `api.${route}`
       const row = record(
-        await call('agent_task_for_runner', {
+        await call(route, {
           p_access_token: input.credentials.accessToken,
           p_resource: input.credentials.resource,
           p_task_handle: input.taskHandle,
-          p_tool_name: input.calledBy,
         }),
         where,
       )
