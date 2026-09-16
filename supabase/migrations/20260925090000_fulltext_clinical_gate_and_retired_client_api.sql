@@ -79,14 +79,18 @@ begin
       message = 'Antidep 2-resetten stoppet: evidensrøttene har ikke nøyaktig de to autoriserte virkestoffidentitetene.';
   end if;
 
+  -- source_version_id is nullable in the historical schema. Use a LEFT JOIN so
+  -- a versionless root is itself an explicit mismatch instead of disappearing
+  -- from the destructive-scope check through inner-join semantics.
   if exists (
     select 1
     from knowledge.evidence_items e
-    join knowledge.source_versions sv on sv.id = e.source_version_id
+    left join knowledge.source_versions sv on sv.id = e.source_version_id
     join knowledge.sources s on s.id = e.source_id
     join catalog.drugs d on d.id = e.intervention_drug_id
     join catalog.clinical_concepts c on c.id = e.outcome_concept_id
-    where sv.representation is distinct from 'abstract'::knowledge.source_representation
+    where sv.id is null
+       or sv.representation is distinct from 'abstract'::knowledge.source_representation
        or c.canonical_label <> 'vektendring'
        or not (
          (d.canonical_name = 'sertralin'
