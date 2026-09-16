@@ -119,6 +119,33 @@ begin
       message = 'Antidep 2-resetten stoppet: evidensrøttene er ikke nøyaktig de to autoriserte abstract-baserte legacy-kildene.';
   end if;
 
+  -- Source identity is still not historical lineage. After evidence extraction
+  -- became a controlled write path, a new extraction can legitimately point to
+  -- the same source version, drug and outcome as a removed prototype row. The
+  -- two authorized roots predate BOTH evidence-item agent provenance (007g) and
+  -- the evidence_item_created audit trigger. Rows from before 007g were
+  -- backfilled with agent_run_id = NULL, and the audit trigger was not
+  -- retroactive. Any later editor or agent replacement therefore has
+  -- agent_run_id and/or a creation audit. Require both historical markers so a
+  -- semantically identical replacement is never classified as disposable
+  -- legacy content.
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    where e.agent_run_id is not null
+       or exists (
+         select 1
+         from audit.events ae
+         where ae.operation = 'evidence_item_created'
+           and ae.object_id = e.id
+       )
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: en evidensrot kan ikke bevises å være et historisk prototypefunn.',
+      detail = 'En autorisert legacy-evidensrot skal være fra før både agentkjørings-proveniens og evidence_item_created-audit ble innført.';
+  end if;
+
   -- Claims are derived content, so one of the historical roots may already have
   -- been retired/removed and a remaining root may have gained later revisions.
   -- Accept that evolution only while every surviving claim is still a unique
