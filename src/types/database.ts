@@ -408,14 +408,19 @@ export type Database = {
         Args: Record<string, never>
         Returns: unknown
       }
-      // Selvmeldingen fra en brukerflate.
+      // Selvmeldingen fra en brukerflate, og den ene veien den rå årsaken
+      // bevares varig.
       //
-      // Seks maskinidentifikatorer og ingen tekst: område, svikttype og
+      // De seks første er maskinidentifikatorer: område, svikttype og
       // transportform er lukkede vokabularer, operasjonen kontrolleres mot
       // funksjonene som finnes i api, koden må være en SQLSTATE eller en
-      // PostgREST-kode, og statusen må være en HTTP-status. Til sammen finner
-      // en teknisk agent igjen hvilket kall som sviktet, hvordan og med hva —
-      // uten at en feiltekst havner i databasen.
+      // PostgREST-kode, og statusen må være en HTTP-status. De skriver
+      // tilstandsraden, der setningen er Antideps egen.
+      //
+      // `p_detail` er feilteksten og stacken, og går til
+      // `workflow.client_diagnostics` — en egen, privat tabell uten grants,
+      // uten policy og uten noen api-lesevei, bundet av attribusjon, en
+      // mengdegrense per bruker og time, en lengdegrense og vasking.
       //
       // Det finnes ingen lukking herfra. En selvmeldt rad gjelder så lenge den
       // fornyes, og databasen avgjør når den er over: en opprydding som hvilte
@@ -428,6 +433,7 @@ export type Database = {
           p_code?: string | null
           p_http_status?: number | null
           p_transport?: string | null
+          p_detail?: string | null
         }
         Returns: unknown
       }

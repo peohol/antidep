@@ -597,6 +597,131 @@ comment on function workflow.close_stale_self_reports() is
 
 revoke execute on function workflow.close_stale_self_reports() from public;
 
+-- ----------------------------------------------------------------------------
+-- Den rå årsaken, lagret der den faktisk overlever
+--
+-- `workflow.technical_incidents.diagnosis` er og blir Antideps egen setning: én
+-- rad per problem, skrevet av Antidep, aldri en videreformidlet feiltekst. Den
+-- regelen står.
+--
+-- Men klassifiseringen er ikke diagnosen. En teknisk agent som skal finne ut
+-- *hvorfor* et kall sviktet, trenger stacken og den faktiske meldingen — og en
+-- `console.error` i en nettleser er ingen varig kanal: fanen lukkes, og da er
+-- årsaken borte. Issue #99 krever eksplisitt at den bevares for Claude Code og
+-- ChatGPT uten å vises i UI, og det kravet er ikke oppfylt av en logglinje som
+-- forsvinner.
+--
+-- Den rå årsaken får derfor sin egen tabell, atskilt fra tilstandsraden, med
+-- fire grenser som gjør en klientskrevet tekst forsvarlig:
+--
+--   attribusjon   hver rad bæres av en innlogget bruker, og kan ikke skrives
+--                 av en anonym besøkende
+--   mengde        en bruker kan skrive et begrenset antall rader per time;
+--                 over grensen telles problemet fortsatt, men teksten droppes
+--   lengde        teksten klippes, slik at ingen kan fylle tabellen med én rad
+--   innhold       tokenformede strenger fjernes før lagring
+--
+-- Tabellen er append-only, som sporet ved siden av: en observasjon av hva som
+-- gikk galt, skal ikke kunne endres eller fjernes av den samme veien som skrev
+-- den. Mengdegrensen er derfor også det som holder den i tømme — skal den
+-- ryddes, gjøres det av den som allerede har databasetilgang.
+--
+-- Og den viktigste: ingen vei ut. Tabellen har RLS med default deny, ingen
+-- grants og ingen policy, og ingen api-funksjon leser den. Den finnes for den
+-- som allerede har databasetilgang — altså for en teknisk agent, og ikke for
+-- noen brukerflate (ANTIDEP_CONSTITUTION.md regel 4, 7).
+--
+-- Hvorfor ikke en ekstern tjeneste: en adresse i nettleserbygget er offentlig,
+-- og et mottak som godtar kall fra hvem som helst uten autentisering, er enten
+-- åpent for forgiftning eller avhengig av en hemmelighet en klient ikke kan
+-- holde. Antidep har allerede en autentisert, serverkontrollert skrivevei med
+-- hele autorisasjonen i databasen, og den er den tryggeste som finnes her.
+-- Prisen er ærlig: svikter Data API-et selv, når heller ikke denne raden fram.
+-- Da er *det* hendelsen, og den ser man på tjenestens egen status.
+-- ----------------------------------------------------------------------------
+create table workflow.client_diagnostics (
+  id uuid primary key default gen_random_uuid(),
+
+  technical_incident_id uuid
+    references workflow.technical_incidents (id) on update restrict on delete restrict,
+
+  reported_by_user_id uuid not null,
+  area workflow.technical_area not null,
+  kind text not null,
+  operation text,
+  code text,
+  http_status integer,
+  transport text,
+
+  -- Den rå årsaken: stacken og meldingen slik flaten så dem, klippet og
+  -- vasket av workflow.scrub_diagnostic_detail(text).
+  detail text not null,
+
+  occurred_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+
+  constraint client_diagnostics_detail_shape_check
+    check (length(detail) between 1 and 4000),
+  constraint client_diagnostics_http_status_check
+    check (http_status is null or http_status between 100 and 599)
+);
+
+comment on table workflow.client_diagnostics is
+  'Den rå tekniske årsaken slik en brukerflate så den, lagret privat for Claude Code og ChatGPT (issue #99, punkt 8). Atskilt fra workflow.technical_incidents med vilje: tilstandsraden bærer Antideps egen setning og aldri en videreformidlet feiltekst, mens denne bærer nettopp den videreformidlede teksten — og er derfor bundet av attribusjon, mengdegrense, lengdegrense og vasking i api.report_technical_problem(text, text, text, text, integer, text, text). Tabellen har RLS med default deny, ingen grants og ingen policy, og ingen api-funksjon leser den: den finnes for den som allerede har databasetilgang, og har ingen vei til noen brukerflate.';
+comment on column workflow.client_diagnostics.detail is
+  'Stacken og meldingen slik flaten så dem. Klippet til 4000 tegn og vasket for tokenformede strenger før lagring. Aldri lesbar gjennom noe api-objekt.';
+comment on column workflow.client_diagnostics.reported_by_user_id is
+  'Den innloggede brukeren raden er skrevet av. Finnes for at mengdegrensen skal kunne håndheves per bruker, og for at en rad ikke skal kunne skrives av noen som ikke kan tilskrives.';
+
+alter table workflow.client_diagnostics enable row level security;
+
+create index client_diagnostics_incident_idx
+  on workflow.client_diagnostics (technical_incident_id, occurred_at desc);
+
+create index client_diagnostics_reporter_idx
+  on workflow.client_diagnostics (reported_by_user_id, occurred_at desc);
+
+-- Append-only, som sporet ved siden av. En observasjon av hva som gikk galt,
+-- skal ikke kunne endres eller fjernes av den samme veien som skrev den — og
+-- allerminst av en klient. Skal tabellen ryddes, gjøres det av den som allerede
+-- har databasetilgang, altså av en teknisk agent.
+create trigger client_diagnostics_set_created_at
+  before insert on workflow.client_diagnostics
+  for each row execute function catalog.set_created_at();
+
+create trigger client_diagnostics_are_append_only
+  before update or delete on workflow.client_diagnostics
+  for each row execute function knowledge.reject_append_only_mutation(
+    'Den rå årsaken er en observasjon av hva som faktisk skjedde. En ny observasjon er en ny rad.'
+  );
+
+-- ----------------------------------------------------------------------------
+-- Vaskingen
+--
+-- Klipper og fjerner det som ser ut som en hemmelighet. Bevisst smal: målet er
+-- ikke å gjøre teksten trygg i seg selv — den er allerede bak RLS uten noen
+-- lesevei — men å hindre at en token som havnet i en feilmelding, blir liggende
+-- lesbar i en tabell lenger enn den lever.
+-- ----------------------------------------------------------------------------
+create function workflow.scrub_diagnostic_detail(p_detail text)
+  returns text
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select left(
+    regexp_replace(
+      regexp_replace(coalesce(p_detail, ''), 'eyJ[A-Za-z0-9_.-]{20,}', '[token utelatt]', 'g'),
+      '(?i)(bearer|apikey|api_key|authorization|password)([=: ]+)[^\s,;"'']+',
+      '\1\2[utelatt]', 'g'),
+    4000)
+$$;
+
+comment on function workflow.scrub_diagnostic_detail(text) is
+  'Klipper den rå årsaken til 4000 tegn og fjerner tokenformede strenger — JWT-er og verdier bak bearer, apikey, authorization eller password. Bevisst smal: teksten er allerede bak RLS uten noen lesevei, og vaskingen finnes for at en token som havnet i en feilmelding, ikke skal bli liggende lesbar lenger enn den lever.';
+
+revoke execute on function workflow.scrub_diagnostic_detail(text) from public;
+
 -- ============================================================================
 -- 2. Hvilke artikler Antidep faktisk mangler
 --
@@ -2314,7 +2439,8 @@ create function api.report_technical_problem(
   p_operation text default null,
   p_code text default null,
   p_http_status integer default null,
-  p_transport text default null
+  p_transport text default null,
+  p_detail text default null
 )
   returns void
   language plpgsql
@@ -2325,6 +2451,8 @@ declare
   v_area workflow.technical_area;
   v_description text;
   v_transport text;
+  v_incident_id uuid;
+  v_detail text;
 begin
   if auth.uid() is null then
     raise exception using
@@ -2410,26 +2538,46 @@ begin
       hint = 'Tillatt er offline, network, aborted, timeout, http, contract eller unknown. Vokabularet er lukket fordi Antidep skriver setningen selv.';
   end if;
 
-  perform workflow.record_technical_incident(
+  v_incident_id := workflow.record_technical_incident(
     v_area,
     -- Signaturen bærer operasjonen, slik at to forskjellige kall som svikter,
     -- blir to problemer og ikke ett.
     'client:' || coalesce(p_operation, 'ukjent'),
-    format('%s Kallet var api.%s, svaret bar koden %s, og HTTP-statusen var %s. %s Ingen feiltekst følger med: bare maskinidentifikatorer, som ikke kan bære innhold.',
+    format('%s Kallet var api.%s, svaret bar koden %s, og HTTP-statusen var %s. %s Selve feilteksten står ikke her, men i workflow.client_diagnostics, der den er bundet av attribusjon, mengde, lengde og vasking.',
            v_description,
            coalesce(p_operation, '(ikke oppgitt)'),
            coalesce(p_code, '(ingen)'),
            coalesce(p_http_status::text, '(ingen)'),
            coalesce(v_transport, 'Transportformen ble ikke oppgitt.')),
     true);
+
+  -- Og den rå årsaken, til den som skal finne ut hvorfor.
+  --
+  -- Mengdegrensen står før innsettingen og ikke etter: en flate som svikter i
+  -- en løkke, skal ikke kunne fylle tabellen. Problemet telles fortsatt — det
+  -- er teksten som droppes, og det er riktig vei å tape på.
+  v_detail := workflow.scrub_diagnostic_detail(p_detail);
+  if length(coalesce(v_detail, '')) > 0
+     and (select count(*)
+          from workflow.client_diagnostics d
+          where d.reported_by_user_id = auth.uid()
+            and d.occurred_at > statement_timestamp() - interval '1 hour') < 60
+  then
+    insert into workflow.client_diagnostics
+      (technical_incident_id, reported_by_user_id, area, kind, operation, code,
+       http_status, transport, detail)
+    values
+      (v_incident_id, auth.uid(), v_area, p_kind, p_operation, p_code,
+       p_http_status, p_transport, v_detail);
+  end if;
 end;
 $$;
 
-comment on function api.report_technical_problem(text, text, text, text, integer, text) is
-  'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom. Alle seks argumentene er maskinidentifikatorer og aldri tekst: området, svikttypen og transportformen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, koden må være en SQLSTATE eller en PostgREST-kode, og statusen må være en HTTP-status. Antidep skriver setningen selv. Til sammen sier de hvilket kall som sviktet, hvordan det sviktet og hva svaret bar — varig og privat, uten at en videreformidlet feilmelding noen gang havner i databasen. Transportformen bærer mest når koden mangler, altså nettopp når svaret aldri kom. Raden merkes self_reported, fordi den sier hva en klient SA og ikke hva databasen SÅ, og gjelder bare så lenge den fornyes (workflow.self_report_heartbeat()). En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
+comment on function api.report_technical_problem(text, text, text, text, integer, text, text) is
+  'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom, og er den eneste veien den rå årsaken bevares varig. De seks første argumentene er maskinidentifikatorer og aldri tekst: området, svikttypen og transportformen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, koden må være en SQLSTATE eller en PostgREST-kode, og statusen må være en HTTP-status. De skriver tilstandsraden, der setningen er Antideps egen. Det siste argumentet er feilteksten og stacken, og de går til workflow.client_diagnostics — en egen, privat tabell uten grants, uten policy og uten noen api-lesevei, der teksten er bundet av attribusjon, en mengdegrense per bruker og time, en lengdegrense og vasking av tokenformede strenger. Skillet er med vilje: tilstandsraden er Antideps ord om hva som er galt, råmaterialet er klientens ord om hva den så. Raden merkes self_reported og gjelder bare så lenge den fornyes (workflow.self_report_heartbeat()). En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
 
-revoke execute on function api.report_technical_problem(text, text, text, text, integer, text) from public;
-grant execute on function api.report_technical_problem(text, text, text, text, integer, text) to authenticated;
+revoke execute on function api.report_technical_problem(text, text, text, text, integer, text, text) from public;
+grant execute on function api.report_technical_problem(text, text, text, text, integer, text, text) to authenticated;
 
 -- ----------------------------------------------------------------------------
 -- Og veien ut igjen

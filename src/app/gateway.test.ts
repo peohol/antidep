@@ -156,15 +156,17 @@ describe('kallet gjennom gatewayen', () => {
       () => undefined,
     )
     const report = calls.find((call) => call.fn === 'report_technical_problem')
-    expect(report?.args).toEqual({
-      p_area: 'full_text_intake',
-      p_kind: 'unavailable',
-      p_operation: 'noe',
-      p_code: 'PGRST301',
-      p_http_status: null,
-      p_transport: 'unknown',
-    })
-    expect(JSON.stringify(report?.args)).not.toContain('hemmelig')
+    const args = report?.args as Record<string, unknown>
+    expect(args.p_area).toBe('full_text_intake')
+    expect(args.p_kind).toBe('unavailable')
+    expect(args.p_operation).toBe('noe')
+    expect(args.p_code).toBe('PGRST301')
+    expect(args.p_transport).toBe('unknown')
+
+    // Den rå årsaken følger med — men bare som `p_detail`, som går til en egen,
+    // privat tabell uten lesevei. Setningen tilstandsraden får, er Antideps
+    // egen, og den bærer den aldri.
+    expect(args.p_detail).toContain('hemmelig')
   })
 
   // Koden mangler nettopp når svaret aldri kom. Uten transportformen ville en
@@ -200,14 +202,30 @@ describe('kallet gjennom gatewayen', () => {
     spy.mockRestore()
 
     const report = calls.find((call) => call.fn === 'report_technical_problem')
-    expect(report?.args).toEqual({
-      p_area: 'work_queue',
-      p_kind: 'unavailable',
-      p_operation: 'noe',
-      p_code: null,
-      p_http_status: null,
-      p_transport: 'network',
-    })
+    const args = report?.args as Record<string, unknown>
+    expect(args.p_code).toBeNull()
+    expect(args.p_http_status).toBeNull()
+    expect(args.p_transport).toBe('network')
+    expect(args.p_detail).toContain('Failed to fetch')
+  })
+
+  // Databasen klipper uansett, men en stack på flere hundre kilobyte skal ikke
+  // sendes over nettet for å bli kastet i andre enden.
+  it('klipper den rå årsaken før den sendes', async () => {
+    const svær = new Error('x'.repeat(20000))
+    const { client: db, calls } = client({ noe: { data: [] } })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(db, {
+      fn: 'noe',
+      area: 'work_queue',
+      parse: () => {
+        throw svær
+      },
+    }).catch(() => undefined)
+    spy.mockRestore()
+
+    const report = calls.find((call) => call.fn === 'report_technical_problem')
+    expect(String((report?.args as { p_detail: unknown }).p_detail)).toHaveLength(4000)
   })
 
   // HTTP-statusen står i konvolutten rundt svaret og ikke i feilen, og en 503

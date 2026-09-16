@@ -38,11 +38,17 @@
 // PostgREST-kode) og skriver setningen selv.
 //
 // Klassifiseringen er likevel ikke diagnosen. Den rå årsaken — stacken, den
-// faktiske meldingen — går sin egen vei, til den private kanalen deployen har
-// valgt (`diagnostics-sink.ts`). Den veien er med vilje ikke den samme RPC-en
-// som nettopp kan være nede, og den er ikke Antideps egen database: et
-// fritekstfelt en nettleser kan skrive til, ville vært nettopp den
-// samlingsplassen regelen over finnes for å unngå.
+// faktiske meldingen — sendes med som `p_detail`, og havner i
+// `workflow.client_diagnostics`: en egen, privat tabell uten grants, uten
+// policy og uten noen api-lesevei. Skillet er med vilje. Tilstandsraden er
+// Antideps ord om hva som er galt, og den skal aldri bære en videreformidlet
+// feiltekst; råmaterialet er klientens ord om hva den så, og det er bundet av
+// attribusjon, en mengdegrense per bruker og time, en lengdegrense og vasking
+// av tokenformede strenger.
+//
+// En `console.error` er ingen erstatning: fanen lukkes, og da er årsaken borte.
+// Konsollen skrives til uansett, fordi den er det den som feilsøker lokalt
+// leser — men det varige er raden.
 //
 // En kode alene er ikke nok, for koden mangler nettopp når svaret aldri kom.
 // Meldingen bærer derfor også HTTP-statusen og en *transportform* fra et lukket
@@ -63,7 +69,6 @@
 // ============================================================================
 
 import { getAntidepClient, type AntidepClient } from '../lib/supabase'
-import { createDiagnosticsSink, readDiagnosticsEndpoint } from './diagnostics-sink'
 
 /** Områdene Antidep melder tekniske problemer under. Lukket, som i databasen. */
 export type TechnicalArea =
@@ -194,18 +199,13 @@ export interface TechnicalDetail {
 
 export type TechnicalSink = (entry: TechnicalDetail) => void
 
-let sink: TechnicalSink | undefined
-
-/**
- * Sluket, opprettet ved første bruk.
- *
- * Lest her og ikke ved modulimport, slik at en prøve eller et verktøy uten
- * miljøvariabler kan importere modulen uten at noe kastes.
- */
-function technicalSink(): TechnicalSink {
-  sink ??= createDiagnosticsSink(readDiagnosticsEndpoint(import.meta.env))
-  return sink
+const consoleSink: TechnicalSink = (entry) => {
+  // Én linje, strukturert, med et prefiks som kan søkes etter. Dette er for den
+  // som feilsøker lokalt; det varige er raden i workflow.client_diagnostics.
+  console.error('[antidep:teknisk]', entry)
 }
+
+let sink: TechnicalSink = consoleSink
 
 /**
  * Formen databasen godtar en kode i: en SQLSTATE på fem tegn, eller en
@@ -214,6 +214,15 @@ function technicalSink(): TechnicalSink {
  * gjelder.
  */
 const MACHINE_CODE = /^([0-9A-Z]{5}|PGRST[0-9]{3})$/
+
+/**
+ * Grensen databasen håndhever, gjentatt her med vilje.
+ *
+ * Ikke som en andre sannhet — databasen klipper uansett — men fordi en stack
+ * på flere hundre kilobyte ikke skal sendes over nettet for å bli kastet i
+ * andre enden.
+ */
+const MAX_DETAIL_CHARS = 4000
 
 /**
  * Hvilken form svikten hadde.
@@ -258,7 +267,7 @@ function httpStatusOf(cause: unknown): number | null {
 
 /** Bare for prøver: bytt ut observability-sluket og få det tilbake etterpå. */
 export function setTechnicalSink(next: TechnicalSink | null): void {
-  sink = next ?? undefined
+  sink = next ?? consoleSink
 }
 
 function rawDetail(cause: unknown): string {
@@ -289,7 +298,7 @@ export function recordTechnicalDetail(
   cause: unknown,
   httpStatus: number | null = null,
 ): boolean {
-  technicalSink()({
+  sink({
     area,
     operation,
     kind,
@@ -369,11 +378,11 @@ function fail<T>(
 /**
  * Melder fra til Antidep at ett kall ikke gikk gjennom.
  *
- * Seks maskinidentifikatorer og ingen tekst: databasen skriver setningen selv,
- * og kontrollerer både at operasjonen finnes, at koden har en kodes form, at
- * statusen er en HTTP-status og at transportformen er en den kjenner. En
- * uinnlogget kaller blir avvist der, og det er riktig — en melding som ikke kan
- * tilskrives noen, skal ikke kunne få merket i navigasjonen til å lyse.
+ * Seks maskinidentifikatorer og den rå årsaken. De seks skriver tilstandsraden,
+ * der setningen er Antideps egen, og databasen kontrollerer hver av dem. Den rå
+ * årsaken går til en egen, privat tabell uten lesevei. En uinnlogget kaller
+ * blir avvist der, og det er riktig — en melding som ikke kan tilskrives noen,
+ * skal verken få merket i navigasjonen til å lyse eller legge igjen tekst.
  *
  * Feiler meldingen, er det ingenting mer å gjøre: da er det nettopp databasen
  * som ikke svarer. Den svelges derfor med vilje, framfor å bli en ny feil på
@@ -388,6 +397,9 @@ function reportTechnicalProblem(
   httpStatus: number | null,
   cause: unknown,
 ): void {
+  // Klippes allerede her. Databasen klipper uansett, men en stack på flere
+  // hundre kilobyte skal ikke sendes over nettet for å bli kastet i andre enden.
+  const detail = rawDetail(cause).slice(0, MAX_DETAIL_CHARS)
   void Promise.resolve(
     client.rpc('report_technical_problem', {
       p_area: area,
@@ -399,6 +411,7 @@ function reportTechnicalProblem(
       p_code: MACHINE_CODE.test(code ?? '') ? code : null,
       p_http_status: httpStatus,
       p_transport: transportShape(cause, kind),
+      p_detail: detail,
     }),
   ).then(
     () => undefined,

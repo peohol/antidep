@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(116);
+select plan(125);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -27,6 +27,7 @@ select has_table('workflow', 'full_text_intake', 'workflow.full_text_intake finn
 select has_table('workflow', 'technical_incidents', 'workflow.technical_incidents finnes');
 select has_table('workflow', 'technical_incident_events',
                  'workflow.technical_incident_events finnes');
+select has_table('workflow', 'client_diagnostics', 'workflow.client_diagnostics finnes');
 
 -- De tre nye tabellene er private på nøyaktig samme måte som resten av
 -- workflow: RLS, ingen grants, ingen policy. Originalfilen i innboksen er den
@@ -35,7 +36,8 @@ select is_empty(
   $$
     select t.name || ' for ' || r.role_name
     from (values ('workflow.full_text_requests'), ('workflow.full_text_intake'),
-                 ('workflow.technical_incidents'), ('workflow.technical_incident_events'))
+                 ('workflow.technical_incidents'), ('workflow.technical_incident_events'),
+                 ('workflow.client_diagnostics'))
          as t(name),
          (values ('anon'), ('authenticated'), ('service_role'), ('public')) as r(role_name)
     where has_table_privilege(r.role_name, t.name, 'SELECT')
@@ -62,7 +64,7 @@ select is_empty(
                  ('api.resume_blocked_full_text_extractions()'),
                  ('api.technical_problem_board()'),
                  ('api.technical_problem_summary()'),
-                 ('api.report_technical_problem(text,text,text,text,integer,text)')) as f(name)
+                 ('api.report_technical_problem(text,text,text,text,integer,text,text)')) as f(name)
     where has_function_privilege('anon', f.name, 'EXECUTE')
        or has_function_privilege('public', f.name, 'EXECUTE')
        or has_function_privilege('service_role', f.name, 'EXECUTE')
@@ -81,6 +83,18 @@ select is_empty(
       and p.prosrc like '%diagnosis%'
   $$,
   'ingen api-funksjon leser den rå diagnosen'
+);
+
+-- Og det samme for råmaterialet, som en uttømmende liste: nøyaktig én
+-- api-funksjon nevner tabellen i det hele tatt, og det er den som skriver til
+-- den. En senere funksjon som begynte å lese den, ville blitt fanget her.
+select is(
+  (select array_agg(p.oid::regprocedure::text order by p.oid::regprocedure::text)
+   from pg_proc p
+   where p.pronamespace = 'api'::regnamespace
+     and p.prosrc like '%client_diagnostics%'),
+  array['api.report_technical_problem(text,text,text,text,integer,text,text)'],
+  'bare skriveveien nevner den rå årsaken — ingen api-funksjon leser den ut igjen'
 );
 
 -- ===========================================================================
@@ -904,8 +918,11 @@ select throws_ok(
 );
 
 do $$ begin
-  perform api.report_technical_problem('work_queue', 'unavailable', 'public_work_board',
-                                       'PGRST301', 503, 'http');
+  perform api.report_technical_problem(
+    'work_queue', 'unavailable', 'public_work_board', 'PGRST301', 503, 'http',
+    'TypeError: Failed to fetch' || chr(10) ||
+    '    at callRpc (gateway.ts:1:1)' || chr(10) ||
+    'authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.hemmelig.signatur');
 end $$;
 reset role;
 
@@ -950,6 +967,26 @@ select is(
   (select ti.signature from workflow.technical_incidents ti where ti.area = 'work_queue'),
   'client:public_work_board',
   'og to forskjellige kall som svikter, blir to problemer framfor ett'
+);
+
+-- Og den rå årsaken selv, som er det #99 faktisk krever bevart: den ligger i
+-- databasen og overlever at fanen lukkes, uten å ha en eneste vei til en flate.
+select ok(
+  (select d.detail from workflow.client_diagnostics d
+   where d.operation = 'public_work_board') like '%at callRpc (gateway.ts:1:1)%',
+  'stacken er bevart, ikke bare klassifiseringen av den'
+);
+select ok(
+  (select d.detail from workflow.client_diagnostics d
+   where d.operation = 'public_work_board') not like '%hemmelig.signatur%',
+  'men en tokenformet streng er vasket bort før lagring'
+);
+select is(
+  (select ti.area::text from workflow.technical_incidents ti
+   join workflow.client_diagnostics d on d.technical_incident_id = ti.id
+   where d.operation = 'public_work_board'),
+  'work_queue',
+  'og raden peker på problemet den hører til, slik en agent finner veien'
 );
 
 -- En selvmeldt rad er et hjerteslag og ikke en tilstand: den gjelder så lenge
@@ -1005,6 +1042,62 @@ select is(
 );
 
 -- ===========================================================================
+-- Del 9c — Grensene som gjør en klientskrevet tekst forsvarlig
+--
+-- Teksten kommer fra en nettleser, og det er nettopp derfor den er bundet:
+-- attribusjon, mengde, lengde og innhold. Uten dem ville tabellen vært et sted
+-- hvem som helst kunne fylle med hva som helst.
+-- ===========================================================================
+select is(
+  (select count(*)::int from workflow.client_diagnostics),
+  1,
+  'råmaterialet har nøyaktig de radene som faktisk er meldt inn'
+);
+
+-- Lengden klippes, slik at ingen kan fylle tabellen med én rad.
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
+set local role authenticated;
+do $$ begin
+  perform api.report_technical_problem('agent_service', 'unavailable', 'agent_work_queue',
+                                       null, null, 'network', repeat('x', 12000));
+end $$;
+reset role;
+
+select is(
+  (select length(d.detail) from workflow.client_diagnostics d
+   where d.operation = 'agent_work_queue'),
+  4000,
+  'en tekst over grensen klippes framfor å bli avvist — en klippet årsak er bedre enn ingen'
+);
+
+-- Mengden begrenses per bruker og time. Problemet telles fortsatt; det er
+-- teksten som droppes, og det er riktig vei å tape på.
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
+set local role authenticated;
+do $$
+begin
+  for i in 1..70 loop
+    perform api.report_technical_problem('agent_service', 'unavailable', 'agent_task_payload',
+                                         null, null, 'network', 'rå årsak nummer ' || i);
+  end loop;
+end;
+$$;
+reset role;
+
+select ok(
+  (select count(*)::int from workflow.client_diagnostics
+   where reported_by_user_id = '80000000-0000-4000-8000-00000000000d') <= 60,
+  'en flate som svikter i en løkke, kan ikke fylle tabellen'
+);
+select ok(
+  (select ti.occurrence_count from workflow.technical_incidents ti
+   where ti.signature = 'client:agent_task_payload') >= 70,
+  'men problemet telles fortsatt hver eneste gang'
+);
+
+-- ===========================================================================
 -- Del 9b — En episode som er over, blir lukket selv om ingen ser etter
 --
 -- Hjerteslaget regner ut at en stille rad er over, men regnestykket alene
@@ -1042,12 +1135,15 @@ do $$ begin
 end $$;
 reset role;
 
+-- Sortert på navn og ikke på tidspunkt: alt i prøven skjer i én transaksjon, så
+-- now() er det samme for hver rad. Påstanden er uansett hvilke overganger som
+-- finnes — at det ble en lukking og en ny åpning, og ikke bare en `seen`.
 select is(
-  (select array_agg(e.transition::text order by e.occurred_at, e.created_at)
+  (select array_agg(e.transition::text order by e.transition::text)
    from workflow.technical_incident_events e
    join workflow.technical_incidents ti on ti.id = e.technical_incident_id
    where ti.area = 'clinical_content'),
-  array['opened', 'resolved', 'opened'],
+  array['opened', 'opened', 'resolved'],
   'den stille episoden lukkes i skriveveien, og den nye åpnes — uten at noen så etter'
 );
 select ok(
@@ -1286,7 +1382,8 @@ where c.connection_key = 'proeve:800';
 
 select is(
   (select count(*)::int from workflow.technical_incidents ti
-   where ti.area = 'agent_service' and ti.resolved_at is null),
+   where ti.area = 'agent_service' and ti.signature like 'runner:%'
+     and ti.resolved_at is null),
   1,
   'et teknisk kjørerkall blir et uløst problem'
 );
@@ -1298,7 +1395,8 @@ where c.connection_key = 'proeve:800';
 
 select is(
   (select count(*)::int from workflow.technical_incidents ti
-   where ti.area = 'agent_service' and ti.resolved_at is null),
+   where ti.area = 'agent_service' and ti.signature like 'runner:%'
+     and ti.resolved_at is null),
   0,
   'og neste kall som går gjennom, lukker det'
 );
