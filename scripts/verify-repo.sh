@@ -46,6 +46,79 @@ reject_grep_matches \
   --include='*.ts' --include='*.tsx' --exclude='*.test.ts' --exclude='*.test.tsx' \
   '(/review|/extraction-review|Fava|Versiani)' src/app
 
+# Teknisk arbeid skal ikke komme tilbake i produkt-UI (issue #99).
+#
+# Å velge KI-tjeneste for et agentledd, registrere en «kjører», hente en
+# tilkoblingskode, laste ned en oppgavefil og laste opp et agentsvar er teknisk
+# arbeid. Det er flyttet til `src/ops/` og til kommandoene der. Søket går på de
+# api-funksjonene som *er* de handlingene: en flate som kalte en av dem, ville
+# hatt handlingen tilbake uansett hva knappen het. Selve adressen `/agentarbeid`
+# holdes borte av `src/app/routes.test.ts`, som prøver hver rute mot den — her
+# ville et søk på den også truffet forklaringene på hvorfor flaten er borte.
+reject_grep_matches \
+  'En runner-, modell- eller filtransportkontroll finnes i produkt-UI.' \
+  -R -n -E \
+  --include='*.ts' --include='*.tsx' --exclude='*.test.ts' --exclude='*.test.tsx' \
+  '(register_agent_runner|issue_agent_runner_pairing_code|revoke_agent_runner|agent_runner_connections|assign_agent_role_model|agent_task_payload|import_agent_answer|agent_work_queue)' \
+  src/app
+
+# Rå feiltekst skal aldri rendres til et menneske.
+#
+# Gatewayene formulerer setningen selv (`src/app/gateway.ts`), og sidene leser
+# den gjennom `pageMessage`. En gateway som la databasens `error.message` inn i
+# en feil den kastet, ville tatt regelen ut av kraft uten at noe annet endret
+# seg — og det er nettopp den formen issue #99 punkt 8 gjelder.
+reject_grep_matches \
+  'En gateway sender databasens egen feiltekst videre til flaten.' \
+  -R -n -E \
+  --include='*-gateway.ts' --exclude='*.test.ts' \
+  '(error|cause)\.message' \
+  src/app
+
+reject_grep_matches \
+  'En side rendrer en rå feiltekst framfor flatens egen setning.' \
+  -R -n -E \
+  --include='*.tsx' --exclude='*.test.tsx' \
+  'instanceof Error \? [a-zA-Z]+\.message' \
+  src/app
+
+# En arbeidsflyt med hemmeligheter skal ikke kunne startes mot en valgt branch.
+#
+# `VERCEL_TOKEN` og redaktørens innlogging ligger i jobbens miljø, og jobben
+# kjører kode fra den branchen kjøringen gjelder. Kode på en branch som ikke er
+# reviewet, skal derfor ikke kunne starte den: den ene kan deploye til
+# produksjon, den andre kan lese originaldokumenter ut av databasen.
+#
+# `pull_request` er den åpenbare — en pull request fra en branch i samme repo
+# kan få repository-secrets. De tre andre er mindre åpenbare og like ille:
+# `workflow_dispatch` har en branch-meny i GitHubs «Run workflow», og en
+# manuell kjøring mot en valgt branch setter `GITHUB_REF`/`GITHUB_SHA` til
+# nettopp den, slik at `actions/checkout` henter den branchens kode.
+# `workflow_call` lar kalleren bestemme det samme. `schedule` og `push` mot en
+# navngitt branch gjør det ikke, og er derfor det som er igjen.
+#
+# Grensen sto til nå bare som en kommentar i `vercel.yml`. Her er den en
+# kontroll, slik at den neste arbeidsflyten med en hemmelighet ikke kan glemme
+# den (AGENTS.md, ANTIDEP_CONSTITUTION.md regel 7).
+while IFS= read -r workflow; do
+  grep -q 'secrets\.' "$workflow" || continue
+  if trigger=$(grep -oE '^[[:space:]]{2}(pull_request_target|pull_request|workflow_dispatch|workflow_call):' \
+                 "$workflow" | head -1); then
+    echo "Arbeidsflyt med hemmeligheter kan startes mot en valgt branch ($trigger): $workflow" >&2
+    exit 1
+  fi
+done < <(find .github/workflows -type f -name '*.yml' | sort)
+
+# Den planlagte kjøringen skal ikke be om den rå årsaken.
+#
+# `--diagnostics` tar med feilteksten fra verktøyet og fra databasen. Den er
+# nyttig for den som feilsøker lokalt, og feil i en GitHub Actions-logg i et
+# offentlig repo: en videreformidlet feiltekst kan bære et beskrankningsnavn,
+# en adresse eller en del av dokumentet (AGENTS.md).
+reject_grep_matches \
+  'Den planlagte kjøringen ber om den rå årsaken, og loggen er offentlig.' \
+  -n -E -- '--diagnostics' .github/workflows/full-text-extraction.yml
+
 # Private fulltekster og agentsvar skal aldri bli en del av repoet.
 #
 # En eksportert agentoppgave bærer hele den kontrollerte kildeteksten mellom to
@@ -61,6 +134,35 @@ reject_grep_matches \
   --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist \
   '<kildetekst nonce="[0-9a-f]{16}">|"answer_version": ?"antidep/agent-answer@' \
   .
+
+# Reserveveiens legitimasjon skal aldri nå en nettleser.
+#
+# `ANTIDEP_DIAGNOSTICS_DATABASE_URL` er den ene hemmeligheten i Antidep som gir
+# en forbindelse rett til databasen. Den er smal — rollen kan bare legge til
+# rader gjennom to funksjoner og kan ikke lese én tilbake — men den hører
+# utelukkende hjemme på serversiden.
+#
+# Et `VITE_`-prefiks ville lagt den i klartekst i nettleserbygget. Kontrollen
+# står her slik at den ikke kan glemmes ved neste variabel.
+reject_grep_matches \
+  'Reserveveiens databaseadresse er gitt et VITE_-prefiks og ville havnet i nettleserbygget.' \
+  -R -n -E \
+  --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist \
+  'VITE_[A-Z_]*DIAGNOSTICS_DATABASE' \
+  .
+
+# Og modulen som holder forbindelsen, skal ikke kunne importeres av en flate.
+#
+# `src/diagnostics/store.ts` åpner en Postgres-forbindelse. Havnet den i
+# nettleserbygget — gjennom en import fra `src/app/` eller `src/lib/` — ville
+# bunteren tatt med den, og adressen måtte vært en `VITE_`-verdi for at den
+# skulle virke. Kontrollen fanger importen framfor å vente på variabelen.
+reject_grep_matches \
+  'En nettleserflate importerer den server-side databaseforbindelsen.' \
+  -R -n -E \
+  --include='*.ts' --include='*.tsx' \
+  "from '.*diagnostics/store'" \
+  src/app src/lib src/components
 
 operational_docs=(
   .env.example

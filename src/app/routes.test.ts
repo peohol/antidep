@@ -1,21 +1,36 @@
 import { describe, expect, it } from 'vitest'
 import {
-  AGENT_WORK_PATH,
   CANDIDATE_PATH,
   CANDIDATE_QUEUE_PATH,
+  FULL_TEXT_INBOX_PATH,
   HOME_PATH,
   PUBLISHED_CLAIM_PATH,
   PUBLISHED_PATH,
-  agentWorkPath,
+  TECHNICAL_PROBLEMS_PATH,
+  WORK_BOARD_PATH,
   candidatePath,
   candidateQueuePath,
+  fullTextInboxPath,
   homePath,
   publishedClaimPath,
   publishedPath,
+  technicalProblemsPath,
+  workBoardPath,
 } from './routes'
 
+const ALL_PATHS = [
+  HOME_PATH,
+  CANDIDATE_QUEUE_PATH,
+  CANDIDATE_PATH,
+  PUBLISHED_PATH,
+  PUBLISHED_CLAIM_PATH,
+  WORK_BOARD_PATH,
+  FULL_TEXT_INBOX_PATH,
+  TECHNICAL_PROBLEMS_PATH,
+] as const
+
 describe('routes', () => {
-  it('har forsiden og klinikerflaten som de eneste inngangene', () => {
+  it('har forsiden, klinikerflaten og de tre nye flatene som de eneste inngangene', () => {
     expect(HOME_PATH).toBe('/')
     expect(homePath()).toBe('/')
     expect(candidateQueuePath()).toBe('/kandidater')
@@ -24,15 +39,43 @@ describe('routes', () => {
     expect(publishedPath()).toBe('/publisert')
     expect(PUBLISHED_PATH).toBe('/publisert')
     expect(PUBLISHED_CLAIM_PATH).toBe('/publisert/:claimId')
-    expect(AGENT_WORK_PATH).toBe('/agentarbeid')
-    expect(agentWorkPath()).toBe('/agentarbeid')
+    expect(WORK_BOARD_PATH).toBe('/arbeid')
+    expect(workBoardPath()).toBe('/arbeid')
+    expect(FULL_TEXT_INBOX_PATH).toBe('/fulltekst')
+    expect(fullTextInboxPath()).toBe('/fulltekst')
+    expect(TECHNICAL_PROBLEMS_PATH).toBe('/tekniske-problemer')
+    expect(technicalProblemsPath()).toBe('/tekniske-problemer')
   })
 
-  // Agentarbeid og sluttkontroll er to forskjellige handlinger med hvert sitt
-  // mandat, og de har hver sin adresse.
-  it('holder agentarbeidet fra kandidatflaten og det publiserte innholdet', () => {
-    expect(AGENT_WORK_PATH.startsWith(CANDIDATE_QUEUE_PATH)).toBe(false)
-    expect(AGENT_WORK_PATH.startsWith(PUBLISHED_PATH)).toBe(false)
+  // Den tekniske agentarbeidsflaten er avviklet. Adressen skal ikke komme
+  // tilbake, heller ikke som et prefiks: alt et menneske gjorde der — velge
+  // KI-tjeneste, registrere en kjører, laste ned en oppgave, laste opp et svar —
+  // var teknisk arbeid som ikke hører hjemme i produktet (issue #99).
+  // `scripts/verify-repo.sh` håndhever det samme i CI.
+  it('gjeninnfører ikke den tekniske agentarbeidsflaten', () => {
+    for (const path of ALL_PATHS) {
+      expect(path).not.toContain('/agentarbeid')
+    }
+  })
+
+  // Den åpne oversikten, fulltekstinnboksen og problemoversikten er tre
+  // forskjellige handlinger med hvert sitt mandat, og de har hver sin adresse.
+  it('holder de tre nye flatene fra hverandre og fra klinikerflaten', () => {
+    const distinct = [
+      WORK_BOARD_PATH,
+      FULL_TEXT_INBOX_PATH,
+      TECHNICAL_PROBLEMS_PATH,
+      CANDIDATE_QUEUE_PATH,
+      PUBLISHED_PATH,
+    ]
+    expect(new Set(distinct).size).toBe(distinct.length)
+    for (const one of distinct) {
+      for (const other of distinct) {
+        if (one !== other) {
+          expect(one.startsWith(`${other}/`)).toBe(false)
+        }
+      }
+    }
   })
 
   // Kandidaten og det publiserte innholdet er to forskjellige ting, og de har
@@ -46,14 +89,7 @@ describe('routes', () => {
   // Adressene til den gamle mikroreviewflyten skal ikke komme tilbake, heller
   // ikke som et prefiks. `scripts/verify-repo.sh` håndhever det samme i CI.
   it('gjenbruker ingen adresse fra den gamle reviewflyten', () => {
-    for (const path of [
-      HOME_PATH,
-      CANDIDATE_QUEUE_PATH,
-      CANDIDATE_PATH,
-      PUBLISHED_PATH,
-      PUBLISHED_CLAIM_PATH,
-      AGENT_WORK_PATH,
-    ]) {
+    for (const path of ALL_PATHS) {
       expect(path).not.toContain('/review')
       expect(path).not.toContain('/extraction-review')
     }

@@ -33,6 +33,7 @@ import type { PublicationOutcome } from '../lib/published-claim'
 import type { CandidateGateway } from './candidate-gateway'
 import { publishedClaimPath } from './routes'
 import { SealedContentView } from './SealedContentView'
+import { pageMessage } from './gateway'
 
 /** Utfallene en sluttkontroll kan ha (migrasjon 009d). */
 const DECISIONS = [
@@ -75,7 +76,7 @@ export function CandidatePage({ candidateId, gateway }: CandidatePageProps): Rea
       .catch((cause: unknown) => {
         if (!cancelled) {
           setView(null)
-          setError(cause instanceof Error ? cause.message : String(cause))
+          setError(pageMessage(cause))
         }
       })
     return () => {
@@ -105,7 +106,7 @@ export function CandidatePage({ candidateId, gateway }: CandidatePageProps): Rea
         load()
       })
       .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : String(cause))
+        setError(pageMessage(cause))
       })
       .finally(() => {
         setSubmitting(false)
@@ -132,7 +133,7 @@ export function CandidatePage({ candidateId, gateway }: CandidatePageProps): Rea
       })
       .catch((cause: unknown) => {
         setPublished(null)
-        setPublishError(cause instanceof Error ? cause.message : String(cause))
+        setPublishError(pageMessage(cause))
       })
       .finally(() => {
         setPublishing(false)

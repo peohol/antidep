@@ -15,14 +15,20 @@
 // beregne, ville vært en påstand om seg selv.
 //
 // ----------------------------------------------------------------------------
-// Hvorfor avvisningene når fram ordrett
+// Hvorfor avvisningene ikke lenger når fram ordrett
 //
-// Databasens feilmeldinger sier hva som må gjøres — bygg kandidaten på nytt, få
-// den sluttkontrollert, be om publisher-mandat. En flate som erstattet dem med
-// «noe gikk galt», ville tatt bort nettopp det som gjør en avvisning nyttig.
+// Denne filen sa tidligere det motsatte: at databasens feilmeldinger burde nå
+// fram uendret, fordi de sier hva som må gjøres. Den vurderingen er omgjort
+// (issue #99, punkt 8). Grunnen er ikke at setningene var dårlige, men at
+// avsenderen ikke lot seg kontrollere: den samme veien bar også «JWT expired»,
+// «permission denied for function …» og PostgREST-koder til en kliniker.
+//
+// Handlingen står fortsatt i setningen — bygg kandidaten på nytt, be om mandat,
+// hent siden på nytt — men den er nå Antideps egen formulering, valgt av hva
+// slags avvisning det var. Den rå årsaken går til observability (`gateway.ts`).
 // ============================================================================
 
-import { getAntidepClient } from '../lib/supabase'
+import { antidepClient, callRpc, type FailureWording, type TechnicalArea } from './gateway'
 import {
   parsePublicationOutcome,
   parsePublishedClaim,
@@ -31,6 +37,18 @@ import {
   type PublishedClaimEntry,
   type PublishedClaimView,
 } from '../lib/published-claim'
+
+const AREA: TechnicalArea = 'clinical_content'
+
+/** Setningene som gjelder en handling bundet til det avtrykket flaten viste. */
+const SEALED_CONTENT_WORDING: FailureWording = {
+  not_authorized: 'Du har ikke mandat til denne handlingen i Antidep.',
+  not_found: 'Innholdet finnes ikke lenger slik du så det. Hent siden på nytt.',
+  invalid_input: 'Antidep kunne ikke ta imot dette. Hent siden på nytt og prøv igjen.',
+  rejected:
+    'Grunnlaget er endret siden du åpnet siden, eller innholdet er ikke klart for dette ' +
+    'steget. Hent siden på nytt; er innholdet endret, må det bygges og sluttkontrolleres på nytt.',
+}
 
 export interface PublicationGateway {
   listPublished(): Promise<readonly PublishedClaimEntry[]>
@@ -52,67 +70,92 @@ export interface PublicationGateway {
   }): Promise<PublicationOutcome>
 }
 
-/** Avvisninger fra databasen når fram uendret: de sier hva som må gjøres. */
-function rejected(operation: string, message: string): Error {
-  return new Error(`${operation}: ${message}`)
-}
-
 export function createPublicationGateway(): PublicationGateway {
-  const client = getAntidepClient()
+  const client = antidepClient()
 
   return {
     async listPublished() {
-      const { data, error } = await client.rpc('published_claim_index', {})
-      if (error !== null) {
-        throw rejected('Den publiserte katalogen kunne ikke leses', error.message)
-      }
-      return parsePublishedClaimIndex(data)
+      return callRpc(client, {
+        fn: 'published_claim_index',
+        area: AREA,
+        parse: parsePublishedClaimIndex,
+        wording: {
+          not_authorized:
+            'Publisert klinikerinnhold krever innlogging i Antidep. Logg inn og prøv igjen.',
+          unavailable:
+            'Antidep får ikke hentet det publiserte innholdet akkurat nå. Prøv igjen om litt.',
+        },
+      })
     },
 
     async readPublished(claimId) {
-      const { data, error } = await client.rpc('published_claim', { p_claim_id: claimId })
-      if (error !== null) {
-        throw rejected('Det publiserte innholdet kunne ikke leses', error.message)
-      }
-      return parsePublishedClaim(data)
+      return callRpc(client, {
+        fn: 'published_claim',
+        args: { p_claim_id: claimId },
+        area: AREA,
+        parse: parsePublishedClaim,
+        wording: {
+          not_authorized:
+            'Publisert klinikerinnhold krever innlogging i Antidep. Logg inn og prøv igjen.',
+          not_found: 'Antidep publiserer ikke dette innholdet nå.',
+          unavailable: 'Antidep får ikke hentet innholdet akkurat nå. Prøv igjen om litt.',
+        },
+      })
     },
 
     async publish(input) {
-      const { data, error } = await client.rpc('publish_candidate', {
-        p_candidate_id: input.candidateId,
-        // Uendret fra det flaten viste. Databasen avviser et annet avtrykk, og
-        // avviser også en kandidat som ikke lenger er den gjeldende.
-        p_seen_candidate_digest: input.seenCandidateDigest,
-        p_reason: input.reason,
+      return callRpc(client, {
+        fn: 'publish_candidate',
+        args: {
+          p_candidate_id: input.candidateId,
+          // Uendret fra det flaten viste. Databasen avviser et annet avtrykk, og
+          // avviser også en kandidat som ikke lenger er den gjeldende.
+          p_seen_candidate_digest: input.seenCandidateDigest,
+          p_reason: input.reason,
+        },
+        area: AREA,
+        parse: parsePublicationOutcome,
+        wording: {
+          ...SEALED_CONTENT_WORDING,
+          not_authorized: 'Publisering krever publisher-mandat, og du har det ikke i Antidep.',
+          unavailable:
+            'Publiseringen ble ikke registrert. Antidep svarte ikke. Prøv igjen om litt.',
+        },
       })
-      if (error !== null) {
-        throw rejected('Publiseringen ble ikke registrert', error.message)
-      }
-      return parsePublicationOutcome(data)
     },
 
     async withdraw(input) {
-      const { data, error } = await client.rpc('withdraw_claim_publication', {
-        p_claim_id: input.claimId,
-        p_reason: input.reason,
+      return callRpc(client, {
+        fn: 'withdraw_claim_publication',
+        args: { p_claim_id: input.claimId, p_reason: input.reason },
+        area: AREA,
+        parse: parsePublicationOutcome,
+        wording: {
+          ...SEALED_CONTENT_WORDING,
+          not_authorized: 'Tilbaketrekking krever publisher-mandat, og du har det ikke i Antidep.',
+          unavailable:
+            'Tilbaketrekkingen ble ikke registrert. Antidep svarte ikke. Prøv igjen om litt.',
+        },
       })
-      if (error !== null) {
-        throw rejected('Tilbaketrekkingen ble ikke registrert', error.message)
-      }
-      return parsePublicationOutcome(data)
     },
 
     async rollback(input) {
-      const { data, error } = await client.rpc('rollback_claim_publication', {
-        p_claim_id: input.claimId,
-        p_target_candidate_id: input.targetCandidateId,
-        p_seen_candidate_digest: input.seenCandidateDigest,
-        p_reason: input.reason,
+      return callRpc(client, {
+        fn: 'rollback_claim_publication',
+        args: {
+          p_claim_id: input.claimId,
+          p_target_candidate_id: input.targetCandidateId,
+          p_seen_candidate_digest: input.seenCandidateDigest,
+          p_reason: input.reason,
+        },
+        area: AREA,
+        parse: parsePublicationOutcome,
+        wording: {
+          ...SEALED_CONTENT_WORDING,
+          not_authorized: 'Rollback krever publisher-mandat, og du har det ikke i Antidep.',
+          unavailable: 'Rollbacken ble ikke registrert. Antidep svarte ikke. Prøv igjen om litt.',
+        },
       })
-      if (error !== null) {
-        throw rejected('Rollbacken ble ikke registrert', error.message)
-      }
-      return parsePublicationOutcome(data)
     },
   }
 }

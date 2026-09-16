@@ -7,9 +7,17 @@ kontrollene et manuelt opplastet `svar.json` går gjennom.
 Dette dokumentet er to ting: kontrakten appen tilbyr, og engangsoppsettet
 repo-eier gjør i ChatGPT etter at koden er deployet.
 
-Nedlast/opplast-veien på `/agentarbeid` består. Den er fallback når en planlagt
-kjøring er nede, den er nyttig ved feilsøking, og den er veien inn for en
-KI-tjeneste uten en autonom integrasjon.
+**Oppsettet er et teknisk deploy-/driftssteg.** Det gjøres av Claude Code, av
+ChatGPT, eller av repo-eier — aldri av en kliniker, og aldri fra en produktflate.
+Antidep-siden av det kjøres med `npm run ops:agents`; ChatGPT-siden er stegene
+under, og de finnes bare fordi plattformen krever en menneskelig autorisasjon én
+gang (AGENTS.md, `docs/ROADMAP.md`).
+
+Nedlast/opplast-veien består som **teknisk recovery-mekanisme**
+(`npm run ops:agents -- export-task` / `import-answer`). Den er nyttig når en
+planlagt kjøring er nede, ved feilsøking, og som vei inn for en KI-tjeneste uten
+en autonom integrasjon. Den er ikke lenger en klinikeroppgave og ligger ikke i
+noen brukerflate.
 
 ## Hva appen tilbyr, og hva den ikke gjør
 
@@ -76,8 +84,8 @@ oppgir ingen opprinnelse, og den merker ingenting.
   nøkkelen, og de ti kjørerveiene er gitt til `anon` fordi legitimasjonen — ikke
   Data API-rollen — er kontrollen. Det er den samme formen agentkjørerne har
   brukt siden migrasjon 005e.
-- **Alt kan trekkes tilbake.** «Trekk tilbake» på `/agentarbeid` avslutter
-  tilkoblingen, alle tokenene og alt arbeidet kjøreren holdt, i samme
+- **Alt kan trekkes tilbake.** `npm run ops:agents -- revoke --key … --reason …`
+  avslutter tilkoblingen, alle tokenene og alt arbeidet kjøreren holdt, i samme
   transaksjon. Oppgavene blir ledige med det samme framfor å stå til leien
   løper ut: kjøreren kommer aldri tilbake for å levere dem, og den som overtar
   leddet, skal kunne gjøre arbeidet nå. Den samme nøkkelen kan brukes på nytt,
@@ -138,15 +146,22 @@ administratortilgang i workspacet.
 
 ### 1. Registrer kjøreren i Antidep
 
-1. Åpne `/agentarbeid` i Antidep, innlogget som redaktør.
-2. Under **Autonom kjører**, fyll ut:
-   - **Agentledd** — leddet denne agenten skal utføre.
-   - **Navn på kjøreren** — hva du vil kalle den i Antidep.
-   - **Agentens navn i plattformen** — nøyaktig det navnet Workspace Agent-en
-     har i ChatGPT.
-   - **Plattformen pinner og viser hvilken modell agenten kjører** — huk av bare
-     dersom det faktisk er tilfelle.
-3. Velg **Registrer kjøreren**.
+Fra en terminal med redaktørens egen legitimasjon (`.env.editor.local`):
+
+```sh
+npm run ops:agents -- register-runner \
+  --key ekstraksjon-01 \
+  --name "Ekstraksjonsagent" \
+  --role evidence_extraction \
+  --platform-ref "<nøyaktig navnet Workspace Agent-en har i ChatGPT>" \
+  --disclosure not_exposed \
+  --reason "Registrert ved oppsett av ChatGPT-kjøreren."
+```
+
+`--disclosure` er en opplysning om **plattformen** og ikke om modellen: bruk
+`platform_pinned` bare dersom ChatGPT faktisk pinner og viser hvilken modell
+agenten kjører. Gjør den ikke det, er `not_exposed` den sanne verdien, og
+Antidep hevder da ikke at separasjonen er bevist av plattformen.
 
 Ikke hent tilkoblingskoden ennå. Den lever i ti minutter, og du trenger den
 først i steg 4.
@@ -172,11 +187,10 @@ Når ChatGPT ber om autorisasjon, åpnes Antideps egen tilkoblingsside. Den ber 
 
 ### 4. Hent engangskoden og lim den inn
 
-1. Tilbake i Antidep, på `/agentarbeid`: velg **Hent tilkoblingskode** på
-   kjøreren du registrerte.
+1. I terminalen: `npm run ops:agents -- pair --key ekstraksjon-01`
 2. Kopier koden og lim den inn i tilkoblingsvinduet i ChatGPT.
 3. Koden gjelder i ti minutter og kan brukes én gang. Blir den for gammel, hent
-   en ny.
+   en ny med den samme kommandoen.
 
 Dette er den ene gangen du beviser at du har redaktørmandat. Etterpå godkjenner
 du ingen enkeltoppgaver.
@@ -188,7 +202,11 @@ du ingen enkeltoppgaver.
    plattformen» i steg 1.
 3. Velg modell for agenten dersom plattformen lar deg gjøre det. Gjør den det,
    pass på at to Antidep-agenter ikke får den samme modellen — og registrer
-   modellen i Antidep under **Velg KI-tjeneste** for det leddet.
+   modellen i Antidep med
+   `npm run ops:agents -- assign-model --role <ledd> --provider openai --model <navn> --reason "…"`.
+   Tildelingen inngår i oppgavens avtrykk, og den må gjøres **før** agenten
+   henter sin første oppgave: et svar kan bekrefte identiteten sin, men aldri
+   bestemme den (ANTIDEP_CONSTITUTION.md regel 3).
 4. Legg til Antidep-appen blant agentens apper/verktøy.
 5. Lim inn agentinstruksen under som agentens instruks.
 
@@ -216,8 +234,9 @@ Dette er det eneste steget som avgjør om autonomien virker i ditt workspace.
 
 1. Legg inn én agentoppgave i Antidep.
 2. La den planlagte kjøringen gå — eller start den manuelt fra agentens skjerm.
-3. Gå til `/agentarbeid`. Kjøreren skal stå som **Tilkoblet**, og telleren over
-   leverte svar skal ha økt.
+3. Kjør `npm run ops:agents -- runners`. Kjøreren skal stå som **tilkoblet**, og
+   telleren over leverte svar skal ha økt. Den åpne arbeidsoversikten på
+   `/arbeid` skal samtidig vise at oppgaven har gått fra planlagt til fullført.
 
 «Tilkoblet» betyr at tilkoblingen står ved lag og kan hente seg et nytt token
 ved neste kjøring — ikke at en kjøring pågår akkurat nå. Et access-token lever
@@ -318,12 +337,12 @@ egendefinert app. Det er en innstilling i OpenAIs produkt, ikke i Antidep, og
 den kan ikke prøves fra CI. Steg 8 er derfor ikke valgfritt: det er der du
 faktisk ser om autonomien virker hos deg.
 
-Virker det ikke, er ingenting tapt. Nedlast/opplast-veien på `/agentarbeid` er
+Virker det ikke, er ingenting tapt. Recovery-veien `npm run ops:agents -- export-task` er
 uendret og gjør det samme arbeidet — bare med deg som transport.
 
 ## Feilsøking
 
-`/agentarbeid` viser om kjøreren er tilkoblet og hvor mange svar den har
+`npm run ops:agents -- runners` viser om kjøreren er tilkoblet og hvor mange svar den har
 levert. Det detaljerte sporet ligger i `workflow.agent_runner_events`, med én rad
 per verktøykall:
 

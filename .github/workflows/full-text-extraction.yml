@@ -1,0 +1,146 @@
+# Antideps egen tekstuttrekker, kjørt planlagt.
+#
+# ----------------------------------------------------------------------------
+# Hvorfor denne arbeidsflyten finnes
+#
+# Redaktøren velger riktig PDF i fulltekstinnboksen. Alt etter det er Antideps
+# eget arbeid — men det registrerte tekstuttrekket er `pdftotext` med en låst
+# argumentliste (migrasjon 003f, 003g), og en nettleser kan ikke kjøre det.
+# Uten denne arbeidsflyten ville kjeden stått og ventet på at et menneske kjørte
+# `npm run ops:full-text` i en terminal, og da hadde opplastingen bare flyttet
+# den tekniske oppgaven ett hakk (issue #99).
+#
+# Her er den derfor teknisk drift som hører til deployen: en tidsplan, en
+# maskin med verktøyet installert, og ingen i transporten.
+#
+# ----------------------------------------------------------------------------
+# Hvorfor denne bare har én utløser
+#
+# Jobben har redaktørens innlogging i miljøet og kjører kode fra den branchen
+# kjøringen gjelder. Kode på en branch som ikke er reviewet, skal derfor ikke
+# kunne starte den: legitimasjonen her kan lese originaldokumenter ut av
+# databasen. Samme minste-privilegium-grense som `vercel.yml` bærer, og samme
+# trusselmodell som agentene (AGENTS.md, ANTIDEP_CONSTITUTION.md regel 7).
+#
+# `pull_request` er den åpenbare: en pull request fra en branch i samme repo
+# kan få repository-secrets. Men `workflow_dispatch` er like ille, og mindre
+# åpenbart: GitHubs «Run workflow» har en branch-meny, og en manuell kjøring
+# mot en valgt branch setter `GITHUB_REF`/`GITHUB_SHA` til nettopp den — så
+# `actions/checkout` henter den branchens kode, med hemmelighetene i miljøet.
+# Derfor finnes bare `schedule` her, som alltid kjører standardbranchen.
+#
+# Kontrollen ligger i `scripts/verify-repo.sh`, slik at den ikke kan glemmes
+# ved neste arbeidsflyt.
+#
+# Dette er grensen denne filen kan sette selv. Den som allerede har skrive-
+# tilgang til repoet, kan legge til en hvilken som helst arbeidsflyt og nå de
+# samme repository-secrets; det er iboende i hva en repository-secret er. Skal
+# grensen håndheves av GitHub framfor av filen, må hemmelighetene ligge på et
+# *environment* med en deployment-branch-regel på `main` — da nekter GitHub
+# selv å gi dem ut til en kjøring på en annen branch.
+#
+# ----------------------------------------------------------------------------
+# Før legitimasjonen er lagt inn
+#
+# Mangler en av hemmelighetene, avslutter jobben grønt med en advarsel framfor
+# å stå rød hvert kvarter. En rød arbeidsflyt som alltid er rød, er en lampe
+# ingen ser på.
+#
+# ----------------------------------------------------------------------------
+# Om tidsplanen skulle stoppe
+#
+# GitHub slår av planlagte arbeidsflyter i et offentlig repo etter 60 dager
+# uten aktivitet. Antidep er i aktiv utvikling, så det er en teoretisk grense —
+# og «Enable workflow» i Actions-fanen starter den igjen. Det krever ingen
+# manuell utløser, og derfor finnes ingen her.
+# ----------------------------------------------------------------------------
+
+name: Tekstuttrekk av opplastede fulltekster
+
+on:
+  schedule:
+    # Hvert kvarter. Ventetiden er Antideps og ikke redaktørens: den som lastet
+    # opp, har allerede gjort sitt, og oppgaven står som «pågår» til teksten er
+    # registrert.
+    - cron: '*/15 * * * *'
+
+permissions:
+  contents: read
+
+# To kjøringer samtidig ville tatt hvert sitt oppdrag uten å kollidere — leien
+# i databasen sørger for det. Men de ville også begge stått i kø for de samme
+# radene, og det er ingenting å vinne på. Den som allerede kjører, får fullføre.
+concurrency:
+  group: full-text-extraction
+  cancel-in-progress: false
+
+jobs:
+  extract:
+    name: Hent tekst ut av fulltekstene som venter
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # `schedule` kjører alltid standardbranchen, så denne er sann hver gang i
+    # dag. Den står her fordi den ikke er det om noen senere legger til en
+    # utløser som kan velge branch: da stopper jobben framfor å kjøre ureviewet
+    # kode med redaktørens legitimasjon.
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      # Kontrolleres først, slik at en kjøring uten legitimasjon ikke bruker tid
+      # på å sjekke ut koden og installere noe som helst.
+      - name: Kontroller at legitimasjonen finnes
+        id: credentials
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_EDITOR_EMAIL: ${{ secrets.ANTIDEP_EDITOR_EMAIL }}
+          ANTIDEP_EDITOR_PASSWORD: ${{ secrets.ANTIDEP_EDITOR_PASSWORD }}
+        run: |
+          missing=()
+          for name in ANTIDEP_SUPABASE_URL ANTIDEP_SUPABASE_PUBLISHABLE_KEY \
+                      ANTIDEP_EDITOR_EMAIL ANTIDEP_EDITOR_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::warning::Tekstuttrekket er ikke koblet til ennå. Legg inn ${missing[*]} som repository secrets, så kjører det av seg selv."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # Kommandoen bruker bare kjøretidsavhengighetene. Byggverktøyene hører til
+      # CI, ikke til en drift som skal være rask og kjøre ofte.
+      - name: Installer avhengigheter
+        if: steps.credentials.outputs.ready == 'true'
+        run: npm ci --omit=dev
+
+      # Verktøyet den registrerte oppskriften krever. Uten det melder kommandoen
+      # fra som et teknisk problem og lar filen bli liggende — den blir aldri
+      # sendt tilbake til redaktøren som en ny oppgave.
+      - name: Installer poppler-utils (pdftotext)
+        if: steps.credentials.outputs.ready == 'true'
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      - name: Kjør tekstuttrekket
+        if: steps.credentials.outputs.ready == 'true'
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_EDITOR_EMAIL: ${{ secrets.ANTIDEP_EDITOR_EMAIL }}
+          ANTIDEP_EDITOR_PASSWORD: ${{ secrets.ANTIDEP_EDITOR_PASSWORD }}
+        run: |
+          npm run ops:full-text -- --max 25 | tee -a "$GITHUB_STEP_SUMMARY"

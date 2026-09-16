@@ -76,6 +76,20 @@ jobs:
       - name: Samtidighetsprøve (to forbindelser)
         if: always()
         run: npm run db:test:lock
+      # Kvoten på rå diagnostikk er «tell, og sett inn hvis tallet er lavt
+      # nok» — et kappløp som bare finnes mellom transaksjoner, og som pgTAP
+      # derfor ikke kan se. Denne kjører mange forbindelser mot hverandre og
+      # kontrollerer at radlåsen faktisk holder grensen.
+      - name: Samtidighetsprøve for diagnostikk-kvoten
+        if: always()
+        run: npm run db:test:quota
+      # Enhetsprøvene dekker hver sin halvdel: nettleseren sender, og ruten
+      # videresender. Denne går hele veien med den ekte serverruten, den ekte
+      # Data API-en og den ekte databasen, og leser resultatet med psql — altså
+      # utenom enhver leservei appen har (issue #99, punkt 8).
+      - name: Ende-til-ende for diagnostikkveien (rute til faktisk lagring)
+        if: always()
+        run: npm run db:test:diagnostics
       # pgTAP prøver SQL, og vitest prøver TypeScript med doble for databasen.
       # Grensen mellom dem — at parameternavnene agentporten sender, er nøyaktig
       # de api-funksjonene tar imot — er ikke prøvd av noen av dem. Denne kjører
@@ -92,6 +106,15 @@ jobs:
       - name: Ende-til-ende for den autonome kjøreren (MCP mot ekte database)
         if: always()
         run: npm run db:test:mcp
+      # Fulltekstinnboksen er den ene flaten der et menneske gjør noe for at
+      # kjeden skal gå videre, og handlingen er å velge riktig PDF. Resten —
+      # bindingen, lesbarhetskontrollen, det registrerte tekstuttrekket,
+      # registreringen og kølegging av neste ledd — er Antideps eget arbeid.
+      # Denne kjøringen går hele veien med en ekte PDF og det ekte pdftotext,
+      # gjennom de ekte api-funksjonene (issue #99).
+      - name: Ende-til-ende for fulltekstinnboksen (opplasting til kølagt arbeid)
+        if: always()
+        run: npm run db:test:intake
       - name: Stopp stacken
         if: always()
         run: npx supabase stop

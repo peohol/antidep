@@ -16,6 +16,7 @@ import { Link } from 'react-router'
 
 import { candidatePath } from './routes'
 import type { CandidateGateway, CandidateQueueEntry } from './candidate-gateway'
+import { pageMessage } from './gateway'
 
 export interface CandidateQueuePageProps {
   readonly gateway: CandidateGateway
@@ -38,7 +39,7 @@ export function CandidateQueuePage({ gateway }: CandidateQueuePageProps): React.
       .catch((cause: unknown) => {
         if (!cancelled) {
           setEntries(null)
-          setError(cause instanceof Error ? cause.message : String(cause))
+          setError(pageMessage(cause))
         }
       })
     return () => {

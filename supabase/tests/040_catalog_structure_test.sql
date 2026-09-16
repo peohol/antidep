@@ -88,8 +88,16 @@ select set_eq(
            -- Migrasjon 011a: den autonome kjøreren over den samme handoffen —
            -- tilkoblingen, OAuth-klienten, hemmelighetene og sporet.
            ('agent_runner_connections'), ('agent_runner_clients'),
-           ('agent_runner_secrets'), ('agent_runner_events')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c og 011a'
+           ('agent_runner_secrets'), ('agent_runner_events'),
+           -- Migrasjon 012a: hvilke artikler Antidep mangler fullteksten til,
+           -- filen som er på vei gjennom kontrollene, og de tekniske
+           -- problemene med sitt eget append-only spor.
+           ('full_text_requests'), ('full_text_intake'), ('client_diagnostics'),
+           ('technical_incidents'), ('technical_incident_events'),
+           -- Og telleren som gjør forsøksgrensen på reserveveien felles for
+           -- alle instansene av serverruten.
+           ('diagnostics_attempts')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a og 012a'
 );
 select set_eq(
   $$

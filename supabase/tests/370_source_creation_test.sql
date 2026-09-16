@@ -247,7 +247,34 @@ select is_empty(
         'api.submit_agent_answer(text,text,uuid,jsonb)',
         'api.release_agent_task(text,text,uuid,text)',
         'api.agent_runner_identity(text,text)',
-        'api.record_agent_runner_outcome(text,text,text,text,uuid)'
+        'api.record_agent_runner_outcome(text,text,text,text,uuid)',
+        -- Migrasjon 012a. Den klinikervennlige arbeidsflaten.
+        --
+        -- api.public_work_board() er den ene som i tillegg er anon, og det er
+        -- hele poenget med den: arbeidsoversikten skal kunne leses uten
+        -- innlogging. Den svarer med et lukket produktvokabular og bærer ingen
+        -- agentrolle, modell, kjører, jobbnøkkel, artikkeltittel, uuid eller
+        -- feiltekst. Kontrolleres i 800_clinician_work_surface_test.sql.
+        'api.public_work_board()',
+        -- Fulltekstinnboksen og Antideps eget tekstuttrekk. Alle authenticated:
+        -- innboksen krever editor- eller admin-mandat, og uttrekksveiene gir ut
+        -- originaldokumentet, som bare skal forlate databasen til den som
+        -- allerede kan laste det opp.
+        'api.request_full_text(uuid,uuid[],uuid[],uuid[],text)',
+        'api.withdraw_full_text_request(text,text)',
+        'api.full_text_inbox()',
+        'api.submit_full_text(text,text)',
+        'api.claim_full_text_extraction(integer)',
+        'api.complete_full_text_extraction(uuid,text,text)',
+        'api.fail_full_text_extraction(uuid,text)',
+        'api.resume_blocked_full_text_extractions()',
+        -- Den tekniske problemoversikten. Tellingen svarer stille «ikke synlig»
+        -- til alle som ikke er admin, og selvmeldingen tar bare
+        -- maskinidentifikatorer og ingen tekst. Ingen av dem leser diagnosen.
+        'api.technical_problem_board()',
+        'api.technical_problem_summary()',
+        'api.report_technical_problem(text,text,text,text,integer,text,uuid)',
+        'api.record_client_diagnostic(uuid,text,text,text,text,integer,text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

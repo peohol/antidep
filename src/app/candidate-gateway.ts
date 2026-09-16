@@ -2,8 +2,8 @@
 // Kandidatflatens eneste vei til databasen
 //
 // Flaten skal kunne prøves uten en Supabase-stack, og en komponent som kalte
-// `getAntidepClient()` direkte, kunne ikke det. De tre kallene ligger derfor bak
-// én grenseflate, og komponenten kjenner bare den.
+// `getAntidepClient()` direkte, kunne ikke det. De fire kallene ligger derfor
+// bak én grenseflate, og komponenten kjenner bare den.
 //
 // ----------------------------------------------------------------------------
 // Hvorfor avtrykket sendes tilbake uendret
@@ -13,11 +13,39 @@
 // derfor med beslutningen, og databasen krever at det er kandidatens eget *og*
 // at innholdet fortsatt bygger til det. Flaten regner ikke ut noe avtrykk selv:
 // en verdi klienten kunne beregne, ville vært en påstand om seg selv.
+//
+// ----------------------------------------------------------------------------
+// Hvorfor avvisningene ikke lenger når fram ordrett
+//
+// Tidligere gikk databasens melding rett til siden. Den var ofte god — «bygg
+// kandidaten på nytt», «be om publisher-mandat» — men den var like ofte
+// PostgreSQL, PostgREST eller Supabase som formulerte den, og de to lar seg
+// ikke skille pålitelig fra utsiden (issue #99, punkt 8). Flaten skriver derfor
+// setningen selv, valgt av *hva slags* avvisning det var, og den rå årsaken går
+// til observability (`gateway.ts`). Handlingen den som står her skal gjøre, står
+// fortsatt i setningen — den kommer bare fra Antidep og ikke fra databasen.
 // ============================================================================
 
-import { getAntidepClient } from '../lib/supabase'
+import { antidepClient, callRpc, type FailureWording, type TechnicalArea } from './gateway'
 import { parseCandidateView, type CandidateView } from '../lib/candidate-view'
 import { parsePublicationOutcome, type PublicationOutcome } from '../lib/published-claim'
+
+const AREA: TechnicalArea = 'clinical_content'
+
+/**
+ * Setningene som gjelder en avgjørelse bundet til det avtrykket flaten viste.
+ *
+ * En avvisning her betyr nesten alltid det samme: grunnlaget er endret siden
+ * siden ble åpnet, og kandidaten må bygges og godkjennes på nytt.
+ */
+const SEALED_CONTENT_WORDING: FailureWording = {
+  not_authorized: 'Du har ikke mandat til denne handlingen i Antidep.',
+  not_found: 'Innholdet finnes ikke lenger slik du så det. Hent siden på nytt.',
+  invalid_input: 'Antidep kunne ikke ta imot dette. Hent siden på nytt og prøv igjen.',
+  rejected:
+    'Grunnlaget er endret siden du åpnet siden, eller innholdet er ikke klart for dette ' +
+    'steget. Hent siden på nytt; er innholdet endret, må det bygges og sluttkontrolleres på nytt.',
+}
 
 /** Én rad i køen: nok til å velge én kandidat, ikke nok til å vurdere den. */
 export interface CandidateQueueEntry {
@@ -80,60 +108,82 @@ function queueEntry(value: unknown, index: number): CandidateQueueEntry {
   }
 }
 
-/** Avvisninger fra databasen når fram uendret: de sier hva som må gjøres. */
-function rejected(operation: string, message: string): Error {
-  return new Error(`${operation}: ${message}`)
+function parseQueue(data: unknown): readonly CandidateQueueEntry[] {
+  if (!Array.isArray(data)) {
+    throw new Error('Kandidatkøen er ugyldig: svaret er ikke en liste.')
+  }
+  return data.map(queueEntry)
 }
 
 export function createCandidateGateway(): CandidateGateway {
-  const client = getAntidepClient()
+  const client = antidepClient()
 
   return {
     async listQueue() {
-      const { data, error } = await client.rpc('candidate_control_queue', {})
-      if (error !== null) {
-        throw rejected('Kandidatkøen kunne ikke leses', error.message)
-      }
-      if (!Array.isArray(data)) {
-        throw new Error('Kandidatkøen er ugyldig: svaret er ikke en liste.')
-      }
-      return data.map(queueEntry)
+      return callRpc(client, {
+        fn: 'candidate_control_queue',
+        area: AREA,
+        parse: parseQueue,
+        wording: {
+          not_authorized:
+            'Sluttkontrollen krever mandat. Ta kontakt med en administrator hvis du skulle ' +
+            'hatt det.',
+          unavailable: 'Antidep får ikke hentet kandidatkøen akkurat nå. Prøv igjen om litt.',
+        },
+      })
     },
 
     async read(candidateId) {
-      const { data, error } = await client.rpc('candidate_for_control', {
-        p_candidate_id: candidateId,
+      return callRpc(client, {
+        fn: 'candidate_for_control',
+        args: { p_candidate_id: candidateId },
+        area: AREA,
+        parse: parseCandidateView,
+        wording: {
+          ...SEALED_CONTENT_WORDING,
+          unavailable: 'Antidep får ikke hentet kandidaten akkurat nå. Prøv igjen om litt.',
+        },
       })
-      if (error !== null) {
-        throw rejected('Kandidaten kunne ikke leses', error.message)
-      }
-      return parseCandidateView(data)
     },
 
     async recordFinalControl(input) {
-      const { error } = await client.rpc('record_candidate_final_control', {
-        p_candidate_id: input.candidateId,
-        // Uendret fra det flaten viste. Databasen avviser et annet avtrykk, og
-        // avviser også en kandidat hvis grunnlag er endret siden forseglingen.
-        p_seen_candidate_digest: input.seenCandidateDigest,
-        p_decision: input.decision,
-        p_rationale: input.rationale,
+      await callRpc(client, {
+        fn: 'record_candidate_final_control',
+        args: {
+          p_candidate_id: input.candidateId,
+          // Uendret fra det flaten viste. Databasen avviser et annet avtrykk, og
+          // avviser også en kandidat hvis grunnlag er endret siden forseglingen.
+          p_seen_candidate_digest: input.seenCandidateDigest,
+          p_decision: input.decision,
+          p_rationale: input.rationale,
+        },
+        area: AREA,
+        parse: () => undefined,
+        wording: {
+          ...SEALED_CONTENT_WORDING,
+          unavailable:
+            'Sluttkontrollen ble ikke registrert. Antidep svarte ikke. Prøv igjen om litt.',
+        },
       })
-      if (error !== null) {
-        throw rejected('Sluttkontrollen ble ikke registrert', error.message)
-      }
     },
 
     async publish(input) {
-      const { data, error } = await client.rpc('publish_candidate', {
-        p_candidate_id: input.candidateId,
-        p_seen_candidate_digest: input.seenCandidateDigest,
-        p_reason: input.reason,
+      return callRpc(client, {
+        fn: 'publish_candidate',
+        args: {
+          p_candidate_id: input.candidateId,
+          p_seen_candidate_digest: input.seenCandidateDigest,
+          p_reason: input.reason,
+        },
+        area: AREA,
+        parse: parsePublicationOutcome,
+        wording: {
+          ...SEALED_CONTENT_WORDING,
+          not_authorized: 'Publisering krever publisher-mandat, og du har det ikke i Antidep.',
+          unavailable:
+            'Publiseringen ble ikke registrert. Antidep svarte ikke. Prøv igjen om litt.',
+        },
       })
-      if (error !== null) {
-        throw rejected('Publiseringen ble ikke registrert', error.message)
-      }
-      return parsePublicationOutcome(data)
     },
   }
 }

@@ -62,3 +62,111 @@ pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* --------------------------------------------------------------------------
+ * Navigasjon
+ *
+ * Én meny over innholdet, og ett merke i den. Merket uttrykker aldri noe med
+ * farge alene: det bærer tallet og ordet «uløste» (WCAG 1.4.1).
+ * -------------------------------------------------------------------------- */
+.sitenav {
+  width: min(760px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 1rem 0 0;
+}
+.sitenav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-weight: 650;
+}
+.badge {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border-radius: 1rem;
+  background: #8c2f19;
+  color: #fff;
+  font-size: 0.8rem;
+}
+.badge__what {
+  font-weight: 500;
+}
+
+/* --------------------------------------------------------------------------
+ * Arbeidsstatus
+ *
+ * Tegn, tekst og farge følges alltid ad. Tegnene er forskjellige *former* og
+ * ikke bare forskjellige farger, slik at de skiller seg også i svart-hvitt og
+ * for den som ikke ser fargeforskjellen.
+ * -------------------------------------------------------------------------- */
+.status {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.1rem 0.6rem 0.15rem;
+  border: 0.09rem solid currentcolor;
+  border-radius: 1rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.status__mark {
+  font-size: 1rem;
+  line-height: 1;
+}
+.status--planned {
+  color: #4c564f;
+  background: #eff1ef;
+}
+.status--progress {
+  color: #6b4a06;
+  background: #fdf3da;
+}
+.status--failed {
+  color: #8c2f19;
+  background: #fbecea;
+}
+.status--done {
+  color: #235c39;
+  background: #e8f3ea;
+}
+
+.work-list,
+.inbox-list,
+.problem-list {
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.work-item,
+.inbox-item,
+.problem-item {
+  margin: 0 0 1rem;
+  padding: 1rem 1.25rem;
+  border: 0.06rem solid #dfe5e0;
+  border-radius: 0.35rem;
+  background: #fcfdfc;
+}
+.work-item__what,
+.problem-item__what {
+  margin: 0.5rem 0 0.25rem;
+  font-weight: 650;
+}
+.work-item__subjects,
+.work-item__when,
+.problem-item__when,
+.inbox-item__article {
+  margin: 0.15rem 0;
+  color: #4c564f;
+  font-size: 0.92rem;
+}
+.work-item__note {
+  margin: 0.35rem 0 0;
+  font-weight: 650;
+}
+.inbox-item h3 {
+  margin: 0 0 0.25rem;
+}

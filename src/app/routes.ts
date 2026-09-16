@@ -25,21 +25,52 @@ export const PUBLISHED_PATH = '/publisert' as const
 export const PUBLISHED_CLAIM_PATH = '/publisert/:claimId' as const
 
 /**
- * Agentarbeidet: oppgavene som venter på en ekstern KI-agent.
+ * Den åpne arbeidsoversikten: hva Antidep arbeider med.
  *
- * Egen adresse og ikke en del av kandidatflaten: det er to forskjellige
- * handlinger med hvert sitt mandat. Agentarbeid er redaktørens operative
- * arbeid med å få utkastene laget; sluttkontrollen er en navngitt fagpersons
- * vurdering av det ferdige produktet (ANTIDEP_CONSTITUTION.md regel 5).
+ * Erstatter den tekniske flaten `/agentarbeid`, som ba mennesker velge
+ * KI-tjeneste, registrere en kjører og frakte filer mellom Antidep og et
+ * chatvindu. Ingen av delene var klinisk eller redaksjonelt arbeid (issue #99).
+ *
+ * Adressen krever ingen innlogging, og det er hele poenget: oversikten viser
+ * hva Antidep holder på med, i klinikerens språk, uten én eneste intern verdi.
+ * Selve tilstanden kommer fra databasen og ikke fra flaten, slik at historikken
+ * overlever en sideoppfriskning og en ny sesjon.
  */
-export const AGENT_WORK_PATH = '/agentarbeid' as const
+export const WORK_BOARD_PATH = '/arbeid' as const
+
+/**
+ * Fulltekstinnboksen: artiklene Antidep mangler, og opplastingen av dem.
+ *
+ * Egen adresse og ikke en del av arbeidsoversikten: den ene er åpen og
+ * read-only, den andre krever mandat og er stedet et menneske faktisk gjør noe.
+ * Det som gjøres der, er redaksjonelt — å kjenne igjen hvilken artikkel som
+ * mangler, og velge riktig fil.
+ */
+export const FULL_TEXT_INBOX_PATH = '/fulltekst' as const
+
+/**
+ * Den tekniske problemoversikten: driftens egen side.
+ *
+ * Krever admin-mandat, og sier bare hvilket område som har problemer, når det
+ * oppsto og om det fortsatt pågår. Den rå diagnosen finnes, men bare i
+ * databasen, der Claude Code og ChatGPT kan lese den (issue #99, punkt 6).
+ */
+export const TECHNICAL_PROBLEMS_PATH = '/tekniske-problemer' as const
 
 export function homePath(): string {
   return HOME_PATH
 }
 
-export function agentWorkPath(): string {
-  return AGENT_WORK_PATH
+export function workBoardPath(): string {
+  return WORK_BOARD_PATH
+}
+
+export function fullTextInboxPath(): string {
+  return FULL_TEXT_INBOX_PATH
+}
+
+export function technicalProblemsPath(): string {
+  return TECHNICAL_PROBLEMS_PATH
 }
 
 export function candidateQueuePath(): string {

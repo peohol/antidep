@@ -23,8 +23,11 @@
     "db:test": "supabase test db",
     "db:test:upgrade": "bash ./scripts/db-upgrade-antidep2.sh",
     "db:test:lock": "./scripts/db-lock-antidep2.sh",
+    "db:test:quota": "./scripts/db-diagnostics-quota.sh",
     "db:test:chain": "node scripts/agent-chain-test.ts",
     "db:test:mcp": "node scripts/agent-runner-e2e.ts",
+    "db:test:intake": "node scripts/full-text-intake-e2e.ts",
+    "db:test:diagnostics": "node scripts/diagnostics-e2e.ts",
     "agent:verify-extraction": "node --env-file-if-exists=.env.agent.local src/agents/verify-extraction-cli.ts",
     "agent:verify-claims": "node --env-file-if-exists=.env.agent.local src/agents/verify-claims-cli.ts",
     "agent:extract-evidence": "node --env-file-if-exists=.env.agent.local src/agents/extract-evidence-cli.ts",
@@ -34,10 +37,13 @@
     "agent:propose-extraction": "node src/agents/propose-extraction-cli.ts",
     "agent:draft-extraction": "node src/agents/draft-extraction-cli.ts",
     "editor:assignment": "node --env-file-if-exists=.env.editor.local src/ops/extraction-assignment-cli.ts",
+    "ops:full-text": "node --env-file-if-exists=.env.editor.local src/ops/full-text-worker-cli.ts",
+    "ops:agents": "node --env-file-if-exists=.env.editor.local src/ops/agent-platform-cli.ts",
     "verify:repo": "./scripts/verify-repo.sh"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
+    "pg": "^8.23.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router": "^8.3.0"
@@ -48,6 +54,7 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^22.20.1",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
