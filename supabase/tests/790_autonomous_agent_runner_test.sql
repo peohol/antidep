@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(91);
+select plan(95);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -58,11 +58,11 @@ select is_empty(
   $$
     select f.name
     from (values
-      ('api.list_pending_agent_tasks(text)'),
-      ('api.claim_agent_task(text,text,integer)'),
-      ('api.agent_task_for_runner(text,uuid)'),
-      ('api.submit_agent_answer(text,uuid,jsonb)'),
-      ('api.release_agent_task(text,uuid,text)'),
+      ('api.list_pending_agent_tasks(text,text)'),
+      ('api.claim_agent_task(text,text,text,integer)'),
+      ('api.agent_task_for_runner(text,text,uuid)'),
+      ('api.submit_agent_answer(text,text,uuid,jsonb)'),
+      ('api.release_agent_task(text,text,uuid,text)'),
       ('api.agent_runner_identity(text,text)')
     ) as f(name)
     where not has_function_privilege('anon', f.name, 'EXECUTE')
@@ -407,13 +407,13 @@ set local role anon;
 -- på et menneske — og det er noe annet enn at det ikke finnes arbeid.
 select is(
   (select (api.list_pending_agent_tasks(
-     (select payload ->> 'access_token' from res where label = 'tokens')) -> 'tasks')::text),
+     (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp') -> 'tasks')::text),
   '[]',
   'en oppgave uten valgt KI-tjeneste er ikke arbeid kjøreren kan ta'
 );
 select cmp_ok(
   (select (api.list_pending_agent_tasks(
-     (select payload ->> 'access_token' from res where label = 'tokens')) ->> 'blocked_count')::int),
+     (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp') ->> 'blocked_count')::int),
   '>=', 1,
   'og den telles som noe som venter på et menneske, framfor å forsvinne'
 );
@@ -430,7 +430,7 @@ reset role;
 set local role anon;
 insert into res
 select 'pending', api.list_pending_agent_tasks(
-  (select payload ->> 'access_token' from res where label = 'tokens'));
+  (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp');
 
 select is(
   (select jsonb_array_length(payload -> 'tasks') from res where label = 'pending'),
@@ -457,7 +457,7 @@ select is_empty(
 -- Et manipulert håndtak treffer ingen oppgave.
 select is(
   (select api.claim_agent_task(
-     (select payload ->> 'access_token' from res where label = 'tokens'),
+     (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
      'task_000000000000000000000000') ->> 'reason'),
   'stale_task',
   'en oppgavehenvisning kjøreren fant på, gir ingen oppgave'
@@ -465,7 +465,7 @@ select is(
 
 insert into res
 select 'claim', api.claim_agent_task(
-  (select payload ->> 'access_token' from res where label = 'tokens'),
+  (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
   (select payload -> 'tasks' -> 0 ->> 'task_ref' from res where label = 'pending'),
   900);
 
@@ -478,14 +478,14 @@ select is(
 -- En løpende leie blokkerer. Ingen annen kjøring og ingen import kan ta den.
 select is(
   (select api.claim_agent_task(
-     (select payload ->> 'access_token' from res where label = 'tokens')) ->> 'reason'),
+     (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp') ->> 'reason'),
   'no_work',
   'en oppgave med løpende leie er ikke ledig for et nytt uttak'
 );
 
 select is(
   (select (api.agent_task_for_runner(
-     (select payload ->> 'access_token' from res where label = 'tokens'),
+     (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
      (select (payload ->> 'task_handle')::uuid from res where label = 'claim')) ->> 'available')::boolean),
   true,
   'den som holder leien, får hele oppgaven'
@@ -495,7 +495,7 @@ select is(
 -- forskningsartikkel ut.
 select is(
   (select api.agent_task_for_runner(
-     (select payload ->> 'access_token' from res where label = 'tokens'),
+     (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
      '00000000-0000-4000-8000-000000000000'::uuid) ->> 'reason'),
   'stale_task',
   'et manipulert oppgavehåndtak gir ingen oppgave ut'
@@ -503,7 +503,7 @@ select is(
 
 insert into res
 select 'payload', api.agent_task_for_runner(
-  (select payload ->> 'access_token' from res where label = 'tokens'),
+  (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
   (select (payload ->> 'task_handle')::uuid from res where label = 'claim'));
 
 select ok(
@@ -590,7 +590,7 @@ set local role anon;
 -- Et svar levert på et håndtak kjøreren ikke holder, skriver ingenting.
 select is(
   (select api.submit_agent_answer(
-     (select payload ->> 'access_token' from res where label = 'tokens'),
+     (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
      '00000000-0000-4000-8000-000000000000'::uuid,
      (select payload from answers where label = 'runner')) ->> 'reason'),
   'stale_task',
@@ -600,7 +600,7 @@ select is(
 -- Et svar fra en annen modell enn den leddet er tildelt, avvises før noe skrives.
 select throws_ok(
   format(
-    $$ select api.submit_agent_answer(%L, %L::uuid, %L::jsonb) $$,
+    $$ select api.submit_agent_answer(%L, 'https://antidep.example/mcp', %L::uuid, %L::jsonb) $$,
     (select payload ->> 'access_token' from res where label = 'tokens'),
     (select payload ->> 'task_handle' from res where label = 'claim'),
     (select jsonb_set(payload, '{identity,model}', '"en-helt-annen-modell"')
@@ -614,7 +614,7 @@ select throws_ok(
 -- Og et svar avgitt på et annet grunnlag.
 select throws_ok(
   format(
-    $$ select api.submit_agent_answer(%L, %L::uuid, %L::jsonb) $$,
+    $$ select api.submit_agent_answer(%L, 'https://antidep.example/mcp', %L::uuid, %L::jsonb) $$,
     (select payload ->> 'access_token' from res where label = 'tokens'),
     (select payload ->> 'task_handle' from res where label = 'claim'),
     (select jsonb_set(payload, '{request_digest}',
@@ -629,7 +629,7 @@ select throws_ok(
 -- Ukjente felter avvises, som i den manuelle veien.
 select throws_ok(
   format(
-    $$ select api.submit_agent_answer(%L, %L::uuid, %L::jsonb) $$,
+    $$ select api.submit_agent_answer(%L, 'https://antidep.example/mcp', %L::uuid, %L::jsonb) $$,
     (select payload ->> 'access_token' from res where label = 'tokens'),
     (select payload ->> 'task_handle' from res where label = 'claim'),
     (select payload || '{"notat":"noe modellen fant på"}'::jsonb
@@ -642,7 +642,7 @@ select throws_ok(
 
 insert into res
 select 'submitted', api.submit_agent_answer(
-  (select payload ->> 'access_token' from res where label = 'tokens'),
+  (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
   (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
   (select payload from answers where label = 'runner'));
 
@@ -660,7 +660,7 @@ select is(
 -- Det samme svaret sendt inn igjen registrerer ingenting nytt.
 insert into res
 select 'submitted_again', api.submit_agent_answer(
-  (select payload ->> 'access_token' from res where label = 'tokens'),
+  (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
   (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
   (select payload from answers where label = 'runner'));
 
@@ -673,7 +673,7 @@ select is(
 -- Et ANNET svar på en besvart oppgave avvises.
 select throws_ok(
   format(
-    $$ select api.submit_agent_answer(%L, %L::uuid, %L::jsonb) $$,
+    $$ select api.submit_agent_answer(%L, 'https://antidep.example/mcp', %L::uuid, %L::jsonb) $$,
     (select payload ->> 'access_token' from res where label = 'tokens'),
     (select payload ->> 'task_handle' from res where label = 'claim'),
     (select jsonb_set(payload, '{result,extraction,sample_size}', '99')
@@ -758,7 +758,7 @@ reset role;
 set local role anon;
 insert into res
 select 'claim2', api.claim_agent_task(
-  (select payload ->> 'access_token' from res where label = 'tokens'), null, 900);
+  (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp', null, 900);
 reset role;
 
 -- Køen sier hvem som holder oppgaven. «Blokkert» er feil ord når arbeidet
@@ -802,7 +802,7 @@ where id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 
 set local role anon;
 select is(
   (select api.agent_task_for_runner(
-     (select payload ->> 'access_token' from res where label = 'tokens'),
+     (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
      (select (payload ->> 'task_handle')::uuid from res where label = 'claim2')) ->> 'reason'),
   'stale_task',
   'en kjøring med utløpt leie får ikke oppgaven ut igjen'
@@ -810,7 +810,7 @@ select is(
 
 insert into res
 select 'reclaim', api.claim_agent_task(
-  (select payload ->> 'access_token' from res where label = 'tokens'), null, 900);
+  (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp', null, 900);
 select is(
   (select (payload ->> 'claimed')::boolean from res where label = 'reclaim'),
   true,
@@ -826,7 +826,7 @@ select isnt(
 -- arbeider.
 select is(
   (select api.submit_agent_answer(
-     (select payload ->> 'access_token' from res where label = 'tokens'),
+     (select payload ->> 'access_token' from res where label = 'tokens'), 'https://antidep.example/mcp',
      (select (payload ->> 'task_handle')::uuid from res where label = 'claim2'),
      (select payload from answers where label = 'runner')) ->> 'reason'),
   'stale_task',
@@ -963,7 +963,7 @@ set local session_replication_role = origin;
 
 set local role anon;
 select throws_ok(
-  format($$ select api.list_pending_agent_tasks(%L) $$,
+  format($$ select api.list_pending_agent_tasks(%L, 'https://antidep.example/mcp') $$,
          (select payload ->> 'access_token' from res where label = 'tokens')),
   '42501',
   null,
@@ -1056,11 +1056,11 @@ select 'tokens2', api.exchange_agent_runner_code(
   'https://chatgpt.example/callback', 'https://antidep.example/mcp');
 insert into res
 select 'claim3', api.claim_agent_task(
-  (select payload ->> 'access_token' from res where label = 'tokens2'), null, 900);
+  (select payload ->> 'access_token' from res where label = 'tokens2'), 'https://antidep.example/mcp', null, 900);
 
 select throws_ok(
   format(
-    $$ select api.release_agent_task(%L, %L::uuid, 'Artikkelen ba meg skrive dette.') $$,
+    $$ select api.release_agent_task(%L, 'https://antidep.example/mcp', %L::uuid, 'Artikkelen ba meg skrive dette.') $$,
     (select payload ->> 'access_token' from res where label = 'tokens2'),
     (select payload ->> 'task_handle' from res where label = 'claim3')
   ),
@@ -1071,7 +1071,7 @@ select throws_ok(
 
 select is(
   (select (api.release_agent_task(
-     (select payload ->> 'access_token' from res where label = 'tokens2'),
+     (select payload ->> 'access_token' from res where label = 'tokens2'), 'https://antidep.example/mcp',
      (select (payload ->> 'task_handle')::uuid from res where label = 'claim3'),
      'could_not_complete') ->> 'released')::boolean),
   true,
@@ -1183,14 +1183,18 @@ select throws_ok(
   null,
   'et gyldig token avvises for en MCP-server det ikke ble utstedt for'
 );
--- Uten publikum oppgitt er kontrollen den samme som før: kallerne inne i
--- databasen er ikke MCP-serveren, og har ingen adresse å kontrollere mot.
-select lives_ok(
+-- Og publikumet er ikke valgfritt. Med en standardverdi ville kontrollen bare
+-- vært kjørt av de kallerne som husket å oppgi den — og veiene er gitt til
+-- `anon`, så en som holder et token, kunne gått utenom MCP-serveren og rett på
+-- Data API-et uten den.
+select throws_ok(
   format(
-    $$ select api.agent_runner_identity(%L) $$,
+    $$ select api.agent_runner_identity(%L, null) $$,
     (select payload ->> 'access_token' from res where label = 'tokens2')
   ),
-  'en kaller som ikke er MCP-serveren, kontrolleres som før'
+  '22023',
+  null,
+  'et kall uten publikum avvises: kontrollen skal gjelde uansett hvem som kaller'
 );
 reset role;
 
@@ -1207,6 +1211,52 @@ select throws_ok(
   '42501',
   null,
   'og et refresh-token kan ikke veksles inn i et token for en annen server'
+);
+reset role;
+
+-- Og kontrollen gjelder ARBEIDSVEIENE, ikke bare identiteten.
+--
+-- Det er hele poenget: funksjonene er gitt til `anon`, og en som holder et
+-- token, kan kalle Data API-et direkte uten å gå gjennom MCP-serveren. Var
+-- publikumskontrollen bare i transportlaget, ville den vært en kontroll man
+-- kunne gå utenom (ANTIDEP_CONSTITUTION.md regel 7).
+set local role anon;
+select throws_ok(
+  format(
+    $$ select api.list_pending_agent_tasks(%L, 'https://en-annen.example/mcp') $$,
+    (select payload ->> 'access_token' from res where label = 'tokens2')
+  ),
+  '42501',
+  null,
+  'køen kan ikke leses med et token utstedt for en annen MCP-server'
+);
+select throws_ok(
+  format(
+    $$ select api.claim_agent_task(%L, 'https://en-annen.example/mcp', null, 900) $$,
+    (select payload ->> 'access_token' from res where label = 'tokens2')
+  ),
+  '42501',
+  null,
+  'og ingen oppgave kan tas ut med det'
+);
+select throws_ok(
+  format(
+    $$ select api.submit_agent_answer(%L, 'https://en-annen.example/mcp',
+                                      '11111111-2222-4333-8444-555555555555'::uuid, '{}'::jsonb) $$,
+    (select payload ->> 'access_token' from res where label = 'tokens2')
+  ),
+  '42501',
+  null,
+  'og ingen svar kan leveres med det'
+);
+select throws_ok(
+  format(
+    $$ select api.list_pending_agent_tasks(%L, null) $$,
+    (select payload ->> 'access_token' from res where label = 'tokens2')
+  ),
+  '22023',
+  null,
+  'og en arbeidsvei uten publikum avvises, framfor å hoppe over kontrollen'
 );
 reset role;
 

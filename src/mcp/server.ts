@@ -43,7 +43,7 @@ import {
 } from './json-rpc.ts'
 import { callTool, type ToolCallTrace } from './tool-calls.ts'
 import { TOOL_DEFINITIONS } from './tools.ts'
-import type { RunnerGateway, RunnerIdentity } from './gateway.ts'
+import type { RunnerCredentials, RunnerGateway, RunnerIdentity } from './gateway.ts'
 
 /** Revisjonen som fjernet håndtrykket og gjorde protokollen tilstandsløs. */
 export const MODERN_PROTOCOL_VERSION = '2026-07-28'
@@ -251,7 +251,7 @@ function methodNotFound(message: JsonRpcRequest, note: string): McpDispatchResul
 export async function dispatchMcpMessage(
   message: JsonRpcRequest,
   era: McpEra,
-  accessToken: string,
+  credentials: RunnerCredentials,
   identity: RunnerIdentity,
   deps: McpServerDependencies,
 ): Promise<McpDispatchResult> {
@@ -331,7 +331,7 @@ export async function dispatchMcpMessage(
           ? (rawArgs as Record<string, unknown>)
           : {}
 
-      const outcome = await callTool({ gateway: deps.gateway, accessToken, name, args })
+      const outcome = await callTool({ gateway: deps.gateway, credentials, name, args })
       return {
         response: jsonRpcSuccess(message.id, shape(era, { ...outcome.result })),
         trace: outcome.trace,

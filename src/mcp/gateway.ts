@@ -63,26 +63,34 @@ export type RunnerDatabase = {
         p_client_id: string
         p_resource: string
       }>
-      list_pending_agent_tasks: RunnerRpc<{ p_access_token: string }>
+      list_pending_agent_tasks: RunnerRpc<{ p_access_token: string; p_resource: string }>
       claim_agent_task: RunnerRpc<{
         p_access_token: string
+        p_resource: string
         p_task_ref: string | null
         p_lease_seconds: number
       }>
-      agent_task_for_runner: RunnerRpc<{ p_access_token: string; p_task_handle: string }>
+      agent_task_for_runner: RunnerRpc<{
+        p_access_token: string
+        p_resource: string
+        p_task_handle: string
+      }>
       submit_agent_answer: RunnerRpc<{
         p_access_token: string
+        p_resource: string
         p_task_handle: string
         p_answer: Record<string, unknown>
       }>
       release_agent_task: RunnerRpc<{
         p_access_token: string
+        p_resource: string
         p_task_handle: string
         p_reason_code: string | null
       }>
-      agent_runner_identity: RunnerRpc<{ p_access_token: string; p_resource: string | null }>
+      agent_runner_identity: RunnerRpc<{ p_access_token: string; p_resource: string }>
       record_agent_runner_outcome: RunnerRpc<{
         p_access_token: string
+        p_resource: string
         p_tool_name: string
         p_outcome: string
         p_task_handle: string | null
@@ -171,6 +179,19 @@ export const RUNNER_RELEASE_REASONS = [
 
 export type RunnerReleaseReason = (typeof RUNNER_RELEASE_REASONS)[number]
 
+/**
+ * Tokenet og den adressen det gjelder for, som én verdi.
+ *
+ * De to hører sammen og reiser sammen. Et token uten publikum kunne ellers ha
+ * blitt sendt videre alene, og publikumskontrollen ville vært en kontroll bare
+ * de kallerne som husket den, faktisk kjørte (RFC 8707).
+ */
+export interface RunnerCredentials {
+  readonly accessToken: string
+  /** Den kanoniske adressen til MCP-serveren tokenet brukes mot. */
+  readonly resource: string
+}
+
 /** Hvem et token tilhører. Bærer ingen hemmelighet. */
 export interface RunnerIdentity {
   readonly connectionKey: string
@@ -189,7 +210,7 @@ export interface RunnerGateway {
    * første verktøykallet — og en MCP-klient trenger nettopp avslaget for å vite
    * at den skal fornye.
    */
-  identify(accessToken: string, resource: string): Promise<RunnerIdentity>
+  identify(credentials: RunnerCredentials): Promise<RunnerIdentity>
 
   registerClient(input: {
     readonly clientName: string
@@ -220,27 +241,27 @@ export interface RunnerGateway {
     readonly resource: string
   }): Promise<RunnerTokenSet>
 
-  listPendingTasks(accessToken: string): Promise<PendingTasks>
+  listPendingTasks(credentials: RunnerCredentials): Promise<PendingTasks>
 
   claimTask(input: {
-    readonly accessToken: string
+    readonly credentials: RunnerCredentials
     readonly taskRef: string | null
     readonly leaseSeconds: number
   }): Promise<ClaimResult>
 
   readTask(input: {
-    readonly accessToken: string
+    readonly credentials: RunnerCredentials
     readonly taskHandle: string
   }): Promise<TaskResult>
 
   submitAnswer(input: {
-    readonly accessToken: string
+    readonly credentials: RunnerCredentials
     readonly taskHandle: string
     readonly answer: Record<string, unknown>
   }): Promise<SubmitResult>
 
   releaseTask(input: {
-    readonly accessToken: string
+    readonly credentials: RunnerCredentials
     readonly taskHandle: string
     /**
      * Hvorfor oppgaven gis fra seg, som en lukket klasse.
@@ -253,7 +274,7 @@ export interface RunnerGateway {
   }): Promise<{ readonly released: boolean; readonly reason?: string }>
 
   recordOutcome(input: {
-    readonly accessToken: string
+    readonly credentials: RunnerCredentials
     readonly toolName: string
     readonly outcome: RunnerOutcome
     readonly taskHandle: string | null
@@ -339,12 +360,12 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
   }
 
   return {
-    async identify(accessToken, resource) {
+    async identify(credentials) {
       const where = 'api.agent_runner_identity'
       const row = record(
         await call('agent_runner_identity', {
-          p_access_token: accessToken,
-          p_resource: resource,
+          p_access_token: credentials.accessToken,
+          p_resource: credentials.resource,
         }),
         where,
       )
@@ -417,10 +438,13 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
       )
     },
 
-    async listPendingTasks(accessToken) {
+    async listPendingTasks(credentials) {
       const where = 'api.list_pending_agent_tasks'
       const row = record(
-        await call('list_pending_agent_tasks', { p_access_token: accessToken }),
+        await call('list_pending_agent_tasks', {
+          p_access_token: credentials.accessToken,
+          p_resource: credentials.resource,
+        }),
         where,
       )
       const rows = row['tasks']
@@ -447,7 +471,8 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
       const where = 'api.claim_agent_task'
       const row = record(
         await call('claim_agent_task', {
-          p_access_token: input.accessToken,
+          p_access_token: input.credentials.accessToken,
+          p_resource: input.credentials.resource,
           p_task_ref: input.taskRef,
           p_lease_seconds: input.leaseSeconds,
         }),
@@ -476,7 +501,8 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
       const where = 'api.agent_task_for_runner'
       const row = record(
         await call('agent_task_for_runner', {
-          p_access_token: input.accessToken,
+          p_access_token: input.credentials.accessToken,
+          p_resource: input.credentials.resource,
           p_task_handle: input.taskHandle,
         }),
         where,
@@ -498,7 +524,8 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
       const where = 'api.submit_agent_answer'
       const row = record(
         await call('submit_agent_answer', {
-          p_access_token: input.accessToken,
+          p_access_token: input.credentials.accessToken,
+          p_resource: input.credentials.resource,
           p_task_handle: input.taskHandle,
           // Ordrett. Databasen regner fingeravtrykket av nøyaktig dette svaret
           // og bruker det til å kjenne igjen det samme svaret sendt inn på nytt.
@@ -524,7 +551,8 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
       const where = 'api.release_agent_task'
       const row = record(
         await call('release_agent_task', {
-          p_access_token: input.accessToken,
+          p_access_token: input.credentials.accessToken,
+          p_resource: input.credentials.resource,
           p_task_handle: input.taskHandle,
           p_reason_code: input.reasonCode,
         }),
@@ -536,7 +564,8 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
 
     async recordOutcome(input) {
       await call('record_agent_runner_outcome', {
-        p_access_token: input.accessToken,
+        p_access_token: input.credentials.accessToken,
+        p_resource: input.credentials.resource,
         p_tool_name: input.toolName,
         p_outcome: input.outcome,
         p_task_handle: input.taskHandle,

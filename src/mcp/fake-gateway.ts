@@ -16,7 +16,13 @@ import type { HandoffRole } from '../agents/agent-task.ts'
 import { parseAgentTask } from '../agents/agent-task.ts'
 import { taskPayload } from '../agents/handoff-test-support.ts'
 import { GatewayError } from './errors.ts'
-import type { ClaimResult, RunnerGateway, SubmitResult, TaskResult } from './gateway.ts'
+import type {
+  ClaimResult,
+  RunnerCredentials,
+  RunnerGateway,
+  SubmitResult,
+  TaskResult,
+} from './gateway.ts'
 
 export const FAKE_PAIRING_CODE = 'f'.repeat(64)
 export const FAKE_ACCESS_TOKEN = 'a'.repeat(64)
@@ -61,9 +67,20 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
   let answered: string | null = null
   let claims = 0
 
-  function authenticated(token: string): void {
-    if (token !== FAKE_ACCESS_TOKEN) {
+  /**
+   * Tokenet OG publikumet, som i databasen.
+   *
+   * Grenseflaten speiler regelen den står for: et gyldig token brukt mot en
+   * annen adresse enn den ble utstedt for, er ikke autentisert her heller. En
+   * attrapp som bare så på tokenet, ville gjort prøvene blinde for nettopp den
+   * kontrollen (RFC 8707).
+   */
+  function authenticated(credentials: RunnerCredentials): void {
+    if (credentials.accessToken !== FAKE_ACCESS_TOKEN) {
       throw new GatewayError('Tilkoblingen er ikke autentisert.', '42501')
+    }
+    if (credentials.resource !== FAKE_RESOURCE) {
+      throw new GatewayError('Tokenet er ikke utstedt for denne adressen.', '42501')
     }
   }
 
@@ -82,13 +99,8 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
       leaseValid = false
     },
 
-    identify(accessToken, resource) {
-      authenticated(accessToken)
-      // Publikum er en del av tokenet, ikke av kallet: et token utstedt for en
-      // annen MCP-server skal ikke virke her (RFC 8707).
-      if (resource !== FAKE_RESOURCE) {
-        throw new GatewayError('Tokenet er ikke utstedt for denne adressen.', '42501')
-      }
+    identify(credentials) {
+      authenticated(credentials)
       return Promise.resolve({
         connectionKey: `agent-runner:${role.replaceAll('_', '-')}`,
         displayName: 'Prøvekjøreren',
@@ -146,8 +158,8 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
       })
     },
 
-    listPendingTasks(accessToken) {
-      authenticated(accessToken)
+    listPendingTasks(credentials) {
+      authenticated(credentials)
       const available = options.empty === true || answered !== null
       return Promise.resolve({
         agentRole: role,
@@ -167,7 +179,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
     },
 
     claimTask(input) {
-      authenticated(input.accessToken)
+      authenticated(input.credentials)
       if (options.empty === true || answered !== null) {
         return Promise.resolve({ claimed: false, reason: 'no_work', agentRole: role })
       }
@@ -190,7 +202,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
     },
 
     readTask(input) {
-      authenticated(input.accessToken)
+      authenticated(input.credentials)
       if (!leaseValid || input.taskHandle !== FAKE_TASK_HANDLE) {
         return Promise.resolve({ available: false, reason: 'stale_task' } satisfies TaskResult)
       }
@@ -203,7 +215,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
     },
 
     submitAnswer(input) {
-      authenticated(input.accessToken)
+      authenticated(input.credentials)
       if (!leaseValid || input.taskHandle !== FAKE_TASK_HANDLE) {
         return Promise.resolve({ accepted: false, reason: 'stale_task' } satisfies SubmitResult)
       }
@@ -236,7 +248,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
     },
 
     releaseTask(input) {
-      authenticated(input.accessToken)
+      authenticated(input.credentials)
       released.push(input.reasonCode)
       if (!leaseValid || input.taskHandle !== FAKE_TASK_HANDLE) {
         return Promise.resolve({ released: false, reason: 'stale_task' })
@@ -246,7 +258,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
     },
 
     recordOutcome(input) {
-      authenticated(input.accessToken)
+      authenticated(input.credentials)
       recorded.push(input.outcome)
       return Promise.resolve()
     },

@@ -240,13 +240,13 @@ select is_empty(
         'api.authorize_agent_runner(text,text,text,text,text,text)',
         'api.exchange_agent_runner_code(text,text,text,text,text)',
         'api.refresh_agent_runner_token(text,text,text)',
-        'api.list_pending_agent_tasks(text)',
-        'api.claim_agent_task(text,text,integer)',
-        'api.agent_task_for_runner(text,uuid)',
-        'api.submit_agent_answer(text,uuid,jsonb)',
-        'api.release_agent_task(text,uuid,text)',
+        'api.list_pending_agent_tasks(text,text)',
+        'api.claim_agent_task(text,text,text,integer)',
+        'api.agent_task_for_runner(text,text,uuid)',
+        'api.submit_agent_answer(text,text,uuid,jsonb)',
+        'api.release_agent_task(text,text,uuid,text)',
         'api.agent_runner_identity(text,text)',
-        'api.record_agent_runner_outcome(text,text,text,uuid)'
+        'api.record_agent_runner_outcome(text,text,text,text,uuid)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

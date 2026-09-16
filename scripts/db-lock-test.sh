@@ -1135,6 +1135,10 @@ kjorer_redaktor='7e000000-0000-4000-8000-0000000000e0'
 # prøven ville vært grønn uten å ha prøvd det den finnes for. Henvisningen er
 # den modellen selv får: utledet av jobben og tilkoblingen, aldri en
 # databaseidentitet.
+# Publikumet tokenet ble utstedt for. Det følger hvert kall helt inn i
+# databasen: kontrollen skal gjelde også for en kaller som går utenom
+# MCP-serveren, slik denne prøven gjør (RFC 8707).
+kjorer_res='https://laaseprove.example/mcp'
 kjorer_ref=$(les "select workflow.agent_runner_task_ref(
   '7e000000-0000-4000-8000-0000000000c1'::uuid, '$kjorer_jobb'::uuid)")
 
@@ -1148,7 +1152,7 @@ kapp_om_uttaket() {
 
   (
     printf "begin;\n"
-    printf "select api.claim_agent_task('%s', '%s', 900);\n" "$kjorer_token" "$kjorer_ref"
+    printf "select api.claim_agent_task('%s', '%s', '%s', 900);\n" "$kjorer_token" "$kjorer_res" "$kjorer_ref"
     printf "\\\\echo TATT\n"
     printf "\\\\o /dev/null\n"
     cat "$styr"
@@ -1172,7 +1176,7 @@ kapp_om_uttaket() {
   set +e
   psql "$DB_URL" -X -tA > "$b_log" 2>&1 <<SQL
 set lock_timeout = '2s';
-select api.claim_agent_task('$kjorer_token', '$kjorer_ref', 900);
+select api.claim_agent_task('$kjorer_token', '$kjorer_res', '$kjorer_ref', 900);
 SQL
   set -e
 
@@ -1197,7 +1201,7 @@ SQL
 kapp_om_uttaket
 
 # Prøve 17 — økt A commiter uttaket, og den manuelle importveien avvises.
-handle=$(les "select api.claim_agent_task('$kjorer_token', '$kjorer_ref', 900) ->> 'task_handle'")
+handle=$(les "select api.claim_agent_task('$kjorer_token', '$kjorer_res', '$kjorer_ref', 900) ->> 'task_handle'")
 if [ -z "$handle" ]; then
   printf 'AVVIK    kjøreren fikk ikke tatt oppgaven etter at prøve 16 rullet tilbake\n' >&2
   exit 1
@@ -1232,7 +1236,7 @@ psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
    set lease_expires_at = now() - interval '1 minute'
    where id = '$kjorer_jobb'" > /dev/null
 
-nytt_handle=$(les "select api.claim_agent_task('$kjorer_token', '$kjorer_ref', 900) ->> 'task_handle'")
+nytt_handle=$(les "select api.claim_agent_task('$kjorer_token', '$kjorer_res', '$kjorer_ref', 900) ->> 'task_handle'")
 if [ -z "$nytt_handle" ] || [ "$nytt_handle" = "$handle" ]; then
   printf 'AVVIK    en utløpt leie kan tas på nytt med en ny nøkkel\n' >&2
   printf '         Uttaket fikk ikke sin egen nøkkel, og en kjøring som mistet leien kunne skrevet over den som nå arbeider (DATABASE_ARCHITECTURE.md §33).\n' >&2
@@ -1240,7 +1244,7 @@ if [ -z "$nytt_handle" ] || [ "$nytt_handle" = "$handle" ]; then
 fi
 printf 'ok       en utløpt leie kan tas på nytt, og uttaket får sin egen nøkkel\n'
 
-foreldet=$(les "select api.submit_agent_answer('$kjorer_token', '$handle'::uuid, '{}'::jsonb) ->> 'reason'")
+foreldet=$(les "select api.submit_agent_answer('$kjorer_token', '$kjorer_res', '$handle'::uuid, '{}'::jsonb) ->> 'reason'")
 if [ "$foreldet" = "stale_task" ]; then
   printf 'ok       en kjøring med utløpt leie kan ikke levere over uttaket som nå arbeider\n'
 else
@@ -1251,7 +1255,7 @@ fi
 
 # Oppgaven gis fra seg igjen, slik at databasen ikke blir stående med en leie
 # fra en prøve som er ferdig.
-les "select api.release_agent_task('$kjorer_token', '$nytt_handle'::uuid, 'could_not_complete')" > /dev/null
+les "select api.release_agent_task('$kjorer_token', '$kjorer_res', '$nytt_handle'::uuid, 'could_not_complete')" > /dev/null
 
 # Prøve 19 — taket på klientregistreringen er én avgjørelse om gangen
 #

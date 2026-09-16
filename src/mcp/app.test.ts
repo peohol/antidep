@@ -606,6 +606,8 @@ function modernRpc(
     readonly headers?: Record<string, string | null>
     readonly metaVersion?: string | null
     readonly version?: string
+    /** Hele `_meta` erstattet, for å prøve konvolutten felt for felt. */
+    readonly meta?: Record<string, unknown>
   } = {},
 ): Request {
   const headers: Record<string, string> = {
@@ -628,15 +630,17 @@ function modernRpc(
   const metaVersion =
     overrides.metaVersion === undefined ? (overrides.version ?? MODERN) : overrides.metaVersion
   const meta =
-    metaVersion === null
-      ? {}
-      : {
-          _meta: {
-            'io.modelcontextprotocol/protocolVersion': metaVersion,
-            'io.modelcontextprotocol/clientInfo': { name: 'prøve', version: '1' },
-            'io.modelcontextprotocol/clientCapabilities': {},
-          },
-        }
+    overrides.meta !== undefined
+      ? { _meta: overrides.meta }
+      : metaVersion === null
+        ? {}
+        : {
+            _meta: {
+              'io.modelcontextprotocol/protocolVersion': metaVersion,
+              'io.modelcontextprotocol/clientInfo': { name: 'prøve', version: '1' },
+              'io.modelcontextprotocol/clientCapabilities': {},
+            },
+          }
   return new Request(`${BASE}/mcp`, {
     method: 'POST',
     headers,
@@ -719,66 +723,124 @@ describe('den moderne epoken', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Headerne speiler kroppen, og avviket avvises
+// Konvolutten og headerne, og de to feilformene
 //
-// Et sted som ruter på headeren mens serveren utfører kroppen, er en åpning.
-// Spesifikasjonen krever derfor at serveren avviser avviket med -32020, og det
-// er hele grunnen til at hvert av tilfellene under har sin egen prøve.
+// Spesifikasjonen skiller skarpt: et påkrevd felt som mangler i `params._meta`,
+// gjør meldingen malformed og skal avvises med -32602, mens en header som
+// mangler eller sier noe annet enn kroppen, er -32020. Forskjellen er ikke
+// kosmetisk — en klient bruker koden til å vite om den skal rette meldingen sin
+// eller transporten sin.
 // ---------------------------------------------------------------------------
-describe('speilede headere', () => {
-  const mismatches: readonly {
+describe('den moderne konvolutten', () => {
+  const rejections: readonly {
     readonly name: string
+    readonly code: number
     readonly method: string
     readonly params: Record<string, unknown>
     readonly overrides: Parameters<typeof modernRpc>[2]
   }[] = [
+    // -32020: transporten sier noe annet enn meldingen.
     {
       name: 'Mcp-Method mangler',
+      code: -32020,
       method: 'tools/list',
       params: {},
       overrides: { headers: { 'mcp-method': null } },
     },
     {
       name: 'Mcp-Method sier noe annet enn kroppen',
+      code: -32020,
       method: 'tools/list',
       params: {},
       overrides: { headers: { 'mcp-method': 'tools/call' } },
     },
     {
       name: 'Mcp-Name mangler på et verktøykall',
+      code: -32020,
       method: 'tools/call',
       params: { name: 'list_pending_agent_tasks', arguments: {} },
       overrides: { headers: { 'mcp-name': null } },
     },
     {
       name: 'Mcp-Name sier et annet verktøy enn kroppen',
+      code: -32020,
       method: 'tools/call',
       params: { name: 'list_pending_agent_tasks', arguments: {} },
       overrides: { headers: { 'mcp-name': 'submit_agent_answer' } },
     },
     {
-      name: 'protokollversjonen mangler i _meta',
-      method: 'tools/list',
-      params: {},
-      overrides: { metaVersion: null },
-    },
-    {
       name: 'protokollversjonen i _meta er ikke den i headeren',
+      code: -32020,
       method: 'tools/list',
       params: {},
       overrides: { metaVersion: '2025-11-25' },
     },
+    // -32602: meldingen mangler et felt konvolutten krever.
+    {
+      name: 'protokollversjonen mangler i _meta',
+      code: -32602,
+      method: 'tools/list',
+      params: {},
+      overrides: { meta: {} },
+    },
+    {
+      name: 'clientCapabilities mangler i _meta',
+      code: -32602,
+      method: 'tools/list',
+      params: {},
+      overrides: { meta: { 'io.modelcontextprotocol/protocolVersion': MODERN } },
+    },
+    {
+      name: 'clientCapabilities ikke er et objekt',
+      code: -32602,
+      method: 'tools/list',
+      params: {},
+      overrides: {
+        meta: {
+          'io.modelcontextprotocol/protocolVersion': MODERN,
+          'io.modelcontextprotocol/clientCapabilities': 'ingen',
+        },
+      },
+    },
+    {
+      name: 'clientInfo er til stede men ikke et objekt',
+      code: -32602,
+      method: 'tools/list',
+      params: {},
+      overrides: {
+        meta: {
+          'io.modelcontextprotocol/protocolVersion': MODERN,
+          'io.modelcontextprotocol/clientCapabilities': {},
+          'io.modelcontextprotocol/clientInfo': 'en klient',
+        },
+      },
+    },
   ]
 
-  for (const { name, method, params, overrides } of mismatches) {
-    it(`avviser med -32020 når ${name}`, async () => {
+  for (const { name, code, method, params, overrides } of rejections) {
+    it(`avviser med ${String(code)} når ${name}`, async () => {
       const { status, body } = await modernSend(method, params, overrides)
       expect(status).toBe(400)
-      expect(errorOf(body)['code']).toBe(-32020)
+      expect(errorOf(body)['code']).toBe(code)
     })
   }
 
-  it('utfører ingenting når headerne ikke holder', async () => {
+  // clientInfo er valgfri, og fraværet skal ikke koste noe.
+  it('godtar en forespørsel uten clientInfo', async () => {
+    const { status } = await modernSend(
+      'tools/list',
+      {},
+      {
+        meta: {
+          'io.modelcontextprotocol/protocolVersion': MODERN,
+          'io.modelcontextprotocol/clientCapabilities': {},
+        },
+      },
+    )
+    expect(status).toBe(200)
+  })
+
+  it('utfører ingenting når konvolutten ikke holder', async () => {
     const gateway = createFakeGateway()
     await send(
       'mcp',
@@ -786,6 +848,20 @@ describe('speilede headere', () => {
         'tools/call',
         { name: 'claim_agent_task', arguments: {} },
         { headers: { 'mcp-name': 'list_pending_agent_tasks' } },
+      ),
+      gateway,
+    )
+    expect(gateway.claims).toBe(0)
+  })
+
+  it('utfører ingenting når clientCapabilities mangler', async () => {
+    const gateway = createFakeGateway()
+    await send(
+      'mcp',
+      modernRpc(
+        'tools/call',
+        { name: 'claim_agent_task', arguments: {} },
+        { meta: { 'io.modelcontextprotocol/protocolVersion': MODERN } },
       ),
       gateway,
     )

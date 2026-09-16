@@ -613,7 +613,7 @@ revoke execute on function workflow.reject_agent_runner_authentication() from pu
 -- Tokenet lest som en tilkobling, eller et avslag.
 create function workflow.authenticated_runner_connection(
   p_access_token text,
-  p_resource text default null
+  p_resource text
 )
   returns workflow.agent_runner_connections
   language plpgsql
@@ -622,18 +622,24 @@ create function workflow.authenticated_runner_connection(
 as $$
 declare
   v_connection workflow.agent_runner_connections;
+  v_resource text;
 begin
   if p_access_token is null then
     perform workflow.reject_agent_runner_authentication();
   end if;
+  -- Publikumet er ikke valgfritt, og har ingen standardverdi.
+  --
+  -- Med `default null` ville kontrollen bare vært kjørt av de kallerne som
+  -- husket å oppgi den — og de kontrollerte veiene er gitt til `anon`, så en som
+  -- holder et token, kunne kalt Data API-et direkte uten den og sluppet forbi.
+  -- Autorisasjonen ligger i databasen og ikke i serveren; da må den gjelde
+  -- uansett hvem som kaller (ANTIDEP_CONSTITUTION.md regel 7).
+  v_resource := workflow.assert_agent_runner_resource(p_resource);
 
   -- Alle betingelsene i ett predikat, med ett svar: rekkefølgen skal ikke bli
-  -- et implisitt valg med sin egen observerbare oppførsel.
-  --
-  -- Publikum er en av dem. Oppgir kalleren hvilken MCP-server den er, må tokenet
-  -- være utstedt for nettopp den (RFC 8707): et token utstedt for en annen
-  -- tjeneste skal ikke virke her, uansett hvor gyldig det er der det hører
-  -- hjemme.
+  -- et implisitt valg med sin egen observerbare oppførsel. Publikum er en av
+  -- dem: et token utstedt for en annen tjeneste skal ikke virke her, uansett
+  -- hvor gyldig det er der det hører hjemme (RFC 8707).
   select c.* into v_connection
   from workflow.agent_runner_secrets s
   join workflow.agent_runner_connections c on c.id = s.connection_id
@@ -641,7 +647,7 @@ begin
     and s.secret_hash = workflow.agent_runner_secret_hash('access_token', p_access_token)
     and s.revoked_at is null
     and s.expires_at > statement_timestamp()
-    and (p_resource is null or s.resource = p_resource)
+    and s.resource = v_resource
     and c.valid_from <= statement_timestamp()
     and (c.valid_to is null or c.valid_to > statement_timestamp());
 
@@ -654,7 +660,7 @@ end;
 $$;
 
 comment on function workflow.authenticated_runner_connection(text, text) is
-  'Tilkoblingen et access-token tilhører, eller et avslag (ANTIDEP_CONSTITUTION.md regel 7). Kontrollerer tokenets gyldighet, publikumet og tilkoblingens gyldighet i ett predikat, på kallets eget tidspunkt, slik at en tilbaketrekking virker umiddelbart. p_resource er den kanoniske adressen kalleren er: oppgis den, må tokenet være utstedt for nettopp den (RFC 8707, MCP 2026-07-28 «Token Handling»). Returnerer aldri noe delvis: en kaller som kommer forbi denne, har en gyldig tilkobling med en rolle.';
+  'Tilkoblingen et access-token tilhører, eller et avslag (ANTIDEP_CONSTITUTION.md regel 7). Kontrollerer tokenets gyldighet, publikumet og tilkoblingens gyldighet i ett predikat, på kallets eget tidspunkt, slik at en tilbaketrekking virker umiddelbart. p_resource er den kanoniske adressen kalleren bruker tokenet mot, og er PÅKREVD uten standardverdi: med en standardverdi ville publikumskontrollen bare vært kjørt av de kallerne som husket å oppgi den, og de kontrollerte veiene er gitt til anon — en som holder et token, kunne kalt Data API-et direkte uten den og sluppet forbi (RFC 8707, MCP 2026-07-28 «Token Handling»). Returnerer aldri noe delvis: en kaller som kommer forbi denne, har en gyldig tilkobling med en rolle.';
 
 revoke execute on function workflow.authenticated_runner_connection(text, text) from public;
 
@@ -2342,7 +2348,7 @@ grant execute on function api.refresh_agent_runner_token(text, text, text) to an
 -- den 401-en for å vite at den skal fornye.
 create function api.agent_runner_identity(
   p_access_token text,
-  p_resource text default null
+  p_resource text
 )
   returns jsonb
   language plpgsql
@@ -2368,7 +2374,7 @@ comment on function api.agent_runner_identity(text, text) is
 revoke execute on function api.agent_runner_identity(text, text) from public;
 grant execute on function api.agent_runner_identity(text, text) to anon, authenticated;
 
-create function api.list_pending_agent_tasks(p_access_token text)
+create function api.list_pending_agent_tasks(p_access_token text, p_resource text)
   returns jsonb
   language plpgsql
   security definer
@@ -2379,7 +2385,7 @@ declare
   v_tasks jsonb;
   v_blocked integer;
 begin
-  v_connection := workflow.authenticated_runner_connection(p_access_token);
+  v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
 
   -- Bare det kjøreren trenger for å velge neste oppgave: hva den gjelder, og en
   -- ugjennomsiktig henvisning. Hele oppgaven — som bærer forskningsartikkelen —
@@ -2431,14 +2437,15 @@ begin
 end;
 $$;
 
-comment on function api.list_pending_agent_tasks(text) is
+comment on function api.list_pending_agent_tasks(text, text) is
   'Hva som venter i nettopp dette agentleddet, slik en autonom kjører trenger det: hva oppgaven gjelder, og en ugjennomsiktig henvisning (ANTIDEP_CONSTITUTION.md regel 2, 4). Inneholder ingen forskningsartikkel og ingen databaseidentitet — hele oppgaven hentes først når den faktisk er tatt, slik at én planlagt kjøring ikke laster ned hele fulltekstbiblioteket bare for å se hva som finnes. blocked_count teller de oppgavene som venter på et menneske, fordi «ingen arbeid» og «faglig blokkert» er to forskjellige tilstander. Rollen er tilkoblingens egen og ikke en parameter. EXECUTE går til anon: tokenet og ikke Data API-rollen er kontrollen.';
 
-revoke execute on function api.list_pending_agent_tasks(text) from public;
-grant execute on function api.list_pending_agent_tasks(text) to anon, authenticated;
+revoke execute on function api.list_pending_agent_tasks(text, text) from public;
+grant execute on function api.list_pending_agent_tasks(text, text) to anon, authenticated;
 
 create function api.claim_agent_task(
   p_access_token text,
+  p_resource text,
   p_task_ref text default null,
   p_lease_seconds integer default 900
 )
@@ -2455,7 +2462,7 @@ declare
   v_lease uuid;
   v_problem text;
 begin
-  v_connection := workflow.authenticated_runner_connection(p_access_token);
+  v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
 
   if p_lease_seconds is null or p_lease_seconds < 30 or p_lease_seconds > 86400 then
     raise exception using
@@ -2566,13 +2573,17 @@ begin
 end;
 $$;
 
-comment on function api.claim_agent_task(text, text, integer) is
+comment on function api.claim_agent_task(text, text, text, integer) is
   'Tar ut én ekstern agentoppgave for tilkoblingens eget agentledd, med en leie som løper ut (DATABASE_ARCHITECTURE.md §33, §43). Bruker FOR UPDATE SKIP LOCKED og leser utførbarheten på nytt etter at låsen er tatt, slik at to planlagte kjøringer som spør samtidig aldri kan få den samme oppgaven, og slik at et uttak ikke hviler på en tilstand som rakk å endre seg. En oppgave med en løpende leie er ikke ledig; en med utløpt leie er det, fordi nettopp den tilstanden skal overleve at en kjøring døde. Svarer {claimed: false, reason: "no_work"} når det ikke finnes arbeid; det er ikke en feil. Håndtaket som returneres, ER uttakets leienøkkel: den byttes ut ved hvert uttak, så et håndtak fra en utløpt leie treffer ingenting. EXECUTE går til anon: tokenet og ikke Data API-rollen er kontrollen.';
 
-revoke execute on function api.claim_agent_task(text, text, integer) from public;
-grant execute on function api.claim_agent_task(text, text, integer) to anon, authenticated;
+revoke execute on function api.claim_agent_task(text, text, text, integer) from public;
+grant execute on function api.claim_agent_task(text, text, text, integer) to anon, authenticated;
 
-create function api.agent_task_for_runner(p_access_token text, p_task_handle uuid)
+create function api.agent_task_for_runner(
+  p_access_token text,
+  p_resource text,
+  p_task_handle uuid
+)
   returns jsonb
   language plpgsql
   security definer
@@ -2582,7 +2593,7 @@ declare
   v_connection workflow.agent_runner_connections;
   v_job workflow.pipeline_jobs;
 begin
-  v_connection := workflow.authenticated_runner_connection(p_access_token);
+  v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
 
   select j.* into v_job
   from workflow.pipeline_jobs j
@@ -2618,14 +2629,15 @@ begin
 end;
 $$;
 
-comment on function api.agent_task_for_runner(text, uuid) is
+comment on function api.agent_task_for_runner(text, text, uuid) is
   'Hele agentoppgaven for det uttaket håndtaket navngir — nøyaktig den oppgaven api.agent_task_payload(uuid) bygger, av de samme radene og med det samme avtrykket (ANTIDEP_CONSTITUTION.md regel 2). Leveres bare til den kjøreren som faktisk holder den løpende leien, og bare i tilkoblingens eget agentledd: et håndtak fra en utløpt eller overtatt leie svarer stale_task framfor å gi fra seg en forskningsartikkel. Svarer med en tilstand framfor å kaste, fordi et foreldet håndtak er en normal ting som skjer for en planlagt kjøring og ikke en teknisk feil.';
 
-revoke execute on function api.agent_task_for_runner(text, uuid) from public;
-grant execute on function api.agent_task_for_runner(text, uuid) to anon, authenticated;
+revoke execute on function api.agent_task_for_runner(text, text, uuid) from public;
+grant execute on function api.agent_task_for_runner(text, text, uuid) to anon, authenticated;
 
 create function api.submit_agent_answer(
   p_access_token text,
+  p_resource text,
   p_task_handle uuid,
   p_answer jsonb
 )
@@ -2639,7 +2651,7 @@ declare
   v_job workflow.pipeline_jobs;
   v_outcome jsonb;
 begin
-  v_connection := workflow.authenticated_runner_connection(p_access_token);
+  v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
 
   select j.* into v_job
   from workflow.pipeline_jobs j
@@ -2678,11 +2690,11 @@ begin
 end;
 $$;
 
-comment on function api.submit_agent_answer(text, uuid, jsonb) is
+comment on function api.submit_agent_answer(text, text, uuid, jsonb) is
   'Leverer ett agentsvar fra en autonom kjører, og registrerer det gjennom workflow.record_agent_handoff_answer(uuid, jsonb, uuid, uuid, uuid) — nøyaktig den samme autoritative skriveveien et opplastet svar.json går gjennom (ANTIDEP_CONSTITUTION.md regel 3, 4, 7). MCP-veien kan derfor ikke få større faglige skrivefullmakter enn den manuelle. Svaret leveres under det uttaket kjøreren holder: et foreldet håndtak avvises før noe skrives, og en avvisning fra den autoritative kontrollen ruller hele leveringen tilbake framfor å etterlate et halvt registrert svar. Aktøren svaret føres på, er mennesket som registrerte kjøreren — arbeidet er en KI-agents og står på kjøringen; en kjører kan ikke være sin egen fullmakt.';
 
-revoke execute on function api.submit_agent_answer(text, uuid, jsonb) from public;
-grant execute on function api.submit_agent_answer(text, uuid, jsonb) to anon, authenticated;
+revoke execute on function api.submit_agent_answer(text, text, uuid, jsonb) from public;
+grant execute on function api.submit_agent_answer(text, text, uuid, jsonb) to anon, authenticated;
 
 -- Hvorfor en kjører ga en oppgave fra seg, som en lukket klasse.
 --
@@ -2710,6 +2722,7 @@ revoke execute on function workflow.agent_release_note(text) from public;
 
 create function api.release_agent_task(
   p_access_token text,
+  p_resource text,
   p_task_handle uuid,
   p_reason_code text default null
 )
@@ -2723,7 +2736,7 @@ declare
   v_job workflow.pipeline_jobs;
   v_note text;
 begin
-  v_connection := workflow.authenticated_runner_connection(p_access_token);
+  v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
 
   if p_reason_code is not null then
     v_note := workflow.agent_release_note(p_reason_code);
@@ -2775,11 +2788,11 @@ begin
 end;
 $$;
 
-comment on function api.release_agent_task(text, uuid, text) is
+comment on function api.release_agent_task(text, text, uuid, text) is
   'Gir en tatt oppgave fra seg med det samme, slik at den blir ledig igjen framfor å stå låst til leien løper ut (DATABASE_ARCHITECTURE.md §33). Forsøket står: et uttak ER et forsøk, og en kjører som kunne gi oppgaven fra seg uten å bruke et, kunne prøvd i det uendelige uten at noe i køen fortalte at det gikk galt. Grunnen er en lukket klasse og ikke fri tekst: en setning fra modellen ville vært modellinnhold i det operative sporet, og Antidep skriver derfor selv setningen klassen står for (workflow.agent_release_note(text)).';
 
-revoke execute on function api.release_agent_task(text, uuid, text) from public;
-grant execute on function api.release_agent_task(text, uuid, text) to anon, authenticated;
+revoke execute on function api.release_agent_task(text, text, uuid, text) from public;
+grant execute on function api.release_agent_task(text, text, uuid, text) to anon, authenticated;
 
 -- Sporet MCP-serveren skriver når selve kallet rullet tilbake.
 --
@@ -2788,6 +2801,7 @@ grant execute on function api.release_agent_task(text, uuid, text) to anon, auth
 -- gikk galt, vært de eneste som ikke etterlot seg noe.
 create function api.record_agent_runner_outcome(
   p_access_token text,
+  p_resource text,
   p_tool_name text,
   p_outcome text,
   p_task_handle uuid default null
@@ -2802,7 +2816,7 @@ declare
   v_outcome workflow.agent_runner_outcome;
   v_job_id uuid;
 begin
-  v_connection := workflow.authenticated_runner_connection(p_access_token);
+  v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
 
   begin
     v_outcome := p_outcome::workflow.agent_runner_outcome;
@@ -2828,11 +2842,11 @@ begin
 end;
 $$;
 
-comment on function api.record_agent_runner_outcome(text, text, text, uuid) is
+comment on function api.record_agent_runner_outcome(text, text, text, text, uuid) is
   'Skriver ett spor etter et MCP-kall som ikke kunne skrive sitt eget (ANTIDEP_CONSTITUTION.md regel 4). En avvisning fra den autoritative kontrollen ruller hele transaksjonen tilbake, sporet inkludert; uten denne veien ville nettopp de kjøringene som gikk galt, vært de eneste som ikke etterlot seg noe. Tar bare en utfallsklasse og et verktøynavn — aldri en feiltekst, fordi en avvisning kan navngi en påstand eller et kildeutdrag.';
 
-revoke execute on function api.record_agent_runner_outcome(text, text, text, uuid) from public;
-grant execute on function api.record_agent_runner_outcome(text, text, text, uuid) to anon, authenticated;
+revoke execute on function api.record_agent_runner_outcome(text, text, text, text, uuid) from public;
+grant execute on function api.record_agent_runner_outcome(text, text, text, text, uuid) to anon, authenticated;
 
 -- ============================================================================
 -- 11. Køen sier hvem som holder oppgaven

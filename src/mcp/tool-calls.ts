@@ -20,7 +20,12 @@ import type { AgentTask } from '../agents/agent-task.ts'
 import { renderAgentTaskFile, answerTemplate } from '../agents/agent-task-file.ts'
 import { handoffResultProblem } from '../agents/handoff-result.ts'
 import { GatewayError, outcomeForError, type RunnerOutcome } from './errors.ts'
-import { RUNNER_RELEASE_REASONS, type RunnerGateway, type RunnerReleaseReason } from './gateway.ts'
+import {
+  RUNNER_RELEASE_REASONS,
+  type RunnerCredentials,
+  type RunnerGateway,
+  type RunnerReleaseReason,
+} from './gateway.ts'
 
 /** Én verktøykjøring, slik MCP beskriver resultatet. */
 export interface ToolCallResult {
@@ -124,18 +129,18 @@ function failure(body: string, structured?: Record<string, unknown>): ToolCallRe
 
 export interface ToolCallInput {
   readonly gateway: RunnerGateway
-  readonly accessToken: string
+  readonly credentials: RunnerCredentials
   readonly name: string
   readonly args: Record<string, unknown>
 }
 
 async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
-  const { gateway, accessToken, name, args } = input
+  const { gateway, credentials, name, args } = input
 
   switch (name) {
     case 'list_pending_agent_tasks': {
       rejectUnknown(args, [])
-      const pending = await gateway.listPendingTasks(accessToken)
+      const pending = await gateway.listPendingTasks(credentials)
       const body =
         pending.tasks.length === 0
           ? pending.blockedCount === 0
@@ -176,7 +181,7 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
     case 'claim_agent_task': {
       rejectUnknown(args, ['task_ref', 'lease_seconds'])
       const claim = await gateway.claimTask({
-        accessToken,
+        credentials,
         taskRef: optionalText(args, 'task_ref'),
         leaseSeconds: leaseSeconds(args),
       })
@@ -222,7 +227,7 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
     case 'get_agent_task': {
       rejectUnknown(args, ['task_handle'])
       const handle = requiredText(args, 'task_handle')
-      const task = await gateway.readTask({ accessToken, taskHandle: handle })
+      const task = await gateway.readTask({ credentials, taskHandle: handle })
       if (!task.available) {
         return {
           result: failure(
@@ -276,11 +281,11 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
       // igjen det samme svaret og registrerer ingenting nytt, mens et virkelig
       // foreldet uttak avvises der uansett. Kontrollen her er et forklarende
       // ledd, ikke grensen (ANTIDEP_CONSTITUTION.md regel 4).
-      const claimed = await gateway.readTask({ accessToken, taskHandle: handle })
+      const claimed = await gateway.readTask({ credentials, taskHandle: handle })
       const deterministic = claimed.available ? deterministicProblem(claimed.task, answer) : null
       if (deterministic !== null) {
         await gateway
-          .recordOutcome({ accessToken, toolName: name, outcome: 'rejected', taskHandle: handle })
+          .recordOutcome({ credentials, toolName: name, outcome: 'rejected', taskHandle: handle })
           .catch(() => undefined)
         return {
           result: failure(
@@ -294,7 +299,7 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
       }
 
       const submitted = await gateway.submitAnswer({
-        accessToken,
+        credentials,
         taskHandle: handle,
         answer,
       })
@@ -337,7 +342,7 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
         )
       }
       const released = await gateway.releaseTask({
-        accessToken,
+        credentials,
         taskHandle: handle,
         reasonCode: reasonCode as RunnerReleaseReason | null,
       })
@@ -379,7 +384,7 @@ export async function callTool(input: ToolCallInput): Promise<ToolCallOutput> {
       const outcome = outcomeForError(error)
       await input.gateway
         .recordOutcome({
-          accessToken: input.accessToken,
+          credentials: input.credentials,
           toolName: input.name,
           outcome,
           taskHandle:

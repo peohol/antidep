@@ -29,6 +29,7 @@ import { GatewayError, McpHttpError, UnauthorizedError, type RunnerOutcome } fro
 import type { RunnerGateway } from './gateway.ts'
 import { renderConnectPage, type ConnectPageFields } from './html.ts'
 import {
+  JSON_RPC_INVALID_PARAMS,
   JSON_RPC_METHOD_NOT_FOUND,
   JSON_RPC_PARSE_ERROR,
   JsonRpcMessageError,
@@ -41,6 +42,8 @@ import {
 import { consoleRunnerLogger, type RunnerLogger } from './logging.ts'
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
+  META_CLIENT_CAPABILITIES,
+  META_CLIENT_INFO,
   META_PROTOCOL_VERSION,
   dispatchMcpMessage,
   eraForProtocolVersion,
@@ -247,48 +250,94 @@ function decodeHeaderValue(raw: string): string | null {
   }
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** De to feilformene den moderne epoken skiller mellom. */
+interface ModernProblem {
+  readonly code: number
+  readonly message: string
+}
+
 /**
- * Hva som er galt med de speilede headerne, eller `null`.
+ * Hva som er galt med konvolutten 2026-revisjonen krever, eller `null`.
  *
- * Bare i den moderne epoken: de eldre revisjonene definerte dem ikke, og å
- * kreve dem der ville vært å avvise en klient som følger sin egen versjon.
+ * Bare i den moderne epoken: de eldre revisjonene definerte den ikke, og å
+ * kreve den der ville vært å avvise en klient som følger sin egen versjon.
+ *
+ * To feilformer, og spesifikasjonen skiller skarpt mellom dem:
+ *
+ *   -32602  et påkrevd felt i `params._meta` mangler eller har feil form.
+ *           «A request missing any required field is malformed; the server MUST
+ *           reject it with JSON-RPC error code -32602.»
+ *   -32020  en påkrevd HTTP-header mangler, eller sier noe annet enn kroppen.
+ *           Den finnes fordi et sted som ruter på headeren mens serveren
+ *           utfører kroppen, er en åpning.
  */
-function headerProblem(request: Request, message: JsonRpcRequest, declared: string): string | null {
-  const version = request.headers.get('mcp-protocol-version')
-  if (version === null) {
-    return 'Forespørselen mangler MCP-Protocol-Version.'
+function modernEnvelopeProblem(
+  request: Request,
+  message: JsonRpcRequest,
+  declared: string,
+): ModernProblem | null {
+  const malformed = (message: string): ModernProblem => ({
+    code: JSON_RPC_INVALID_PARAMS,
+    message,
+  })
+  const mismatch = (message: string): ModernProblem => ({ code: MCP_HEADER_MISMATCH, message })
+
+  // ---- Konvolutten i kroppen ----
+  const meta = isObject(message.params['_meta']) ? message.params['_meta'] : {}
+
+  const version = meta[META_PROTOCOL_VERSION]
+  if (typeof version !== 'string' || version.length === 0) {
+    return malformed(`Forespørselen mangler ${META_PROTOCOL_VERSION} i params._meta.`)
   }
-  const meta = message.params['_meta']
-  const inBody =
-    typeof meta === 'object' && meta !== null && !Array.isArray(meta)
-      ? (meta as Record<string, unknown>)[META_PROTOCOL_VERSION]
-      : undefined
-  if (typeof inBody !== 'string' || inBody.length === 0) {
-    return `Forespørselen mangler ${META_PROTOCOL_VERSION} i params._meta.`
+  // Påkrevd på hver forespørsel. Antidep krever ingen klientevne og leser ingen
+  // av dem — men et felt spesifikasjonen sier MÅ være der, er en del av formen,
+  // og en melding som mangler den, er ikke den meldingen protokollen beskriver.
+  if (!isObject(meta[META_CLIENT_CAPABILITIES])) {
+    return malformed(
+      `Forespørselen mangler ${META_CLIENT_CAPABILITIES} i params._meta. Et tomt objekt er nok når klienten ikke trenger noen evne.`,
+    )
   }
-  if (inBody !== declared) {
-    return `MCP-Protocol-Version «${declared}» er ikke den samme som ${META_PROTOCOL_VERSION} «${inBody}».`
+  // Valgfri, men ikke fri: er den der, skal den ha formen den er beskrevet med.
+  const clientInfo = meta[META_CLIENT_INFO]
+  if (clientInfo !== undefined && !isObject(clientInfo)) {
+    return malformed(`${META_CLIENT_INFO} er til stede, men er ikke et JSON-objekt.`)
+  }
+
+  // ---- Headerne, som speiler kroppen ----
+  if (request.headers.get('mcp-protocol-version') === null) {
+    return mismatch('Forespørselen mangler MCP-Protocol-Version.')
+  }
+  if (version !== declared) {
+    return mismatch(
+      `MCP-Protocol-Version «${declared}» er ikke den samme som ${META_PROTOCOL_VERSION} «${version}».`,
+    )
   }
 
   const method = request.headers.get('mcp-method')
   if (method === null) {
-    return 'Forespørselen mangler Mcp-Method.'
+    return mismatch('Forespørselen mangler Mcp-Method.')
   }
   if (method !== message.method) {
-    return `Mcp-Method «${method}» er ikke den samme som metoden «${message.method}» i kroppen.`
+    return mismatch(
+      `Mcp-Method «${method}» er ikke den samme som metoden «${message.method}» i kroppen.`,
+    )
   }
 
   if (message.method === 'tools/call') {
     const raw = request.headers.get('mcp-name')
     if (raw === null) {
-      return 'Forespørselen mangler Mcp-Name.'
+      return mismatch('Forespørselen mangler Mcp-Name.')
     }
     const name = decodeHeaderValue(raw)
     if (name === null) {
-      return 'Mcp-Name er base64-merket, men lar seg ikke dekode.'
+      return mismatch('Mcp-Name er base64-merket, men lar seg ikke dekode.')
     }
     if (name !== message.params['name']) {
-      return `Mcp-Name «${name}» er ikke det samme som verktøynavnet i kroppen.`
+      return mismatch(`Mcp-Name «${name}» er ikke det samme som verktøynavnet i kroppen.`)
     }
   }
 
@@ -555,6 +604,10 @@ async function mcpEndpoint(
     }
   }
 
+  // Tokenet og adressen det gjelder for, reiser sammen herfra og helt inn i
+  // databasen: publikumskontrollen skal ikke kunne bli glemt av et kall.
+  const credentials = { accessToken, resource: canonicalResource(baseUrl) }
+
   // Tokenet kontrolleres på hver forespørsel, og ikke bare i verktøykallet.
   // Uten dette ville et utløpt eller tilbaketrukket token sett ut som en levende
   // tilkobling helt til det første kallet — og en MCP-klient trenger nettopp
@@ -563,7 +616,7 @@ async function mcpEndpoint(
   try {
     // Publikum kontrolleres sammen med tokenet: databasen godtar det bare
     // dersom det faktisk ble utstedt for nettopp denne adressen (RFC 8707).
-    identity = await deps.gateway.identify(accessToken, canonicalResource(baseUrl))
+    identity = await deps.gateway.identify(credentials)
   } catch (error) {
     if (error instanceof GatewayError || error instanceof UnauthorizedError) {
       return {
@@ -606,21 +659,19 @@ async function mcpEndpoint(
     }
   }
 
-  // Headerne speiler kroppen fra 2026-07-28. Avviket avvises her, før noe
-  // utføres: et sted som ruter på headeren mens serveren utfører kroppen, er en
-  // åpning, og det er nettopp den denne kontrollen lukker.
+  // Konvolutten og headerne fra 2026-07-28 kontrolleres her, før noe utføres.
   if (era === 'modern') {
-    const problem = headerProblem(request, message, declared)
+    const problem = modernEnvelopeProblem(request, message, declared)
     if (problem !== null) {
       return {
-        response: json(jsonRpcFailure(message.id, MCP_HEADER_MISMATCH, problem), 400),
+        response: json(jsonRpcFailure(message.id, problem.code, problem.message), 400),
         outcome: 'bad_request',
       }
     }
   }
 
   try {
-    const dispatched = await dispatchMcpMessage(message, era, accessToken, identity, deps)
+    const dispatched = await dispatchMcpMessage(message, era, credentials, identity, deps)
     if (dispatched.response === null) {
       return { response: new Response(null, { status: 202 }), outcome: 'ok' }
     }
