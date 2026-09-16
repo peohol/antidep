@@ -611,8 +611,9 @@ revoke execute on function workflow.close_stale_self_reports() from public;
 -- ChatGPT uten å vises i UI, og det kravet er ikke oppfylt av en logglinje som
 -- forsvinner.
 --
--- Den rå årsaken får derfor sin egen tabell, atskilt fra tilstandsraden, med
--- fire grenser som gjør en klientskrevet tekst forsvarlig:
+-- Den rå årsaken får derfor sin egen tabell, atskilt fra tilstandsraden, og sin
+-- egen skrivevei — den skal kunne nå fram selv når meldingen om problemet ikke
+-- gjør det. Fire grenser gjør en klientskrevet tekst forsvarlig:
 --
 --   attribusjon   hver rad bæres av en innlogget bruker, og kan ikke skrives
 --                 av en anonym besøkende
@@ -667,7 +668,7 @@ create table workflow.client_diagnostics (
 );
 
 comment on table workflow.client_diagnostics is
-  'Den rå tekniske årsaken slik en brukerflate så den, lagret privat for Claude Code og ChatGPT (issue #99, punkt 8). Atskilt fra workflow.technical_incidents med vilje: tilstandsraden bærer Antideps egen setning og aldri en videreformidlet feiltekst, mens denne bærer nettopp den videreformidlede teksten — og er derfor bundet av attribusjon, mengdegrense, lengdegrense og vasking i api.report_technical_problem(text, text, text, text, integer, text, text). Tabellen har RLS med default deny, ingen grants og ingen policy, og ingen api-funksjon leser den: den finnes for den som allerede har databasetilgang, og har ingen vei til noen brukerflate.';
+  'Den rå tekniske årsaken slik en brukerflate så den, lagret privat for Claude Code og ChatGPT (issue #99, punkt 8). Atskilt fra workflow.technical_incidents med vilje: tilstandsraden bærer Antideps egen setning og aldri en videreformidlet feiltekst, mens denne bærer nettopp den videreformidlede teksten — og er derfor bundet av attribusjon, mengdegrense, lengdegrense og vasking i api.record_client_diagnostic(text, text, text, text, integer, text, text). Tabellen har RLS med default deny, ingen grants og ingen policy, og ingen api-funksjon leser den: den finnes for den som allerede har databasetilgang, og har ingen vei til noen brukerflate.';
 comment on column workflow.client_diagnostics.detail is
   'Stacken og meldingen slik flaten så dem. Klippet til 4000 tegn og vasket for tokenformede strenger før lagring. Aldri lesbar gjennom noe api-objekt.';
 comment on column workflow.client_diagnostics.reported_by_user_id is
@@ -2439,8 +2440,7 @@ create function api.report_technical_problem(
   p_operation text default null,
   p_code text default null,
   p_http_status integer default null,
-  p_transport text default null,
-  p_detail text default null
+  p_transport text default null
 )
   returns void
   language plpgsql
@@ -2451,8 +2451,6 @@ declare
   v_area workflow.technical_area;
   v_description text;
   v_transport text;
-  v_incident_id uuid;
-  v_detail text;
 begin
   if auth.uid() is null then
     raise exception using
@@ -2538,46 +2536,125 @@ begin
       hint = 'Tillatt er offline, network, aborted, timeout, http, contract eller unknown. Vokabularet er lukket fordi Antidep skriver setningen selv.';
   end if;
 
-  v_incident_id := workflow.record_technical_incident(
+  perform workflow.record_technical_incident(
     v_area,
     -- Signaturen bærer operasjonen, slik at to forskjellige kall som svikter,
     -- blir to problemer og ikke ett.
     'client:' || coalesce(p_operation, 'ukjent'),
-    format('%s Kallet var api.%s, svaret bar koden %s, og HTTP-statusen var %s. %s Selve feilteksten står ikke her, men i workflow.client_diagnostics, der den er bundet av attribusjon, mengde, lengde og vasking.',
+    format('%s Kallet var api.%s, svaret bar koden %s, og HTTP-statusen var %s. %s Selve feilteksten står ikke her, men i den private diagnostikktabellen, der den er bundet av attribusjon, kvote, lengde og vasking.',
            v_description,
            coalesce(p_operation, '(ikke oppgitt)'),
            coalesce(p_code, '(ingen)'),
            coalesce(p_http_status::text, '(ingen)'),
            coalesce(v_transport, 'Transportformen ble ikke oppgitt.')),
     true);
-
-  -- Og den rå årsaken, til den som skal finne ut hvorfor.
-  --
-  -- Mengdegrensen står før innsettingen og ikke etter: en flate som svikter i
-  -- en løkke, skal ikke kunne fylle tabellen. Problemet telles fortsatt — det
-  -- er teksten som droppes, og det er riktig vei å tape på.
-  v_detail := workflow.scrub_diagnostic_detail(p_detail);
-  if length(coalesce(v_detail, '')) > 0
-     and (select count(*)
-          from workflow.client_diagnostics d
-          where d.reported_by_user_id = auth.uid()
-            and d.occurred_at > statement_timestamp() - interval '1 hour') < 60
-  then
-    insert into workflow.client_diagnostics
-      (technical_incident_id, reported_by_user_id, area, kind, operation, code,
-       http_status, transport, detail)
-    values
-      (v_incident_id, auth.uid(), v_area, p_kind, p_operation, p_code,
-       p_http_status, p_transport, v_detail);
-  end if;
 end;
 $$;
 
-comment on function api.report_technical_problem(text, text, text, text, integer, text, text) is
-  'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom, og er den eneste veien den rå årsaken bevares varig. De seks første argumentene er maskinidentifikatorer og aldri tekst: området, svikttypen og transportformen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, koden må være en SQLSTATE eller en PostgREST-kode, og statusen må være en HTTP-status. De skriver tilstandsraden, der setningen er Antideps egen. Det siste argumentet er feilteksten og stacken, og de går til workflow.client_diagnostics — en egen, privat tabell uten grants, uten policy og uten noen api-lesevei, der teksten er bundet av attribusjon, en mengdegrense per bruker og time, en lengdegrense og vasking av tokenformede strenger. Skillet er med vilje: tilstandsraden er Antideps ord om hva som er galt, råmaterialet er klientens ord om hva den så. Raden merkes self_reported og gjelder bare så lenge den fornyes (workflow.self_report_heartbeat()). En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
+comment on function api.report_technical_problem(text, text, text, text, integer, text) is
+  'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom. Alle seks argumentene er maskinidentifikatorer og aldri tekst: området, svikttypen og transportformen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, koden må være en SQLSTATE eller en PostgREST-kode, og statusen må være en HTTP-status. Antidep skriver setningen selv. Den rå årsaken hører ikke hjemme her: den går sin egen vei, gjennom api.record_client_diagnostic(text, text, text, text, integer, text, text), fordi den skal kunne nå fram selv når dette kallet ikke gjør det. Raden merkes self_reported og gjelder bare så lenge den fornyes (workflow.self_report_heartbeat()). En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
 
-revoke execute on function api.report_technical_problem(text, text, text, text, integer, text, text) from public;
-grant execute on function api.report_technical_problem(text, text, text, text, integer, text, text) to authenticated;
+revoke execute on function api.report_technical_problem(text, text, text, text, integer, text) from public;
+grant execute on function api.report_technical_problem(text, text, text, text, integer, text) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Den rå årsaken, som sin egen skrivevei
+--
+-- Skilt fra meldingen over med vilje, og ikke for ryddighetens skyld: de to har
+-- forskjellige krav til å komme fram. Tilstandsraden er en opplysning som kan
+-- gjentas ved neste svikt; den rå årsaken finnes bare denne ene gangen, og
+-- svikter transporten, er den borte for alltid. Derfor har den en egen vei inn
+-- (`/diagnostics`, `api/diagnostics.ts`), som kan nås med `sendBeacon` mens
+-- fanen lukkes og uten å gå gjennom den samme Data API-veien som nettopp
+-- kanskje er nede.
+--
+-- Funksjonen er likevel den samme uansett hvem som kaller den: hele
+-- autorisasjonen ligger her, og serverruten er en transport og ikke en
+-- fullmakt (ANTIDEP_CONSTITUTION.md regel 7).
+-- ----------------------------------------------------------------------------
+create function api.record_client_diagnostic(
+  p_area text,
+  p_kind text,
+  p_operation text default null,
+  p_code text default null,
+  p_http_status integer default null,
+  p_transport text default null,
+  p_detail text default null
+)
+  returns void
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_area workflow.technical_area;
+  v_detail text;
+  v_incident_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception using
+      errcode = 'insufficient_privilege',
+      message = 'Observasjonen kan ikke tilskrives noen.';
+  end if;
+
+  begin
+    v_area := p_area::workflow.technical_area;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Ukjent område.';
+  end;
+
+  v_detail := workflow.scrub_diagnostic_detail(p_detail);
+  if length(coalesce(v_detail, '')) = 0 then
+    return;
+  end if;
+
+  -- Kvoten serialiseres per bruker.
+  --
+  -- «Tell, og sett inn hvis tallet er lavt nok» er et kappløp: to samtidige
+  -- kall ser den samme tellingen og setter inn begge. Med forskjellige
+  -- signaturer låser de heller ikke den samme raden noe annet sted, så
+  -- ingenting stopper dem. Låsen her er per bruker og holdes ut transaksjonen,
+  -- slik at tellingen og innsettingen er ett udelelig steg. To brukere blokkerer
+  -- aldri hverandre.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('antidep:client_diagnostics:' || auth.uid()::text, 0));
+
+  if (select count(*)
+      from workflow.client_diagnostics d
+      where d.reported_by_user_id = auth.uid()
+        and d.occurred_at > statement_timestamp() - interval '1 hour') >= 60
+  then
+    -- Over grensen droppes teksten i stillhet. Problemet telles fortsatt av
+    -- api.report_technical_problem(text, text, text, text, integer, text), og
+    -- det er riktig vei å tape på: en flate som svikter i en løkke, skal ikke
+    -- kunne fylle tabellen.
+    return;
+  end if;
+
+  -- Knyttes til problemet den hører til, når det finnes. Oppslaget er på den
+  -- samme signaturen meldingen bruker, slik at ingen id må sendes gjennom en
+  -- klient for å komme tilbake igjen.
+  select ti.id into v_incident_id
+  from workflow.technical_incidents ti
+  where ti.area = v_area and ti.signature = 'client:' || coalesce(p_operation, 'ukjent');
+
+  insert into workflow.client_diagnostics
+    (technical_incident_id, reported_by_user_id, area, kind, operation, code,
+     http_status, transport, detail)
+  values
+    (v_incident_id, auth.uid(), v_area, p_kind, p_operation, p_code,
+     p_http_status, p_transport, v_detail);
+end;
+$$;
+
+comment on function api.record_client_diagnostic(text, text, text, text, integer, text, text) is
+  'Tar imot den rå årsaken — feilteksten og stacken — fra en brukerflate, og lagrer den privat i workflow.client_diagnostics. Egen skrivevei fordi den har et annet krav til å komme fram enn meldingen om selve problemet: en tilstandsrad kan gjentas ved neste svikt, mens den rå årsaken finnes bare denne ene gangen. Fire grenser gjør en klientskrevet tekst forsvarlig: attribusjon til en innlogget bruker, en kvote per bruker og time som serialiseres med en radlås slik at den ikke kan omgås med parallelle kall, en lengdegrense, og vasking av tokenformede strenger. Over kvoten droppes teksten i stillhet — problemet telles uansett. Ingen api-funksjon leser tabellen ut igjen. Bare authenticated.';
+
+revoke execute on function api.record_client_diagnostic(text, text, text, text, integer, text, text) from public;
+grant execute on function api.record_client_diagnostic(text, text, text, text, integer, text, text) to authenticated;
 
 -- ----------------------------------------------------------------------------
 -- Og veien ut igjen

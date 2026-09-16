@@ -30,8 +30,45 @@ function client(answers: Record<string, { data?: unknown; error?: unknown }>): {
       const answer = answers[fn] ?? { error: { code: 'PGRST202', message: 'ukjent funksjon' } }
       return Promise.resolve({ data: answer.data ?? null, error: answer.error ?? null })
     },
+    auth: {
+      getSession: () =>
+        Promise.resolve({ data: { session: { access_token: 'brukerens-egen-token' } } }),
+    },
   }
   return { client: fake as unknown as AntidepClient, calls }
+}
+
+/** Det nettleseren faktisk sendte til `/diagnostics`, uten å røre nettet. */
+function fangBeacon(): { readonly sendt: { url: string; body: string }[]; restore: () => void } {
+  const sendt: { url: string; body: string }[] = []
+  const original = globalThis.navigator
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: {
+      sendBeacon: (url: string, blob: Blob) => {
+        // `Blob.text()` er asynkron; prøven leser den rå kroppen i stedet.
+        sendt.push({ url, body: (blob as unknown as { __body: string }).__body })
+        return true
+      },
+    },
+  })
+  const originalBlob = globalThis.Blob
+  Object.defineProperty(globalThis, 'Blob', {
+    configurable: true,
+    value: class {
+      readonly __body: string
+      constructor(parts: string[]) {
+        this.__body = parts.join('')
+      }
+    },
+  })
+  return {
+    sendt,
+    restore: () => {
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: original })
+      Object.defineProperty(globalThis, 'Blob', { configurable: true, value: originalBlob })
+    },
+  }
 }
 
 afterEach(() => {
@@ -163,10 +200,10 @@ describe('kallet gjennom gatewayen', () => {
     expect(args.p_code).toBe('PGRST301')
     expect(args.p_transport).toBe('unknown')
 
-    // Den rå årsaken følger med — men bare som `p_detail`, som går til en egen,
-    // privat tabell uten lesevei. Setningen tilstandsraden får, er Antideps
-    // egen, og den bærer den aldri.
-    expect(args.p_detail).toContain('hemmelig')
+    // Meldingen om problemet bærer ingen tekst i det hele tatt. Den rå årsaken
+    // går sin egen vei, til `/diagnostics`.
+    expect(args.p_detail).toBeUndefined()
+    expect(JSON.stringify(args)).not.toContain('hemmelig')
   })
 
   // Koden mangler nettopp når svaret aldri kom. Uten transportformen ville en
@@ -206,26 +243,24 @@ describe('kallet gjennom gatewayen', () => {
     expect(args.p_code).toBeNull()
     expect(args.p_http_status).toBeNull()
     expect(args.p_transport).toBe('network')
-    expect(args.p_detail).toContain('Failed to fetch')
   })
 
   // Databasen klipper uansett, men en stack på flere hundre kilobyte skal ikke
-  // sendes over nettet for å bli kastet i andre enden.
+  // sendes over nettet for å bli kastet i andre enden — og `sendBeacon` har sin
+  // egen, mindre kø å ta hensyn til.
   it('klipper den rå årsaken før den sendes', async () => {
-    const svær = new Error('x'.repeat(20000))
-    const { client: db, calls } = client({ noe: { data: [] } })
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const seen: TechnicalDetail[] = []
+    setTechnicalSink((entry) => seen.push(entry))
+    const { client: db } = client({ noe: { data: [] } })
     await callRpc(db, {
       fn: 'noe',
       area: 'work_queue',
       parse: () => {
-        throw svær
+        throw new Error('x'.repeat(20000))
       },
     }).catch(() => undefined)
-    spy.mockRestore()
 
-    const report = calls.find((call) => call.fn === 'report_technical_problem')
-    expect(String((report?.args as { p_detail: unknown }).p_detail)).toHaveLength(4000)
+    expect(seen[0]?.detail).toHaveLength(4000)
   })
 
   // HTTP-statusen står i konvolutten rundt svaret og ikke i feilen, og en 503
@@ -264,6 +299,60 @@ describe('kallet gjennom gatewayen', () => {
     )
     const report = calls.find((call) => call.fn === 'report_technical_problem')
     expect((report?.args as { p_code: unknown }).p_code).toBeNull()
+  })
+
+  // Dette er hele grunnen til at den rå årsaken har sin egen vei: den skal nå
+  // fram selv når Data API-et er borte, altså nettopp når den trengs.
+  it('lagrer den rå årsaken selv når hele Data API-veien er nede', async () => {
+    const beacon = fangBeacon()
+    const nedeHeltUt = {
+      rpc: () => Promise.reject(new TypeError('Failed to fetch')),
+      auth: {
+        getSession: () =>
+          Promise.resolve({ data: { session: { access_token: 'brukerens-egen-token' } } }),
+      },
+    } as unknown as AntidepClient
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(nedeHeltUt, {
+      fn: 'public_work_board',
+      area: 'work_queue',
+      parse: () => undefined,
+    }).catch(() => undefined)
+    // Sendingen henter sesjonen først, så den fullføres i neste mikrotask.
+    await Promise.resolve()
+    await Promise.resolve()
+    spy.mockRestore()
+
+    expect(beacon.sendt).toHaveLength(1)
+    expect(beacon.sendt[0]?.url).toBe('/diagnostics')
+    const sendt = JSON.parse(beacon.sendt[0]?.body ?? '{}') as Record<string, unknown>
+    expect(sendt.detail).toContain('Failed to fetch')
+    expect(sendt.operation).toBe('public_work_board')
+    // Tokenen er brukerens egen og allerede i fanen — ingen klienthemmelighet.
+    expect(sendt.accessToken).toBe('brukerens-egen-token')
+    beacon.restore()
+  })
+
+  // En observasjon som ikke kan tilskrives noen, skal ikke sendes: det ville
+  // vært en åpen skrivevei.
+  it('sender ingenting når det ikke finnes noen innlogget bruker', async () => {
+    const beacon = fangBeacon()
+    const uinnlogget = {
+      rpc: () => Promise.resolve({ data: null, error: { code: 'PGRST301' } }),
+      auth: { getSession: () => Promise.resolve({ data: { session: null } }) },
+    } as unknown as AntidepClient
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(uinnlogget, { fn: 'noe', area: 'work_queue', parse: () => undefined }).catch(
+      () => undefined,
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+    spy.mockRestore()
+
+    expect(beacon.sendt).toHaveLength(0)
+    beacon.restore()
   })
 
   // Flaten lukker ingenting. En selvmeldt rad gjelder så lenge den fornyes, og

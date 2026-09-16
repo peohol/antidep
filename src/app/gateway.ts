@@ -38,13 +38,25 @@
 // PostgREST-kode) og skriver setningen selv.
 //
 // Klassifiseringen er likevel ikke diagnosen. Den rå årsaken — stacken, den
-// faktiske meldingen — sendes med som `p_detail`, og havner i
-// `workflow.client_diagnostics`: en egen, privat tabell uten grants, uten
-// policy og uten noen api-lesevei. Skillet er med vilje. Tilstandsraden er
-// Antideps ord om hva som er galt, og den skal aldri bære en videreformidlet
-// feiltekst; råmaterialet er klientens ord om hva den så, og det er bundet av
-// attribusjon, en mengdegrense per bruker og time, en lengdegrense og vasking
-// av tokenformede strenger.
+// faktiske meldingen — havner i `workflow.client_diagnostics`: en egen, privat
+// tabell uten grants, uten policy og uten noen api-lesevei. Skillet er med
+// vilje. Tilstandsraden er Antideps ord om hva som er galt, og den skal aldri
+// bære en videreformidlet feiltekst; råmaterialet er klientens ord om hva den
+// så, og det er bundet av attribusjon, en kvote per bruker og time, en
+// lengdegrense og vasking av tokenformede strenger.
+//
+// ----------------------------------------------------------------------------
+// To meldinger, to veier — og det er ikke ryddighet
+//
+// Meldingen om at et område ikke svarer, går over Data API-et. Den rå årsaken
+// gjør det ikke, og kan ikke gjøre det: det er nettopp den veien som kanskje er
+// nede. Den går derfor til `/diagnostics`, en rute på Antideps egen
+// opprinnelse, med `sendBeacon` — som nettleseren leverer selv mens fanen
+// lukkes, og som ikke har noen preflight å feile på.
+//
+// De to har også forskjellige krav til å komme fram. En tilstandsrad kan
+// gjentas ved neste svikt; den rå årsaken finnes bare denne ene gangen, og
+// svikter transporten, er den borte for alltid.
 //
 // En `console.error` er ingen erstatning: fanen lukkes, og da er årsaken borte.
 // Konsollen skrives til uansett, fordi den er det den som feilsøker lokalt
@@ -297,17 +309,21 @@ export function recordTechnicalDetail(
   kind: GatewayFailureKind,
   cause: unknown,
   httpStatus: number | null = null,
-): boolean {
-  sink({
+): TechnicalDetail | null {
+  const entry: TechnicalDetail = {
     area,
     operation,
     kind,
     code: errorCode(cause),
     httpStatus: httpStatus ?? httpStatusOf(cause),
     transport: transportShape(cause, kind),
-    detail: rawDetail(cause),
-  })
-  return kind === 'unavailable' || kind === 'unreadable_answer'
+    // Klippes allerede her. Databasen klipper uansett, men en stack på flere
+    // hundre kilobyte skal ikke sendes over nettet for å bli kastet i andre
+    // enden — og `sendBeacon` har sin egen, mindre kø å ta hensyn til.
+    detail: rawDetail(cause).slice(0, MAX_DETAIL_CHARS),
+  }
+  sink(entry)
+  return kind === 'unavailable' || kind === 'unreadable_answer' ? entry : null
 }
 
 export interface RpcSpec<T> {
@@ -369,8 +385,10 @@ function fail<T>(
   httpStatus: number | null = null,
 ): GatewayFailure {
   const kind = forced ?? classifyGatewayFailure(cause)
-  if (recordTechnicalDetail(spec.area, spec.fn, kind, cause, httpStatus)) {
-    reportTechnicalProblem(client, spec.area, kind, spec.fn, errorCode(cause), httpStatus, cause)
+  const entry = recordTechnicalDetail(spec.area, spec.fn, kind, cause, httpStatus)
+  if (entry !== null) {
+    reportTechnicalProblem(client, entry)
+    recordRawCause(client, entry)
   }
   return new GatewayFailure(describeGatewayFailure(kind, spec.wording), kind, spec.area)
 }
@@ -378,42 +396,94 @@ function fail<T>(
 /**
  * Melder fra til Antidep at ett kall ikke gikk gjennom.
  *
- * Seks maskinidentifikatorer og den rå årsaken. De seks skriver tilstandsraden,
- * der setningen er Antideps egen, og databasen kontrollerer hver av dem. Den rå
- * årsaken går til en egen, privat tabell uten lesevei. En uinnlogget kaller
- * blir avvist der, og det er riktig — en melding som ikke kan tilskrives noen,
- * skal verken få merket i navigasjonen til å lyse eller legge igjen tekst.
+ * Seks maskinidentifikatorer og ingen tekst: databasen skriver setningen selv,
+ * og kontrollerer hver av dem. En uinnlogget kaller blir avvist der, og det er
+ * riktig — en melding som ikke kan tilskrives noen, skal ikke kunne få merket i
+ * navigasjonen til å lyse.
  *
  * Feiler meldingen, er det ingenting mer å gjøre: da er det nettopp databasen
  * som ikke svarer. Den svelges derfor med vilje, framfor å bli en ny feil på
- * toppen av den som allerede er vist.
+ * toppen av den som allerede er vist. Den rå årsaken går sin egen vei og er
+ * ikke avhengig av at denne kom fram.
  */
-function reportTechnicalProblem(
-  client: AntidepClient,
-  area: TechnicalArea,
-  kind: GatewayFailureKind,
-  operation: string,
-  code: string | null,
-  httpStatus: number | null,
-  cause: unknown,
-): void {
-  // Klippes allerede her. Databasen klipper uansett, men en stack på flere
-  // hundre kilobyte skal ikke sendes over nettet for å bli kastet i andre enden.
-  const detail = rawDetail(cause).slice(0, MAX_DETAIL_CHARS)
+function reportTechnicalProblem(client: AntidepClient, entry: TechnicalDetail): void {
   void Promise.resolve(
     client.rpc('report_technical_problem', {
-      p_area: area,
-      p_kind: kind,
-      p_operation: operation,
+      p_area: entry.area,
+      p_kind: entry.kind,
+      p_operation: entry.operation,
       // Koden sendes bare når den har den formen databasen godtar. En kode
       // flaten ikke kjenner igjen, er ikke en opplysning verdt å presse
       // gjennom en kontroll — den ville bare fått hele meldingen avvist.
-      p_code: MACHINE_CODE.test(code ?? '') ? code : null,
-      p_http_status: httpStatus,
-      p_transport: transportShape(cause, kind),
-      p_detail: detail,
+      p_code: MACHINE_CODE.test(entry.code ?? '') ? entry.code : null,
+      p_http_status: entry.httpStatus,
+      p_transport: entry.transport,
     }),
   ).then(
+    () => undefined,
+    () => undefined,
+  )
+}
+
+/**
+ * Sender den rå årsaken til den private lagringen, utenom Data API-et.
+ *
+ * Tokenen er brukerens egen og allerede i fanen — ingen klienthemmelighet. Er
+ * det ingen token, er det ingen å tilskrive observasjonen, og da sendes den
+ * ikke: en rad som ikke kan tilskrives noen, er nettopp den åpne skriveveien
+ * hele oppsettet finnes for å unngå.
+ */
+function recordRawCause(client: AntidepClient, entry: TechnicalDetail): void {
+  void Promise.resolve(client.auth.getSession())
+    .then(({ data }) => {
+      const accessToken = data.session?.access_token
+      if (accessToken === undefined || accessToken.length === 0) {
+        return
+      }
+      sendDiagnostic(
+        JSON.stringify({
+          accessToken,
+          area: entry.area,
+          kind: entry.kind,
+          operation: entry.operation,
+          code: MACHINE_CODE.test(entry.code ?? '') ? entry.code : null,
+          httpStatus: entry.httpStatus,
+          transport: entry.transport,
+          detail: entry.detail,
+        }),
+      )
+    })
+    .catch(() => undefined)
+}
+
+/** Ruten på Antideps egen opprinnelse. Ingenting å konfigurere. */
+const DIAGNOSTICS_PATH = '/diagnostics'
+
+/**
+ * Leveringen.
+ *
+ * `sendBeacon` først, fordi det er det ene nettleseren lover å levere selv om
+ * fanen lukkes i det samme — og en teknisk svikt er ofte akkurat det som får
+ * noen til å lukke fanen. `fetch` med `keepalive` er reserven for der
+ * `sendBeacon` ikke finnes eller sier nei.
+ */
+function sendDiagnostic(body: string): void {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      const blob = new Blob([body], { type: 'application/json' })
+      if (navigator.sendBeacon(DIAGNOSTICS_PATH, blob)) {
+        return
+      }
+    }
+  } catch {
+    // Kø full, eller ingen Blob. Reserven under tar den.
+  }
+  void fetch(DIAGNOSTICS_PATH, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body,
+    keepalive: true,
+  }).then(
     () => undefined,
     () => undefined,
   )

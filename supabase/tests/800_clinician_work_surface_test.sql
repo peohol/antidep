@@ -64,7 +64,8 @@ select is_empty(
                  ('api.resume_blocked_full_text_extractions()'),
                  ('api.technical_problem_board()'),
                  ('api.technical_problem_summary()'),
-                 ('api.report_technical_problem(text,text,text,text,integer,text,text)')) as f(name)
+                 ('api.report_technical_problem(text,text,text,text,integer,text)'),
+                 ('api.record_client_diagnostic(text,text,text,text,integer,text,text)')) as f(name)
     where has_function_privilege('anon', f.name, 'EXECUTE')
        or has_function_privilege('public', f.name, 'EXECUTE')
        or has_function_privilege('service_role', f.name, 'EXECUTE')
@@ -93,7 +94,7 @@ select is(
    from pg_proc p
    where p.pronamespace = 'api'::regnamespace
      and p.prosrc like '%client_diagnostics%'),
-  array['api.report_technical_problem(text,text,text,text,integer,text,text)'],
+  array['api.record_client_diagnostic(text,text,text,text,integer,text,text)'],
   'bare skriveveien nevner den rå årsaken — ingen api-funksjon leser den ut igjen'
 );
 
@@ -919,6 +920,11 @@ select throws_ok(
 
 do $$ begin
   perform api.report_technical_problem(
+    'work_queue', 'unavailable', 'public_work_board', 'PGRST301', 503, 'http');
+  -- Og den rå årsaken, på sin egen vei. Den går i produksjon gjennom ruten
+  -- `/diagnostics` nettopp fordi den ikke skal være avhengig av at kallet over
+  -- kom fram; her kalles den samme funksjonen direkte.
+  perform api.record_client_diagnostic(
     'work_queue', 'unavailable', 'public_work_board', 'PGRST301', 503, 'http',
     'TypeError: Failed to fetch' || chr(10) ||
     '    at callRpc (gateway.ts:1:1)' || chr(10) ||
@@ -1059,7 +1065,7 @@ select set_config('request.jwt.claims',
                   '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
 set local role authenticated;
 do $$ begin
-  perform api.report_technical_problem('agent_service', 'unavailable', 'agent_work_queue',
+  perform api.record_client_diagnostic('agent_service', 'unavailable', 'agent_work_queue',
                                        null, null, 'network', repeat('x', 12000));
 end $$;
 reset role;
@@ -1080,6 +1086,8 @@ do $$
 begin
   for i in 1..70 loop
     perform api.report_technical_problem('agent_service', 'unavailable', 'agent_task_payload',
+                                         null, null, 'network');
+    perform api.record_client_diagnostic('agent_service', 'unavailable', 'agent_task_payload',
                                          null, null, 'network', 'rå årsak nummer ' || i);
   end loop;
 end;

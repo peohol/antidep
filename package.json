@@ -23,6 +23,7 @@
     "db:test": "supabase test db",
     "db:test:upgrade": "bash ./scripts/db-upgrade-antidep2.sh",
     "db:test:lock": "./scripts/db-lock-antidep2.sh",
+    "db:test:quota": "./scripts/db-diagnostics-quota.sh",
     "db:test:chain": "node scripts/agent-chain-test.ts",
     "db:test:mcp": "node scripts/agent-runner-e2e.ts",
     "db:test:intake": "node scripts/full-text-intake-e2e.ts",

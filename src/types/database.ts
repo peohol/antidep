@@ -417,15 +417,29 @@ export type Database = {
       // PostgREST-kode, og statusen må være en HTTP-status. De skriver
       // tilstandsraden, der setningen er Antideps egen.
       //
-      // `p_detail` er feilteksten og stacken, og går til
-      // `workflow.client_diagnostics` — en egen, privat tabell uten grants,
-      // uten policy og uten noen api-lesevei, bundet av attribusjon, en
-      // mengdegrense per bruker og time, en lengdegrense og vasking.
+      // Den rå årsaken hører ikke hjemme her. Den går sin egen vei, gjennom
+      // ruten `/diagnostics` og videre til `api.record_client_diagnostic`,
+      // fordi den skal kunne nå fram selv når dette kallet ikke gjør det.
       //
       // Det finnes ingen lukking herfra. En selvmeldt rad gjelder så lenge den
       // fornyes, og databasen avgjør når den er over: en opprydding som hvilte
       // på flatens eget minne, ville vært borte ved første sideoppfriskning.
       report_technical_problem: {
+        Args: {
+          p_area: string
+          p_kind: string
+          p_operation?: string | null
+          p_code?: string | null
+          p_http_status?: number | null
+          p_transport?: string | null
+        }
+        Returns: unknown
+      }
+      // Den rå årsaken. Kalles av serverruten `/diagnostics` med brukerens egen
+      // token, aldri av nettleseren direkte — ikke fordi ruten har mer
+      // fullmakt, men fordi den er en transport som tåler at fanen lukkes og
+      // at Data API-veien er nede.
+      record_client_diagnostic: {
         Args: {
           p_area: string
           p_kind: string

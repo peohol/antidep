@@ -76,6 +76,13 @@ jobs:
       - name: Samtidighetsprøve (to forbindelser)
         if: always()
         run: npm run db:test:lock
+      # Kvoten på rå diagnostikk er «tell, og sett inn hvis tallet er lavt
+      # nok» — et kappløp som bare finnes mellom transaksjoner, og som pgTAP
+      # derfor ikke kan se. Denne kjører mange forbindelser mot hverandre og
+      # kontrollerer at radlåsen faktisk holder grensen.
+      - name: Samtidighetsprøve for diagnostikk-kvoten
+        if: always()
+        run: npm run db:test:quota
       # pgTAP prøver SQL, og vitest prøver TypeScript med doble for databasen.
       # Grensen mellom dem — at parameternavnene agentporten sender, er nøyaktig
       # de api-funksjonene tar imot — er ikke prøvd av noen av dem. Denne kjører
