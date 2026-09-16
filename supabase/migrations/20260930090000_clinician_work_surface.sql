@@ -25,8 +25,8 @@
 --
 -- Ingen av dem er en ny faglig skrivevei. Fullteksten registreres fortsatt av
 -- nøyaktig den transaksjonen migrasjon 009a skrev; den er bare løftet ut i
--- workflow.register_full_text_document(...) slik at både den gamle
--- api.upload_full_text_document(...) og innboksen deler den. En andre
+-- workflow.register_full_text_document(uuid, uuid, bytea, timestamptz, text, text, text, text, text, text, text) slik at både den gamle
+-- api.upload_full_text_document(uuid, timestamptz, text, text, text, text, text, text, text, text) og innboksen deler den. En andre
 -- skrivevei ville vært en andre kontroll å glemme (AGENTS.md).
 --
 -- ----------------------------------------------------------------------------
@@ -532,7 +532,7 @@ create table workflow.full_text_requests (
 );
 
 comment on table workflow.full_text_requests is
-  'Hvilke artikler Antidep mangler fullteksten til, med den redaksjonelle avgrensningen ekstraksjonsoppgaven skal bygges av (ANTIDEP_CONSTITUTION.md regel 1). Én åpen forespørsel per kilde. En åpen rad er det den åpne arbeidsoversikten viser som «venter på fulltekst» — en normal arbeidsblokkering, aldri et teknisk problem. Raden lukkes av api.complete_full_text_extraction(...) i det kildeversjonen er registrert, og aldri av en flate.';
+  'Hvilke artikler Antidep mangler fullteksten til, med den redaksjonelle avgrensningen ekstraksjonsoppgaven skal bygges av (ANTIDEP_CONSTITUTION.md regel 1). Én åpen forespørsel per kilde. En åpen rad er det den åpne arbeidsoversikten viser som «venter på fulltekst» — en normal arbeidsblokkering, aldri et teknisk problem. Raden lukkes av api.complete_full_text_extraction(uuid, text, text) i det kildeversjonen er registrert, og aldri av en flate.';
 comment on column workflow.full_text_requests.retrieved_from is
   'Hvor originaldokumentet hentes fra. Oppgis av den som ber om artikkelen, eller utledes av kildens registrerte DOI når den har en — den samme verdien npm run editor:assignment har bedt om siden migrasjon 003e. En PMID utledes bevisst ikke: en PubMed-side viser sammendraget og ikke dokumentet, så den ville pekt et sted fullteksten ikke er å finne, og da er det riktigere å spørre enn å gjette. Fingeravtrykket identifiserer filen, men ikke hvor den kommer fra, og en kildeversjon uten opphav er ikke sporbar til en utgiver.';
 
@@ -691,7 +691,7 @@ end;
 $$;
 
 comment on function workflow.full_text_request_outcome(workflow.full_text_requests, uuid[], uuid[], uuid[]) is
-  'Svaret når artikkelen allerede er etterspurt: den samme avgrensningen er den samme bestillingen og svarer requested: false, mens en annen avgrensning avvises framfor å svelges stille. Egen funksjon fordi api.request_full_text(...) trenger den både når raden ble sett og når den dukket opp under et samtidig kall.';
+  'Svaret når artikkelen allerede er etterspurt: den samme avgrensningen er den samme bestillingen og svarer requested: false, mens en annen avgrensning avvises framfor å svelges stille. Egen funksjon fordi api.request_full_text(uuid, uuid[], uuid[], uuid[], text) trenger den både når raden ble sett og når den dukket opp under et samtidig kall.';
 
 revoke execute on function workflow.full_text_request_outcome(workflow.full_text_requests, uuid[], uuid[], uuid[]) from public;
 
@@ -867,8 +867,8 @@ grant execute on function api.withdraw_full_text_request(text, text) to authenti
 -- lesbarheten inkludert tabellene, og kildeversjonen. Fulltekstinnboksen skal
 -- gjennom nøyaktig de samme fire — ikke gjennom noe som ligner.
 --
--- Kroppen flyttes derfor til workflow.register_full_text_document(...), og
--- api.upload_full_text_document(...) blir det den alltid har vært utad: én
+-- Kroppen flyttes derfor til workflow.register_full_text_document(uuid, uuid, bytea, timestamptz, text, text, text, text, text, text, text), og
+-- api.upload_full_text_document(uuid, timestamptz, text, text, text, text, text, text, text, text) blir det den alltid har vært utad: én
 -- editor-kontroll, én base64-dekoding, og så den delte veien. En andre
 -- skrivevei ville vært en andre kontroll å glemme (AGENTS.md).
 -- ============================================================================
@@ -895,7 +895,7 @@ end;
 $$;
 
 comment on function workflow.full_text_document_problem(bytea) is
-  'Én setning om hvorfor et originaldokument ikke kan tas imot — tomt, større enn grensen, eller ikke en PDF — eller NULL. Egen funksjon fordi både api.upload_full_text_document(...) og fulltekstinnboksen må avvise nøyaktig det samme, og to steder å skrive grensen ville vært to steder å endre den bare ett av.';
+  'Én setning om hvorfor et originaldokument ikke kan tas imot — tomt, større enn grensen, eller ikke en PDF — eller NULL. Egen funksjon fordi både api.upload_full_text_document(uuid, timestamptz, text, text, text, text, text, text, text, text) og fulltekstinnboksen må avvise nøyaktig det samme, og to steder å skrive grensen ville vært to steder å endre den bare ett av.';
 
 revoke execute on function workflow.full_text_document_problem(bytea) from public;
 
@@ -1083,7 +1083,7 @@ $$;
 comment on function workflow.register_full_text_document(
   uuid, uuid, bytea, timestamptz, text, text, text, text, text, text, text
 ) is
-  'Den ene kontrollerte registreringen av en fulltekst, løftet ut av api.upload_full_text_document(...) i migrasjon 012a slik at både den og fulltekstinnboksen går gjennom nøyaktig de samme fire kontrollene: filen inn i det private biblioteket med sha256 beregnet av bytene, publikasjonstilhørigheten mot kildens registrerte DOI, PMID eller tittel, lesbarheten inkludert tabellkontrollen, og kildeversjonen som full_text. Feiler én av dem, blir ingenting stående — heller ikke filen. Kalleren er allerede kontrollert og aktøren allerede bestemt; funksjonen tar derfor aktøren som argument og er ikke SECURITY DEFINER.';
+  'Den ene kontrollerte registreringen av en fulltekst, løftet ut av api.upload_full_text_document(uuid, timestamptz, text, text, text, text, text, text, text, text) i migrasjon 012a slik at både den og fulltekstinnboksen går gjennom nøyaktig de samme fire kontrollene: filen inn i det private biblioteket med sha256 beregnet av bytene, publikasjonstilhørigheten mot kildens registrerte DOI, PMID eller tittel, lesbarheten inkludert tabellkontrollen, og kildeversjonen som full_text. Feiler én av dem, blir ingenting stående — heller ikke filen. Kalleren er allerede kontrollert og aktøren allerede bestemt; funksjonen tar derfor aktøren som argument og er ikke SECURITY DEFINER.';
 
 revoke execute on function workflow.register_full_text_document(
   uuid, uuid, bytea, timestamptz, text, text, text, text, text, text, text
@@ -1155,7 +1155,7 @@ $$;
 --
 -- Filen ligger derfor i innboksen til Antideps egen tekniske arbeider henter
 -- den, kjører oppskriften og leverer teksten tilbake gjennom
--- api.complete_full_text_extraction(...). For den som lastet opp, er dette
+-- api.complete_full_text_extraction(uuid, text, text). For den som lastet opp, er dette
 -- usynlig: oppgaven står som «pågår» til den er registrert. Ventingen er
 -- Antideps, ikke klinikerens.
 --
@@ -1268,7 +1268,7 @@ create table workflow.full_text_intake (
 );
 
 comment on table workflow.full_text_intake is
-  'Én opplastet fulltekst på vei gjennom Antideps egne kontroller (ANTIDEP_CONSTITUTION.md regel 1, 2, 4). Filen ligger her fordi det registrerte tekstuttrekket må kjøres av Antidep selv og ikke av en nettleser; for den som lastet opp, er det usynlig. Bytene nulles i det utfallet avgjøres, slik at verken en avvist fil eller en kopi av en registrert blir liggende utenfor knowledge.source_documents. Tabellen har RLS med default deny, ingen grants og ingen policy: originalfilen forlater den bare gjennom api.claim_full_text_extraction(...), til den som allerede har mandat til å laste den opp.';
+  'Én opplastet fulltekst på vei gjennom Antideps egne kontroller (ANTIDEP_CONSTITUTION.md regel 1, 2, 4). Filen ligger her fordi det registrerte tekstuttrekket må kjøres av Antidep selv og ikke av en nettleser; for den som lastet opp, er det usynlig. Bytene nulles i det utfallet avgjøres, slik at verken en avvist fil eller en kopi av en registrert blir liggende utenfor knowledge.source_documents. Tabellen har RLS med default deny, ingen grants og ingen policy: originalfilen forlater den bare gjennom api.claim_full_text_extraction(integer), til den som allerede har mandat til å laste den opp.';
 comment on column workflow.full_text_intake.content is
   'Originalfilen, bare så lenge den trengs. Nulles i det samme kallet som avgjør utfallet, og tilstandsregelen håndhever det: en avsluttet innboksrad kan ikke ha byte igjen.';
 comment on column workflow.full_text_intake.rejection is
@@ -1567,7 +1567,7 @@ begin
     raise exception using
       errcode = 'no_data_found',
       message = 'Uttrekksoppdraget gjelder ikke lenger.',
-      hint = 'Leien er utløpt eller overtatt. Ta et nytt oppdrag med api.claim_full_text_extraction(...).';
+      hint = 'Leien er utløpt eller overtatt. Ta et nytt oppdrag med api.claim_full_text_extraction(integer).';
   end if;
 
   select r.* into v_request
@@ -1670,7 +1670,7 @@ end;
 $$;
 
 comment on function api.complete_full_text_extraction(uuid, text, text) is
-  'Leverer den uttrukne teksten tilbake for ett innboksoppdrag, og gjør resten i den samme transaksjonen: publikasjonsbindingen, lesbarhetskontrollen, registreringen gjennom workflow.register_full_text_document(...), lukkingen av fulltekstforespørselen og innleggingen av ekstraksjonsoppgaven med den avgrensningen forespørselen allerede bærer. Oppskriften er ikke en parameter — bare verktøyversjonen er, fordi den er en opplysning og ikke noe som velges. En fil som ikke kan brukes, avvises med en lukket grunn og er en produkttilstand, ikke en teknisk feil. Krever editor-mandat.';
+  'Leverer den uttrukne teksten tilbake for ett innboksoppdrag, og gjør resten i den samme transaksjonen: publikasjonsbindingen, lesbarhetskontrollen, registreringen gjennom workflow.register_full_text_document(uuid, uuid, bytea, timestamptz, text, text, text, text, text, text, text), lukkingen av fulltekstforespørselen og innleggingen av ekstraksjonsoppgaven med den avgrensningen forespørselen allerede bærer. Oppskriften er ikke en parameter — bare verktøyversjonen er, fordi den er en opplysning og ikke noe som velges. En fil som ikke kan brukes, avvises med en lukket grunn og er en produkttilstand, ikke en teknisk feil. Krever editor-mandat.';
 
 revoke execute on function api.complete_full_text_extraction(uuid, text, text) from public;
 grant execute on function api.complete_full_text_extraction(uuid, text, text) to authenticated;
@@ -1736,7 +1736,7 @@ end;
 $$;
 
 comment on function api.fail_full_text_extraction(uuid, text) is
-  'Melder at det registrerte tekstuttrekket ikke lot seg kjøre for ett innboksoppdrag. Gir leien fra seg slik at filen kan prøves igjen, og registrerer et teknisk problem med Antideps egen setning — valgt av et lukket vokabular, aldri en videreformidlet feiltekst. Dette er den ene veien der en fil i innboksen blir et teknisk problem; en fil som bare er feil artikkel eller ikke lar seg lese, er en produkttilstand og går gjennom api.complete_full_text_extraction(...).';
+  'Melder at det registrerte tekstuttrekket ikke lot seg kjøre for ett innboksoppdrag. Gir leien fra seg slik at filen kan prøves igjen, og registrerer et teknisk problem med Antideps egen setning — valgt av et lukket vokabular, aldri en videreformidlet feiltekst. Dette er den ene veien der en fil i innboksen blir et teknisk problem; en fil som bare er feil artikkel eller ikke lar seg lese, er en produkttilstand og går gjennom api.complete_full_text_extraction(uuid, text, text).';
 
 revoke execute on function api.fail_full_text_extraction(uuid, text) from public;
 grant execute on function api.fail_full_text_extraction(uuid, text) to authenticated;
