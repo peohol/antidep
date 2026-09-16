@@ -139,6 +139,36 @@
 # en publisering for å kunne vise det den viser, og fiksturen trekker den tilbake
 # før neste kjøring — gjennom den kontrollerte operasjonen, aldri ved å slette
 # historikk.
+#
+# ----------------------------------------------------------------------------
+# Prøve 16 til 18 — den autonome kjøreren (migrasjon 011a)
+#
+# Fra 011a kan en planlagt KI-agent hente arbeid selv. «Det kjøres bare én
+# planlagt oppgave om gangen» er ikke en garanti noen kan gi: en plattform kan
+# starte to kjøringer, en kjøring kan henge og bli startet på nytt, og et
+# menneske kan stå ved agentarbeidsflaten samtidig. Uttaket må derfor holde av
+# seg selv, og det er nettopp det som ikke lar seg prøve i pgTAP: filene der
+# kjører i én transaksjon som rulles tilbake, og en andre forbindelse ville verken
+# sett fiksturen deres eller kunnet kappes mot dem.
+#
+#   16  To planlagte kjøringer kan ikke ta den samme oppgaven. Økt A tar uttaket
+#       og holder transaksjonen åpen; økt B ber om nøyaktig den samme oppgaven
+#       og skal få vite at den ikke kan tas nå, framfor å få den. Uten FOR
+#       UPDATE SKIP LOCKED og lesningen av utførbarheten på nytt etter låsen,
+#       ville begge fått den.
+#
+#   17  Den manuelle veien og den autonome kan ikke registrere det samme
+#       arbeidet. Økt A tar uttaket og commiter; økt B laster opp et svar fra
+#       agentarbeidsflaten og skal avvises av at oppgaven er tatt ut.
+#
+#   18  En utløpt leie kan tas på nytt, uten tapt eller dobbelt arbeid. Uttaket
+#       får sin egen nøkkel, så den forrige kjøringen kan ikke levere et svar
+#       over den som nå arbeider — og oppgaven blir ikke stående låst fordi en
+#       planlagt kjøring døde.
+#
+# Fiksturen er egen (scripts/agent-runner-race-fixture.sql) og bygges opp på
+# nytt hver kjøring: uttak teller forsøk, og en jobb som ble stående med
+# oppbrukte forsøk, ville gjort neste kjøring grønn av feil grunn.
 set -euo pipefail
 
 DB_URL=""
@@ -1091,5 +1121,274 @@ proev 'en samtidig tilbaketrekking må vente på rollbacken (55P03)' \
    select knowledge.withdraw_claim_publication('$pub_paastand', '$pub_publisher_aktor',
      'Samtidighetsprøve; rulles tilbake.');" \
   'Uten radlåsen på påstanden kan en rollback og en tilbaketrekking lese den samme tilstanden, og etterlate to gjeldende sannheter (migrasjon 009e).'
+
+# ----------------------------------------------------------------------------
+# Prøve 16 til 18 — den autonome kjøreren
+# ----------------------------------------------------------------------------
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -f "$(dirname "$0")/agent-runner-race-fixture.sql"
+
+kjorer_token='7e00000000000000000000000000000000000000000000000000000000000001'
+kjorer_jobb='7e000000-0000-4000-8000-00000000000a'
+kjorer_redaktor='7e000000-0000-4000-8000-0000000000e0'
+# Begge øktene ber om NØYAKTIG denne oppgaven. «Gi meg arbeid» ville latt økt B
+# få en annen jobb dersom databasen inneholder mer enn fiksturens egen, og
+# prøven ville vært grønn uten å ha prøvd det den finnes for. Henvisningen er
+# den modellen selv får: utledet av jobben og tilkoblingen, aldri en
+# databaseidentitet.
+# Publikumet tokenet ble utstedt for. Det følger hvert kall helt inn i
+# databasen: kontrollen skal gjelde også for en kaller som går utenom
+# MCP-serveren, slik denne prøven gjør (RFC 8707).
+kjorer_res='https://laaseprove.example/mcp'
+kjorer_ref=$(les "select workflow.agent_runner_task_ref(
+  '7e000000-0000-4000-8000-0000000000c1'::uuid, '$kjorer_jobb'::uuid)")
+
+# Økt A tar uttaket og HOLDER transaksjonen åpen. Økt B spør om arbeid mens
+# raden er låst, og skal få «ingen arbeid» — ikke den samme jobben.
+kapp_om_uttaket() {
+  local styr="$arbeid/styr-runner.$$" a_log="$arbeid/a-runner.log" b_log="$arbeid/b-runner.log"
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  (
+    printf "begin;\n"
+    printf "select api.claim_agent_task('%s', '%s', '%s', 900);\n" "$kjorer_token" "$kjorer_res" "$kjorer_ref"
+    printf "\\\\echo TATT\n"
+    printf "\\\\o /dev/null\n"
+    cat "$styr"
+    printf "rollback;\n"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$a_log" 2>&1 &
+  okt_a_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 100); do
+    grep -q 'TATT' "$a_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  if ! grep -q 'TATT' "$a_log" 2>/dev/null; then
+    printf 'Økt A fikk ikke tatt uttaket:\n' >&2
+    cat "$a_log" >&2
+    exec 9>&-
+    exit 1
+  fi
+
+  set +e
+  psql "$DB_URL" -X -tA > "$b_log" 2>&1 <<SQL
+set lock_timeout = '2s';
+select api.claim_agent_task('$kjorer_token', '$kjorer_res', '$kjorer_ref', 900);
+SQL
+  set -e
+
+  printf 'exit\n' >&9 || true
+  exec 9>&-
+  wait "$okt_a_pid" 2>/dev/null || true
+  okt_a_pid=""
+  rm -f "$styr"
+
+  if grep -q '"claimed": false' "$b_log" && grep -q '"reason": "stale_task"' "$b_log"; then
+    printf 'ok       to planlagte kjøringer kan ikke ta den samme oppgaven\n'
+    return 0
+  fi
+
+  printf 'AVVIK    to planlagte kjøringer kan ikke ta den samme oppgaven\n' >&2
+  printf '         Uten FOR UPDATE SKIP LOCKED og lesningen av utførbarheten etter låsen ville begge fått den samme jobben (migrasjon 011a).\n' >&2
+  printf '         Svaret fra økt B:\n' >&2
+  sed 's/^/         /' "$b_log" >&2
+  exit 1
+}
+
+kapp_om_uttaket
+
+# Prøve 17 — økt A commiter uttaket, og den manuelle importveien avvises.
+handle=$(les "select api.claim_agent_task('$kjorer_token', '$kjorer_res', '$kjorer_ref', 900) ->> 'task_handle'")
+if [ -z "$handle" ]; then
+  printf 'AVVIK    kjøreren fikk ikke tatt oppgaven etter at prøve 16 rullet tilbake\n' >&2
+  exit 1
+fi
+
+manuell_log="$arbeid/manuell.log"
+set +e
+psql "$DB_URL" -X -tA > "$manuell_log" 2>&1 <<SQL
+\set VERBOSITY verbose
+begin;
+select set_config('request.jwt.claims', '{"sub":"$kjorer_redaktor"}', true);
+set local role authenticated;
+select api.import_agent_answer('$kjorer_jobb', '{}'::jsonb);
+rollback;
+SQL
+set -e
+
+if grep -q '23001' "$manuell_log"; then
+  printf 'ok       den manuelle importen kan ikke registrere en oppgave en kjører holder\n'
+else
+  printf 'AVVIK    den manuelle importen kan ikke registrere en oppgave en kjører holder\n' >&2
+  printf '         Uten den delte leien kunne det samme arbeidet blitt registrert to ganger, i to modellidentiteter (migrasjon 011a).\n' >&2
+  sed 's/^/         /' "$manuell_log" >&2
+  exit 1
+fi
+
+# Prøve 18 — en utløpt leie er ledig igjen, og den forrige nøkkelen treffer
+# ingenting. Tiden flyttes framfor å ventes ut: prøven skal si noe om regelen,
+# ikke om klokka.
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
+  "update workflow.pipeline_jobs
+   set lease_expires_at = now() - interval '1 minute'
+   where id = '$kjorer_jobb'" > /dev/null
+
+nytt_handle=$(les "select api.claim_agent_task('$kjorer_token', '$kjorer_res', '$kjorer_ref', 900) ->> 'task_handle'")
+if [ -z "$nytt_handle" ] || [ "$nytt_handle" = "$handle" ]; then
+  printf 'AVVIK    en utløpt leie kan tas på nytt med en ny nøkkel\n' >&2
+  printf '         Uttaket fikk ikke sin egen nøkkel, og en kjøring som mistet leien kunne skrevet over den som nå arbeider (DATABASE_ARCHITECTURE.md §33).\n' >&2
+  exit 1
+fi
+printf 'ok       en utløpt leie kan tas på nytt, og uttaket får sin egen nøkkel\n'
+
+foreldet=$(les "select api.submit_agent_answer('$kjorer_token', '$kjorer_res', '$handle'::uuid, '{}'::jsonb) ->> 'reason'")
+if [ "$foreldet" = "stale_task" ]; then
+  printf 'ok       en kjøring med utløpt leie kan ikke levere over uttaket som nå arbeider\n'
+else
+  printf 'AVVIK    en kjøring med utløpt leie kan ikke levere over uttaket som nå arbeider\n' >&2
+  printf '         Svaret var: %s\n' "$foreldet" >&2
+  exit 1
+fi
+
+# Oppgaven gis fra seg igjen, slik at databasen ikke blir stående med en leie
+# fra en prøve som er ferdig.
+les "select api.release_agent_task('$kjorer_token', '$kjorer_res', '$nytt_handle'::uuid, 'could_not_complete')" > /dev/null
+
+# Prøve 19 — taket på klientregistreringen er én avgjørelse om gangen
+#
+# /oauth/register må være åpen: RFC 7591 dynamisk klientregistrering er det
+# ChatGPT bruker for å koble seg til i det hele tatt. Taket per time er da den
+# eneste grensen, og en grense som leses og skrives i to trinn uten en lås, er
+# ingen grense: samtidige registreringer leser hver sin tilstand fra før de
+# andre commitet, finner alle færre enn taket og slipper alle gjennom.
+#
+# Låsen er transaksjonslokal. Økt A holder den mens den er inne i funksjonen;
+# økt B må vente, og med lock_timeout blir ventingen synlig som 55P03.
+proev 'en samtidig klientregistrering må vente på den som teller først (55P03)' \
+  "select api.register_agent_runner_client('Samtidig A', array['https://samtidig.example/cb']);" \
+  "select api.register_agent_runner_client('Samtidig B', array['https://samtidig.example/cb']);" \
+  'Uten låsen er taket per time en grense som ikke holder nettopp i det tilfellet den finnes for: en flom av samtidige registreringer (migrasjon 011a).'
+
+# Prøve 20 — én engangskode om gangen, per tilkobling
+#
+# Utstedelsen leser tilkoblingen, trekker tilbake koden den ser, og setter inn
+# sin egen. Uten en lås på tilkoblingsraden kunne to faner gjort alle tre
+# trinnene samtidig: begge ville trukket tilbake den koden de så, og begge ville
+# satt inn sin egen — og da finnes det to gyldige koder for den samme kjøreren,
+# som er nøyaktig det utstedelsen finnes for å hindre. Den samme låsen stenger
+# også for at en tilbaketrekking blir ferdig mellom lesningen og innsettingen,
+# slik at redaktøren får en kode til en tilkobling som ikke lenger finnes.
+kode_sesjon="select set_config('request.jwt.claims', '{\"sub\":\"$kjorer_redaktor\"}', true);
+set local role authenticated;"
+
+proev 'en samtidig utstedelse av engangskode må vente på den første (55P03)' \
+  "$kode_sesjon
+   select api.issue_agent_runner_pairing_code('agent-runner:laaseprove');" \
+  "$kode_sesjon
+   select api.issue_agent_runner_pairing_code('agent-runner:laaseprove');" \
+  'Uten låsen på tilkoblingsraden kunne to samtidige utstedelser gitt hver sin gyldige engangskode for den samme kjøreren (migrasjon 011a).'
+
+# Prøve 21 — en tilbaketrekking kan ikke skje midt i et kall
+#
+# Autentiseringen var en lesning av et øyeblikk: en tilbaketrekking kunne bli
+# ferdig ETTER at et kall hadde autentisert seg, men FØR det tok en oppgave — og
+# uttaket som fulgte, ble ikke frigitt av tilbaketrekkingen, som allerede var
+# forbi. Oppgaven sto da som opptatt av en kjører som aldri kommer tilbake.
+#
+# Den delte låsen på tilkoblingsraden holdes ut hele kallet. Flere kjøringer kan
+# arbeide samtidig; det er tilbaketrekkingen som må vente.
+#
+# Prøven går rett på autentiseringen, og det er med vilje: et helt RPC-kall
+# rekker å skrive sporet sitt, og FK-en fra sporet tar sin egen lås på
+# tilkoblingsraden. Prøven ville da passert uten rettingen, og målt feil ting.
+# Vinduet den handler om, er nettopp mellom autentiseringen og arbeidet.
+proev 'en tilbaketrekking må vente på et kall som allerede er autentisert (55P03)' \
+  "select workflow.authenticated_runner_connection('$kjorer_token', '$kjorer_res');" \
+  "$kode_sesjon
+   select api.revoke_agent_runner('agent-runner:laaseprove', 'Samtidighetsprøven.');" \
+  'Uten den delte låsen kunne en tilbaketrekking bli ferdig mellom autentiseringen og arbeidet, og uttaket som fulgte, ville aldri blitt frigitt (migrasjon 011a).'
+
+# Prøve 22 — den tredje rekkefølgen: kallet startet FØRST, men tilbaketrekkingen
+# ble ferdig underveis.
+#
+# Prøve 21 dekker «kallet holdt låsen først». Den tredje rekkefølgen er den
+# farlige: kallet begynte først, og tilbaketrekkingen ble ferdig mens kallet
+# ennå ikke hadde nådd autentiseringen.
+#
+# En gyldighetskontroll som SAMMENLIGNER MED EN KLOKKE, har da feil svar.
+# `statement_timestamp()` er frosset til tidspunktet setningen startet — også
+# gjennom en pause inne i den samme kommandoen — og tilbaketrekkingens
+# `valid_to` er senere enn det. Tilkoblingen ville altså sett gjeldende ut for
+# nettopp det kallet den skulle stenge ute. Kontrollen leser derfor at raden er
+# gjeldende (`valid_to is null`), og da svarer den oppdaterte raden selv.
+#
+# Prøven avslutter tilkoblingsraden DIREKTE og lar tokenet leve. Det er med
+# vilje: `api.revoke_agent_runner` trekker også tilbake hemmelighetene, og da
+# ville tokenkontrollen stoppet kallet uansett — prøven ville passert uten
+# rettingen, og målt feil ting.
+sen_auth="$arbeid/sen-auth.log"
+psql "$DB_URL" -X -tA > "$sen_auth" 2>&1 <<SQL &
+\set VERBOSITY verbose
+do \$\$
+begin
+  perform pg_sleep(2);
+  perform workflow.authenticated_runner_connection('$kjorer_token', '$kjorer_res');
+end
+\$\$;
+SQL
+sen_auth_pid=$!
+
+sleep 1
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
+  "update workflow.agent_runner_connections c
+   set valid_to = statement_timestamp(),
+       revoked_by_actor_id = c.registered_by_actor_id,
+       revocation_reason = 'Samtidighetsprøven, tredje rekkefølge.'
+   where c.connection_key = 'agent-runner:laaseprove' and c.valid_to is null" > /dev/null
+
+wait "$sen_auth_pid" || true
+
+if grep -q '42501' "$sen_auth"; then
+  printf 'ok       et kall som startet før tilbaketrekkingen, avvises likevel etter den\n'
+else
+  printf 'AVVIK    et kall som startet før tilbaketrekkingen, avvises likevel etter den\n' >&2
+  printf '         Gyldigheten ble avgjort mot setningens frosne klokke, så en fullført tilbaketrekking var usynlig for kallet (migrasjon 011a).\n' >&2
+  sed 's/^/         /' "$sen_auth" >&2
+  exit 1
+fi
+
+# Prøve 23 — og etter en fullført tilbaketrekking oppstår det ingen ny leie.
+#
+# Tokenet lever fortsatt — prøve 22 avsluttet bare tilkoblingsraden — så
+# avvisningen her kan ikke komme fra tokenkontrollen. Den kommer fra at
+# tilkoblingen ikke er gjeldende, som er nettopp det som skal stenge veien.
+#
+# Sammen med prøve 21 er dette hele garantien: enten fullfører arbeidet før
+# tilbaketrekkingen og blir ryddet opp av den, eller så kommer det aldri forbi
+# autentiseringen. Det finnes ikke et tredje utfall der en leie oppstår uten at
+# noen frigir den.
+etter_revoke="$arbeid/etter-revoke.log"
+set +e
+psql "$DB_URL" -X -tA > "$etter_revoke" 2>&1 <<SQL
+\set VERBOSITY verbose
+select api.claim_agent_task('$kjorer_token', '$kjorer_res', '$kjorer_ref', 900);
+SQL
+set -e
+
+nye_leier=$(les "select count(*)::text from workflow.pipeline_jobs
+                 where id = '$kjorer_jobb' and state = 'leased'")
+
+if grep -q '42501' "$etter_revoke" && [ "$nye_leier" = '0' ]; then
+  printf 'ok       etter en fullført tilbaketrekking oppstår det ingen ny leie\n'
+else
+  printf 'AVVIK    etter en fullført tilbaketrekking oppstår det ingen ny leie\n' >&2
+  printf '         Et kall med et tilbaketrukket tokens legitimasjon tok en oppgave ingen ville frigitt (migrasjon 011a).\n' >&2
+  printf '         Leide jobber etterpå: %s. Svaret fra kallet:\n' "$nye_leier" >&2
+  sed 's/^/         /' "$etter_revoke" >&2
+  exit 1
+fi
 
 printf '\nAlle samtidighetsprøvene passerte.\n'

@@ -84,6 +84,14 @@ jobs:
       - name: Kjedeprøve (ekte kjørere mot ekte database)
         if: always()
         run: npm run db:test:chain
+      # Den autonome kjøreren prøves som det den er: et protokollendepunkt med
+      # ekte OAuth og den ekte databasen bak. Ingen modell kalles og ingen
+      # nøkkel finnes — «agenten» er prøven selv, og svaret settes sammen av
+      # oppgaven databasen bygget. En prøve som hadde kontaktet ChatGPT, ville
+      # gjort CI avhengig av en ekstern tjeneste og en betalt konto.
+      - name: Ende-til-ende for den autonome kjøreren (MCP mot ekte database)
+        if: always()
+        run: npm run db:test:mcp
       - name: Stopp stacken
         if: always()
         run: npx supabase stop

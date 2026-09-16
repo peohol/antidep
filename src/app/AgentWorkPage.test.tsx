@@ -25,6 +25,7 @@ import { describe, expect, it } from 'vitest'
 import { AgentWorkPage } from './AgentWorkPage'
 import type { AgentWorkGateway } from './agent-work-gateway'
 import {
+  parseAgentRunnerRevocation,
   parseAgentTask,
   parseAgentWorkQueue,
   parseImportOutcome,
@@ -130,6 +131,13 @@ function fakeDatabase(options: { readonly blocked?: readonly string[] } = {}) {
   })
 
   const gateway: AgentWorkGateway = {
+    // Den autonome kjøreren er en egen seksjon på den samme siden. Ingen kjører
+    // er registrert i denne prøven: den manuelle veien skal virke akkurat som
+    // før, og det er nettopp det som gjør den til en fallback.
+    listRunners: () => Promise.resolve([]),
+    registerRunner: () => Promise.reject(new Error('ikke prøvd her')),
+    issuePairingCode: () => Promise.reject(new Error('ikke prøvd her')),
+    revokeRunner: () => Promise.reject(new Error('ikke prøvd her')),
     // Køen er det som venter. En besvart oppgave står ikke i den — akkurat som i
     // databasen, der utfallet gjør jobben til historikk.
     listQueue: () =>
@@ -591,9 +599,237 @@ describe('Agentarbeid', () => {
       assignRoleModel: () => Promise.reject(new Error('nei')),
       readTask: () => Promise.reject(new Error('nei')),
       importAnswer: () => Promise.reject(new Error('nei')),
+      listRunners: () => Promise.resolve([]),
+      registerRunner: () => Promise.reject(new Error('nei')),
+      issuePairingCode: () => Promise.reject(new Error('nei')),
+      revokeRunner: () => Promise.reject(new Error('nei')),
     }
     render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
     expect(await screen.findByText(/ingen tilgang/)).toBeInTheDocument()
     expect(screen.queryByText('Ingen agentoppgaver venter nå.')).not.toBeInTheDocument()
+  })
+})
+
+// ============================================================================
+// Den autonome kjøreren, sett fra flaten
+//
+// Registreringen er en avgjørelse om hvem som utfører kjedens arbeid, og den
+// tas her — av den som har tilgangen. Prøven dekker det flaten faktisk lover:
+// at engangskoden vises én gang, at kjøreren kan trekkes tilbake, at
+// nedlast/opplast-veien består ved siden av, og at en oppgave som gjøres
+// automatisk akkurat nå, ikke ser ut som noe som er i veien.
+// ============================================================================
+describe('autonom kjører', () => {
+  interface Recorded {
+    readonly registered: Record<string, unknown>[]
+    readonly revoked: string[]
+  }
+
+  function runnerGateway(releasedTasks = 0): { gateway: AgentWorkGateway; recorded: Recorded } {
+    const recorded: Recorded = { registered: [], revoked: [] }
+    const gateway: AgentWorkGateway = {
+      listQueue: () =>
+        Promise.resolve(
+          parseAgentWorkQueue([
+            {
+              pipeline_job_id: EXTRACTION_JOB,
+              agent_role: 'evidence_extraction',
+              job_key: 'agent-handoff:kilde:abc',
+              state: 'leased',
+              attempts: 1,
+              max_attempts: 3,
+              enqueued_at: '2026-09-15T09:00:00Z',
+              failure_reason: null,
+              blocked_reason: 'Oppgaven er tatt ut av en kjøring som fortsatt holder den.',
+              subject_label: 'Syntetisk testkilde',
+              registered_model: {
+                provider: 'openai',
+                model: 'GPT-5 Thinking',
+                model_version: 'ikke-eksponert',
+                model_version_disclosure: 'not_exposed',
+              },
+              held_by_runner: 'Antidep ekstraksjonskjører',
+            },
+          ]),
+        ),
+      assignRoleModel: () => Promise.reject(new Error('ikke prøvd her')),
+      readTask: () => Promise.reject(new Error('ikke prøvd her')),
+      importAnswer: () => Promise.reject(new Error('ikke prøvd her')),
+      listRunners: () =>
+        Promise.resolve([
+          {
+            connectionKey: 'agent-runner:evidence-extraction',
+            displayName: 'Antidep ekstraksjonskjører',
+            role: 'evidence_extraction',
+            platformAgentReference: 'Antidep Ekstraksjon (ChatGPT)',
+            platformModelDisclosure: 'not_exposed',
+            connected: true,
+            lastSeenAt: '2026-09-15T09:05:00Z',
+            deliveredAnswers: 3,
+          },
+        ]),
+      registerRunner: (registration) => {
+        recorded.registered.push({ ...registration })
+        return Promise.resolve()
+      },
+      issuePairingCode: (connectionKey) =>
+        Promise.resolve({
+          connectionKey,
+          displayName: 'Antidep ekstraksjonskjører',
+          role: 'evidence_extraction',
+          pairingCode: 'abc123',
+          expiresAt: '2026-09-15T09:15:00Z',
+        }),
+      revokeRunner: (connectionKey) => {
+        recorded.revoked.push(connectionKey)
+        return Promise.resolve({
+          connectionKey,
+          revoked: true,
+          role: 'evidence_extraction',
+          revokedSecrets: 2,
+          releasedTasks,
+        })
+      },
+    }
+    return { gateway, recorded }
+  }
+
+  it('viser kjøreren, hva den utfører, og at plattformen ikke pinner modellen', async () => {
+    const { gateway } = runnerGateway()
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    expect(await screen.findByText('Antidep ekstraksjonskjører')).toBeInTheDocument()
+    expect(screen.getByText(/Antidep Ekstraksjon \(ChatGPT\)/)).toBeInTheDocument()
+    // Det er en sann opplysning og ikke en mangel som skal skjules: separasjonen
+    // hviler da på modelltildelingen, ikke på plattformen.
+    expect(screen.getByText(/oppgir ikke hvilken modell/)).toBeInTheDocument()
+  })
+
+  it('sier at arbeidet gjøres automatisk nå, framfor at noe er i veien', async () => {
+    const { gateway } = runnerGateway()
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    expect(
+      await screen.findByText('Utføres automatisk nå av Antidep ekstraksjonskjører.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Kan ikke utføres ennå/)).not.toBeInTheDocument()
+    // Og nedlastingen tilbys ikke på en oppgave en kjøring holder: de to veiene
+    // deler leie, og skal ikke gjøre det samme arbeidet.
+    expect(screen.queryByRole('button', { name: 'Last ned oppgaven' })).not.toBeInTheDocument()
+  })
+
+  // «Ingen kjører er registrert» er et svar. En kjørerliste som ikke kunne
+  // leses, er fraværet av et svar, og de to skal ikke se like ut: ellers ville
+  // et nettverksavbrudd sagt at alt agentarbeid gjøres manuelt — mens en kjører
+  // kanskje arbeider akkurat nå.
+  it('skiller en kjørerliste som ikke kunne leses, fra en tom liste', async () => {
+    const { gateway } = runnerGateway()
+    render(
+      <AgentWorkPage
+        gateway={{
+          ...gateway,
+          listRunners: () => Promise.reject(new Error('Kjørerne kunne ikke leses: ingen tilgang')),
+        }}
+        saveFile={() => {}}
+      />,
+    )
+
+    expect(await screen.findByText(/ingen tilgang/)).toBeInTheDocument()
+    expect(
+      screen.queryByText('Ingen autonom kjører er registrert. Alt agentarbeid gjøres manuelt.'),
+    ).not.toBeInTheDocument()
+    // Og den manuelle veien består: køen står der uansett.
+    expect(screen.getByText('Syntetisk testkilde')).toBeInTheDocument()
+  })
+
+  it('viser engangskoden én gang, og sier at den bare vises nå', async () => {
+    const { gateway } = runnerGateway()
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Hent tilkoblingskode' }))
+    expect(await screen.findByText('abc123')).toBeInTheDocument()
+    expect(screen.getByText(/Koden vises bare nå/)).toBeInTheDocument()
+  })
+
+  it('registrerer en kjører bundet til ett agentledd, uten å be om en database-id', async () => {
+    const { gateway, recorded } = runnerGateway()
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    fireEvent.change(await screen.findByLabelText('Navn på kjøreren'), {
+      target: { value: 'Antidep syntesekjører' },
+    })
+    fireEvent.change(screen.getByLabelText('Agentens navn i plattformen'), {
+      target: { value: 'Antidep Syntese (ChatGPT)' },
+    })
+    fireEvent.change(screen.getByLabelText('Agentledd'), {
+      target: { value: 'claim_synthesis' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Registrer kjøreren' }))
+
+    await waitFor(() => {
+      expect(recorded.registered).toHaveLength(1)
+    })
+    expect(recorded.registered[0]).toMatchObject({
+      connectionKey: 'agent-runner:claim-synthesis',
+      role: 'claim_synthesis',
+      platformAgentReference: 'Antidep Syntese (ChatGPT)',
+      platformModelDisclosure: 'not_exposed',
+    })
+  })
+
+  it('trekker kjøreren tilbake, og sier at tokenene sluttet å gjelde', async () => {
+    const { gateway, recorded } = runnerGateway()
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Trekk tilbake' }))
+    await waitFor(() => {
+      expect(recorded.revoked).toEqual(['agent-runner:evidence-extraction'])
+    })
+    expect(await screen.findByText(/sluttet å gjelde med det samme/)).toBeInTheDocument()
+    // Holdt kjøreren ikke noe arbeid, skal flaten heller ikke si at noe ble
+    // ledig: en setning om null oppgaver er en setning som skaper tvil.
+    expect(screen.queryByText(/ble ledig igjen/)).not.toBeInTheDocument()
+  })
+
+  // Kom en annen fane eller redaktør først, er kjøreren allerede trukket
+  // tilbake — og det er utfallet man ville ha. Flaten skal si nettopp det,
+  // framfor å melde at tilbaketrekkingen mislyktes.
+  it('sier at kjøreren allerede var trukket tilbake, framfor at noe gikk galt', async () => {
+    const { gateway } = runnerGateway()
+    render(
+      <AgentWorkPage
+        gateway={{
+          ...gateway,
+          revokeRunner: (connectionKey) =>
+            Promise.resolve(
+              parseAgentRunnerRevocation({ revoked: false, connection_key: connectionKey }),
+            ),
+        }}
+        saveFile={() => {}}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Trekk tilbake' }))
+    expect(await screen.findByText('Kjøreren var allerede trukket tilbake.')).toBeInTheDocument()
+    expect(screen.queryByText(/sluttet å gjelde med det samme/)).not.toBeInTheDocument()
+  })
+
+  // Arbeidet kjøreren holdt, er det den som eier innholdet faktisk må vite noe
+  // om: kjøreren kommer ikke tilbake for å levere det, og oppgavene skal kunne
+  // gjøres av den som overtar leddet.
+  it('sier hvor mye arbeid som ble ledig igjen da kjøreren ble trukket tilbake', async () => {
+    const { gateway } = runnerGateway(1)
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Trekk tilbake' }))
+    expect(await screen.findByText(/Én oppgave den holdt, ble ledig igjen/)).toBeInTheDocument()
+  })
+
+  it('teller flere frigitte oppgaver som flere', async () => {
+    const { gateway } = runnerGateway(3)
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Trekk tilbake' }))
+    expect(await screen.findByText(/3 oppgaver den holdt, ble ledig igjen/)).toBeInTheDocument()
   })
 })

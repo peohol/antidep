@@ -17,6 +17,12 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '../types/database'
+import { assertPublishableKey } from './publishable-key'
+
+// Vakten mot en for privilegert nøkkel ligger i sin egen modul, fordi
+// MCP-appen leser den samme regelen på serversiden — og en import av noe
+// Vite-spesifikt derfra ville dratt `import.meta.env` inn i et Node-bygg.
+export { assertPublishableKey }
 
 /** Supabase-klienten slik resten av appen ser den: bundet til `api`. */
 export type AntidepClient = SupabaseClient<Database, 'api'>
@@ -30,66 +36,6 @@ export interface SupabaseConfig {
 export interface SupabaseEnv {
   readonly VITE_SUPABASE_URL?: string | undefined
   readonly VITE_SUPABASE_PUBLISHABLE_KEY?: string | undefined
-}
-
-const SECRET_KEY_PREFIX = 'sb_secret_'
-
-/** Rollene en nettleserklient har lov til å opptre som (migrasjon 001). */
-const CLIENT_ROLES = ['anon', 'authenticated']
-
-/**
- * Leser `role`-claimet fra en legacy Supabase-nøkkel (en JWT).
- *
- * Returnerer `null` når nøkkelen ikke er en JWT vi kan lese. Et ukjent format
- * er ikke bevis på at nøkkelen er hemmelig, og vakten skal ikke blokkere et
- * gyldig nøkkelformat den ikke kjenner.
- */
-function jwtRoleClaim(key: string): string | null {
-  const segments = key.split('.')
-  if (segments.length !== 3) {
-    return null
-  }
-  const payload = segments[1]
-  if (payload === undefined || payload.length === 0) {
-    return null
-  }
-  try {
-    const base64 = payload.replaceAll('-', '+').replaceAll('_', '/')
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
-    const claims: unknown = JSON.parse(atob(padded))
-    if (typeof claims !== 'object' || claims === null) {
-      return null
-    }
-    const role = (claims as Record<string, unknown>)['role']
-    return typeof role === 'string' ? role : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Avviser nøkler som gir mer enn en nettleser skal ha.
- *
- * Kontrollen er bevisst positiv for JWT-nøkler: alt annet enn `anon` og
- * `authenticated` avvises, ikke bare `service_role`. En framtidig privilegert
- * rolle skal ikke slippe gjennom fordi vakten bare kjente den ene ved navn.
- */
-export function assertPublishableKey(key: string): void {
-  if (key.startsWith(SECRET_KEY_PREFIX)) {
-    throw new Error(
-      'VITE_SUPABASE_PUBLISHABLE_KEY ser ut til å være en secret key ' +
-        `(${SECRET_KEY_PREFIX}…). Hemmelige nøkler skal aldri i klientkode eller i repoet. ` +
-        'Bruk prosjektets publishable key.',
-    )
-  }
-  const role = jwtRoleClaim(key)
-  if (role !== null && !CLIENT_ROLES.includes(role)) {
-    throw new Error(
-      `VITE_SUPABASE_PUBLISHABLE_KEY har rollen «${role}». En nettleserklient skal bare ` +
-        `opptre som ${CLIENT_ROLES.join(' eller ')}. En service_role-nøkkel omgår RLS og ` +
-        'skal aldri i klientkode eller i repoet.',
-    )
-  }
 }
 
 function required(env: SupabaseEnv, name: keyof SupabaseEnv): string {
