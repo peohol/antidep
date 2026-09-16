@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(110);
+select plan(111);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -269,6 +269,18 @@ select throws_ok(
   '22023',
   null,
   'en redirect-adresse som verken er https eller loopback, avvises'
+);
+
+-- Og en adresse som bare BEGYNNER som en adresse. Uten forankringen i begge
+-- ender ville den blitt godtatt her, brukt opp en engangskode ved
+-- autorisasjonen, og så kastet i serverens URL-lesning — 500 uten
+-- videresending, og en ny engangskode å hente.
+select throws_ok(
+  $$ select api.register_agent_runner_client('Halvveis',
+       array['https://chatgpt.example/callback noe helt annet']) $$,
+  '22023',
+  null,
+  'en redirect-adresse som ikke kan leses som en adresse, avvises der den oppgis'
 );
 
 -- PKCE er påkrevd, og bare S256.

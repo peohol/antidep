@@ -1112,6 +1112,35 @@ describe('argumentene til et verktøykall', () => {
     expect(gateway.claims).toBe(1)
   })
 
+  // Og en notifikasjon besvares ikke, heller ikke når den er malformet:
+  // statusen bærer utfallet, og JSON-RPC-kroppen faller bort. Den hadde uansett
+  // ingen id å kobles til.
+  it('svarer en malformet notifikasjon med en status og ingen kropp', async () => {
+    const gateway = createFakeGateway()
+    const response = await send(
+      'mcp',
+      rpc({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        params: { name: 'claim_agent_task', arguments: 'feil' },
+      }),
+      gateway,
+    )
+    expect(response.status).toBe(400)
+    expect(await response.text()).toBe('')
+    expect(gateway.claims).toBe(0)
+  })
+
+  it('gjør det samme med et ukjent verktøy i en notifikasjon', async () => {
+    const response = await send(
+      'mcp',
+      rpc({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'finnes_ikke' } }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(400)
+    expect(await response.text()).toBe('')
+  })
+
   // Og «id: null» er verken en forespørsel eller en notifikasjon: revisjonen
   // sier at en id MÅ finnes og IKKE være null. Leses den som en notifikasjon,
   // blir kallet utført mens klienten venter på et resultat den aldri får.

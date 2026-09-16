@@ -776,6 +776,25 @@ async function mcpEndpoint(
 
   try {
     const dispatched = await dispatchMcpMessage(message, era, credentials, identity, deps)
+
+    // En notifikasjon besvares ikke — heller ikke med et feilsvar.
+    //
+    // Revisjonen sier at mottakeren IKKE skal sende et svar på en notifikasjon,
+    // og transporten sier hva som skal skje i stedet: 202 uten kropp når
+    // serveren tok imot den, og en HTTP-feilstatus når den ikke kunne det.
+    // Statusen bærer altså utfallet, og JSON-RPC-kroppen faller bort — den
+    // hadde uansett ingen `id` å kobles til, og en klient som ikke venter på et
+    // svar, har ingen steder å gjøre av den.
+    if (message.isNotification) {
+      const accepted = dispatched.response === null || !('error' in dispatched.response)
+      const status = accepted ? 202 : (dispatched.status ?? 400)
+      const result = {
+        response: new Response(null, { status }),
+        outcome: dispatched.trace?.outcome ?? 'ok',
+      }
+      return dispatched.trace === null ? result : { ...result, tool: dispatched.trace.tool }
+    }
+
     if (dispatched.response === null) {
       return { response: new Response(null, { status: 202 }), outcome: 'ok' }
     }

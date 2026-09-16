@@ -276,14 +276,22 @@ as $$
     cardinality(p_uris) between 1 and 8
     and not exists (
       select 1 from unnest(p_uris) as u(uri)
-      where u.uri !~ '^https://[^\s?#]+'
+      -- Forankret i BEGGE ender, og med en vert som faktisk er en vert.
+      --
+      -- Uten `$` var «https://klient.example/callback noe helt annet» en lovlig
+      -- adresse: prefikset stemte. Den ville blitt godtatt ved registreringen,
+      -- brukt opp en engangskode ved autorisasjonen, og så kastet i
+      -- `new URL(...)` i serveren — 500 uten videresending, og en ny engangskode
+      -- å hente. En adresse som ikke kan leses som en adresse, skal avvises der
+      -- den oppgis.
+      where u.uri !~ '^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?(/[^\s?#]*)?$'
         and u.uri !~ '^http://(localhost|127\.0\.0\.1)(:[0-9]{1,5})?(/[^\s]*)?$'
     ),
     false);
 $$;
 
 comment on function workflow.agent_runner_redirect_uris_are_valid(text[]) is
-  'Om en klients redirect-adresser er lovlige: mellom én og åtte, og alle https — med unntak for loopback, som MCP-inspektøren og lokal feilsøking trenger. Egen funksjon fordi en check constraint ikke kan bære en subquery, og fordi registreringen og constrainten ikke skal kunne bli uenige om hva en lovlig adresse er.';
+  'Om en klients redirect-adresser er lovlige: mellom én og åtte, og alle https — med unntak for loopback, som MCP-inspektøren og lokal feilsøking trenger. Mønsteret er forankret i begge ender og krever en vert som er en vert: en adresse som bare BEGYNNER som en adresse, ville blitt godtatt her, brukt opp en engangskode ved autorisasjonen og så kastet i serverens URL-lesning. Egen funksjon fordi en check constraint ikke kan bære en subquery, og fordi registreringen og constrainten ikke skal kunne bli uenige om hva en lovlig adresse er.';
 
 revoke execute on function workflow.agent_runner_redirect_uris_are_valid(text[]) from public;
 
