@@ -224,7 +224,11 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
     submitAnswer(input) {
       authenticated(input.credentials)
       if (!leaseValid || input.taskHandle !== FAKE_TASK_HANDLE) {
-        return Promise.resolve({ accepted: false, reason: 'stale_task' } satisfies SubmitResult)
+        return Promise.resolve({
+          accepted: false,
+          reason: 'stale_task',
+          message: null,
+        } satisfies SubmitResult)
       }
       const digest = JSON.stringify(input.answer)
       if (answered !== null) {
@@ -238,9 +242,15 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
             outcome: { evidence_item_id: '88888888-8888-4888-8888-888888888888' },
           } satisfies SubmitResult)
         }
-        return Promise.reject(
-          new GatewayError('Denne agentoppgaven har allerede tatt imot et annet svar.', '23505'),
-        )
+        // Som databasen: den autoritative kontrollen sier nei, leveringen
+        // skriver selv `rejected` i sporet, og kalleren får en tilstand framfor
+        // et unntak. En attrapp som kastet her, ville prøvd en vei produksjonen
+        // ikke lenger går.
+        return Promise.resolve({
+          accepted: false,
+          reason: 'rejected',
+          message: 'Denne agentoppgaven har allerede tatt imot et annet svar.',
+        } satisfies SubmitResult)
       }
       answered = digest
       submitted.push(input.answer)

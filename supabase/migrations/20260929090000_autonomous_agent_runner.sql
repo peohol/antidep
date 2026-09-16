@@ -519,6 +519,19 @@ create table workflow.agent_runner_events (
     references workflow.pipeline_jobs (id) on update restrict on delete restrict,
   outcome workflow.agent_runner_outcome not null,
 
+  -- Hvem raden kommer fra, og dermed hva den er verdt som bevis.
+  --
+  -- `false`: raden ble skrevet AV operasjonen den handler om, i den samme
+  -- transaksjonen som arbeidet. Da kan den ikke stå der uten at operasjonen
+  -- faktisk skjedde, og den er autoritativ.
+  --
+  -- `true`: kjøreren meldte selv fra om et kall som ikke kunne skrive sitt eget
+  -- spor. Den sier hva kjøreren SA, ikke hva databasen SÅ. Skillet står i
+  -- raden framfor i et dokument, fordi en tokeninnehaver kan kalle
+  -- api.record_agent_runner_outcome direkte — og da skal raden bære at den er
+  -- en selvmelding.
+  self_reported boolean not null default false,
+
   -- Én kort setning Antidep selv skriver, aldri en videreformidlet feiltekst og
   -- aldri noe som kommer fra en kilde eller en modell.
   note text,
@@ -697,7 +710,8 @@ create function workflow.record_agent_runner_event(
   p_outcome workflow.agent_runner_outcome,
   p_agent_role provenance.agent_role default null,
   p_pipeline_job_id uuid default null,
-  p_note text default null
+  p_note text default null,
+  p_self_reported boolean default false
 )
   returns void
   language sql
@@ -705,15 +719,15 @@ create function workflow.record_agent_runner_event(
   set search_path = ''
 as $$
   insert into workflow.agent_runner_events
-    (connection_id, tool_name, agent_role, pipeline_job_id, outcome, note)
+    (connection_id, tool_name, agent_role, pipeline_job_id, outcome, note, self_reported)
   values (p_connection_id, p_tool_name, p_agent_role, p_pipeline_job_id, p_outcome,
-          nullif(btrim(coalesce(p_note, '')), ''));
+          nullif(btrim(coalesce(p_note, '')), ''), coalesce(p_self_reported, false));
 $$;
 
-comment on function workflow.record_agent_runner_event(uuid, text, workflow.agent_runner_outcome, provenance.agent_role, uuid, text) is
-  'Skriver ett spor etter ett MCP-kall. Notatet er Antideps egen korte setning og aldri en videreformidlet feiltekst: en avvisning kan navngi en påstand eller et kildeutdrag, og sporet skal ikke bli et sted privat innhold samler seg.';
+comment on function workflow.record_agent_runner_event(uuid, text, workflow.agent_runner_outcome, provenance.agent_role, uuid, text, boolean) is
+  'Skriver ett spor etter ett MCP-kall. Notatet er Antideps egen korte setning og aldri en videreformidlet feiltekst: en avvisning kan navngi en påstand eller et kildeutdrag, og sporet skal ikke bli et sted privat innhold samler seg. p_self_reported skiller raden operasjonen selv skrev, fra den kjøreren meldte inn etterpå.';
 
-revoke execute on function workflow.record_agent_runner_event(uuid, text, workflow.agent_runner_outcome, provenance.agent_role, uuid, text) from public;
+revoke execute on function workflow.record_agent_runner_event(uuid, text, workflow.agent_runner_outcome, provenance.agent_role, uuid, text, boolean) from public;
 
 -- ----------------------------------------------------------------------------
 -- 6. Utførbarheten, sett fra innsiden av et uttak
@@ -2739,6 +2753,7 @@ declare
   v_connection workflow.agent_runner_connections;
   v_job workflow.pipeline_jobs;
   v_outcome jsonb;
+  v_rejection text;
 begin
   v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
 
@@ -2761,15 +2776,38 @@ begin
 
   -- Selve registreringen: nøyaktig den samme skriveveien et opplastet
   -- `svar.json` går gjennom, kalt under det uttaket kjøreren faktisk holder.
-  -- Avviser den, ruller hele leveringen tilbake — inkludert sporet, som
-  -- MCP-serveren da skriver med utfallsklassen `rejected`.
   --
   -- Aktøren er mennesket som registrerte kjøreren. Arbeidet er en KI-agents og
   -- står på kjøringen (provenance.agent_runs.semantic_*); dette er hvem som
   -- svarer for at det kom inn i Antidep i det hele tatt. En kjører kan ikke
   -- være sin egen fullmakt.
-  v_outcome := workflow.record_agent_handoff_answer(
-    v_job.id, p_answer, v_connection.registered_by_actor_id, v_connection.id, p_task_handle);
+  --
+  -- Avvisningen fanges her, og det er en egenskap ved sporet og ikke en
+  -- bekvemmelighet: en avvisning ruller hele leveringen tilbake, sporet
+  -- inkludert, og uten dette måtte kjøreren SELV meldt fra om at den ble
+  -- avvist. En slik rad sier bare hva kjøreren sa. Fanget her er den derimot
+  -- skrevet av operasjonen som faktisk fant sted — unntaksblokken ruller bare
+  -- tilbake til sitt eget punkt, så raden under står igjen og commiter.
+  --
+  -- Teksten fra avvisningen går til kalleren, som allerede har materialet den
+  -- handler om, og aldri inn i sporet.
+  begin
+    v_outcome := workflow.record_agent_handoff_answer(
+      v_job.id, p_answer, v_connection.registered_by_actor_id, v_connection.id, p_task_handle);
+  exception
+    when restrict_violation or invalid_parameter_value or unique_violation then
+      v_rejection := sqlerrm;
+      perform workflow.record_agent_runner_event(
+        v_connection.id, 'submit_agent_answer', 'rejected'::workflow.agent_runner_outcome,
+        v_connection.agent_role, v_job.id,
+        'Den autoritative kontrollen avviste svaret.');
+      return jsonb_build_object(
+        'accepted', false,
+        'reason', 'rejected',
+        'agent_role', v_connection.agent_role::text,
+        'message', v_rejection
+      );
+  end;
 
   perform workflow.record_agent_runner_event(
     v_connection.id, 'submit_agent_answer', 'ok'::workflow.agent_runner_outcome,
@@ -2954,10 +2992,13 @@ begin
       and j.agent_role = v_connection.agent_role;
   end if;
 
+  -- Raden bærer at den er en selvmelding. En tokeninnehaver kan kalle denne
+  -- veien direkte, og da skal raden si hva kjøreren SA — ikke stå som en rad
+  -- databasen selv så.
   perform workflow.record_agent_runner_event(
-    v_connection.id, v_tool, v_outcome, v_connection.agent_role, v_job_id);
+    v_connection.id, v_tool, v_outcome, v_connection.agent_role, v_job_id, null, true);
 
-  return jsonb_build_object('recorded', true);
+  return jsonb_build_object('recorded', true, 'self_reported', true);
 end;
 $$;
 

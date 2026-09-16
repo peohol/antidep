@@ -322,6 +322,22 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
         answer,
       })
       if (!submitted.accepted) {
+        // Databasen skiller nå de to: et håndtak som ikke gjelder, og et svar
+        // den autoritative kontrollen sa nei til. Avvisningen er dessuten
+        // skrevet i sporet av leveringen selv, framfor å måtte meldes inn av
+        // kjøreren etterpå — en rad operasjonen skrev, kan ikke stå der uten at
+        // operasjonen fant sted.
+        if (submitted.reason === 'rejected') {
+          return {
+            result: failure(
+              `Antidep avviste svaret: ${submitted.message ?? 'Den autoritative kontrollen sa nei.'}\n\n` +
+                'Rett svaret og lever det på nytt med det samme oppgavehåndtaket. ' +
+                'Kontrollen skal ikke omgås.',
+              { accepted: false, reason: 'rejected' },
+            ),
+            trace: { tool: name, outcome: 'rejected' },
+          }
+        }
         return {
           result: failure(
             'Håndtaket gjelder ingen oppgave i dette agentleddet. Svaret ble ikke registrert.',
@@ -393,6 +409,19 @@ export async function callTool(input: ToolCallInput): Promise<ToolCallOutput> {
     return await runTool(input)
   } catch (error) {
     if (error instanceof ToolArgumentError) {
+      // Også en avvisning Antidep tar lokalt, hører hjemme i sporet: uten den
+      // ville en planlagt kjøring som stoppet på et malformet kall, sett ut som
+      // en kjøring som aldri kom. Feilteksten følger ikke med — den kan navngi
+      // et felt fra svaret, og sporet bærer klassen, ikke setningen.
+      await input.gateway
+        .recordOutcome({
+          credentials: input.credentials,
+          toolName: input.name,
+          outcome: 'rejected',
+          taskHandle:
+            typeof input.args['task_handle'] === 'string' ? input.args['task_handle'] : null,
+        })
+        .catch(() => undefined)
       return {
         result: failure(error.message),
         trace: { tool: input.name, outcome: 'rejected' },

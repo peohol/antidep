@@ -369,7 +369,16 @@ export async function dispatchMcpMessage(
 
       const outcome = await callTool({ gateway: deps.gateway, credentials, name, args })
       return {
-        response: jsonRpcSuccess(message.id, shape(era, { ...outcome.result })),
+        // En notifikasjon har ingen `id`, og skal derfor ikke ha et svar.
+        //
+        // Kallet utføres — klienten ba om det — men svaret er den tomme 202-en
+        // transporten allerede gir de andre notifikasjonene. Et JSON-RPC-svar
+        // med `id: null` ville vært et svar på noe ingen spurte om, og en klient
+        // som leser det som et protokollbrudd, ville prøvd et uttak eller en
+        // levering en gang til etter at den allerede er utført.
+        response: message.isNotification
+          ? null
+          : jsonRpcSuccess(message.id, shape(era, { ...outcome.result })),
         trace: outcome.trace,
       }
     }

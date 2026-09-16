@@ -161,7 +161,18 @@ export type SubmitResult =
       readonly agentRunId: string
       readonly outcome: Record<string, unknown>
     }
-  | { readonly accepted: false; readonly reason: string }
+  | {
+      readonly accepted: false
+      readonly reason: string
+      /**
+       * Setningen den autoritative kontrollen sa nei med.
+       *
+       * Går til agenten, som allerede har materialet den handler om — og aldri
+       * inn i sporet, som ikke skal bli et sted en påstand eller et kildeutdrag
+       * samler seg.
+       */
+      readonly message: string | null
+    }
 
 export interface AuthorizationGrant {
   readonly authorizationCode: string
@@ -566,7 +577,12 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
         where,
       )
       if (!flag(row, 'accepted', where)) {
-        return { accepted: false, reason: text(row, 'reason', where) }
+        const message = row['message']
+        return {
+          accepted: false,
+          reason: text(row, 'reason', where),
+          message: typeof message === 'string' ? message : null,
+        }
       }
       const outcome = row['outcome']
       return {

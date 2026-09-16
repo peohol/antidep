@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(106);
+select plan(110);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -669,48 +669,72 @@ select is(
   'et svar på et foreldet håndtak registrerer ingenting'
 );
 
+-- En avvisning er en TILSTAND, ikke et unntak — og det er en egenskap ved
+-- sporet. Et unntak ville rullet hele leveringen tilbake, sporet inkludert, og
+-- da måtte kjøreren selv meldt fra om at den ble avvist. En slik rad sier bare
+-- hva kjøreren sa. Fanget i leveringen er raden derimot skrevet av operasjonen
+-- som faktisk fant sted.
+--
 -- Et svar fra en annen modell enn den leddet er tildelt, avvises før noe skrives.
-select throws_ok(
-  format(
-    $$ select api.submit_agent_answer(%L, 'https://antidep.example/mcp', %L::uuid, %L::jsonb) $$,
-    (select payload ->> 'access_token' from res where label = 'tokens'),
-    (select payload ->> 'task_handle' from res where label = 'claim'),
-    (select jsonb_set(payload, '{identity,model}', '"en-helt-annen-modell"')
-     from answers where label = 'runner')
-  ),
-  '22023',
-  null,
+select is(
+  (select api.submit_agent_answer(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     'https://antidep.example/mcp',
+     (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
+     (select jsonb_set(payload, '{identity,model}', '"en-helt-annen-modell"')
+      from answers where label = 'runner')) ->> 'reason'),
+  'rejected',
   'et svar fra en annen modell enn den tildelte, avvises'
 );
 
+-- Og avvisningen står i sporet, skrevet av leveringen selv.
+reset role;
+select is(
+  (select e.self_reported
+   from workflow.agent_runner_events e
+   where e.tool_name = 'submit_agent_answer' and e.outcome = 'rejected'
+   order by e.created_at desc
+   limit 1),
+  false,
+  'og avvisningen står i sporet, skrevet av leveringen og ikke meldt inn'
+);
+set local role anon;
+
 -- Og et svar avgitt på et annet grunnlag.
-select throws_ok(
-  format(
-    $$ select api.submit_agent_answer(%L, 'https://antidep.example/mcp', %L::uuid, %L::jsonb) $$,
-    (select payload ->> 'access_token' from res where label = 'tokens'),
-    (select payload ->> 'task_handle' from res where label = 'claim'),
-    (select jsonb_set(payload, '{request_digest}',
-                      to_jsonb('sha256:' || repeat('a', 64)))
-     from answers where label = 'runner')
-  ),
-  '22023',
-  null,
+select is(
+  (select api.submit_agent_answer(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     'https://antidep.example/mcp',
+     (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
+     (select jsonb_set(payload, '{request_digest}',
+                       to_jsonb('sha256:' || repeat('a', 64)))
+      from answers where label = 'runner')) ->> 'reason'),
+  'rejected',
   'et svar avgitt på et annet grunnlag, avvises'
 );
 
 -- Ukjente felter avvises, som i den manuelle veien.
-select throws_ok(
-  format(
-    $$ select api.submit_agent_answer(%L, 'https://antidep.example/mcp', %L::uuid, %L::jsonb) $$,
-    (select payload ->> 'access_token' from res where label = 'tokens'),
-    (select payload ->> 'task_handle' from res where label = 'claim'),
-    (select payload || '{"notat":"noe modellen fant på"}'::jsonb
-     from answers where label = 'runner')
-  ),
-  '22023',
-  null,
+select is(
+  (select api.submit_agent_answer(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     'https://antidep.example/mcp',
+     (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
+     (select payload || '{"notat":"noe modellen fant på"}'::jsonb
+      from answers where label = 'runner')) ->> 'reason'),
+  'rejected',
   'et svar med et felt kontrakten ikke kjenner, avvises'
 );
+
+-- Og teksten avvisningen kom med, står ikke i sporet: den kan navngi en påstand
+-- eller et kildeutdrag, og går bare til kjøreren som allerede har materialet.
+reset role;
+select is(
+  (select count(*)::int from workflow.agent_runner_events e
+   where coalesce(e.note, '') like '%notat%'),
+  0,
+  'og feilteksten følger ikke med inn i sporet'
+);
+set local role anon;
 
 insert into res
 select 'submitted', api.submit_agent_answer(
@@ -742,17 +766,16 @@ select is(
   'det samme svaret sendt inn igjen registrerer ingenting nytt'
 );
 
--- Et ANNET svar på en besvart oppgave avvises.
-select throws_ok(
-  format(
-    $$ select api.submit_agent_answer(%L, 'https://antidep.example/mcp', %L::uuid, %L::jsonb) $$,
-    (select payload ->> 'access_token' from res where label = 'tokens'),
-    (select payload ->> 'task_handle' from res where label = 'claim'),
-    (select jsonb_set(payload, '{result,extraction,sample_size}', '99')
-     from answers where label = 'runner')
-  ),
-  '23505',
-  null,
+-- Et ANNET svar på en besvart oppgave avvises — som en tilstand, og med sin
+-- egen rad i sporet.
+select is(
+  (select api.submit_agent_answer(
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     'https://antidep.example/mcp',
+     (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
+     (select jsonb_set(payload, '{result,extraction,sample_size}', '99')
+      from answers where label = 'runner')) ->> 'reason'),
+  'rejected',
   'et annet svar på en besvart oppgave avvises'
 );
 reset role;
@@ -1480,6 +1503,26 @@ select lives_ok(
 );
 
 reset role;
+
+-- Og raden bærer at den er en selvmelding. Skillet står i raden, ikke i et
+-- dokument: en rad operasjonen selv skrev, kan ikke stå der uten at operasjonen
+-- fant sted — en innmeldt rad sier bare hva kjøreren sa.
+select is(
+  (select e.self_reported
+   from workflow.agent_runner_events e
+   where e.self_reported
+   order by e.created_at desc
+   limit 1),
+  true,
+  'en innmeldt rad står som innmeldt'
+);
+
+select is(
+  (select count(*)::int from workflow.agent_runner_events e
+   where e.self_reported and e.outcome = 'ok'),
+  0,
+  'og ingen innmeldt rad påstår at noe lyktes'
+);
 
 -- ===========================================================================
 -- Del 12 — Tilkoblingen står ved lag mellom kjøringene

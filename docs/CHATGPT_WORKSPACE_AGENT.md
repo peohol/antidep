@@ -342,6 +342,12 @@ per verktøykall:
 Autentiseringsfeil står ikke der: et token som ikke holder, har ingen tilkobling
 å føre raden på. De ligger i serverloggen, som `auth_failed`.
 
+Kolonnen `self_reported` sier hvor raden kommer fra. `false` betyr at
+operasjonen selv skrev den, i den samme transaksjonen som arbeidet — den kan
+ikke stå der uten at operasjonen fant sted. `true` betyr at kjøreren meldte fra
+om et kall som ikke kunne skrive sitt eget spor, og sier hva kjøreren *sa*. En
+innmeldt rad kan aldri påstå at noe lyktes.
+
 Ser du ingen rader i det hele tatt, har ingen planlagt kjøring nådd fram. Prøv
 appen i developer mode først; da ser du om det er tilkoblingen eller tidsplanen
 som mangler.

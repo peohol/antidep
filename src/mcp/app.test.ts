@@ -466,6 +466,16 @@ describe('arbeidsgangen', () => {
     expect(gateway.recorded).toEqual(['rejected'])
   })
 
+  // En avvisning Antidep tar lokalt, hører også hjemme i sporet: uten den ville
+  // en planlagt kjøring som stoppet på et malformet kall, sett ut som en kjøring
+  // som aldri kom.
+  it('fører en lokal avvisning i sporet, uten feilteksten', async () => {
+    const gateway = createFakeGateway()
+    const body = await call(gateway, 'claim_agent_task', { finnes_ikke: 1 })
+    expect(resultOf(body)['isError']).toBe(true)
+    expect(gateway.recorded).toEqual(['rejected'])
+  })
+
   it('fører et ekte get_agent_task under sitt eget navn', async () => {
     const gateway = createFakeGateway()
     await call(gateway, 'claim_agent_task')
@@ -586,7 +596,11 @@ describe('arbeidsgangen', () => {
     })
     expect(resultOf(different)['isError']).toBe(true)
     expect(gateway.submitted).toHaveLength(1)
-    expect(gateway.recorded).toContain('rejected')
+    // Og avvisningen meldes ikke inn etterpå: leveringen skriver den selv, i
+    // den samme transaksjonen som forsøket. En rad operasjonen skrev, kan ikke
+    // stå der uten at operasjonen fant sted — en innmeldt rad sier bare hva
+    // kjøreren sa. Selve raden prøves mot en ekte database i pgTAP 790.
+    expect(gateway.recorded).toEqual([])
   })
 
   it('gir oppgaven fra seg uten å levere et svar', async () => {
@@ -1079,6 +1093,23 @@ describe('argumentene til et verktøykall', () => {
     })
     expect(errorOf(body)['code']).toBe(-32602)
     expect(gateway.claims).toBe(0)
+  })
+
+  // Et verktøykall uten `id` er en notifikasjon. Kallet skal utføres — klienten
+  // ba om det — men svaret skal være den tomme 202-en, ikke et JSON-RPC-svar med
+  // `id: null`. En klient som leser et uventet svar som et protokollbrudd,
+  // ville prøvd uttaket en gang til etter at det allerede er tatt.
+  it('utfører et verktøykall uten id, men svarer 202 uten kropp', async () => {
+    const gateway = createFakeGateway()
+    const response = await send(
+      'mcp',
+      rpc({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'claim_agent_task' } }),
+      gateway,
+    )
+    expect(response.status).toBe(202)
+    expect(await response.text()).toBe('')
+    // Én gang, og bare én.
+    expect(gateway.claims).toBe(1)
   })
 
   // Det samme gjelder verktøynavnet: en forespørsel som aldri ble utført, skal
