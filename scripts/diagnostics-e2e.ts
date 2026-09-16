@@ -77,12 +77,18 @@ async function main(): Promise<void> {
   check('ruten tar imot observasjonen', first.status === 204, String(first.status))
   check('og årsaken ligger i den private lagringen', stored(eventId) === 1)
 
+  // Linjeskiftene slås sammen i spørringen: `psql(...)` gir én linje tilbake, og
+  // en flerlinjet stack ville blitt kuttet etter den første. Da ville begge
+  // påstandene under vært sanne uten å ha sett teksten de handler om — og den
+  // ene av dem ville vært sann nettopp fordi den manglet.
   const lagret = psql(
     config,
-    `select detail from workflow.client_diagnostics where client_event_id = ${q(eventId)}`,
+    `select replace(detail, chr(10), ' / ')
+     from workflow.client_diagnostics where client_event_id = ${q(eventId)}`,
   )
-  check('med stacken i behold', lagret.includes('at callRpc (gateway.ts:1:1)'))
-  check('og uten den tokenformede strengen', !lagret.includes('hemmelig.signatur'))
+  check('med stacken i behold', lagret.includes('at callRpc (gateway.ts:1:1)'), lagret)
+  check('og uten den tokenformede strengen', !lagret.includes('hemmelig.signatur'), lagret)
+  check('men med linjen den sto på', lagret.includes('authorization:'), lagret)
 
   // Et ubekreftet forsøk prøves på nytt. Det skal ikke bli to rader.
   const again = await serveDiagnostics(envelope(eventId, token, detail), environment)
