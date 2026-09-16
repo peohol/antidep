@@ -84,7 +84,8 @@
 // ============================================================================
 
 import { getAntidepClient, type AntidepClient } from '../lib/supabase'
-import { forget, pending, remember, type PendingDiagnostic } from './diagnostics-outbox'
+import { forget, pendingFor, remember, type PendingDiagnostic } from './diagnostics-outbox'
+import { scrubDetail } from '../diagnostics/envelope'
 
 /** Områdene Antidep melder tekniske problemer under. Lukket, som i databasen. */
 export type TechnicalArea =
@@ -432,58 +433,71 @@ function reportTechnicalProblem(client: AntidepClient, entry: TechnicalDetail): 
 /**
  * Legger den rå årsaken i utboksen, og tømmer den.
  *
- * Rekkefølgen er hele poenget: observasjonen er lagret lokalt før noe sendes,
- * så en levering som ikke går gjennom, utsetter den framfor å miste den.
+ * Sesjonen hentes først, av to grunner. Observasjonen merkes med hvem den
+ * tilhørte, slik at en restanse aldri følger med neste innlogging på den samme
+ * maskinen. Og finnes det ingen innlogget bruker, legges den ikke bort i det
+ * hele tatt: en observasjon som ikke kan tilskrives noen, kan verken sendes
+ * eller tilskrives senere uten å bli feil.
+ *
+ * Teksten vaskes før den lagres. Databasen vasker uansett, men årsaken ligger i
+ * nettleserens eget lager i mellomtiden, og en token som havnet i en feilmelding
+ * skal ikke bli liggende lesbar der.
  */
 function recordRawCause(client: AntidepClient, entry: TechnicalDetail): void {
-  remember({
-    eventId: newEventId(),
-    area: entry.area,
-    kind: entry.kind,
-    operation: entry.operation,
-    code: MACHINE_CODE.test(entry.code ?? '') ? entry.code : null,
-    httpStatus: entry.httpStatus,
-    transport: entry.transport,
-    detail: entry.detail,
-  })
-  flushPendingDiagnostics(client)
+  void Promise.resolve(client.auth.getSession())
+    .then(({ data }) => {
+      const session = data.session
+      if (session === null || session === undefined) {
+        // Den uinnloggede flaten. Årsaken står i konsollen, og der blir den:
+        // en rad uten noen å tilskrive den ville vært en åpen skrivevei, og en
+        // som ble tilskrevet neste innlogging, ville vært feil person.
+        return
+      }
+      remember({
+        eventId: newEventId(),
+        userId: session.user.id,
+        area: entry.area,
+        kind: entry.kind,
+        operation: entry.operation,
+        code: MACHINE_CODE.test(entry.code ?? '') ? entry.code : null,
+        httpStatus: entry.httpStatus,
+        transport: entry.transport,
+        detail: scrubDetail(entry.detail),
+      })
+      return deliverPending(session.access_token, session.user.id)
+    })
+    .catch(() => undefined)
 }
 
 /**
- * Sender alt som venter, og glemmer bare det som faktisk kom fram.
+ * Sender alt som venter for denne brukeren, og glemmer bare det som faktisk kom
+ * fram.
  *
- * Tokenen er brukerens egen og allerede i fanen — ingen klienthemmelighet. Er
- * det ingen token, sendes ingenting: en rad som ikke kan tilskrives noen, ville
- * vært en åpen skrivevei, og da kunne hvem som helst fylle den private
- * lagringen. Dette gjelder også den åpne arbeidsoversikten, som kan leses uten
- * innlogging, og grensen er bevisst.
- *
- * Det er ikke det samme som at årsaken går tapt: observasjonen blir liggende i
- * utboksen, og den første innloggingen i den nettleseren tar restansen med. En
- * uinnlogget besvergelse som aldri logger inn, er det eneste tilfellet som bare
- * når konsollen — og da finnes det ingen å tilskrive den uansett.
+ * Tokenen er brukerens egen og allerede i fanen — ingen klienthemmelighet.
+ * Bare denne brukerens restanse går med: en annens observasjon skal ikke
+ * tilskrives den som tilfeldigvis logger inn på den samme maskinen.
  *
  * Eksportert fordi flaten også kaller den når appen åpnes: da er restansen fra
  * en tidligere økt det eneste som finnes igjen av den.
  */
 export function flushPendingDiagnostics(client: AntidepClient): void {
-  const waiting = pending()
-  if (waiting.length === 0) {
-    return
-  }
   void Promise.resolve(client.auth.getSession())
-    .then(async ({ data }) => {
-      const accessToken = data.session?.access_token
-      if (accessToken === undefined || accessToken.length === 0) {
-        return
+    .then(({ data }) => {
+      const session = data.session
+      if (session === null || session === undefined) {
+        return undefined
       }
-      for (const entry of waiting) {
-        if (await deliver(accessToken, entry)) {
-          forget(entry.eventId)
-        }
-      }
+      return deliverPending(session.access_token, session.user.id)
     })
     .catch(() => undefined)
+}
+
+async function deliverPending(accessToken: string, userId: string): Promise<void> {
+  for (const entry of pendingFor(userId)) {
+    if (await deliver(accessToken, entry)) {
+      forget(entry.eventId)
+    }
+  }
 }
 
 /** Ruten på Antideps egen opprinnelse. Ingenting å konfigurere. */
@@ -508,7 +522,10 @@ function newEventId(): string {
  *
  * `keepalive` slik at en forespørsel rett før en navigasjon fullføres — og det
  * er ofte nettopp da den sendes. Til forskjell fra `sendBeacon` gir den et
- * svar, og det svaret er det som avgjør om observasjonen kan glemmes.
+ * svar, og det svaret er det som avgjør om observasjonen kan glemmes: ruten
+ * svarer 204 først når den er ferdig behandlet, og 503 når den ikke ble lagret.
+ * Alt annet enn et bekreftet svar lar observasjonen bli liggende.
+ *
  * `sendBeacon` er reserven der `fetch` ikke finnes; da er leveringen ubekreftet,
  * og observasjonen blir liggende til en senere kjøring bekrefter den.
  */

@@ -44,6 +44,15 @@ export const MAX_PENDING = 20
 /** Én observasjon slik den venter. Formen er konvoluttens, uten tokenen. */
 export interface PendingDiagnostic {
   readonly eventId: string
+  /**
+   * Hvem observasjonen tilhørte da den oppsto.
+   *
+   * Uten den ville en restanse blitt sendt med den brukeren som tilfeldigvis er
+   * innlogget når den endelig går — og på en delt maskin på et kontor ville en
+   * annens observasjon blitt tilskrevet feil person. Restansen leveres derfor
+   * bare når den samme brukeren er innlogget igjen.
+   */
+  readonly userId: string
   readonly area: string
   readonly kind: string
   readonly operation: string | null
@@ -82,7 +91,17 @@ export function remember(entry: PendingDiagnostic): void {
   write(entries.slice(-MAX_PENDING))
 }
 
-/** Alt som venter, eldste først. */
+/**
+ * Det som venter for én bruker, eldste først.
+ *
+ * Ingen andres. En restanse hører til den som så den, og skal aldri følge med
+ * neste innlogging på den samme maskinen.
+ */
+export function pendingFor(userId: string): readonly PendingDiagnostic[] {
+  return read().filter((entry) => entry.userId === userId)
+}
+
+/** Alt som venter, uansett hvem. Bare for prøver og for taket. */
 export function pending(): readonly PendingDiagnostic[] {
   return read()
 }

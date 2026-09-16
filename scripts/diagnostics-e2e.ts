@@ -89,7 +89,9 @@ async function main(): Promise<void> {
   check('den samme observasjonen levert igjen svarer likt', again.status === 204)
   check('og blir fortsatt én rad', stored(eventId) === 1)
 
-  // Uten en gyldig token er det ingen å tilskrive observasjonen.
+  // Uten en gyldig token er det ingen å tilskrive observasjonen. Databasen
+  // svarer, så dette er et endelig utfall — og svaret skal ikke skille seg fra
+  // et vellykket, ellers ville ruten vært et sted å prøve seg fram fra utsiden.
   const anonymous = randomUUID()
   const refused = await serveDiagnostics(
     envelope(anonymous, 'ikke-en-gyldig-token', detail),
@@ -97,6 +99,17 @@ async function main(): Promise<void> {
   )
   check('et kall uten gyldig token svarer det samme utad', refused.status === 204)
   check('men legger ingenting igjen', stored(anonymous) === 0)
+
+  // Og den ene forskjellen som må finnes: når lagringen ikke er tilgjengelig,
+  // skal ruten si fra, slik at nettleseren beholder årsaken framfor å slette
+  // den. Dette er tapsmåten utboksen finnes for å fjerne.
+  const utilgjengelig = randomUUID()
+  const nede = await serveDiagnostics(envelope(utilgjengelig, token, detail), {
+    ANTIDEP_SUPABASE_URL: 'http://127.0.0.1:1/ingen-tjeneste',
+    ANTIDEP_SUPABASE_PUBLISHABLE_KEY: config.anonKey,
+  })
+  check('en utilgjengelig lagring svarer 503, ikke 204', nede.status === 503, String(nede.status))
+  check('og ingenting ble lagret', stored(utilgjengelig) === 0)
 
   // Og ingen leservei: kontrollen er på grants, ikke på tilfellet.
   const lesbar = psql(

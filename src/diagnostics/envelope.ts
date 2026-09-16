@@ -43,6 +43,24 @@ export const TRANSPORT_SHAPES = [
  */
 export const MAX_DETAIL_CHARS = 4000
 
+/**
+ * Fjerner det som ser ut som en hemmelighet, før teksten lagres noe sted.
+ *
+ * Den samme vaskingen finnes i databasen, og den er den autoritative. Denne
+ * kjøres likevel først, fordi årsaken legges i nettleserens eget lager før den
+ * sendes: en bearer-token som havnet i en feilmelding, skal ikke bli liggende
+ * lesbar i `localStorage` i påvente av en levering.
+ *
+ * Bevisst smal, som databasens: målet er ikke å gjøre teksten trygg i seg selv,
+ * men å hindre at en token overlever lenger enn den lever.
+ */
+export function scrubDetail(detail: string): string {
+  return detail
+    .replace(/eyJ[A-Za-z0-9_.-]{20,}/g, '[token utelatt]')
+    .replace(/(bearer|apikey|api_key|authorization|password)([=: ]+)[^\s,;"']+/gi, '$1$2[utelatt]')
+    .slice(0, MAX_DETAIL_CHARS)
+}
+
 /** Én observasjon på vei fra en nettleser til den private lagringen. */
 export interface DiagnosticEnvelope {
   /**

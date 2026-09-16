@@ -60,6 +60,25 @@ describe('lesingen av konvolutten', () => {
 })
 
 describe('ruten', () => {
+  // Databasen vasker uansett, men teksten skal ikke gå videre uvasket fra en
+  // kaller ruten ikke kontrollerer.
+  it('vasker tokenformede strenger før den sender videre', async () => {
+    const sendt: { args: Record<string, unknown> }[] = []
+    const forward: ForwardDiagnostic = (_target, args) => {
+      sendt.push({ args })
+      return Promise.resolve({ delivered: true, retry: false })
+    }
+    await serveDiagnostics(
+      post({
+        ...KONVOLUTT,
+        detail: 'authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.hemmelig.signatur',
+      }),
+      MILJØ,
+      forward,
+    )
+    expect(String(sendt[0]?.args.p_detail)).not.toContain('hemmelig.signatur')
+  })
+
   it('videresender brukerens egen token, og ingen av sine egne', async () => {
     const sendt: { target: ForwardTarget; args: Record<string, unknown> }[] = []
     const forward: ForwardDiagnostic = (target, args) => {
@@ -104,15 +123,24 @@ describe('ruten', () => {
     expect(forsøk).toBe(1)
   })
 
-  it('kaster aldri, heller ikke når nettet mellom ruten og databasen ryker', async () => {
-    const forward: ForwardDiagnostic = () => Promise.reject(new Error('ECONNRESET'))
-    await expect(serveDiagnostics(post(KONVOLUTT), MILJØ, forward)).resolves.toMatchObject({
-      status: 204,
+  // Dette er forskjellen som gjør utboksen verdt noe: en lagring som ikke gikk
+  // gjennom, må ikke se ut som en bekreftet levering. Ellers sletter
+  // nettleseren årsaken den nettopp skulle berge.
+  it('sier fra når observasjonen ikke ble lagret, så nettleseren beholder den', async () => {
+    const ryker: ForwardDiagnostic = () => Promise.reject(new Error('ECONNRESET'))
+    await expect(serveDiagnostics(post(KONVOLUTT), MILJØ, ryker)).resolves.toMatchObject({
+      status: 503,
+    })
+
+    const svarteIkke: ForwardDiagnostic = () => Promise.resolve({ delivered: false, retry: true })
+    await expect(serveDiagnostics(post(KONVOLUTT), MILJØ, svarteIkke)).resolves.toMatchObject({
+      status: 503,
     })
   })
 
-  // Svaret skal ikke være et sted å prøve seg fram fra utsiden: det sier aldri
-  // om tokenen var gyldig, eller om kvoten var brukt opp.
+  // Utover det ene skillet skal svaret ikke være et sted å prøve seg fram fra
+  // utsiden: det sier aldri om tokenen var gyldig, eller om kvoten var brukt
+  // opp. Begge er endelige svar fra databasen, og begge er 204.
   it('svarer det samme enten databasen tok imot eller avviste', async () => {
     const tok = await serveDiagnostics(post(KONVOLUTT), MILJØ, () =>
       Promise.resolve({ delivered: true, retry: false }),

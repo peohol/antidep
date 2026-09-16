@@ -21,6 +21,9 @@ import type { AntidepClient } from '../lib/supabase'
  * mer enn den. Kallene registreres, slik at prøven kan se hva som faktisk ble
  * sendt — særlig selvmeldingen, som aldri skal bære tekst.
  */
+const BRUKER = 'a1b2c3d4-0000-4000-8000-000000000001'
+const ANNEN_BRUKER = 'a1b2c3d4-0000-4000-8000-000000000002'
+
 function client(answers: Record<string, { data?: unknown; error?: unknown }>): {
   readonly client: AntidepClient
   readonly calls: { fn: string; args: unknown }[]
@@ -34,7 +37,9 @@ function client(answers: Record<string, { data?: unknown; error?: unknown }>): {
     },
     auth: {
       getSession: () =>
-        Promise.resolve({ data: { session: { access_token: 'brukerens-egen-token' } } }),
+        Promise.resolve({
+          data: { session: { access_token: 'brukerens-egen-token', user: { id: BRUKER } } },
+        }),
     },
   }
   return { client: fake as unknown as AntidepClient, calls }
@@ -303,7 +308,9 @@ describe('kallet gjennom gatewayen', () => {
       rpc: () => Promise.reject(new TypeError('Failed to fetch')),
       auth: {
         getSession: () =>
-          Promise.resolve({ data: { session: { access_token: 'brukerens-egen-token' } } }),
+          Promise.resolve({
+            data: { session: { access_token: 'brukerens-egen-token', user: { id: BRUKER } } },
+          }),
       },
     } as unknown as AntidepClient
 
@@ -335,7 +342,9 @@ describe('kallet gjennom gatewayen', () => {
       rpc: () => Promise.reject(new TypeError('Failed to fetch')),
       auth: {
         getSession: () =>
-          Promise.resolve({ data: { session: { access_token: 'brukerens-egen-token' } } }),
+          Promise.resolve({
+            data: { session: { access_token: 'brukerens-egen-token', user: { id: BRUKER } } },
+          }),
       },
     } as unknown as AntidepClient
 
@@ -364,7 +373,10 @@ describe('kallet gjennom gatewayen', () => {
 
   // En observasjon som ikke kan tilskrives noen, skal ikke sendes: det ville
   // vært en åpen skrivevei. Den blir liggende, så en fornyet innlogging tar den.
-  it('sender ingenting når det ikke finnes noen innlogget bruker', async () => {
+  // Den uinnloggede flaten. Årsaken står i konsollen, og der blir den: en rad
+  // uten noen å tilskrive den ville vært en åpen skrivevei, og en som ble
+  // tilskrevet neste innlogging, ville vært feil person.
+  it('legger ingenting bort når det ikke finnes noen innlogget bruker', async () => {
     const levering = fangLevering({ ok: true })
     const uinnlogget = {
       rpc: () => Promise.resolve({ data: null, error: { code: 'PGRST301' } }),
@@ -380,8 +392,59 @@ describe('kallet gjennom gatewayen', () => {
     spy.mockRestore()
 
     expect(levering.sendt).toHaveLength(0)
-    expect(pending()).toHaveLength(1)
+    expect(pending()).toHaveLength(0)
     levering.restore()
+  })
+
+  // En delt maskin på et kontor: én brukers restanse skal aldri følge med den
+  // neste som logger inn.
+  it('leverer aldri en annens restanse', async () => {
+    const ryker = fangLevering('ryker')
+    const { client: db } = client({ noe: { error: { code: 'PGRST301' } } })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(db, { fn: 'noe', area: 'work_queue', parse: () => undefined }).catch(
+      () => undefined,
+    )
+    await vi.waitFor(() => expect(pending()).toHaveLength(1))
+    spy.mockRestore()
+    ryker.restore()
+
+    const nesteBruker = fangLevering({ ok: true })
+    flushPendingDiagnostics({
+      auth: {
+        getSession: () =>
+          Promise.resolve({
+            data: { session: { access_token: 'en-annens-token', user: { id: ANNEN_BRUKER } } },
+          }),
+      },
+    } as unknown as AntidepClient)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(nesteBruker.sendt).toHaveLength(0)
+    expect(pending()).toHaveLength(1)
+    nesteBruker.restore()
+  })
+
+  // Databasen vasker uansett, men årsaken ligger i nettleserens eget lager i
+  // mellomtiden, og en token skal ikke bli liggende lesbar der.
+  it('vasker tokenformede strenger før årsaken legges i utboksen', async () => {
+    const ryker = fangLevering('ryker')
+    const { client: db } = client({ noe: { data: [] } })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(db, {
+      fn: 'noe',
+      area: 'work_queue',
+      parse: () => {
+        throw new Error('authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.hemmelig.signatur')
+      },
+    }).catch(() => undefined)
+    await vi.waitFor(() => expect(pending()).toHaveLength(1))
+    spy.mockRestore()
+    ryker.restore()
+
+    expect(pending()[0]?.detail).not.toContain('hemmelig.signatur')
+    expect(pending()[0]?.detail).toContain('[utelatt]')
   })
 
   // Flaten lukker ingenting. En selvmeldt rad gjelder så lenge den fornyes, og

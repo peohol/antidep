@@ -20,17 +20,28 @@
 // den samme grensen MCP-appen bærer, og av samme grunn.
 //
 // ----------------------------------------------------------------------------
-// Svaret sier ingenting
+// Svaret sier to ting, og ikke én til
 //
-// 204 uansett utfall, så lenge kroppen lot seg lese. En rute som fortalte om
-// tokenen var gyldig, eller om kvoten var brukt opp, ville vært et sted å prøve
-// seg fram fra utsiden. Grunnen står i kjøreloggen, som er privat.
+// 204 betyr *ferdig behandlet*: lagret, eller avvist av databasen — en
+// avvisning er et endelig svar, og et nytt forsøk ville gitt det samme. 503
+// betyr *ikke lagret, prøv igjen*: transporten videre sviktet uten at databasen
+// svarte.
+//
+// Skillet er ikke kosmetikk. Nettleseren beholder observasjonen i utboksen til
+// leveringen er bekreftet, og en rute som svarte 204 på en mislykket lagring,
+// ville fått den til å slette årsaken den nettopp skulle berge — den samme
+// tapsmåten utboksen finnes for å fjerne.
+//
+// Utover de to sier svaret ingenting. Om tokenen var gyldig, om kvoten var
+// brukt opp, om raden allerede fantes: alt er 204. En rute som skilte dem, ville
+// vært et sted å prøve seg fram fra utsiden. Grunnen står i kjøreloggen, som er
+// privat.
 // ============================================================================
 
 import { createClient } from '@supabase/supabase-js'
 
 import type { Database } from '../types/database.ts'
-import { parseDiagnosticEnvelope, MAX_DETAIL_CHARS } from './envelope.ts'
+import { parseDiagnosticEnvelope, scrubDetail, MAX_DETAIL_CHARS } from './envelope.ts'
 
 /** Den delen av miljøet ruten leser. Samme verdier som resten av utrullingen. */
 export interface DiagnosticsEnvironment {
@@ -156,19 +167,26 @@ export async function serveDiagnostics(
     p_code: envelope.code,
     p_http_status: envelope.httpStatus,
     p_transport: envelope.transport,
-    p_detail: envelope.detail.slice(0, MAX_DETAIL_CHARS),
+    // Vaskes også her, uavhengig av hva nettleseren gjorde. Databasen vasker
+    // uansett; dette er den samme grensen ett ledd tidligere, for en kaller vi
+    // ikke kontrollerer.
+    p_detail: scrubDetail(envelope.detail).slice(0, MAX_DETAIL_CHARS),
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const outcome = await forward(target, args)
       if (outcome.delivered || !outcome.retry) {
-        // Levert, eller avvist av databasen. En avvisning er dens avgjørelse.
+        // Levert, eller avvist av databasen. En avvisning er dens avgjørelse,
+        // og et nytt forsøk ville gitt det samme svaret.
         return nothing()
       }
     } catch {
       // Et brudd i nettet mellom ruten og databasen. Verdt ett forsøk til.
     }
   }
-  return nothing()
+
+  // Ikke lagret. Nettleseren må beholde observasjonen — den er det eneste
+  // stedet den finnes nå.
+  return new Response(null, { status: 503 })
 }
