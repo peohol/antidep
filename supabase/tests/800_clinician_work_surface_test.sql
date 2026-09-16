@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(167);
+select plan(176);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1556,11 +1556,12 @@ select is_empty(
     select t.name, p.privilege
     from (values ('workflow.client_diagnostics'),
                  ('workflow.technical_incidents'),
-                 ('workflow.technical_incident_events')) as t(name)
+                 ('workflow.technical_incident_events'),
+                 ('workflow.diagnostics_attempts')) as t(name)
     cross join (values ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')) as p(privilege)
     where has_table_privilege('antidep_diagnostics', t.name, p.privilege)
   $$,
-  'og kan hverken lese eller skrive de tre tabellene den skriver til, direkte'
+  'og kan hverken lese eller skrive de fire tabellene denne veien rører, direkte'
 );
 
 -- Ingen SECURITY DEFINER-funksjon utenom de to skal være nåbar for rollen. Det
@@ -1576,7 +1577,8 @@ select is_empty(
       and has_function_privilege('antidep_diagnostics', p.oid, 'execute')
       and p.oid::regprocedure::text not in (
         'workflow.ingest_client_diagnostic(text,uuid,text,text,text,text,integer,text,text)',
-        'workflow.ingest_public_technical_problem(text,text,text,text,text,integer,text)')
+        'workflow.ingest_public_technical_problem(text,text,text,text,text,integer,text)',
+        'workflow.claim_diagnostics_attempt(text)')
   $$,
   'og kan ikke kjøre noen annen SECURITY DEFINER-funksjon, uansett hvor granten kom fra'
 );
@@ -1838,6 +1840,97 @@ select throws_ok(
   $$,
   '22023', 'Ukjent statuskode.',
   'og en status som ikke er en HTTP-status'
+);
+
+-- --- Forsøksgrensen, som er felles for alle instansene ---------------------
+--
+-- Punkt 2 fra tolvte gjennomgang. Grensen foran rundturen til
+-- autentiseringstjenesten lå i minnet til den serverless funksjonen, og en
+-- serverless flate har mange instanser: hver kald eller parallell instans
+-- startet med sitt eget friske budsjett, så den som ville, kunne få så mange
+-- budsjetter den ville. Det er en demper, ikke et vern.
+--
+-- Den står her i stedet, fordi databasen er den ene tilstanden alle instansene
+-- deler — og den er nåbar akkurat når den trengs, siden det er PostgREST som er
+-- nede i den grenen, ikke Postgres.
+select throws_ok(
+  $$select workflow.claim_diagnostics_attempt('ikke-en-sum')$$,
+  '22023',
+  'Forsøket mangler serverens egen avsendersum.',
+  'forsøksgrensen krever en avsendersum av riktig form'
+);
+select throws_ok(
+  $$select workflow.claim_diagnostics_attempt(null)$$,
+  '22023',
+  'Forsøket mangler serverens egen avsendersum.',
+  'og den finnes ikke uten en i det hele tatt'
+);
+
+select is(
+  workflow.claim_diagnostics_attempt(repeat('1', 64)),
+  true,
+  'det første forsøket er innenfor'
+);
+select is(
+  (select attempts from workflow.diagnostics_attempts
+   where reporter_ip_hash = repeat('1', 64)),
+  1,
+  'og det er talt, i minuttet det hører til'
+);
+
+-- Tretti i minuttet. Trettien er ikke.
+do $$
+declare
+  i integer;
+begin
+  for i in 2..30 loop
+    perform workflow.claim_diagnostics_attempt(repeat('1', 64));
+  end loop;
+end
+$$;
+select is(
+  workflow.claim_diagnostics_attempt(repeat('1', 64)),
+  false,
+  'forsøk nummer trettien er over grensen'
+);
+select is(
+  (select attempts from workflow.diagnostics_attempts
+   where reporter_ip_hash = repeat('1', 64)),
+  31,
+  'og telleren står likevel: et forsøk over grensen er fortsatt et forsøk'
+);
+
+-- Grensen er per avsender. Én som prøver for mye, skal ikke stenge ute en annen.
+select is(
+  workflow.claim_diagnostics_attempt(repeat('2', 64)),
+  true,
+  'en annen avsender er upåvirket av den som prøvde for mye'
+);
+
+-- Og taket for veien under ett, som er grensen om legitimasjonen lekker: en
+-- kaller kan velge sin egen avsendersum, og kunne ellers omgått grensen over
+-- ved å velge en ny sum for hvert forsøk.
+do $$
+declare
+  i integer;
+begin
+  -- Førti summer à tretti forsøk = 1200, godt over taket på 600 i minuttet.
+  for i in 1..40 loop
+    for j in 1..30 loop
+      perform workflow.claim_diagnostics_attempt(lpad(to_hex(i + 8192), 64, '0'));
+    end loop;
+  end loop;
+end
+$$;
+select is(
+  (select coalesce(sum(attempts), 0)::int from workflow.diagnostics_attempts),
+  600,
+  'veien under ett teller høyst seks hundre forsøk i minuttet, uansett hvor mange summer kalleren finner opp'
+);
+select is(
+  workflow.claim_diagnostics_attempt(repeat('3', 64)),
+  false,
+  'og en fersk avsender får nei når taket er nådd — det er prisen for at summen oppgis av kalleren'
 );
 
 -- --- Den samme svikten, meldt to veier, er én svikt ------------------------

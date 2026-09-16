@@ -73,17 +73,28 @@ beforeEach(forgetAttempts)
 /** Adressen plattformen setter. Uten den kan serveren ikke telle avsenderen. */
 const AVSENDER = { 'x-real-ip': '198.51.100.7' }
 
-/** Den varige lagringen, uten en database. */
-function fangLagringen(svar = true): {
+/**
+ * Den varige lagringen, uten en database.
+ *
+ * `budsjett` er den felles forsøksgrensen: `true` slipper gjennom, `false` er
+ * over grensen, og `null` er at databasen ikke svarte på spørsmålet.
+ */
+function fangLagringen(
+  svar = true,
+  budsjett: boolean | null = true,
+): {
   beholdt: StoredDiagnostic[]
   meldt: StoredPublicProblem[]
+  talt: string[]
   store: DiagnosticsStore
 } {
   const beholdt: StoredDiagnostic[] = []
   const meldt: StoredPublicProblem[] = []
+  const talt: string[] = []
   return {
     beholdt,
     meldt,
+    talt,
     store: {
       keep: (entry) => {
         beholdt.push(entry)
@@ -92,6 +103,30 @@ function fangLagringen(svar = true): {
       keepPublicProblem: (entry) => {
         meldt.push(entry)
         return Promise.resolve(svar)
+      },
+      claimAttempt: (reporterIpHash) => {
+        talt.push(reporterIpHash)
+        return Promise.resolve(budsjett)
+      },
+    },
+  }
+}
+
+/**
+ * Den felles grensen slik databasen håndhever den: én teller, delt av alle
+ * instansene, uansett hvor mange av dem som starter opp med friskt minne.
+ */
+function fellesGrense(tak = 30): { store: DiagnosticsStore; talt: Map<string, number> } {
+  const talt = new Map<string, number>()
+  const lagring = fangLagringen()
+  return {
+    talt,
+    store: {
+      ...lagring.store,
+      claimAttempt: (reporterIpHash) => {
+        const nå = (talt.get(reporterIpHash) ?? 0) + 1
+        talt.set(reporterIpHash, nå)
+        return Promise.resolve(nå <= tak)
       },
     },
   }
@@ -328,6 +363,9 @@ describe('serverloggen', () => {
       MILJØ,
       () => Promise.resolve({ delivered: false, retry: true }),
       logg.journal,
+      // Reserven finnes, men tar heller ikke imot. Da er loggen det eneste
+      // stedet observasjonen er, og linjen skal si det.
+      fangLagringen(false).store,
     )
     expect(response.status).toBe(503)
     expect(logg.linjer).toHaveLength(2)
@@ -736,9 +774,10 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
     },
   )
 
-  // Og grensen som gjør at en ukontrollert avsender ikke kan fylle hverken
-  // kjøreloggen eller autentiseringstjenesten.
+  // Demperen i denne instansen: den sparer et kall til databasen når svaret
+  // allerede er kjent her.
   it('demper en avsender som prøver om og om igjen', async () => {
+    const lagring = fangLagringen()
     let spurt = 0
     const tell: VerifyReporter = () => {
       spurt += 1
@@ -752,24 +791,97 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
         // autentiseringstjenesten spørres i det hele tatt.
         () => Promise.resolve({ delivered: false, retry: true }),
         () => undefined,
-        null,
+        lagring.store,
         tell,
       )
     }
     // Tretti i minuttet, og ikke førti rundturer til autentiseringstjenesten.
     expect(spurt).toBe(30)
+    // Og databasen ble heller ikke spurt de siste ti gangene.
+    expect(lagring.talt).toHaveLength(30)
+  })
+
+  // Punkt 2 fra tolvte gjennomgang, og det som gjør grensen til et vern framfor
+  // en demper: en serverless flate har mange instanser, og hver av dem starter
+  // med friskt minne. `forgetAttempts()` er nettopp den kalde instansen — uten
+  // en felles teller ville hver runde her fått sitt eget budsjett.
+  it('gir ikke et friskt budsjett til hver nye instans', async () => {
+    const felles = fellesGrense()
+    let spurt = 0
+    const tell: VerifyReporter = () => {
+      spurt += 1
+      return Promise.resolve('rejected')
+    }
+    for (let i = 0; i < 40; i += 1) {
+      // Hver runde er en ny instans, med et tomt minne.
+      forgetAttempts()
+      await serveDiagnostics(
+        post(PÅFØRT),
+        MILJØ,
+        () => Promise.resolve({ delivered: false, retry: true }),
+        () => undefined,
+        felles.store,
+        tell,
+      )
+    }
+    expect(felles.talt.get(reporterIpHash(post(PÅFØRT)) ?? '')).toBe(40)
+    // Førti kalde instanser, og fortsatt tretti rundturer.
+    expect(spurt).toBe(30)
+  })
+
+  // Og når den felles grensen sier nei, skjer ingenting mer: ingen rundtur,
+  // ingen linje, og et svar som ikke skiller seg ut.
+  it('spør ikke autentiseringstjenesten når den felles grensen sier nei', async () => {
+    const logg = fangLoggen()
+    const lagring = fangLagringen(true, false)
+    const response = await serveDiagnostics(
+      post(PÅFØRT),
+      MILJØ,
+      () => Promise.resolve({ delivered: false, retry: true }),
+      logg.journal,
+      lagring.store,
+      () => {
+        throw new Error('autentiseringstjenesten skal ikke spørres over grensen')
+      },
+    )
+    expect(response.status).toBe(204)
+    expect(logg.linjer).toHaveLength(0)
+    expect(lagring.beholdt).toHaveLength(0)
+  })
+
+  // Og svarer databasen ikke på spørsmålet heller, er det ikke avsenderen som
+  // er over en grense — det er at ingen grense kan håndheves. Da skal ingenting
+  // videre skje, og nettleseren skal beholde observasjonen.
+  it('spør ingen når den felles grensen ikke kunne håndheves', async () => {
+    const logg = fangLoggen()
+    const lagring = fangLagringen(true, null)
+    const response = await serveDiagnostics(
+      post(PÅFØRT),
+      MILJØ,
+      () => Promise.resolve({ delivered: false, retry: true }),
+      logg.journal,
+      lagring.store,
+      () => {
+        throw new Error('autentiseringstjenesten skal ikke spørres uten en grense')
+      },
+    )
+    expect(response.status).toBe(503)
+    expect(logg.linjer.at(-1)?.bareILoggen).toBe(true)
+    expect(JSON.stringify(logg.linjer)).not.toContain('HEMMELIG-PÅFØRT-TEKST')
+    expect(lagring.beholdt).toHaveLength(0)
   })
 
   // Budsjettet er per avsender: én som prøver for mye, skal ikke stenge ute en
   // annen som bare møtte en feil.
   it('demper bare den avsenderen som prøver for mye', async () => {
+    const lagring = fangLagringen()
     for (let i = 0; i < 40; i += 1) {
       await serveDiagnostics(
         post(PÅFØRT),
         MILJØ,
         () => Promise.resolve({ delivered: false, retry: true }),
         () => undefined,
-        null,
+        lagring.store,
         () => Promise.resolve('rejected'),
       )
     }
@@ -817,9 +929,17 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
     }) as typeof fetch
 
     try {
-      const response = await serveDiagnostics(post(KONVOLUTT), MILJØ, () => {
-        throw new Error('skal ikke videresendes')
-      })
+      const response = await serveDiagnostics(
+        post(KONVOLUTT),
+        MILJØ,
+        () => {
+          throw new Error('skal ikke videresendes')
+        },
+        () => undefined,
+        // Reserven må finnes, ellers er det ingenting å hente i en rundtur til
+        // autentiseringstjenesten, og ruten gjør den ikke.
+        fangLagringen().store,
+      )
       expect(response.status).toBe(204)
     } finally {
       globalThis.fetch = opprinnelig

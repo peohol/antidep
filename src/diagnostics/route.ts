@@ -32,6 +32,13 @@
 // ikke svarte i det hele tatt — og den grenen kan ingen utenforstående utløse,
 // for den krever at Data API-et faktisk er nede.
 //
+// Den grenen har sin egen grense, og den ligger i databasen framfor i minnet
+// her: `workflow.claim_diagnostics_attempt(text)` teller forsøkene på tvers av
+// alle instansene av denne ruten. En grense i minnet ville vært per instans, og
+// en serverless flate har mange — da ville en avsender fått et friskt budsjett
+// på hver av dem. Grensen er nåbar akkurat når den trengs, for det er PostgREST
+// som er nede i denne grenen, ikke Postgres.
+//
 // ----------------------------------------------------------------------------
 // De tre lagringene, i den rekkefølgen de svikter
 //
@@ -274,8 +281,9 @@ const TOKEN_SHAPE = /^[\w-]+\.[\w-]+\.[\w-]+$/
 /**
  * Hvor mange ganger én avsender får prøve i minuttet før den er kontrollert.
  *
- * En nettleser sender en håndfull. Et forsøk på å fylle kjøreloggen eller
- * autentiseringstjenesten sender flere.
+ * Det samme tallet står i databasen, som er den som faktisk håndhever det.
+ * Gjentatt her fordi denne instansen skal la være å sende et kall den vet
+ * svaret på — ikke som en andre sannhet.
  */
 const ATTEMPTS_PER_MINUTE = 30
 
@@ -285,16 +293,15 @@ const MAX_REMEMBERED_REPORTERS = 5000
 const attempts = new Map<string, { minute: number; count: number }>()
 
 /**
- * Forsøksbudsjettet, og hva det faktisk er verdt.
+ * Den lokale demperen, som er nøyaktig det og ikke mer.
  *
- * Det er per instans og lever i minnet: en serverless funksjon har ingen delt
- * tilstand, og to instanser teller hver for seg. Det gjør det til en demper og
- * ikke en garanti — den varige grensen er kvotene i databasen, som gjelder
- * uansett hvor kallet kom fra.
+ * Den lever i minnet til én instans, og en serverless flate har mange: en
+ * avsender som treffer en kald eller parallell instans, får et friskt budsjett
+ * der. Alene ville den derfor ikke vært et vern i det hele tatt.
  *
- * Men det er nettopp denne grensen som mangler for *ukontrollerte* kall: de når
- * aldri databasen, så databasekvotene binder dem ikke. Her binder de det de kan
- * koste — en linje i kjøreloggen og en rundtur til autentiseringstjenesten.
+ * Grensen som holder, står i databasen — `workflow.claim_diagnostics_attempt`
+ * teller på tvers av alle instansene. Denne sparer bare et kall dit når
+ * *denne* instansen allerede vet svaret, og er med av den grunn alene.
  */
 export function withinAttemptBudget(reporter: string, now = Date.now()): boolean {
   const minute = Math.floor(now / 60_000)
@@ -505,8 +512,37 @@ export async function serveDiagnostics(
   // den eneste der autentiseringstjenesten må spørres, siden databasen ikke
   // fikk sagt noe om hvem dette er. En utenforstående kan ikke utløse den:
   // den krever at Data API-et faktisk er nede.
+  //
+  // Den lokale demperen først, fordi den er gratis.
   if (!withinAttemptBudget(ipHash)) {
     return nothing()
+  }
+
+  // Og så grensen som faktisk holder.
+  //
+  // Den over er per instans, og en serverless flate har mange — så en avsender
+  // kunne fått et friskt budsjett på hver av dem og skalert trafikken mot
+  // autentiseringstjenesten fritt. Denne står i databasen, som er den ene
+  // tilstanden alle instansene deler, og den er nåbar akkurat her: det er
+  // PostgREST som er nede i denne grenen, ikke Postgres.
+  if (store === null) {
+    // Uten reservevei finnes ingen felles grense å håndheve, og heller ingen
+    // rad å skrive om avsenderen skulle vise seg ekte. Da er det ingenting å
+    // hente i en rundtur til autentiseringstjenesten.
+    journal({ ...line, reporter: 'ukjent', detail: NO_UNVERIFIED_TEXT, bareILoggen: true })
+    return new Response(null, { status: 503 })
+  }
+
+  const budget = await store.claimAttempt(ipHash)
+  if (budget === false) {
+    return nothing()
+  }
+  if (budget === null) {
+    // Databasen svarte ikke på spørsmålet heller. Da er det ikke avsenderen som
+    // er over en grense — det er at ingen grense kan håndheves, og da skal
+    // ingenting videre skje.
+    journal({ ...line, reporter: 'ukjent', detail: NO_UNVERIFIED_TEXT, bareILoggen: true })
+    return new Response(null, { status: 503 })
   }
 
   const verdict = await verify(target)
@@ -525,21 +561,19 @@ export async function serveDiagnostics(
   // fanen lukkes.
   journal(line)
 
-  if (store !== null) {
-    const kept = await store.keep({
-      reporterIpHash: ipHash,
-      eventId: envelope.eventId,
-      area: envelope.area,
-      kind: envelope.kind,
-      operation: envelope.operation,
-      code: envelope.code,
-      httpStatus: envelope.httpStatus,
-      transport: envelope.transport,
-      detail,
-    })
-    if (kept) {
-      return nothing()
-    }
+  const kept = await store.keep({
+    reporterIpHash: ipHash,
+    eventId: envelope.eventId,
+    area: envelope.area,
+    kind: envelope.kind,
+    operation: envelope.operation,
+    code: envelope.code,
+    httpStatus: envelope.httpStatus,
+    transport: envelope.transport,
+    detail,
+  })
+  if (kept) {
+    return nothing()
   }
 
   // Ingen rad noe sted. Loggen er nå det eneste stedet observasjonen finnes, og

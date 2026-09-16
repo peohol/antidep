@@ -13,7 +13,8 @@
 // ----------------------------------------------------------------------------
 // Hva legitimasjonen her faktisk kan
 //
-// Rollen `antidep_diagnostics` kan kjøre to funksjoner som *legger til* rader.
+// Rollen `antidep_diagnostics` kan kjøre tre funksjoner: to som *legger til*
+// rader, og en som teller ett forsøk og svarer ja eller nei.
 // Ingen tabellrettigheter, ingen lesevei, ingen bypass av RLS, ingen create.
 // Lekker den, er det verste noen kan gjøre å skrive vaskede, klippede og
 // mengdebegrensede observasjoner inn i en privat tabell ingen brukerflate
@@ -74,6 +75,15 @@ export interface DiagnosticsStore {
   /** `true` når raden er skrevet. `false` når den ikke er det, uansett grunn. */
   keep(entry: StoredDiagnostic): Promise<boolean>
   keepPublicProblem(entry: StoredPublicProblem): Promise<boolean>
+  /**
+   * Teller ett forsøk fra denne avsenderen, og svarer om den er innenfor.
+   *
+   * Tre utfall, og forskjellen mellom de to siste betyr noe: `true` er
+   * innenfor, `false` er over grensen, og `null` er at databasen ikke svarte
+   * i det hele tatt. Det siste er ikke et nei — det er at ingen grense kunne
+   * håndheves, og da skal ruten la være å bruke noe som helst videre.
+   */
+  claimAttempt(reporterIpHash: string): Promise<boolean | null>
 }
 
 const CONNECT_TIMEOUT_MS = 4000
@@ -99,6 +109,35 @@ async function run(url: string, sql: string, values: readonly unknown[]): Promis
     // Grunnen står i kjøreloggen gjennom ruten, som skriver linjen uansett.
     // Her er det bare ett spørsmål som betyr noe: ble raden skrevet?
     return false
+  } finally {
+    try {
+      await client.end()
+    } catch {
+      // En forbindelse som ikke lot seg lukke pent, er ikke en feil å melde.
+    }
+  }
+}
+
+/**
+ * Ett spørsmål med et ja eller et nei, og `null` når databasen ikke svarte.
+ *
+ * Skilt fra `run` fordi utfallene er tre og ikke to: en grense som ikke kunne
+ * håndheves, er noe annet enn en grense som sa nei.
+ */
+async function ask(url: string, sql: string, values: readonly unknown[]): Promise<boolean | null> {
+  const client = new Client({
+    connectionString: url,
+    connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+    statement_timeout: STATEMENT_TIMEOUT_MS,
+    application_name: 'antidep-diagnostikk',
+  })
+  try {
+    await client.connect()
+    const result = await client.query<Record<string, unknown>>(sql, values as unknown[])
+    const answer = Object.values(result.rows[0] ?? {})[0]
+    return typeof answer === 'boolean' ? answer : null
+  } catch {
+    return null
   } finally {
     try {
       await client.end()
@@ -143,5 +182,7 @@ export function createDiagnosticsStore(env: StoreEnvironment): DiagnosticsStore 
         entry.httpStatus,
         entry.transport,
       ]),
+    claimAttempt: (reporterIpHash) =>
+      ask(url, 'select workflow.claim_diagnostics_attempt($1)', [reporterIpHash]),
   }
 }

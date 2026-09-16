@@ -93,7 +93,10 @@ select set_eq(
            -- filen som er på vei gjennom kontrollene, og de tekniske
            -- problemene med sitt eget append-only spor.
            ('full_text_requests'), ('full_text_intake'), ('client_diagnostics'),
-           ('technical_incidents'), ('technical_incident_events')$$,
+           ('technical_incidents'), ('technical_incident_events'),
+           -- Og telleren som gjør forsøksgrensen på reserveveien felles for
+           -- alle instansene av serverruten.
+           ('diagnostics_attempts')$$,
   'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a og 012a'
 );
 select set_eq(

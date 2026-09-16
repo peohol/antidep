@@ -152,6 +152,7 @@ function ryddOpp(): void {
          and ti.signature = 'client:public_work_board';
      delete from workflow.technical_incidents
        where area = 'work_queue' and signature = 'client:public_work_board';
+     delete from workflow.diagnostics_attempts;
      reset session_replication_role;`,
   )
 }

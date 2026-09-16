@@ -835,6 +835,70 @@ create trigger client_diagnostics_are_append_only
   );
 
 -- ----------------------------------------------------------------------------
+-- Forsøkene reserveveien ikke kan stole på ennå
+--
+-- Reserveveien brukes bare når Data API-et ikke svarte, og da er det ingen som
+-- har kontrollert avsenderen ennå. Serveren må spørre autentiseringstjenesten,
+-- og *det* kallet må være begrenset: uten en grense kunne en avsender skalert
+-- den trafikken fritt, siden ingen databasekvote er nådd ennå.
+--
+-- Grensen lå først i minnet til den serverless funksjonen. Det var en demper og
+-- ikke et vern: hver kalde eller parallelle instans startet med sitt eget
+-- friske budsjett, så den som ville, kunne få så mange budsjetter den ville.
+--
+-- Den står her i stedet, fordi dette er den ene tilstanden alle instansene
+-- deler — og fordi den er nåbar akkurat når den trengs: det er PostgREST som er
+-- nede i denne grenen, ikke Postgres. Er *begge* nede, finnes ingen rad å
+-- skrive og ingen grunn til å spørre noen om noe; ruten svarer 503 og
+-- nettleseren beholder observasjonen.
+--
+-- Tabellen er en teller og ikke en historikk. Den er derfor ikke append-only,
+-- som resten her: en rad per avsender per minutt, som telles opp og ryddes bort
+-- når minuttet er over. Hva som ble forsøkt, står i kjøreloggen; her står bare
+-- hvor mange ganger.
+create table workflow.diagnostics_attempts (
+  id uuid primary key default gen_random_uuid(),
+
+  -- Serverens egen observasjon av hvem som ringte. Aldri adressen selv.
+  reporter_ip_hash text not null,
+  -- Minuttet forsøkene telles i. Grensen gjelder per minutt, så raden gjør det
+  -- også: da er opptellingen én radlås framfor et spørsmål over et tidsrom.
+  minute timestamptz not null,
+  attempts integer not null default 1,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  -- Én rad per avsender per minutt, og det er den nøkkelen opptellingen
+  -- kolliderer mot.
+  constraint diagnostics_attempts_reporter_minute_key
+    unique (reporter_ip_hash, minute),
+  constraint diagnostics_attempts_hash_shape_check
+    check (reporter_ip_hash ~ '^[0-9a-f]{64}$'),
+  constraint diagnostics_attempts_count_check
+    check (attempts >= 1)
+);
+
+comment on table workflow.diagnostics_attempts is
+  'Hvor mange ganger hver avsender har prøvd reserveveien i inneværende minutt, brukt av workflow.claim_diagnostics_attempt(text). Finnes fordi grensen ellers ville ligget i minnet til én serverless instans, og en avsender kunne fått et friskt budsjett på hver av dem — dette er den ene tilstanden alle instansene deler. Ikke append-only, i motsetning til resten her: den er en teller og ikke en historikk, og radene ryddes bort i det minuttet er over. RLS med default deny, ingen grants og ingen policy; ingen api-funksjon leser den.';
+comment on column workflow.diagnostics_attempts.reporter_ip_hash is
+  'SHA-256 av avsenderens ip-adresse, slik serveren selv observerte den. Adressen lagres aldri, og summen er serverens egen — ikke noe kalleren oppgir.';
+comment on column workflow.diagnostics_attempts.minute is
+  'Minuttet forsøkene telles i, avrundet. Nøkkelen er (avsender, minutt), slik at opptellingen er én radlås framfor et spørsmål over et tidsrom.';
+comment on column workflow.diagnostics_attempts.attempts is
+  'Antall forsøk fra denne avsenderen i dette minuttet.';
+
+alter table workflow.diagnostics_attempts enable row level security;
+
+-- Oppryddingen leter etter alt som er eldre enn minuttet som gjelder.
+create index diagnostics_attempts_minute_idx
+  on workflow.diagnostics_attempts (minute);
+
+create trigger diagnostics_attempts_set_row_timestamps
+  before insert or update on workflow.diagnostics_attempts
+  for each row execute function catalog.set_row_timestamps();
+
+-- ----------------------------------------------------------------------------
 -- Vaskingen
 --
 -- Klipper og fjerner det som ser ut som en hemmelighet. Bevisst smal: målet er
@@ -2838,7 +2902,8 @@ revoke execute on function api.record_client_diagnostic(uuid, text, text, text, 
 -- ----------------------------------------------------------------------------
 -- Hvorfor dette ikke er service_role, og ikke i nærheten
 --
--- Rollen under kan én ting: kjøre to funksjoner som *legger til* rader. Den har
+-- Rollen under kan tre ting, og alle tre er små: kjøre to funksjoner som
+-- *legger til* rader, og en som teller et forsøk og svarer ja eller nei. Den har
 -- ingen tabellrettigheter, ingen lesevei, ingen bypass av RLS, og kan ikke
 -- opprette noe. Lekker legitimasjonen, er det verste noen kan gjøre å skrive
 -- vaskede, klippede og mengdebegrensede observasjoner inn i en privat tabell
@@ -2900,13 +2965,76 @@ begin
     raise exception using
       errcode = 'insufficient_privilege',
       message = 'Reserverollen for diagnostikk har en fullmakt den ikke skal ha.',
-      hint = 'Rollen skal kunne logge inn og kjøre to append-funksjoner. Ingenting mer.';
+      hint = 'Rollen skal kunne logge inn, kjøre to append-funksjoner og telle et forsøk. Ingenting mer.';
   end if;
 end
 $$;
 
 revoke all on schema workflow from antidep_diagnostics;
 grant usage on schema workflow to antidep_diagnostics;
+
+-- ----------------------------------------------------------------------------
+-- Forsøksgrensen, som gjelder på tvers av instanser
+--
+-- Kalles av serverruten *før* den spør autentiseringstjenesten om en avsender
+-- den ennå ikke vet noe om. Svarer den nei, gjøres ingen rundtur.
+--
+-- To grenser, som ellers på reserveveien. Den per avsender er den som gjelder
+-- til daglig. Den for veien under ett er den som gjelder om legitimasjonen
+-- lekker, siden en kaller som velger sin egen avsendersum ellers kunne omgått
+-- den første ved å velge en ny sum for hvert forsøk.
+--
+-- Låsen gjør hele opptellingen til ett udelelig steg. Rollen har fire
+-- forbindelser og fem sekunders lock_timeout, så ventingen er bundet.
+create function workflow.claim_diagnostics_attempt(p_reporter_ip_hash text)
+  returns boolean
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_minute timestamptz := pg_catalog.date_trunc('minute', pg_catalog.now());
+  v_attempts integer;
+  v_total integer;
+begin
+  if p_reporter_ip_hash is null or p_reporter_ip_hash !~ '^[0-9a-f]{64}$' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Forsøket mangler serverens egen avsendersum.',
+      hint = 'Avsendersummen er en SHA-256 med små bokstaver, og serverens egen observasjon av hvem som ringte.';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('antidep:diagnostics_attempts', 0));
+
+  -- Telleren er ingen historikk. Det som ikke lenger kan telle mot noen grense,
+  -- skal heller ikke ligge igjen.
+  delete from workflow.diagnostics_attempts a
+  where a.minute < v_minute;
+
+  select coalesce(sum(a.attempts), 0) into v_total
+  from workflow.diagnostics_attempts a
+  where a.minute = v_minute;
+
+  if v_total >= 600 then
+    return false;
+  end if;
+
+  insert into workflow.diagnostics_attempts (reporter_ip_hash, minute, attempts)
+  values (p_reporter_ip_hash, v_minute, 1)
+  on conflict (reporter_ip_hash, minute)
+    do update set attempts = diagnostics_attempts.attempts + 1
+  returning attempts into v_attempts;
+
+  return v_attempts <= 30;
+end;
+$$;
+
+comment on function workflow.claim_diagnostics_attempt(text) is
+  'Teller ett forsøk på reserveveien og svarer om avsenderen fortsatt er innenfor. Kalles av Antideps egen serverrute før den spør autentiseringstjenesten om en avsender ingen har kontrollert ennå. Grensen står her framfor i minnet til den serverless funksjonen, fordi hver instans ellers ville startet med sitt eget friske budsjett: dette er den ene tilstanden alle instansene deler. Tretti i minuttet per avsendersum, og seks hundre i minuttet for veien under ett — den siste er grensen som gjelder om legitimasjonen lekker, siden en kaller kan velge sin egen sum. Hele opptellingen står bak én lås, så to samtidige kall kan ikke begge vinne. Kjørbar bare av rollen antidep_diagnostics.';
+
+revoke all on function workflow.claim_diagnostics_attempt(text) from public;
+grant execute on function workflow.claim_diagnostics_attempt(text) to antidep_diagnostics;
 
 -- ----------------------------------------------------------------------------
 -- Reserven for den rå årsaken
