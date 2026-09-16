@@ -3084,11 +3084,11 @@ begin
 end;
 $$;
 
-comment on function workflow.ingest_public_technical_problem(text, text, text, text, integer, text) is
+comment on function workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) is
   'Melder at en offentlig flate svikter for en uinnlogget besøkende. Tar maskinidentifikatorer og ingen tekst i det hele tatt — en anonym vei inn for fritekst ville vært en logg hvem som helst kunne fylle med sine egne ord. Bare de to offentlige områdene godtas, operasjonen må treffe en funksjon som faktisk finnes i api — så antallet problemrader denne veien kan skape er bundet av antallet api-funksjoner, uansett hvor mange avsendere som prøver — og mengden er begrenset til tjue i timen per SHA-256 av ip-adressen serveren selv observerte. Kjørbar bare av rollen antidep_diagnostics.';
 
-revoke execute on function workflow.ingest_public_technical_problem(text, text, text, text, integer, text) from public;
-grant execute on function workflow.ingest_public_technical_problem(text, text, text, text, integer, text) to antidep_diagnostics;
+revoke execute on function workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) from public;
+grant execute on function workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) to antidep_diagnostics;
 grant execute on function api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text) to authenticated;
 
 -- ----------------------------------------------------------------------------
