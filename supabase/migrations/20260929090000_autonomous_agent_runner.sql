@@ -266,6 +266,39 @@ create trigger agent_runner_connections_are_not_deleted
 -- Adressekravet som en egen regel, fordi en check constraint ikke kan bære en
 -- subquery. Den står her og ikke i to kopier: registreringen og constrainten
 -- skal ikke kunne bli uenige om hva en lovlig redirect-adresse er.
+-- Én adresse, prøvd mot den samme grensen serveren har.
+--
+-- Målet er ikke «ser ut som en adresse», men «kan leses som en adresse av
+-- URL-leseren i serveren». Alt annet blir en feil som først dukker opp midt i
+-- tilkoblingen, etter at engangskoden er brukt opp — og da må redaktøren hente
+-- en ny for noe som var ulovlig allerede da det ble registrert.
+--
+-- Derfor to ting, ikke én: formen er forankret i BEGGE ender, og porten leses
+-- som et TALL. Et mønster som bare teller siffer, ville godtatt `:99999`, og
+-- den finnes ikke — portene stopper på 65535.
+create function workflow.agent_runner_redirect_uri_is_valid(p_uri text)
+  returns boolean
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select case
+    when p_uri ~ '^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?(/[^\s?#]*)?$'
+      or p_uri ~ '^http://(localhost|127\.0\.0\.1)(:[0-9]{1,5})?(/[^\s]*)?$'
+    then coalesce(
+      (pg_catalog.substring(p_uri, '^[a-z]+://[^/]*:([0-9]{1,5})'))::integer
+        between 0 and 65535,
+      -- Ingen port oppgitt, og da er det ingenting å avvise.
+      true)
+    else false
+  end;
+$$;
+
+comment on function workflow.agent_runner_redirect_uri_is_valid(text) is
+  'Om én redirect-adresse er lovlig: https, eller loopback for MCP-inspektøren og lokal feilsøking. Formen er forankret i begge ender og porten leses som et tall, fordi grensen her skal være den samme som serverens URL-leser har — en adresse databasen godtar og serveren ikke kan lese, blir en feil som først dukker opp etter at engangskoden er brukt opp.';
+
+revoke execute on function workflow.agent_runner_redirect_uri_is_valid(text) from public;
+
 create function workflow.agent_runner_redirect_uris_are_valid(p_uris text[])
   returns boolean
   language sql
@@ -276,22 +309,13 @@ as $$
     cardinality(p_uris) between 1 and 8
     and not exists (
       select 1 from unnest(p_uris) as u(uri)
-      -- Forankret i BEGGE ender, og med en vert som faktisk er en vert.
-      --
-      -- Uten `$` var «https://klient.example/callback noe helt annet» en lovlig
-      -- adresse: prefikset stemte. Den ville blitt godtatt ved registreringen,
-      -- brukt opp en engangskode ved autorisasjonen, og så kastet i
-      -- `new URL(...)` i serveren — 500 uten videresending, og en ny engangskode
-      -- å hente. En adresse som ikke kan leses som en adresse, skal avvises der
-      -- den oppgis.
-      where u.uri !~ '^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?(/[^\s?#]*)?$'
-        and u.uri !~ '^http://(localhost|127\.0\.0\.1)(:[0-9]{1,5})?(/[^\s]*)?$'
+      where not workflow.agent_runner_redirect_uri_is_valid(u.uri)
     ),
     false);
 $$;
 
 comment on function workflow.agent_runner_redirect_uris_are_valid(text[]) is
-  'Om en klients redirect-adresser er lovlige: mellom én og åtte, og alle https — med unntak for loopback, som MCP-inspektøren og lokal feilsøking trenger. Mønsteret er forankret i begge ender og krever en vert som er en vert: en adresse som bare BEGYNNER som en adresse, ville blitt godtatt her, brukt opp en engangskode ved autorisasjonen og så kastet i serverens URL-lesning. Egen funksjon fordi en check constraint ikke kan bære en subquery, og fordi registreringen og constrainten ikke skal kunne bli uenige om hva en lovlig adresse er.';
+  'Om en klients redirect-adresser er lovlige: mellom én og åtte, og hver av dem prøvd av workflow.agent_runner_redirect_uri_is_valid(text). Egen funksjon fordi en check constraint ikke kan bære en subquery, og fordi registreringen og constrainten ikke skal kunne bli uenige om hva en lovlig adresse er.';
 
 revoke execute on function workflow.agent_runner_redirect_uris_are_valid(text[]) from public;
 

@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(111);
+select plan(114);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -282,6 +282,36 @@ select throws_ok(
   null,
   'en redirect-adresse som ikke kan leses som en adresse, avvises der den oppgis'
 );
+
+-- Og en port som ikke finnes. Et mønster som bare teller siffer, ville godtatt
+-- begge de to under: portene stopper på 65535, og grensen her skal være den
+-- samme som serverens URL-leser har.
+select throws_ok(
+  $$ select api.register_agent_runner_client('For høy port',
+       array['https://chatgpt.example:65536/callback']) $$,
+  '22023',
+  null,
+  'en portverdi over 65535 avvises'
+);
+
+select throws_ok(
+  $$ select api.register_agent_runner_client('Mye for høy port',
+       array['https://chatgpt.example:99999/callback']) $$,
+  '22023',
+  null,
+  'og en som ikke engang er i nærheten'
+);
+
+-- Grenseverdien prøves på selve regelen framfor gjennom registreringen: en
+-- vellykket registrering ville brukt av taket per time, som en annen prøve
+-- lenger nede teller nøyaktig.
+reset role;
+select is(
+  workflow.agent_runner_redirect_uri_is_valid('https://chatgpt.example:65535/callback'),
+  true,
+  'mens den høyeste porten som finnes, godtas'
+);
+set local role anon;
 
 -- PKCE er påkrevd, og bare S256.
 select throws_ok(
