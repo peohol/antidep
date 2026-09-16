@@ -79,59 +79,70 @@ begin
       message = 'Antidep 2-resetten stoppet: evidensrøttene har ikke nøyaktig de to autoriserte virkestoffidentitetene.';
   end if;
 
-  -- source_version_id is nullable in the historical schema. Use a LEFT JOIN so
-  -- a versionless root is itself an explicit mismatch instead of disappearing
-  -- from the destructive-scope check through inner-join semantics.
-  --
-  -- The globally unique PMID is the source identity here. The bibliographic
-  -- title is deliberately NOT an identity check: source titles are editable
-  -- correction metadata in this schema and may be normalized without creating
-  -- a different source. Requiring byte-identical title text made a safe legacy
-  -- root fail the production preflight even though its stable identifier,
-  -- abstract representation and historical evidence lineage were unchanged.
+  -- Evidence roots are bound to the exact immutable source snapshots they were
+  -- originally extracted from, not to mutable bibliographic metadata. The two
+  -- source_versions were created in migration 003 with fixed SHA-256 hashes;
+  -- knowledge.freeze_source_version() prevents those hashes from ever changing.
+  -- This is a stronger identity boundary than current title/identifier rows:
+  -- it proves which bytes the historical extraction actually read.
   if exists (
     select 1
     from knowledge.evidence_items e
     left join knowledge.source_versions sv on sv.id = e.source_version_id
-    join catalog.drugs d on d.id = e.intervention_drug_id
-    join catalog.clinical_concepts c on c.id = e.outcome_concept_id
     where sv.id is null
-       or sv.representation is distinct from 'abstract'::knowledge.source_representation
-       or c.canonical_label <> 'vektendring'
-       or not (
-         (d.canonical_name = 'sertralin'
-          and exists (
-            select 1
-            from knowledge.source_identifiers si
-            where si.source_id = e.source_id
-              and si.identifier_system = 'pmid'
-              and si.identifier_value = '11105740'
-          ))
-         or
-         (d.canonical_name = 'mirtazapin'
-          and exists (
-            select 1
-            from knowledge.source_identifiers si
-            where si.source_id = e.source_id
-              and si.identifier_system = 'pmid'
-              and si.identifier_value = '15697327'
-          ))
-       )
   ) then
     raise exception using
       errcode = '23001',
-      message = 'Antidep 2-resetten stoppet: evidensrøttene er ikke nøyaktig de to autoriserte abstract-baserte legacy-kildene.';
+      message = 'Antidep 2-resetten stoppet: en historisk evidensrot mangler kildeversjon.';
   end if;
 
-  -- Source identity is still not historical lineage. After evidence extraction
-  -- became a controlled write path, a new extraction can legitimately point to
-  -- the same source version, drug and outcome as a removed prototype row. The
-  -- two authorized roots predate BOTH evidence-item agent provenance (007g) and
-  -- the evidence_item_created audit trigger. Rows from before 007g were
-  -- backfilled with agent_run_id = NULL, and the audit trigger was not
-  -- retroactive. Any later editor or agent replacement therefore has
-  -- agent_run_id and/or a creation audit. Require both historical markers so a
-  -- semantically identical replacement is never classified as disposable
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join knowledge.source_versions sv on sv.id = e.source_version_id
+    where sv.representation is distinct from 'abstract'::knowledge.source_representation
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: en autorisert legacy-kilde er ikke lenger dokumentert som abstract-representasjon.';
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join catalog.clinical_concepts c on c.id = e.outcome_concept_id
+    where c.canonical_label <> 'vektendring'
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: et evidensfunn har annet klinisk utfall enn den autoriserte legacy-prototypen.';
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join knowledge.source_versions sv on sv.id = e.source_version_id
+    join catalog.drugs d on d.id = e.intervention_drug_id
+    where case d.canonical_name
+      when 'sertralin' then sv.content_hash is distinct from 'sha256:797e91b6c4a6c075bdde4113d263608d708fb07c3c0a7b656ff3c231d12895d3'
+      when 'mirtazapin' then sv.content_hash is distinct from 'sha256:c62a66215fc51b8c164cda70072ea30ff055b7c8e565a173a0be17cdf4e75722'
+      else true
+    end
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: kildeversjonen er ikke ett av de to autoriserte, uforanderlige legacy-snapshotene.';
+  end if;
+
+  -- Snapshot identity is still not historical evidence-row lineage. After
+  -- evidence extraction became a controlled write path, a new extraction can
+  -- legitimately point to the same old source version, drug and outcome as a
+  -- removed prototype row. The two authorized roots predate BOTH evidence-item
+  -- agent provenance (007g) and the evidence_item_created audit trigger. Rows
+  -- from before 007g were backfilled with agent_run_id = NULL, and the audit
+  -- trigger was not retroactive. Any later editor or agent replacement therefore
+  -- has agent_run_id and/or a creation audit. Require both historical markers so
+  -- a semantically identical replacement is never classified as disposable
   -- legacy content.
   if exists (
     select 1
@@ -212,7 +223,7 @@ begin
   -- surviving claim must have at least one revision, every revision must be
   -- explicitly linked to an evidence root, and the claim and evidence item must
   -- concern the same drug. Because the evidence-root check above admits only
-  -- the two legacy abstract rows, all linked revisions/assessments remain
+  -- the two historical source snapshots, all linked revisions/assessments remain
   -- structurally inside that bounded graph.
   if exists (
     select 1
