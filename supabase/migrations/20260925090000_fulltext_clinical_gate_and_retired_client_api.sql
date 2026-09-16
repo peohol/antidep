@@ -79,44 +79,77 @@ begin
       message = 'Antidep 2-resetten stoppet: evidensrøttene har ikke nøyaktig de to autoriserte virkestoffidentitetene.';
   end if;
 
-  -- source_version_id is nullable in the historical schema. Use a LEFT JOIN so
-  -- a versionless root is itself an explicit mismatch instead of disappearing
-  -- from the destructive-scope check through inner-join semantics.
+  -- Keep every identity check fail-closed, but distinguish the reason in the
+  -- production log. The hosted database is intentionally not queried from a
+  -- code task, and the production workflow is therefore the only safe place to
+  -- learn which structural invariant differs. These messages expose no UUIDs,
+  -- source contents or other production data.
   if exists (
     select 1
     from knowledge.evidence_items e
     left join knowledge.source_versions sv on sv.id = e.source_version_id
-    join knowledge.sources s on s.id = e.source_id
-    join catalog.drugs d on d.id = e.intervention_drug_id
-    join catalog.clinical_concepts c on c.id = e.outcome_concept_id
     where sv.id is null
-       or sv.representation is distinct from 'abstract'::knowledge.source_representation
-       or c.canonical_label <> 'vektendring'
-       or not (
-         (d.canonical_name = 'sertralin'
-          and s.title = 'Fluoxetine versus sertraline and paroxetine in major depressive disorder: changes in weight with long-term treatment'
-          and exists (
-            select 1
-            from knowledge.source_identifiers si
-            where si.source_id = e.source_id
-              and si.identifier_system = 'pmid'
-              and si.identifier_value = '11105740'
-          ))
-         or
-         (d.canonical_name = 'mirtazapin'
-          and s.title = 'Comparison of the effects of mirtazapine and fluoxetine in severely depressed patients'
-          and exists (
-            select 1
-            from knowledge.source_identifiers si
-            where si.source_id = e.source_id
-              and si.identifier_system = 'pmid'
-              and si.identifier_value = '15697327'
-          ))
-       )
   ) then
     raise exception using
       errcode = '23001',
-      message = 'Antidep 2-resetten stoppet: evidensrøttene er ikke nøyaktig de to autoriserte abstract-baserte legacy-kildene.';
+      message = 'Antidep 2-resetten stoppet: minst én autorisert evidensrot mangler kildeversjon.';
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join knowledge.source_versions sv on sv.id = e.source_version_id
+    where sv.representation is distinct from 'abstract'::knowledge.source_representation
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: minst én autorisert evidensrot peker ikke på en abstract-representasjon.';
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join catalog.clinical_concepts c on c.id = e.outcome_concept_id
+    where c.canonical_label <> 'vektendring'
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: minst én autorisert evidensrot har feil utfallsidentitet.';
+  end if;
+
+  -- Source identity is checked last so a failure here means that count, drug,
+  -- source-version presence, representation and outcome have already matched.
+  -- The exact title + PMID pairing remains unchanged from the previous guard.
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join knowledge.sources s on s.id = e.source_id
+    join catalog.drugs d on d.id = e.intervention_drug_id
+    where not (
+      (d.canonical_name = 'sertralin'
+       and s.title = 'Fluoxetine versus sertraline and paroxetine in major depressive disorder: changes in weight with long-term treatment'
+       and exists (
+         select 1
+         from knowledge.source_identifiers si
+         where si.source_id = e.source_id
+           and si.identifier_system = 'pmid'
+           and si.identifier_value = '11105740'
+       ))
+      or
+      (d.canonical_name = 'mirtazapin'
+       and s.title = 'Comparison of the effects of mirtazapine and fluoxetine in severely depressed patients'
+       and exists (
+         select 1
+         from knowledge.source_identifiers si
+         where si.source_id = e.source_id
+           and si.identifier_system = 'pmid'
+           and si.identifier_value = '15697327'
+       ))
+    )
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: minst én evidensrot har feil tittel/PMID-paring for den autoriserte legacy-kilden.';
   end if;
 
   -- Source identity is still not historical lineage. After evidence extraction
