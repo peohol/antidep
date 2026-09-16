@@ -134,7 +134,14 @@ export type ForwardDiagnostic = (
  */
 export interface JournalLine {
   readonly event: string
-  readonly reporter: 'innlogget' | 'anonym'
+  /**
+   * Hva serveren vet om avsenderen, og ikke hvem den er.
+   *
+   * `ukjent` er linjen som skrives *før* tokenen er kontrollert. Den bærer
+   * aldri den rå teksten: en påstand om å være innlogget er ikke en innlogging,
+   * og en tekst fra en ukontrollert avsender skal ikke skrives ned noe sted.
+   */
+  readonly reporter: 'innlogget' | 'anonym' | 'ukjent'
   readonly area: string
   readonly kind: string
   readonly operation: string | null
@@ -171,6 +178,63 @@ const consoleJournal: DiagnosticsJournal = (line) => {
  * aldri i det hele tatt.
  */
 const NO_PUBLIC_TEXT = '(ingen tekst: meldingen kom fra en uinnlogget besøkende)'
+
+/** Og det som står der før tokenen er kontrollert. Samme regel, annen grunn. */
+const NO_UNVERIFIED_TEXT = '(ingen tekst: avsenderen er ikke kontrollert ennå)'
+
+/**
+ * Koder som betyr «tjenesten er ikke tilgjengelig», ikke «databasen avviste».
+ *
+ * Skillet avgjør om reserveveien brukes, og det er ikke «har kode» mot «mangler
+ * kode»: PostgRESTs egne connection-feil *har* kode. PGRST000 til PGRST003 er
+ * nettopp at PostgREST ikke nådde databasen, og SQLSTATE-klassene 08
+ * (forbindelsen), 53 (ressurser) og 57 (avbrutt av drift) er det samme sett fra
+ * databasen. 40001 og 40P01 er serialisering og vranglås — sanne, men
+ * forbigående.
+ *
+ * Alt annet med en kode er databasens egen avgjørelse om *denne* observasjonen,
+ * og den gjelder begge veier: et nytt forsøk ville gitt det samme svaret.
+ */
+const AVAILABILITY_CODE = /^(PGRST00[0-3]|08[0-9A-Z]{3}|53[0-9A-Z]{3}|57P0[123]|40001|40P01)$/
+
+/** Eksportert slik at listen kan prøves mot de kodene den handler om. */
+export function isAvailabilityCode(code: string): boolean {
+  return AVAILABILITY_CODE.test(code)
+}
+
+/**
+ * Å kontrollere at tokenen faktisk er en Antidep-innlogging.
+ *
+ * Injiserbar, slik at en prøve slipper nettet.
+ */
+export type VerifyReporter = (target: ForwardTarget) => Promise<'verified' | 'rejected' | 'unknown'>
+
+/**
+ * Kontrollen går til autentiseringstjenesten, ikke til Data API-et.
+ *
+ * Det er poenget: de er to forskjellige tjenester. Er PostgREST nede, kan
+ * autentiseringen fortsatt svare — og da kan reserveveien brukes med en
+ * avsender som faktisk er kontrollert. Er begge nede, kan ingen bekrefte hvem
+ * dette er, og da skal ingen tekst skrives ned.
+ */
+const goTrueVerify: VerifyReporter = async (target) => {
+  try {
+    const response = await fetch(`${target.url.replace(/\/+$/, '')}/auth/v1/user`, {
+      headers: {
+        apikey: target.publishableKey,
+        authorization: `Bearer ${target.accessToken}`,
+      },
+    })
+    if (response.ok) {
+      return 'verified'
+    }
+    // Et svar som sier nei, er et svar. Alt annet — 5xx, en gateway i veien —
+    // er tjenesten som ikke kunne svare, og det er ikke det samme.
+    return response.status === 401 || response.status === 403 ? 'rejected' : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
 
 /**
  * Kroppen leses med et tak.
@@ -240,10 +304,12 @@ const supabaseForward: ForwardDiagnostic = async (target, args) => {
   if (error === null) {
     return { delivered: true, retry: false }
   }
-  // En kode betyr at databasen svarte — en avvisning er dens avgjørelse, og
-  // ikke noe å prøve om igjen. Uten kode er det transporten som sviktet.
-  const answered = typeof error.code === 'string' && error.code.length > 0
-  return { delivered: false, retry: !answered }
+  // Uten kode sviktet transporten. Med kode er det databasens svar — men ikke
+  // alle koder er en avgjørelse om observasjonen: PostgRESTs egne
+  // connection-feil har også kode, og de er nettopp tilfellet reserveveien
+  // finnes for.
+  const code = typeof error.code === 'string' ? error.code : ''
+  return { delivered: false, retry: code.length === 0 || AVAILABILITY_CODE.test(code) }
 }
 
 /**
@@ -260,6 +326,7 @@ export async function serveDiagnostics(
   forward: ForwardDiagnostic = supabaseForward,
   journal: DiagnosticsJournal = consoleJournal,
   store: DiagnosticsStore | null = createDiagnosticsStore(env),
+  verify: VerifyReporter = goTrueVerify,
 ): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(null, { status: 405, headers: { allow: 'POST' } })
@@ -286,28 +353,26 @@ export async function serveDiagnostics(
 
   // Vaskes her også, uavhengig av hva nettleseren gjorde. Databasen vasker
   // uansett; dette er den samme grensen ett ledd tidligere, for en kaller vi
-  // ikke kontrollerer — og loggen skrives før databasen ser noe som helst.
+  // ikke kontrollerer.
   const detail = scrubDetail(envelope.detail).slice(0, MAX_DETAIL_CHARS)
 
-  const line: JournalLine = {
+  // Maskinidentifikatorene, og ikke ett tegn av teksten. Denne linjen skrives
+  // først og alltid: den sier at noe sviktet, uten å skrive ned ord fra en
+  // avsender ingen ennå har kontrollert.
+  const unverified: JournalLine = {
     event: envelope.eventId,
-    reporter: 'innlogget',
+    reporter: 'ukjent',
     area: envelope.area,
     kind: envelope.kind,
     operation: envelope.operation,
     code: envelope.code,
     httpStatus: envelope.httpStatus,
     transport: envelope.transport,
-    detail,
+    detail: NO_UNVERIFIED_TEXT,
   }
+  journal(unverified)
 
-  // Først, og alltid. Blir prosessen revet ned i kallene under, er årsaken
-  // likevel skrevet ned et sted som overlever at fanen lukkes.
-  journal(line)
-
-  // Ingen Data API-adresse i utrullingen er ikke en feil her: da er reserven
-  // under alt som finnes, og den er nettopp det den er til for.
-  let target: ForwardTarget | null
+  let target: ForwardTarget
   try {
     target = {
       url: pick(env, ['ANTIDEP_SUPABASE_URL', 'VITE_SUPABASE_URL']),
@@ -318,30 +383,51 @@ export async function serveDiagnostics(
       accessToken: envelope.accessToken ?? '',
     }
   } catch {
-    target = null
+    // Uten adresse finnes ingen autentiseringstjeneste heller, og da kan ingen
+    // bekrefte avsenderen. Teksten blir liggende i nettleserens utboks.
+    journal({ ...unverified, bareILoggen: true })
+    return new Response(null, { status: 503 })
   }
 
-  if (target !== null) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const outcome = await forward(target, {
-          p_event_id: envelope.eventId,
-          p_area: envelope.area,
-          p_kind: envelope.kind,
-          p_operation: envelope.operation,
-          p_code: envelope.code,
-          p_http_status: envelope.httpStatus,
-          p_transport: envelope.transport,
-          p_detail: detail,
-        })
-        if (outcome.delivered || !outcome.retry) {
-          // Levert, eller avvist av databasen. En avvisning er dens avgjørelse,
-          // og et nytt forsøk ville gitt det samme svaret.
-          return nothing()
-        }
-      } catch {
-        // Et brudd i nettet mellom ruten og Data API-et. Verdt ett forsøk til.
+  // En påstand om å være innlogget er ikke en innlogging. Kontrollen går til
+  // autentiseringstjenesten, som er en annen tjeneste enn Data API-et.
+  const verdict = await verify(target)
+  if (verdict === 'rejected') {
+    // Et endelig svar: avsenderen er ikke den den utgir seg for. Ingenting
+    // skrives, og svaret skiller seg ikke ut — ruten er ikke et sted å prøve
+    // seg fram fra utsiden.
+    return nothing()
+  }
+  if (verdict !== 'verified') {
+    // Ingen kunne bekrefte avsenderen. Da skal ingen tekst skrives ned, og
+    // nettleseren beholder årsaken til den kan bekreftes senere.
+    journal({ ...unverified, bareILoggen: true })
+    return new Response(null, { status: 503 })
+  }
+
+  // Herfra er avsenderen kontrollert, og teksten kan skrives ned.
+  const line: JournalLine = { ...unverified, reporter: 'innlogget', detail }
+  journal(line)
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const outcome = await forward(target, {
+        p_event_id: envelope.eventId,
+        p_area: envelope.area,
+        p_kind: envelope.kind,
+        p_operation: envelope.operation,
+        p_code: envelope.code,
+        p_http_status: envelope.httpStatus,
+        p_transport: envelope.transport,
+        p_detail: detail,
+      })
+      if (outcome.delivered || !outcome.retry) {
+        // Levert, eller avvist av databasen. En avvisning er dens avgjørelse,
+        // og et nytt forsøk ville gitt det samme svaret.
+        return nothing()
       }
+    } catch {
+      // Et brudd i nettet mellom ruten og Data API-et. Verdt ett forsøk til.
     }
   }
 

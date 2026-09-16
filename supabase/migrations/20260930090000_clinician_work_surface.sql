@@ -2878,6 +2878,47 @@ begin
         message = 'Ukjent område.';
   end;
 
+  -- Maskinidentifikatorene kontrolleres like strengt som på den innloggede
+  -- veien. Det er ikke en formalitet: uten kontrollen ville en som fikk tak i
+  -- legitimasjonen kunnet skrive fritekst i felter som skal være lukkede
+  -- vokabularer og kontrollerte former.
+  if p_kind not in ('unavailable', 'unreadable_answer') then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent svikttype.';
+  end if;
+
+  if p_transport is not null and p_transport not in
+    ('offline', 'network', 'aborted', 'timeout', 'http', 'contract', 'unknown')
+  then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent transportform.';
+  end if;
+
+  if p_operation is not null and not exists (
+    select 1
+    from pg_catalog.pg_proc pr
+    join pg_catalog.pg_namespace ns on ns.oid = pr.pronamespace
+    where ns.nspname = 'api' and pr.proname = p_operation
+  ) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent operasjon.';
+  end if;
+
+  if p_code is not null and p_code !~ '^([0-9A-Z]{5}|PGRST[0-9]{3})$' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent kode.';
+  end if;
+
+  if p_http_status is not null and p_http_status not between 100 and 599 then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent statuskode.';
+  end if;
+
   v_detail := workflow.scrub_diagnostic_detail(p_detail);
   if length(coalesce(v_detail, '')) = 0 then
     return;
@@ -2894,11 +2935,34 @@ begin
     return;
   end if;
 
-  -- Samme kappløpsgrense som på normalveien: «tell, og sett inn hvis tallet er
-  -- lavt nok» er to steg to samtidige kall begge vinner. Låsen er per avsender
-  -- og holdes ut transaksjonen.
+  -- Én lås for hele reserven, ikke én per avsender.
+  --
+  -- «Tell, og sett inn hvis tallet er lavt nok» er to steg to samtidige kall
+  -- begge vinner, så tellingene må leses under en lås. Og siden det er *to*
+  -- tellinger — reserven under ett, og denne avsenderen — må begge leses under
+  -- den samme, ellers ville to låser i to rekkefølger kunnet gi vranglås.
+  -- Reserven er en lavfrekvent vei som bare brukes når Data API-et svikter, så
+  -- serialiseringen koster ingenting som betyr noe.
   perform pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtextextended('antidep:client_diagnostics:' || v_key, 0));
+    pg_catalog.hashtextextended('antidep:client_diagnostics:reserve', 0));
+
+  -- Grensen som gjelder om legitimasjonen lekker.
+  --
+  -- Avsendersummen oppgis av kalleren. Den legitime ruten regner den ut selv,
+  -- men en som stjeler legitimasjonen, kan velge en ny gyldig sum for hvert
+  -- kall — og da er en kvote per avsender ingen kvote. Denne teller hele
+  -- reserven, uansett hvem kalleren påstår å være, og er derfor den eneste som
+  -- faktisk binder skriveflaten.
+  --
+  -- Taket er rundhåndet mot en ekte Data API-svikt, der mange brukere skriver
+  -- samtidig, og smalt mot en lekkasje, som ellers ville vært ubegrenset.
+  if (select count(*)
+      from workflow.client_diagnostics d
+      where d.reporter_ip_hash is not null
+        and d.occurred_at > statement_timestamp() - interval '1 hour') >= 600
+  then
+    return;
+  end if;
 
   if (select count(*)
       from workflow.client_diagnostics d
@@ -2923,7 +2987,7 @@ end;
 $$;
 
 comment on function workflow.ingest_client_diagnostic(text, uuid, text, text, text, text, integer, text, text) is
-  'Reserveveien for den rå årsaken, brukt av Antideps egen serverrute når Data API-et ikke svarer. Samme vasking, lengdegrense, mengdegrense og idempotens som api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text), men avsenderen er en SHA-256 av ip-adressen serveren faktisk så, siden ingen token kan kontrolleres når PostgREST er nede. Kjørbar bare av rollen antidep_diagnostics, som ikke kan lese én rad ut igjen.';
+  'Reserveveien for den rå årsaken, brukt av Antideps egen serverrute når Data API-et ikke svarer. Samme vasking, lengdegrense, idempotens og lukkede kontroll av maskinidentifikatorene som api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text). Avsenderen er en SHA-256 av ip-adressen ruten observerte, og sier hvordan raden kom inn framfor hvem som sendte den; ruten har kontrollert tokenen mot autentiseringstjenesten før den kaller hit, men databasen kan ikke se det, og derfor er kvoten dobbel: seksti i timen per avsendersum, og seks hundre i timen for reserven under ett. Den siste er grensen som gjelder om legitimasjonen lekker, siden en kaller kan velge sin egen sum. Kjørbar bare av rollen antidep_diagnostics, som ikke kan lese én rad ut igjen.';
 
 revoke execute on function workflow.ingest_client_diagnostic(text, uuid, text, text, text, text, integer, text, text) from public;
 grant execute on function workflow.ingest_client_diagnostic(text, uuid, text, text, text, text, integer, text, text) to antidep_diagnostics;
@@ -3057,10 +3121,21 @@ begin
   v_key := 'offentlig:' || p_reporter_ip_hash;
 
   -- Kvoten er på det append-only sporet, fordi det er der radene faktisk blir
-  -- liggende. Låsen gjør tellingen og skrivingen til ett udelelig steg, slik at
-  -- parallelle kall fra den samme avsenderen ikke kan gå forbi grensen.
+  -- liggende. Én lås for hele veien, ikke én per avsender: de to tellingene
+  -- under må leses under den samme låsen, og to låser i to rekkefølger ville
+  -- kunnet gi vranglås.
   perform pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtextextended('antidep:public_problem:' || v_key, 0));
+    pg_catalog.hashtextextended('antidep:public_problem:reserve', 0));
+
+  -- Grensen som gjelder om legitimasjonen lekker: avsendersummen oppgis av
+  -- kalleren, så en kvote per avsender binder ingenting alene.
+  if (select count(*)
+      from workflow.technical_incident_events e
+      where e.reporter_key like 'offentlig:%'
+        and e.occurred_at > statement_timestamp() - interval '1 hour') >= 200
+  then
+    return;
+  end if;
 
   if (select count(*)
       from workflow.technical_incident_events e
@@ -3085,7 +3160,7 @@ end;
 $$;
 
 comment on function workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) is
-  'Melder at en offentlig flate svikter for en uinnlogget besøkende. Tar maskinidentifikatorer og ingen tekst i det hele tatt — en anonym vei inn for fritekst ville vært en logg hvem som helst kunne fylle med sine egne ord. Bare de to offentlige områdene godtas, operasjonen må treffe en funksjon som faktisk finnes i api — så antallet problemrader denne veien kan skape er bundet av antallet api-funksjoner, uansett hvor mange avsendere som prøver — og mengden er begrenset til tjue i timen per SHA-256 av ip-adressen serveren selv observerte. Kjørbar bare av rollen antidep_diagnostics.';
+  'Melder at en offentlig flate svikter for en uinnlogget besøkende. Tar maskinidentifikatorer og ingen tekst i det hele tatt — en anonym vei inn for fritekst ville vært en logg hvem som helst kunne fylle med sine egne ord. Bare de to offentlige områdene godtas, operasjonen må treffe en funksjon som faktisk finnes i api — så antallet problemrader denne veien kan skape er bundet av antallet api-funksjoner, uansett hvor mange avsendere som prøver — og mengden er begrenset både til tjue i timen per SHA-256 av ip-adressen ruten observerte, og til to hundre i timen for veien under ett — den siste er grensen som gjelder om legitimasjonen lekker, siden en kaller kan velge sin egen sum. Kjørbar bare av rollen antidep_diagnostics.';
 
 revoke execute on function workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) from public;
 grant execute on function workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) to antidep_diagnostics;

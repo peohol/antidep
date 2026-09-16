@@ -25,7 +25,11 @@
 
 import { randomUUID } from 'node:crypto'
 
-import { serveDiagnostics, type JournalLine } from '../src/diagnostics/route.ts'
+import {
+  serveDiagnostics,
+  type ForwardDiagnostic,
+  type JournalLine,
+} from '../src/diagnostics/route.ts'
 import { check, psql, q, readLocalStackConfig, userToken } from './local-stack.ts'
 
 const config = readLocalStackConfig(process.argv.slice(2))
@@ -52,8 +56,22 @@ const environment = {
   ANTIDEP_DIAGNOSTICS_DATABASE_URL: reserveUrl,
 }
 
-/** Data API-et pekt på en port ingen lytter på. Utilgjengelig for ekte. */
-const dataApiNede = {
+/**
+ * Data API-et som svikter slik det faktisk gjør.
+ *
+ * PGRST000 til PGRST003 er PostgREST som ikke nådde databasen — tjenesten
+ * svarer, men kan ikke utføre kallet. Det er nettopp tilfellet reserven finnes
+ * for, og det er også tilfellet der autentiseringstjenesten fortsatt svarer, så
+ * avsenderen kan kontrolleres.
+ *
+ * Å peke hele adressen på en død port ville slått ut begge tjenestene. Da kan
+ * ingen bekrefte hvem som sender, og da skal ingenting skrives — riktig, men
+ * ikke det som prøves her. Det tilfellet har sin egen påstand nederst.
+ */
+const postgrestSvikter: ForwardDiagnostic = () => Promise.resolve({ delivered: false, retry: true })
+
+/** Hele Supabase utilgjengelig: verken Data API eller autentisering svarer. */
+const altNede = {
   ANTIDEP_SUPABASE_URL: 'http://127.0.0.1:1/ingen-tjeneste',
   ANTIDEP_SUPABASE_PUBLISHABLE_KEY: config.anonKey,
   ANTIDEP_DIAGNOSTICS_DATABASE_URL: reserveUrl,
@@ -97,10 +115,14 @@ function stored(eventId: string): number {
 async function main(): Promise<void> {
   console.log('Diagnostikkveien, ende til ende')
 
+  // Radene autentiseringstjenesten faktisk slår opp i. Uten aud og role ville
+  // den ikke kjent igjen brukeren tokenet peker på, og kontrollen av avsenderen
+  // ville sagt nei av feil grunn.
   psql(
     config,
-    `insert into auth.users (id, email)
-     values (${q(USER)}, 'diagnostikk-e2e@test.invalid')
+    `insert into auth.users (id, instance_id, aud, role, email)
+     values (${q(USER)}, '00000000-0000-0000-0000-000000000000',
+             'authenticated', 'authenticated', 'diagnostikk-e2e@test.invalid')
      on conflict (id) do nothing;`,
   )
 
@@ -132,16 +154,28 @@ async function main(): Promise<void> {
   check('den samme observasjonen levert igjen svarer likt', again.status === 204)
   check('og blir fortsatt én rad', stored(eventId) === 1)
 
-  // Uten en gyldig token er det ingen å tilskrive observasjonen. Databasen
-  // svarer, så dette er et endelig utfall — og svaret skal ikke skille seg fra
-  // et vellykket, ellers ville ruten vært et sted å prøve seg fram fra utsiden.
-  const anonymous = randomUUID()
+  // En påstand om å være innlogget er ikke en innlogging.
+  //
+  // Dette går gjennom den ekte autentiseringstjenesten på den lokale stacken:
+  // ingen injisert kontroll, ingen doble. Tokenen er oppdiktet, og da skal
+  // ingen tekst skrives noe sted — verken i loggen eller i databasen. Svaret
+  // skal likevel ikke skille seg fra et vellykket, ellers ville ruten vært et
+  // sted å prøve seg fram fra utsiden.
+  const påstått = randomUUID()
+  const påførtLogg = fangLoggen()
   const refused = await serveDiagnostics(
-    envelope(anonymous, 'ikke-en-gyldig-token', detail),
+    envelope(påstått, 'ikke-en-gyldig-token', 'HEMMELIG-PÅFØRT-TEKST fra en fremmed'),
     environment,
+    undefined,
+    påførtLogg.journal,
   )
-  check('et kall uten gyldig token svarer det samme utad', refused.status === 204)
-  check('men legger ingenting igjen', stored(anonymous) === 0)
+  check('en oppdiktet token svarer det samme utad', refused.status === 204, String(refused.status))
+  check('men legger ingenting igjen', stored(påstått) === 0)
+  check(
+    'og ingen av avsenderens ord ble skrevet ned',
+    !JSON.stringify(påførtLogg.linjer).includes('HEMMELIG-PÅFØRT-TEKST'),
+    JSON.stringify(påførtLogg.linjer),
+  )
 
   // ==========================================================================
   // Selve poenget: Data API-et er nede, og raden kommer fram likevel.
@@ -155,11 +189,11 @@ async function main(): Promise<void> {
   const uteLogg = fangLoggen()
   const nede = await serveDiagnostics(
     envelope(utenDataApi, token, detail),
-    dataApiNede,
-    undefined,
+    environment,
+    postgrestSvikter,
     uteLogg.journal,
   )
-  check('en utilgjengelig Data API svarer likevel 204', nede.status === 204, String(nede.status))
+  check('et sviktende Data API svarer likevel 204', nede.status === 204, String(nede.status))
   check('fordi raden gikk gjennom den egne forbindelsen', stored(utenDataApi) === 1)
 
   const varig = psql(
@@ -184,8 +218,13 @@ async function main(): Promise<void> {
 
   check(
     'den samme årsaken står også i serverloggen',
-    uteLogg.linjer[0]?.detail.includes('at callRpc (gateway.ts:1:1)') === true,
-    JSON.stringify(uteLogg.linjer[0]?.detail),
+    uteLogg.linjer.some((linje) => linje.detail.includes('at callRpc (gateway.ts:1:1)')),
+    JSON.stringify(uteLogg.linjer.map((linje) => linje.reporter)),
+  )
+  check(
+    'og den første linjen, før avsenderen var kontrollert, bar ingen tekst',
+    uteLogg.linjer[0]?.reporter === 'ukjent' && !uteLogg.linjer[0].detail.includes('callRpc'),
+    JSON.stringify(uteLogg.linjer[0]),
   )
   check(
     'og loggen sier ikke at den er det eneste stedet, for raden kom fram',
@@ -199,8 +238,8 @@ async function main(): Promise<void> {
   // Det samme forsøket en gang til blir den samme raden, ikke en til.
   const igjen = await serveDiagnostics(
     envelope(utenDataApi, token, detail),
-    dataApiNede,
-    undefined,
+    environment,
+    postgrestSvikter,
     fangLoggen().journal,
   )
   check('et nytt forsøk svarer likt', igjen.status === 204)
@@ -212,13 +251,40 @@ async function main(): Promise<void> {
   const utenLogg = fangLoggen()
   const helt = await serveDiagnostics(
     envelope(uten, token, detail),
-    { ...dataApiNede, ANTIDEP_DIAGNOSTICS_DATABASE_URL: '' },
-    undefined,
+    { ...environment, ANTIDEP_DIAGNOSTICS_DATABASE_URL: '' },
+    postgrestSvikter,
     utenLogg.journal,
   )
   check('uten noen vei igjen svarer ruten 503', helt.status === 503, String(helt.status))
   check('og ingenting ble lagret', stored(uten) === 0)
   check('men loggen sier at den er det eneste stedet', utenLogg.linjer.at(-1)?.bareILoggen === true)
+
+  // ==========================================================================
+  // Er *alt* nede, kan ingen bekrefte hvem som sender.
+  //
+  // Da skal ingen tekst skrives noe sted — heller ikke i reserven, som ellers
+  // ville tatt imot en fremmeds ord som om de kom fra en bruker. Nettleseren
+  // beholder årsaken til noen kan bekrefte avsenderen.
+  // ==========================================================================
+  const altBorte = randomUUID()
+  const altLogg = fangLoggen()
+  const ingen = await serveDiagnostics(
+    envelope(altBorte, token, detail),
+    altNede,
+    postgrestSvikter,
+    altLogg.journal,
+  )
+  check(
+    'uten noen å bekrefte avsenderen svarer ruten 503',
+    ingen.status === 503,
+    String(ingen.status),
+  )
+  check('og ingenting ble lagret', stored(altBorte) === 0)
+  check(
+    'og ingen tekst ble skrevet ned',
+    !JSON.stringify(altLogg.linjer).includes('callRpc'),
+    JSON.stringify(altLogg.linjer),
+  )
 
   // ==========================================================================
   // Den uinnloggede besøkende: et problem meldt, og ikke ett tegn fritekst.

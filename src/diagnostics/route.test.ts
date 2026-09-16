@@ -11,12 +11,14 @@ import { describe, expect, it } from 'vitest'
 
 import { parseDiagnosticEnvelope } from './envelope.ts'
 import {
+  isAvailabilityCode,
   reporterIpHash,
   serveDiagnostics,
   type DiagnosticsJournal,
   type ForwardDiagnostic,
   type ForwardTarget,
   type JournalLine,
+  type VerifyReporter,
 } from './route.ts'
 import type { DiagnosticsStore, StoredDiagnostic, StoredPublicProblem } from './store.ts'
 
@@ -41,6 +43,25 @@ const KONVOLUTT = {
 function fangLoggen(): { linjer: JournalLine[]; journal: DiagnosticsJournal } {
   const linjer: JournalLine[] = []
   return { linjer, journal: (line) => linjer.push(line) }
+}
+
+/**
+ * Avsenderen er kontrollert.
+ *
+ * Prøvene under handler om hva som skjer *etter* kontrollen. At den faktisk
+ * finner sted, og hva som skjer når den sier nei, står i sin egen del nederst.
+ */
+const GODKJENT: VerifyReporter = () => Promise.resolve('verified')
+
+/** Den vanlige veien gjennom ruten, med en avsender som er kontrollert. */
+function svar(
+  request: Request,
+  env: Parameters<typeof serveDiagnostics>[1],
+  forward?: ForwardDiagnostic,
+  journal?: DiagnosticsJournal,
+  store?: Parameters<typeof serveDiagnostics>[4],
+): Promise<Response> {
+  return serveDiagnostics(request, env, forward, journal, store ?? null, GODKJENT)
 }
 
 /** Adressen plattformen setter. Uten den kan serveren ikke telle avsenderen. */
@@ -110,7 +131,7 @@ describe('ruten', () => {
       sendt.push({ args })
       return Promise.resolve({ delivered: true, retry: false })
     }
-    await serveDiagnostics(
+    await svar(
       post({
         ...KONVOLUTT,
         detail: 'authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.hemmelig.signatur',
@@ -128,7 +149,7 @@ describe('ruten', () => {
       return Promise.resolve({ delivered: true, retry: false })
     }
 
-    const response = await serveDiagnostics(post(KONVOLUTT), MILJØ, forward)
+    const response = await svar(post(KONVOLUTT), MILJØ, forward)
 
     expect(response.status).toBe(204)
     expect(sendt).toHaveLength(1)
@@ -151,7 +172,7 @@ describe('ruten', () => {
       forsøk += 1
       return Promise.resolve({ delivered: false, retry: true })
     }
-    await serveDiagnostics(post(KONVOLUTT), MILJØ, forward)
+    await svar(post(KONVOLUTT), MILJØ, forward)
     expect(forsøk).toBe(2)
   })
 
@@ -161,7 +182,7 @@ describe('ruten', () => {
       forsøk += 1
       return Promise.resolve({ delivered: false, retry: false })
     }
-    await serveDiagnostics(post(KONVOLUTT), MILJØ, forward)
+    await svar(post(KONVOLUTT), MILJØ, forward)
     expect(forsøk).toBe(1)
   })
 
@@ -184,10 +205,10 @@ describe('ruten', () => {
   // utsiden: det sier aldri om tokenen var gyldig, eller om kvoten var brukt
   // opp. Begge er endelige svar fra databasen, og begge er 204.
   it('svarer det samme enten databasen tok imot eller avviste', async () => {
-    const tok = await serveDiagnostics(post(KONVOLUTT), MILJØ, () =>
+    const tok = await svar(post(KONVOLUTT), MILJØ, () =>
       Promise.resolve({ delivered: true, retry: false }),
     )
-    const avviste = await serveDiagnostics(post(KONVOLUTT), MILJØ, () =>
+    const avviste = await svar(post(KONVOLUTT), MILJØ, () =>
       Promise.resolve({ delivered: false, retry: false }),
     )
     expect(tok.status).toBe(avviste.status)
@@ -197,33 +218,29 @@ describe('ruten', () => {
     ['en kropp som ikke er JSON', 'ikke json', 400],
     ['en konvolutt som ikke stemmer', JSON.stringify({ area: 'work_queue' }), 400],
   ])('avviser %s uten å si hvorfor', async (_hva, body, status) => {
-    const response = await serveDiagnostics(post(body), MILJØ, () => {
+    const response = await svar(post(body), MILJØ, () => {
       throw new Error('skal ikke videresendes')
     })
     expect(response.status).toBe(status)
   })
 
   it('avviser en kropp som er absurd stor, uten å lese den videre', async () => {
-    const response = await serveDiagnostics(post('x'.repeat(20000)), MILJØ, () => {
+    const response = await svar(post('x'.repeat(20000)), MILJØ, () => {
       throw new Error('skal ikke videresendes')
     })
     expect(response.status).toBe(413)
   })
 
   it('tar bare imot POST', async () => {
-    const response = await serveDiagnostics(
-      new Request('https://antidep.example/diagnostics'),
-      MILJØ,
-      () => {
-        throw new Error('skal ikke videresendes')
-      },
-    )
+    const response = await svar(new Request('https://antidep.example/diagnostics'), MILJØ, () => {
+      throw new Error('skal ikke videresendes')
+    })
     expect(response.status).toBe(405)
   })
 
   it('svarer 503 framfor å kaste når utrullingen mangler oppsett', async () => {
     const logg = fangLoggen()
-    const response = await serveDiagnostics(
+    const response = await svar(
       post(KONVOLUTT),
       {},
       () => {
@@ -248,26 +265,29 @@ describe('ruten', () => {
 describe('serverloggen', () => {
   it('skriver observasjonen før den prøver databasen', async () => {
     const logg = fangLoggen()
-    let skrevetFørKallet = false
+    let skrevetFørKallet = 0
     const forward: ForwardDiagnostic = () => {
-      skrevetFørKallet = logg.linjer.length === 1
+      skrevetFørKallet = logg.linjer.length
       return Promise.resolve({ delivered: true, retry: false })
     }
-    await serveDiagnostics(post(KONVOLUTT), MILJØ, forward, logg.journal)
-    expect(skrevetFørKallet).toBe(true)
-    expect(logg.linjer[0]).toMatchObject({
+    await svar(post(KONVOLUTT), MILJØ, forward, logg.journal)
+
+    // To linjer før databasen ses: maskinidentifikatorene før kontrollen av
+    // avsenderen, og hele observasjonen etter at den sa ja.
+    expect(skrevetFørKallet).toBe(2)
+    expect(logg.linjer.at(-1)).toMatchObject({
       event: '4a1d0f2e-9c33-4b71-8f5a-2b6c7d8e9f01',
       reporter: 'innlogget',
       area: 'work_queue',
       operation: 'public_work_board',
     })
-    expect(logg.linjer[0]?.detail).toContain('Failed to fetch')
+    expect(logg.linjer.at(-1)?.detail).toContain('Failed to fetch')
   })
 
   // Tokenen er avsenderens legitimasjon og har ingenting i en logg å gjøre.
   it('bærer aldri tokenen, og aldri hvem avsenderen var', async () => {
     const logg = fangLoggen()
-    await serveDiagnostics(
+    await svar(
       post(KONVOLUTT),
       MILJØ,
       () => Promise.resolve({ delivered: true, retry: false }),
@@ -278,7 +298,7 @@ describe('serverloggen', () => {
 
   it('vasker teksten før den skrives ned', async () => {
     const logg = fangLoggen()
-    await serveDiagnostics(
+    await svar(
       post({
         ...KONVOLUTT,
         detail: 'authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.hemmelig.signatur',
@@ -287,35 +307,36 @@ describe('serverloggen', () => {
       () => Promise.resolve({ delivered: true, retry: false }),
       logg.journal,
     )
-    expect(logg.linjer[0]?.detail).not.toContain('hemmelig.signatur')
+    expect(JSON.stringify(logg.linjer)).not.toContain('hemmelig.signatur')
   })
 
   // Dette er hele grunnen til at loggen finnes: raden kom ikke fram, og den som
   // leter skal kunne se nøyaktig hvilke observasjoner som bare ligger her.
   it('merker linjen når raden ikke kom fram', async () => {
     const logg = fangLoggen()
-    const response = await serveDiagnostics(
+    const response = await svar(
       post(KONVOLUTT),
       MILJØ,
       () => Promise.resolve({ delivered: false, retry: true }),
       logg.journal,
     )
     expect(response.status).toBe(503)
-    expect(logg.linjer).toHaveLength(2)
-    expect(logg.linjer[0]?.bareILoggen).toBeUndefined()
-    expect(logg.linjer[1]?.bareILoggen).toBe(true)
+    expect(logg.linjer).toHaveLength(3)
+    expect(logg.linjer.filter((linje) => linje.bareILoggen === true)).toHaveLength(1)
+    expect(logg.linjer.at(-1)?.bareILoggen).toBe(true)
+    expect(logg.linjer.at(-1)?.detail).toContain('Failed to fetch')
   })
 
   it('merker den ikke når raden kom fram', async () => {
     const logg = fangLoggen()
-    await serveDiagnostics(
+    await svar(
       post(KONVOLUTT),
       MILJØ,
       () => Promise.resolve({ delivered: true, retry: false }),
       logg.journal,
     )
-    expect(logg.linjer).toHaveLength(1)
-    expect(logg.linjer[0]?.bareILoggen).toBeUndefined()
+    expect(logg.linjer).toHaveLength(2)
+    expect(logg.linjer.some((linje) => linje.bareILoggen === true)).toBe(false)
   })
 })
 
@@ -333,7 +354,7 @@ describe('en anonym observasjon', () => {
   it('melder problemet uten å nå den vanlige skriveveien', async () => {
     const logg = fangLoggen()
     const lagring = fangLagringen()
-    const response = await serveDiagnostics(
+    const response = await svar(
       post(ANONYM),
       MILJØ,
       () => {
@@ -356,7 +377,7 @@ describe('en anonym observasjon', () => {
   it('tar ikke med ett tegn av kallerens tekst, uansett hva som lå ved', async () => {
     const logg = fangLoggen()
     const lagring = fangLagringen()
-    await serveDiagnostics(
+    await svar(
       post({ ...ANONYM, detail: 'HEMMELIG-PÅFØRT-TEKST fra en fremmed' }),
       MILJØ,
       () => Promise.resolve({ delivered: true, retry: false }),
@@ -384,7 +405,7 @@ describe('en anonym observasjon', () => {
     async (område) => {
       const logg = fangLoggen()
       const lagring = fangLagringen()
-      const response = await serveDiagnostics(
+      const response = await svar(
         post({ ...ANONYM, area: område }),
         MILJØ,
         () => {
@@ -402,7 +423,7 @@ describe('en anonym observasjon', () => {
 
   it.each(['work_queue', 'clinical_content'])('tar imot %s, som er offentlig', async (område) => {
     const lagring = fangLagringen()
-    const response = await serveDiagnostics(
+    const response = await svar(
       post({ ...ANONYM, area: område }),
       MILJØ,
       () => {
@@ -420,7 +441,7 @@ describe('en anonym observasjon', () => {
   it('skriver ingenting når serveren ikke kjenner avsenderen', async () => {
     const logg = fangLoggen()
     const lagring = fangLagringen()
-    const response = await serveDiagnostics(
+    const response = await svar(
       post(ANONYM, {}),
       MILJØ,
       () => {
@@ -454,13 +475,7 @@ describe('reserveveien', () => {
   it('lagrer raden når Data API-et ikke tok imot', async () => {
     const logg = fangLoggen()
     const lagring = fangLagringen()
-    const response = await serveDiagnostics(
-      post(KONVOLUTT),
-      MILJØ,
-      nede,
-      logg.journal,
-      lagring.store,
-    )
+    const response = await svar(post(KONVOLUTT), MILJØ, nede, logg.journal, lagring.store)
 
     expect(response.status).toBe(204)
     expect(lagring.beholdt).toHaveLength(1)
@@ -474,7 +489,7 @@ describe('reserveveien', () => {
   // første virker — ellers ville hver observasjon blitt to rader.
   it('røres ikke når Data API-et tok imot', async () => {
     const lagring = fangLagringen()
-    await serveDiagnostics(
+    await svar(
       post(KONVOLUTT),
       MILJØ,
       () => Promise.resolve({ delivered: true, retry: false }),
@@ -487,7 +502,7 @@ describe('reserveveien', () => {
   // En avvisning er databasens egen avgjørelse, og den gjelder begge veier.
   it('røres ikke når databasen avviste observasjonen', async () => {
     const lagring = fangLagringen()
-    await serveDiagnostics(
+    await svar(
       post(KONVOLUTT),
       MILJØ,
       () => Promise.resolve({ delivered: false, retry: false }),
@@ -499,7 +514,7 @@ describe('reserveveien', () => {
 
   it('bærer avsendersummen, og aldri adressen selv', async () => {
     const lagring = fangLagringen()
-    await serveDiagnostics(post(KONVOLUTT), MILJØ, nede, fangLoggen().journal, lagring.store)
+    await svar(post(KONVOLUTT), MILJØ, nede, fangLoggen().journal, lagring.store)
     expect(lagring.beholdt[0]?.reporterIpHash).toMatch(/^[0-9a-f]{64}$/)
     expect(JSON.stringify(lagring.beholdt)).not.toContain('198.51.100.7')
   })
@@ -507,13 +522,7 @@ describe('reserveveien', () => {
   it('sier fra når heller ikke reserven tok imot', async () => {
     const logg = fangLoggen()
     const lagring = fangLagringen(false)
-    const response = await serveDiagnostics(
-      post(KONVOLUTT),
-      MILJØ,
-      nede,
-      logg.journal,
-      lagring.store,
-    )
+    const response = await svar(post(KONVOLUTT), MILJØ, nede, logg.journal, lagring.store)
 
     expect(response.status).toBe(503)
     expect(logg.linjer.at(-1)?.bareILoggen).toBe(true)
@@ -521,27 +530,166 @@ describe('reserveveien', () => {
 
   it('sier fra når utrullingen ikke har fått legitimasjonen', async () => {
     const logg = fangLoggen()
-    const response = await serveDiagnostics(post(KONVOLUTT), MILJØ, nede, logg.journal, null)
+    const response = await svar(post(KONVOLUTT), MILJØ, nede, logg.journal, null)
 
     expect(response.status).toBe(503)
     expect(logg.linjer.at(-1)?.bareILoggen).toBe(true)
   })
 
-  // Uten Data API-adresse i miljøet er reserven alt som finnes, og da skal den
-  // brukes framfor at observasjonen går tapt.
-  it('brukes også når Data API-adressen mangler helt', async () => {
+  // Uten Data API-adresse finnes ingen autentiseringstjeneste heller, og da kan
+  // ingen bekrefte hvem avsenderen er. Da skrives ingen tekst noe sted — heller
+  // ikke i reserven — og nettleseren beholder årsaken.
+  it('brukes ikke når ingen kan bekrefte hvem avsenderen er', async () => {
+    const logg = fangLoggen()
     const lagring = fangLagringen()
-    const response = await serveDiagnostics(
+    const response = await svar(
       post(KONVOLUTT),
       {},
       () => {
         throw new Error('skal ikke videresendes uten adresse')
       },
-      fangLoggen().journal,
+      logg.journal,
       lagring.store,
     )
+    expect(response.status).toBe(503)
+    expect(lagring.beholdt).toHaveLength(0)
+    expect(JSON.stringify(logg.linjer)).not.toContain('Failed to fetch')
+  })
+
+  // Dette er punkt 3 fra tiende gjennomgang: PostgRESTs egne connection-feil
+  // *har* kode, og ble derfor lest som endelige avvisninger. Da ble reserven
+  // hoppet over i nøyaktig de tilfellene den finnes for.
+  it.each(['PGRST000', 'PGRST001', 'PGRST002', 'PGRST003', '08006', '53300', '57P01', '40001'])(
+    'brukes når Data API-et svarer %s, som er utilgjengelighet og ikke en avvisning',
+    (kode) => {
+      expect(isAvailabilityCode(kode)).toBe(true)
+    },
+  )
+
+  it.each(['42501', '23505', 'PGRST301', 'PGRST116', '22023'])(
+    'brukes ikke når databasen svarer %s, som er dens egen avgjørelse',
+    (kode) => {
+      expect(isAvailabilityCode(kode)).toBe(false)
+    },
+  )
+})
+
+// ============================================================================
+// Kontrollen av avsenderen
+//
+// En påstand om å være innlogget er ikke en innlogging. Uten denne kontrollen
+// kunne hvem som helst sende en ikke-tom token og fritt valgt tekst, og få den
+// skrevet ned som om den kom fra en bruker — og videre inn i reserven dersom
+// Data API-et samtidig var nede.
+// ============================================================================
+describe('avsenderen må være kontrollert før teksten brukes', () => {
+  const PÅFØRT = { ...KONVOLUTT, accessToken: 'x', detail: 'HEMMELIG-PÅFØRT-TEKST fra en fremmed' }
+
+  it('skriver ingen tekst når kontrollen sier nei', async () => {
+    const logg = fangLoggen()
+    const lagring = fangLagringen()
+    const response = await serveDiagnostics(
+      post(PÅFØRT),
+      MILJØ,
+      () => {
+        throw new Error('en ukontrollert avsender skal aldri nå databasen')
+      },
+      logg.journal,
+      lagring.store,
+      () => Promise.resolve('rejected'),
+    )
+
+    // Svaret skiller seg ikke ut: ruten er ikke et sted å prøve seg fram fra.
     expect(response.status).toBe(204)
-    expect(lagring.beholdt).toHaveLength(1)
+    expect(JSON.stringify({ linjer: logg.linjer, ...lagring })).not.toContain(
+      'HEMMELIG-PÅFØRT-TEKST',
+    )
+    expect(lagring.beholdt).toHaveLength(0)
+  })
+
+  // Og det farlige tilfellet: Data API-et er nede, så reserven ville vært i
+  // bruk. Uten kontrollen ville den fremmede teksten blitt varig lagret.
+  it('skriver ingen tekst når ingen kan bekrefte avsenderen', async () => {
+    const logg = fangLoggen()
+    const lagring = fangLagringen()
+    const response = await serveDiagnostics(
+      post(PÅFØRT),
+      MILJØ,
+      () => Promise.resolve({ delivered: false, retry: true }),
+      logg.journal,
+      lagring.store,
+      () => Promise.resolve('unknown'),
+    )
+
+    expect(response.status).toBe(503)
+    expect(lagring.beholdt).toHaveLength(0)
+    expect(JSON.stringify({ linjer: logg.linjer, ...lagring })).not.toContain(
+      'HEMMELIG-PÅFØRT-TEKST',
+    )
+  })
+
+  // Linjen som skrives før kontrollen, sier at noe sviktet — og ikke ett ord av
+  // det avsenderen påstod.
+  it('skriver maskinidentifikatorene før kontrollen, og aldri teksten', async () => {
+    const logg = fangLoggen()
+    await serveDiagnostics(
+      post(PÅFØRT),
+      MILJØ,
+      () => Promise.resolve({ delivered: true, retry: false }),
+      logg.journal,
+      null,
+      () => Promise.resolve('rejected'),
+    )
+    expect(logg.linjer[0]).toMatchObject({
+      reporter: 'ukjent',
+      area: 'work_queue',
+      operation: 'public_work_board',
+      detail: '(ingen tekst: avsenderen er ikke kontrollert ennå)',
+    })
+  })
+
+  it('skriver teksten først etter at kontrollen har sagt ja', async () => {
+    const logg = fangLoggen()
+    await serveDiagnostics(
+      post(KONVOLUTT),
+      MILJØ,
+      () => Promise.resolve({ delivered: true, retry: false }),
+      logg.journal,
+      null,
+      GODKJENT,
+    )
+    expect(logg.linjer).toHaveLength(2)
+    expect(logg.linjer[0]?.reporter).toBe('ukjent')
+    expect(logg.linjer[0]?.detail).not.toContain('Failed to fetch')
+    expect(logg.linjer[1]?.reporter).toBe('innlogget')
+    expect(logg.linjer[1]?.detail).toContain('Failed to fetch')
+  })
+
+  // Kontrollen går til autentiseringstjenesten, og ikke til Data API-et. Det er
+  // hele poenget: de kan være nede hver for seg.
+  it('spør autentiseringstjenesten, med brukerens egen token', async () => {
+    const spurt: { url: string; headers: Record<string, string> }[] = []
+    const opprinnelig = globalThis.fetch
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      spurt.push({
+        url: String(input),
+        headers: (init?.headers ?? {}) as Record<string, string>,
+      })
+      return Promise.resolve(new Response(null, { status: 401 }))
+    }) as typeof fetch
+
+    try {
+      const response = await serveDiagnostics(post(KONVOLUTT), MILJØ, () => {
+        throw new Error('skal ikke videresendes')
+      })
+      expect(response.status).toBe(204)
+    } finally {
+      globalThis.fetch = opprinnelig
+    }
+
+    expect(spurt[0]?.url).toBe('https://prosjekt.supabase.co/auth/v1/user')
+    expect(spurt[0]?.headers.authorization).toBe('Bearer brukerens-egen-token')
+    expect(spurt[0]?.headers.apikey).toBe('sb_publishable_prøve')
   })
 })
 
