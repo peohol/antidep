@@ -1530,9 +1530,12 @@ select set_eq(
   $$,
   $$
     values ('workflow.ingest_client_diagnostic(text,uuid,text,text,text,text,integer,text,text)'),
-           ('workflow.ingest_public_technical_problem(text,text,text,text,text,integer,text)')
+           ('workflow.ingest_public_technical_problem(text,text,text,text,text,integer,text)'),
+           -- Og forsøksgrensen, som ikke skriver noe den veien: den teller ett
+           -- forsøk og svarer ja eller nei.
+           ('workflow.claim_diagnostics_attempt(text)')
   $$,
-  'reserverollen er gitt nøyaktig de to append-funksjonene, og ingen andre'
+  'reserverollen er gitt nøyaktig de tre funksjonene, og ingen andre'
 );
 
 select set_eq(
