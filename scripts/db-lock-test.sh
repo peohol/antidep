@@ -1311,22 +1311,65 @@ proev 'en tilbaketrekking må vente på et kall som allerede er autentisert (55P
    select api.revoke_agent_runner('agent-runner:laaseprove', 'Samtidighetsprøven.');" \
   'Uten den delte låsen kunne en tilbaketrekking bli ferdig mellom autentiseringen og arbeidet, og uttaket som fulgte, ville aldri blitt frigitt (migrasjon 011a).'
 
-# Prøve 22 — og den motsatte rekkefølgen: etter en fullført tilbaketrekking
-# kan det ikke oppstå en ny leie i det hele tatt.
+# Prøve 22 — den tredje rekkefølgen: kallet startet FØRST, men tilbaketrekkingen
+# ble ferdig underveis.
 #
-# Prøve 21 viser at tilbaketrekkingen venter på et kall som allerede er i gang.
-# Denne viser den andre siden: når tilbaketrekkingen først er ferdig, blir
-# kallet avvist av autentiseringen, og ingen oppgave blir tatt. De to
-# rekkefølgene er hele garantien — det finnes ikke et tredje utfall der en leie
-# oppstår uten at noen frigir den.
-psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > /dev/null <<SQL
-begin;
-select set_config('request.jwt.claims', '{"sub":"$kjorer_redaktor"}', true);
-set local role authenticated;
-select api.revoke_agent_runner('agent-runner:laaseprove', 'Samtidighetsprøven, andre rekkefølge.');
-commit;
+# Prøve 21 dekker «kallet holdt låsen først». Den tredje rekkefølgen er den
+# farlige: kallet begynte først, og tilbaketrekkingen ble ferdig mens kallet
+# ennå ikke hadde nådd autentiseringen.
+#
+# En gyldighetskontroll som SAMMENLIGNER MED EN KLOKKE, har da feil svar.
+# `statement_timestamp()` er frosset til tidspunktet setningen startet — også
+# gjennom en pause inne i den samme kommandoen — og tilbaketrekkingens
+# `valid_to` er senere enn det. Tilkoblingen ville altså sett gjeldende ut for
+# nettopp det kallet den skulle stenge ute. Kontrollen leser derfor at raden er
+# gjeldende (`valid_to is null`), og da svarer den oppdaterte raden selv.
+#
+# Prøven avslutter tilkoblingsraden DIREKTE og lar tokenet leve. Det er med
+# vilje: `api.revoke_agent_runner` trekker også tilbake hemmelighetene, og da
+# ville tokenkontrollen stoppet kallet uansett — prøven ville passert uten
+# rettingen, og målt feil ting.
+sen_auth="$arbeid/sen-auth.log"
+psql "$DB_URL" -X -tA > "$sen_auth" 2>&1 <<SQL &
+\set VERBOSITY verbose
+do \$\$
+begin
+  perform pg_sleep(2);
+  perform workflow.authenticated_runner_connection('$kjorer_token', '$kjorer_res');
+end
+\$\$;
 SQL
+sen_auth_pid=$!
 
+sleep 1
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
+  "update workflow.agent_runner_connections c
+   set valid_to = statement_timestamp(),
+       revoked_by_actor_id = c.registered_by_actor_id,
+       revocation_reason = 'Samtidighetsprøven, tredje rekkefølge.'
+   where c.connection_key = 'agent-runner:laaseprove' and c.valid_to is null" > /dev/null
+
+wait "$sen_auth_pid" || true
+
+if grep -q '42501' "$sen_auth"; then
+  printf 'ok       et kall som startet før tilbaketrekkingen, avvises likevel etter den\n'
+else
+  printf 'AVVIK    et kall som startet før tilbaketrekkingen, avvises likevel etter den\n' >&2
+  printf '         Gyldigheten ble avgjort mot setningens frosne klokke, så en fullført tilbaketrekking var usynlig for kallet (migrasjon 011a).\n' >&2
+  sed 's/^/         /' "$sen_auth" >&2
+  exit 1
+fi
+
+# Prøve 23 — og etter en fullført tilbaketrekking oppstår det ingen ny leie.
+#
+# Tokenet lever fortsatt — prøve 22 avsluttet bare tilkoblingsraden — så
+# avvisningen her kan ikke komme fra tokenkontrollen. Den kommer fra at
+# tilkoblingen ikke er gjeldende, som er nettopp det som skal stenge veien.
+#
+# Sammen med prøve 21 er dette hele garantien: enten fullfører arbeidet før
+# tilbaketrekkingen og blir ryddet opp av den, eller så kommer det aldri forbi
+# autentiseringen. Det finnes ikke et tredje utfall der en leie oppstår uten at
+# noen frigir den.
 etter_revoke="$arbeid/etter-revoke.log"
 set +e
 psql "$DB_URL" -X -tA > "$etter_revoke" 2>&1 <<SQL

@@ -222,12 +222,26 @@ begin
       errcode = 'restrict_violation',
       message = 'Tilkoblingen er allerede trukket tilbake.';
   end if;
+  -- En tilbaketrekking kan ikke dateres fram i tid.
+  --
+  -- Regelen gjør `valid_to is null` til det samme som «gjeldende», og det er
+  -- nettopp den likheten sikkerhetsveiene hviler på: de avgjør gyldigheten av
+  -- at feltet er tomt, framfor å sammenligne med en klokke. En sammenligning
+  -- ville vært frosset til tidspunktet SETNINGEN startet, og en tilbaketrekking
+  -- som ble ferdig mens kallet ventet på radlåsen, ville dermed vært usynlig for
+  -- den — kallet ville autentisert seg mot en tilkobling som ikke finnes lenger.
+  if new.valid_to is not null and new.valid_to > statement_timestamp() then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'En tilbaketrekking kan ikke dateres fram i tid.',
+      hint = 'Sikkerhetsveiene leser «gjeldende» som valid_to is null. En framtidsdatert avslutning ville gjort en tilkobling gjeldende og avsluttet på samme tid.';
+  end if;
   return new;
 end;
 $$;
 
 comment on function workflow.freeze_agent_runner_connection() is
-  'Lar bare tilbaketrekkingen endre en registrert kjørertilkobling (ANTIDEP_CONSTITUTION.md regel 7). Identiteten — nøkkelen, rollen, Workspace Agent-en og eksponeringsgraden — er uforanderlig, og en allerede tilbaketrukket tilkobling kan ikke gjenåpnes.';
+  'Lar bare tilbaketrekkingen endre en registrert kjørertilkobling (ANTIDEP_CONSTITUTION.md regel 7). Identiteten — nøkkelen, rollen, Workspace Agent-en og eksponeringsgraden — er uforanderlig, og en allerede tilbaketrukket tilkobling kan ikke gjenåpnes. En tilbaketrekking kan heller ikke dateres fram i tid: det er den regelen som gjør «valid_to is null» til det samme som «gjeldende», og sikkerhetsveiene avgjør gyldigheten av nettopp det framfor av en klokke som er frosset til setningens starttid.';
 
 revoke execute on function workflow.freeze_agent_runner_connection() from public;
 
@@ -659,6 +673,17 @@ begin
   -- et implisitt valg med sin egen observerbare oppførsel. Publikum er en av
   -- dem: et token utstedt for en annen tjeneste skal ikke virke her, uansett
   -- hvor gyldig det er der det hører hjemme (RFC 8707).
+  -- Gyldigheten avgjøres av at raden er GJELDENDE, ikke av en klokke.
+  --
+  -- `statement_timestamp()` er frosset til tidspunktet setningen startet — og
+  -- inne i en funksjon til det øverste kallet. En sammenligning mot den ville
+  -- derfor svart på «var tilkoblingen gjeldende da kallet mitt begynte», og det
+  -- er feil spørsmål etter at kallet har ventet på en lås: en tilbaketrekking
+  -- som ble ferdig i mellomtiden, fikk et `valid_to` som er SENERE enn den
+  -- frosne klokka, og ville sett gjeldende ut for nettopp det kallet den skulle
+  -- stenge ute. Med `valid_to is null` er det den oppdaterte raden selv som
+  -- svarer, og den sier nei.
+  --
   -- Delt lås på tilkoblingsraden, og den holdes ut hele kallet.
   --
   -- Uten den var autentiseringen en lesning av et øyeblikk: en tilbaketrekking
@@ -681,7 +706,7 @@ begin
     and s.expires_at > statement_timestamp()
     and s.resource = v_resource
     and c.valid_from <= statement_timestamp()
-    and (c.valid_to is null or c.valid_to > statement_timestamp())
+    and c.valid_to is null
   for share of c;
 
   if v_connection.id is null then
@@ -1665,7 +1690,7 @@ begin
       from workflow.agent_runner_connections c
       where c.platform_agent_reference = btrim(coalesce(p_platform_agent_reference, ''))
         and c.agent_role <> v_role
-        and (c.valid_to is null or c.valid_to > statement_timestamp());
+        and c.valid_to is null;
 
       if v_holder is not null then
         raise exception using
@@ -1679,7 +1704,7 @@ begin
       if exists (
         select 1 from workflow.agent_runner_connections c
         where c.connection_key = btrim(coalesce(p_connection_key, ''))
-          and (c.valid_to is null or c.valid_to > statement_timestamp())
+          and c.valid_to is null
       ) then
         raise exception using
           errcode = 'restrict_violation',
@@ -1846,7 +1871,7 @@ begin
   from workflow.agent_runner_connections c
   where c.connection_key = btrim(coalesce(p_connection_key, ''))
     and c.valid_from <= statement_timestamp()
-    and (c.valid_to is null or c.valid_to > statement_timestamp())
+    and c.valid_to is null
   for update;
 
   if not found then
@@ -1939,7 +1964,7 @@ begin
       ) as delivered_answers
     from workflow.agent_runner_connections c
     where c.valid_from <= statement_timestamp()
-      and (c.valid_to is null or c.valid_to > statement_timestamp())
+      and c.valid_to is null
   ) q;
 
   return v_rows;
@@ -2159,7 +2184,7 @@ begin
   from workflow.agent_runner_connections c
   where c.id = v_secret.connection_id
     and c.valid_from <= statement_timestamp()
-    and (c.valid_to is null or c.valid_to > statement_timestamp());
+    and c.valid_to is null;
   if not found then
     perform workflow.reject_agent_runner_authentication();
   end if;
@@ -2284,7 +2309,7 @@ begin
   from workflow.agent_runner_connections c
   where c.id = v_secret.connection_id
     and c.valid_from <= statement_timestamp()
-    and (c.valid_to is null or c.valid_to > statement_timestamp());
+    and c.valid_to is null;
   if not found then
     perform workflow.reject_agent_runner_authentication();
   end if;
@@ -2343,7 +2368,7 @@ begin
   from workflow.agent_runner_connections c
   where c.id = v_secret.connection_id
     and c.valid_from <= statement_timestamp()
-    and (c.valid_to is null or c.valid_to > statement_timestamp());
+    and c.valid_to is null;
   if not found then
     perform workflow.reject_agent_runner_authentication();
   end if;
