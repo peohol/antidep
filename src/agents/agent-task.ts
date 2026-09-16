@@ -358,6 +358,15 @@ export interface AgentRunnerPairingCode {
   readonly expiresAt: string
 }
 
+/** Hva en tilbaketrekking faktisk gjorde. */
+export interface AgentRunnerRevocation {
+  readonly connectionKey: string
+  readonly role: string
+  readonly revokedSecrets: number
+  /** Uttak kjøreren holdt, og som ble ledige igjen i den samme transaksjonen. */
+  readonly releasedTasks: number
+}
+
 const QUEUE_SUBJECT = 'Agentkøen'
 
 function asCount(fields: Fields, key: string): number {
@@ -498,6 +507,21 @@ export function parseAgentRunnerPairingCode(value: unknown): AgentRunnerPairingC
     role: asText(fields, 'agent_role'),
     pairingCode: asText(fields, 'pairing_code'),
     expiresAt: asText(fields, 'expires_at'),
+  }
+}
+
+/**
+ * Leser hva tilbaketrekkingen gjorde. Antallet frigitte uttak er ikke pynt: det
+ * er forskjellen mellom «kjøreren er borte» og «kjøreren er borte, og arbeidet
+ * den holdt, kan gjøres av den som overtar».
+ */
+export function parseAgentRunnerRevocation(value: unknown): AgentRunnerRevocation {
+  const fields = fieldsOf(value, 'Tilbaketrekkingen', 'svaret')
+  return {
+    connectionKey: asText(fields, 'connection_key'),
+    role: asText(fields, 'agent_role'),
+    revokedSecrets: asCount(fields, 'revoked_secrets'),
+    releasedTasks: asCount(fields, 'released_tasks'),
   }
 }
 

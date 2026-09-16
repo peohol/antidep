@@ -785,6 +785,64 @@ revoke execute on function workflow.agent_task_problem(workflow.pipeline_jobs) f
 -- To ting skiller kallerne, og bare to: hvem som er autentisert, og om kalleren
 -- allerede holder et uttak. Alt annet er felles.
 -- ----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+-- 6b. Uttaket vet hvilken kjører som holder det
+--
+-- Leieholderen på workflow.pipeline_jobs er agentidentiteten, og den er PER
+-- ROLLE: to kjørere i det samme leddet deler den. Da kan ingen av dem skilles
+-- fra den andre på raden, og det får to følger som begge er feil.
+--
+-- Den ene: trekkes en kjører tilbake mens den holder arbeid, blir uttaket
+-- stående til leien løper ut — normalt et kvarter, og opptil et døgn om
+-- kjøringen ba om det. Erstatteren, som nå kan registreres på den samme
+-- nøkkelen, får ikke gjort noe i mellomtiden, og arbeidet ser ut til å pågå
+-- hos noen som ikke lenger finnes.
+--
+-- Den andre: agentarbeidsflaten leste «en kjører holder denne» strukturelt, av
+-- at uttakshendelsen manglet en aktør. Etter en tilbaketrekking pekte den
+-- avlesningen på den NYE kjøreren i rollen, og flaten fortalte at et arbeid var
+-- i gang hos noen som aldri hadde tatt det.
+--
+-- Kolonnen gjør holderen til en opplysning framfor en gjetning. Den gjelder
+-- bare mens uttaket løper: en trigger glemmer den i det raden forlater
+-- «leased», slik at ingen skrivevei kan etterlate en holder som ikke holder
+-- noe (ANTIDEP_CONSTITUTION.md regel 4).
+-- ----------------------------------------------------------------------------
+alter table workflow.pipeline_jobs
+  add column runner_connection_id uuid
+    references workflow.agent_runner_connections (id) on update restrict on delete restrict,
+  add constraint pipeline_jobs_runner_connection_lease_check
+    check (runner_connection_id is null or (state = 'leased' and lease_token is not null));
+
+comment on column workflow.pipeline_jobs.runner_connection_id is
+  'Den autonome kjøreren som holder det løpende uttaket, eller NULL når uttaket er et menneskes eller ingen holder noe. Egen kolonne fordi leased_by_agent_identity_id er per rolle og deles av alle kjørere i den: uten denne kunne verken en tilbaketrekking finne arbeidet sin egen kjører holdt, eller flaten si hvem som faktisk holdt det. Gjelder bare i tilstanden leased, håndhevet av pipeline_jobs_runner_connection_lease_check og workflow.forget_runner_connection_outside_lease().';
+
+create index pipeline_jobs_runner_connection_idx
+  on workflow.pipeline_jobs (runner_connection_id)
+  where runner_connection_id is not null;
+
+create function workflow.forget_runner_connection_outside_lease()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  if new.state <> 'leased' then
+    new.runner_connection_id := null;
+  end if;
+  return new;
+end;
+$$;
+
+comment on function workflow.forget_runner_connection_outside_lease() is
+  'Glemmer hvilken autonom kjører som holdt uttaket, i det raden forlater tilstanden leased. Ligger i en trigger og ikke i hver skrivevei: en holder som blir stående etter at uttaket er over, ville fått agentarbeidsflaten til å melde et arbeid som pågår, og en tilbaketrekking til å frigi noe som allerede var frigitt. Regelen skal gjelde uansett hvem som skriver.';
+
+revoke execute on function workflow.forget_runner_connection_outside_lease() from public;
+
+create trigger pipeline_jobs_forget_runner_connection
+  before update on workflow.pipeline_jobs
+  for each row execute function workflow.forget_runner_connection_outside_lease();
+
 alter table workflow.agent_handoff_imports
   add column runner_connection_id uuid
     references workflow.agent_runner_connections (id) on update restrict on delete restrict;
@@ -1111,6 +1169,10 @@ begin
         leased_by_agent_identity_id = v_agent_identity.id,
         lease_expires_at = statement_timestamp() + interval '15 minutes',
         lease_token = v_lease,
+        -- Uttaket er et menneskes. Sto det en kjører på raden fra et uttak som
+        -- rakk å løpe ut, er den ikke lenger holderen, og skal ikke bli stående
+        -- som om den var det.
+        runner_connection_id = null,
         -- En jobb som sto som failed, bærer et fullføringstidspunkt. Uttaket er
         -- et nytt forsøk, og et forsøk som pågår, er ikke fullført.
         completed_at = null
@@ -1587,6 +1649,8 @@ declare
   v_actor_id uuid;
   v_connection workflow.agent_runner_connections;
   v_secrets integer;
+  v_job workflow.pipeline_jobs;
+  v_released integer := 0;
 begin
   v_actor_id := knowledge.assert_editor_authorized();
 
@@ -1622,17 +1686,62 @@ begin
     and revoked_at is null;
   get diagnostics v_secrets = row_count;
 
+  -- Arbeidet kjøreren holdt, blir ledig med det samme.
+  --
+  -- En tilbaketrukket kjører kommer aldri tilbake for å levere eller gi fra
+  -- seg: tokenet er dødt i det samme øyeblikket. Uten dette ville uttaket
+  -- blitt stående til leien løp ut — normalt et kvarter, opptil et døgn om
+  -- kjøringen ba om det — og erstatteren ville ikke fått gjort arbeidet i
+  -- mellomtiden. Køen ville samtidig meldt det som pågående, og en oppgave
+  -- som ingen utfører, skal ikke se ut som en oppgave noen utfører
+  -- (ANTIDEP_CONSTITUTION.md regel 4).
+  --
+  -- Forsøket står, som når en kjører selv gir oppgaven fra seg: uttaket ER et
+  -- forsøk, og et tall som telles ned igjen, ville vært en historikk skrevet
+  -- om til å se penere ut enn den var.
+  for v_job in
+    select j.*
+    from workflow.pipeline_jobs j
+    where j.runner_connection_id = v_connection.id
+      and j.state = 'leased'
+    for update
+  loop
+    update workflow.pipeline_jobs
+    set state = 'ready',
+        leased_by_agent_identity_id = null,
+        lease_token = null,
+        lease_expires_at = null,
+        runner_connection_id = null
+    where id = v_job.id;
+
+    -- Hendelsen føres på mennesket og ikke på agentidentiteten: det var
+    -- redaktøren som frigjorde uttaket, ikke kjøreren som ga det fra seg.
+    perform workflow.record_pipeline_job_event(
+      v_job.id, 'leased'::workflow.pipeline_job_state, 'ready'::workflow.pipeline_job_state,
+      v_job.attempts, v_actor_id, null,
+      'Uttaket ble frigitt fordi kjøreren som holdt det, ble trukket tilbake.'
+    );
+
+    perform workflow.record_agent_runner_event(
+      v_connection.id, 'revoke_agent_runner', 'lease_lost'::workflow.agent_runner_outcome,
+      v_connection.agent_role, v_job.id,
+      'Uttaket ble frigitt da tilkoblingen ble trukket tilbake.');
+
+    v_released := v_released + 1;
+  end loop;
+
   return jsonb_build_object(
     'revoked', true,
     'connection_key', v_connection.connection_key,
     'agent_role', v_connection.agent_role::text,
-    'revoked_secrets', v_secrets
+    'revoked_secrets', v_secrets,
+    'released_tasks', v_released
   );
 end;
 $$;
 
 comment on function api.revoke_agent_runner(text, text) is
-  'Trekker tilbake en autonom kjører og alle tokenene dens i samme transaksjon (ANTIDEP_CONSTITUTION.md regel 7). Tilgangen forsvinner i det samme øyeblikket: en tilbaketrukket tilkobling med et levende token ville vært en tilbaketrekking som ikke virket før tokenet tilfeldigvis løp ut. Sletter aldri: tilkoblingen blir stående med sin periode, med hvem og hvorfor. Krever editor-mandat og en begrunnelse.';
+  'Trekker tilbake en autonom kjører, alle tokenene dens og alt arbeidet den holdt, i samme transaksjon (ANTIDEP_CONSTITUTION.md regel 7). Tilgangen forsvinner i det samme øyeblikket: en tilbaketrukket tilkobling med et levende token ville vært en tilbaketrekking som ikke virket før tokenet tilfeldigvis løp ut. Uttakene den holdt, blir ledige med det samme framfor å stå til leien løper ut — kjøreren kommer aldri tilbake for å levere dem, og en oppgave ingen utfører, skal ikke se ut som en oppgave noen utfører. Forsøkene står, som når en kjører selv gir en oppgave fra seg. Sletter aldri: tilkoblingen blir stående med sin periode, med hvem og hvorfor. Krever editor-mandat og en begrunnelse.';
 
 revoke execute on function api.revoke_agent_runner(text, text) from public;
 grant execute on function api.revoke_agent_runner(text, text) to authenticated;
@@ -1806,6 +1915,17 @@ begin
   -- vindu går en flom over av seg selv, og den ekte tilkoblingen kan gjøres like
   -- etterpå (ANTIDEP_CONSTITUTION.md regel 4: en teknisk grense skal ikke se ut
   -- som en permanent tilstand).
+  -- Telling og innsetting er én avgjørelse, og må derfor gjøres av én om
+  -- gangen. Uten låsen leser samtidige registreringer hver sin tilstand fra før
+  -- de andre commitet, finner alle færre enn taket og slipper alle gjennom — og
+  -- en takt ville vært en grense som ikke holdt nettopp i det tilfellet den
+  -- finnes for. Låsen er transaksjonslokal og slippes av seg selv; nøkkelen er
+  -- utledet av hva den beskytter, slik at ingen annen lås kan kollidere med den
+  -- ved et uhell.
+  perform pg_catalog.pg_advisory_xact_lock(
+    ('x' || pg_catalog.substr(pg_catalog.md5('workflow.agent_runner_clients'), 1, 16))::bit(64)::bigint
+  );
+
   select count(*) into v_count
   from workflow.agent_runner_clients c
   where c.created_at > statement_timestamp() - interval '1 hour';
@@ -2307,6 +2427,9 @@ begin
       leased_by_agent_identity_id = v_identity.id,
       lease_token = v_lease,
       lease_expires_at = statement_timestamp() + make_interval(secs => p_lease_seconds),
+      -- Hvem som holder uttaket, og ikke bare hvilken rolle det tilhører.
+      -- Identiteten deles av alle kjørere i leddet; tilkoblingen er denne ene.
+      runner_connection_id = v_connection.id,
       completed_at = null
   where j.id = v_job.id
   returning * into v_job;
@@ -2650,29 +2773,19 @@ begin
       -- Leies den ut til en planlagt kjøring, er «blokkert» feil ord for det som
       -- skjer: arbeidet er i gang.
       --
-      -- Hvem som tok uttaket, leses av sporet og ikke av en antakelse: et uttak
-      -- en autonom kjører tok, er ført på rollens agentidentitet og på ingen
-      -- aktør, mens den manuelle importens uttak er ført på mennesket som
-      -- importerte. Uten det skillet ville en pågående manuell import sett ut
-      -- som en planlagt kjøring (ANTIDEP_CONSTITUTION.md regel 4).
+      -- Hvem som holder uttaket, leses av raden og ikke av en antakelse.
+      -- Tidligere ble det utledet av at uttakshendelsen manglet en aktør, og
+      -- den utledningen kunne bare svare «en kjører i denne rollen» — etter en
+      -- tilbaketrekking pekte den på erstatteren, som aldri hadde tatt
+      -- arbeidet. Nå navngir raden tilkoblingen selv, og en manuell import,
+      -- som ikke har noen, gir NULL (ANTIDEP_CONSTITUTION.md regel 4).
       (
         select c.display_name
         from workflow.agent_runner_connections c
-        where c.agent_role = j.agent_role
+        where c.id = j.runner_connection_id
           and j.state = 'leased'
           and j.lease_expires_at is not null
           and j.lease_expires_at > statement_timestamp()
-          and c.valid_from <= statement_timestamp()
-          and (c.valid_to is null or c.valid_to > statement_timestamp())
-          and exists (
-            select 1
-            from workflow.pipeline_job_events pe
-            where pe.pipeline_job_id = j.id
-              and pe.to_state = 'leased'
-              and pe.attempt = j.attempts
-              and pe.actor_id is null
-              and pe.agent_identity_id is not null
-          )
       ) as held_by_runner
     from workflow.pipeline_jobs j
     join workflow.agent_handoff_jobs h on h.pipeline_job_id = j.id

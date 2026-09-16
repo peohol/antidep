@@ -46,7 +46,11 @@ menneske med redaktørmandat.
   Data API-rollen — er kontrollen. Det er den samme formen agentkjørerne har
   brukt siden migrasjon 005e.
 - **Alt kan trekkes tilbake.** «Trekk tilbake» på `/agentarbeid` avslutter
-  tilkoblingen og alle tokenene i samme transaksjon.
+  tilkoblingen, alle tokenene og alt arbeidet kjøreren holdt, i samme
+  transaksjon. Oppgavene blir ledige med det samme framfor å stå til leien
+  løper ut: kjøreren kommer aldri tilbake for å levere dem, og den som overtar
+  leddet, skal kunne gjøre arbeidet nå. Den samme nøkkelen kan brukes på nytt,
+  så «trekk tilbake, registrer på nytt» er en vei som virker hver gang.
 - **Sporet bærer ikke innhold.** `workflow.agent_runner_events` og
   serverloggen fører verktøynavn, jobb, rolle, utfallsklasse og varighet — aldri
   fulltekst, modellsvar eller tokens.

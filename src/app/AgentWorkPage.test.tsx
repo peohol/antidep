@@ -624,7 +624,7 @@ describe('autonom kjører', () => {
     readonly revoked: string[]
   }
 
-  function runnerGateway(): { gateway: AgentWorkGateway; recorded: Recorded } {
+  function runnerGateway(releasedTasks = 0): { gateway: AgentWorkGateway; recorded: Recorded } {
     const recorded: Recorded = { registered: [], revoked: [] }
     const gateway: AgentWorkGateway = {
       listQueue: () =>
@@ -681,7 +681,12 @@ describe('autonom kjører', () => {
         }),
       revokeRunner: (connectionKey) => {
         recorded.revoked.push(connectionKey)
-        return Promise.resolve()
+        return Promise.resolve({
+          connectionKey,
+          role: 'evidence_extraction',
+          revokedSecrets: 2,
+          releasedTasks,
+        })
       },
     }
     return { gateway, recorded }
@@ -755,5 +760,27 @@ describe('autonom kjører', () => {
       expect(recorded.revoked).toEqual(['agent-runner:evidence-extraction'])
     })
     expect(await screen.findByText(/sluttet å gjelde med det samme/)).toBeInTheDocument()
+    // Holdt kjøreren ikke noe arbeid, skal flaten heller ikke si at noe ble
+    // ledig: en setning om null oppgaver er en setning som skaper tvil.
+    expect(screen.queryByText(/ble ledig igjen/)).not.toBeInTheDocument()
+  })
+
+  // Arbeidet kjøreren holdt, er det den som eier innholdet faktisk må vite noe
+  // om: kjøreren kommer ikke tilbake for å levere det, og oppgavene skal kunne
+  // gjøres av den som overtar leddet.
+  it('sier hvor mye arbeid som ble ledig igjen da kjøreren ble trukket tilbake', async () => {
+    const { gateway } = runnerGateway(1)
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Trekk tilbake' }))
+    expect(await screen.findByText(/Én oppgave den holdt, ble ledig igjen/)).toBeInTheDocument()
+  })
+
+  it('teller flere frigitte oppgaver som flere', async () => {
+    const { gateway } = runnerGateway(3)
+    render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Trekk tilbake' }))
+    expect(await screen.findByText(/3 oppgaver den holdt, ble ledig igjen/)).toBeInTheDocument()
   })
 })

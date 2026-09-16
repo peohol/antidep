@@ -587,6 +587,11 @@ function describeDisclosure(value: string): string {
         'modelltildelingen over, ikke på plattformen — og Antidep later ikke som noe annet.'
 }
 
+/** «Én oppgave» eller «N oppgaver» — tallet skal kunne leses som en setning. */
+function describeReleased(count: number): string {
+  return count === 1 ? 'Én oppgave den holdt,' : `${String(count)} oppgaver den holdt,`
+}
+
 interface AutonomousRunnersProps {
   readonly gateway: AgentWorkGateway
   readonly runners: readonly AgentRunnerConnection[] | null
@@ -631,12 +636,17 @@ function AutonomousRunners({
 
   const revoke = (connectionKey: string): void => {
     void act(async () => {
-      await gateway.revokeRunner(
+      const revocation = await gateway.revokeRunner(
         connectionKey,
         'Trukket tilbake fra agentarbeidsflaten av den som eier innholdet.',
       )
       setCode(null)
-      return 'Kjøreren er trukket tilbake, og tokenene sluttet å gjelde med det samme.'
+      // Hvor mye arbeid som ble ledig igjen, er det den som eier innholdet
+      // faktisk trenger å vite: kjøreren kommer ikke tilbake for å levere det,
+      // og oppgavene skal kunne gjøres av den som overtar leddet.
+      return revocation.releasedTasks === 0
+        ? 'Kjøreren er trukket tilbake, og tokenene sluttet å gjelde med det samme.'
+        : `Kjøreren er trukket tilbake, og tokenene sluttet å gjelde med det samme. ${describeReleased(revocation.releasedTasks)} ble ledig igjen.`
     })
   }
 

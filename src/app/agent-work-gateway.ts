@@ -22,12 +22,14 @@ import { getAntidepClient } from '../lib/supabase'
 import {
   parseAgentRunnerConnections,
   parseAgentRunnerPairingCode,
+  parseAgentRunnerRevocation,
   parseAgentTask,
   parseAgentWorkQueue,
   parseImportOutcome,
   parseRoleModelAssignment,
   type AgentRunnerConnection,
   type AgentRunnerPairingCode,
+  type AgentRunnerRevocation,
   type AgentTask,
   type AgentWorkItem,
   type ImportOutcome,
@@ -83,7 +85,7 @@ export interface AgentWorkGateway {
   listRunners(): Promise<readonly AgentRunnerConnection[]>
   registerRunner(registration: RunnerRegistration): Promise<void>
   issuePairingCode(connectionKey: string): Promise<AgentRunnerPairingCode>
-  revokeRunner(connectionKey: string, reason: string): Promise<void>
+  revokeRunner(connectionKey: string, reason: string): Promise<AgentRunnerRevocation>
 }
 
 /** Avvisninger fra databasen når fram uendret: de sier hva som må gjøres. */
@@ -177,13 +179,14 @@ export function createAgentWorkGateway(): AgentWorkGateway {
     },
 
     async revokeRunner(connectionKey, reason) {
-      const { error } = await client.rpc('revoke_agent_runner', {
+      const { data, error } = await client.rpc('revoke_agent_runner', {
         p_connection_key: connectionKey,
         p_reason: reason,
       })
       if (error !== null) {
         throw rejected('Kjøreren ble ikke trukket tilbake', error.message)
       }
+      return parseAgentRunnerRevocation(data)
     },
   }
 }

@@ -152,9 +152,10 @@
 # sett fiksturen deres eller kunnet kappes mot dem.
 #
 #   16  To planlagte kjøringer kan ikke ta den samme oppgaven. Økt A tar uttaket
-#       og holder transaksjonen åpen; økt B spør om arbeid og skal få «ingen
-#       arbeid» framfor den samme jobben. Uten FOR UPDATE SKIP LOCKED og
-#       lesningen av utførbarheten på nytt etter låsen, ville begge fått den.
+#       og holder transaksjonen åpen; økt B ber om nøyaktig den samme oppgaven
+#       og skal få vite at den ikke kan tas nå, framfor å få den. Uten FOR
+#       UPDATE SKIP LOCKED og lesningen av utførbarheten på nytt etter låsen,
+#       ville begge fått den.
 #
 #   17  Den manuelle veien og den autonome kan ikke registrere det samme
 #       arbeidet. Økt A tar uttaket og commiter; økt B laster opp et svar fra
@@ -1129,6 +1130,13 @@ psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -f "$(dirname "$0")/agent-runner-race-fi
 kjorer_token='7e00000000000000000000000000000000000000000000000000000000000001'
 kjorer_jobb='7e000000-0000-4000-8000-00000000000a'
 kjorer_redaktor='7e000000-0000-4000-8000-0000000000e0'
+# Begge øktene ber om NØYAKTIG denne oppgaven. «Gi meg arbeid» ville latt økt B
+# få en annen jobb dersom databasen inneholder mer enn fiksturens egen, og
+# prøven ville vært grønn uten å ha prøvd det den finnes for. Henvisningen er
+# den modellen selv får: utledet av jobben og tilkoblingen, aldri en
+# databaseidentitet.
+kjorer_ref=$(les "select workflow.agent_runner_task_ref(
+  '7e000000-0000-4000-8000-0000000000c1'::uuid, '$kjorer_jobb'::uuid)")
 
 # Økt A tar uttaket og HOLDER transaksjonen åpen. Økt B spør om arbeid mens
 # raden er låst, og skal få «ingen arbeid» — ikke den samme jobben.
@@ -1140,7 +1148,7 @@ kapp_om_uttaket() {
 
   (
     printf "begin;\n"
-    printf "select api.claim_agent_task('%s', null, 900);\n" "$kjorer_token"
+    printf "select api.claim_agent_task('%s', '%s', 900);\n" "$kjorer_token" "$kjorer_ref"
     printf "\\\\echo TATT\n"
     printf "\\\\o /dev/null\n"
     cat "$styr"
@@ -1164,7 +1172,7 @@ kapp_om_uttaket() {
   set +e
   psql "$DB_URL" -X -tA > "$b_log" 2>&1 <<SQL
 set lock_timeout = '2s';
-select api.claim_agent_task('$kjorer_token', null, 900);
+select api.claim_agent_task('$kjorer_token', '$kjorer_ref', 900);
 SQL
   set -e
 
@@ -1174,7 +1182,7 @@ SQL
   okt_a_pid=""
   rm -f "$styr"
 
-  if grep -q '"claimed": false' "$b_log" && grep -q '"reason": "no_work"' "$b_log"; then
+  if grep -q '"claimed": false' "$b_log" && grep -q '"reason": "stale_task"' "$b_log"; then
     printf 'ok       to planlagte kjøringer kan ikke ta den samme oppgaven\n'
     return 0
   fi
@@ -1189,7 +1197,7 @@ SQL
 kapp_om_uttaket
 
 # Prøve 17 — økt A commiter uttaket, og den manuelle importveien avvises.
-handle=$(les "select api.claim_agent_task('$kjorer_token', null, 900) ->> 'task_handle'")
+handle=$(les "select api.claim_agent_task('$kjorer_token', '$kjorer_ref', 900) ->> 'task_handle'")
 if [ -z "$handle" ]; then
   printf 'AVVIK    kjøreren fikk ikke tatt oppgaven etter at prøve 16 rullet tilbake\n' >&2
   exit 1
@@ -1224,7 +1232,7 @@ psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c \
    set lease_expires_at = now() - interval '1 minute'
    where id = '$kjorer_jobb'" > /dev/null
 
-nytt_handle=$(les "select api.claim_agent_task('$kjorer_token', null, 900) ->> 'task_handle'")
+nytt_handle=$(les "select api.claim_agent_task('$kjorer_token', '$kjorer_ref', 900) ->> 'task_handle'")
 if [ -z "$nytt_handle" ] || [ "$nytt_handle" = "$handle" ]; then
   printf 'AVVIK    en utløpt leie kan tas på nytt med en ny nøkkel\n' >&2
   printf '         Uttaket fikk ikke sin egen nøkkel, og en kjøring som mistet leien kunne skrevet over den som nå arbeider (DATABASE_ARCHITECTURE.md §33).\n' >&2
@@ -1244,5 +1252,20 @@ fi
 # Oppgaven gis fra seg igjen, slik at databasen ikke blir stående med en leie
 # fra en prøve som er ferdig.
 les "select api.release_agent_task('$kjorer_token', '$nytt_handle'::uuid, 'could_not_complete')" > /dev/null
+
+# Prøve 19 — taket på klientregistreringen er én avgjørelse om gangen
+#
+# /oauth/register må være åpen: RFC 7591 dynamisk klientregistrering er det
+# ChatGPT bruker for å koble seg til i det hele tatt. Taket per time er da den
+# eneste grensen, og en grense som leses og skrives i to trinn uten en lås, er
+# ingen grense: samtidige registreringer leser hver sin tilstand fra før de
+# andre commitet, finner alle færre enn taket og slipper alle gjennom.
+#
+# Låsen er transaksjonslokal. Økt A holder den mens den er inne i funksjonen;
+# økt B må vente, og med lock_timeout blir ventingen synlig som 55P03.
+proev 'en samtidig klientregistrering må vente på den som teller først (55P03)' \
+  "select api.register_agent_runner_client('Samtidig A', array['https://samtidig.example/cb']);" \
+  "select api.register_agent_runner_client('Samtidig B', array['https://samtidig.example/cb']);" \
+  'Uten låsen er taket per time en grense som ikke holder nettopp i det tilfellet den finnes for: en flom av samtidige registreringer (migrasjon 011a).'
 
 printf '\nAlle samtidighetsprøvene passerte.\n'

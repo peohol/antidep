@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(71);
+select plan(80);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -838,9 +838,122 @@ select throws_ok(
   null,
   'en tilbaketrekking krever en begrunnelse'
 );
-select api.revoke_agent_runner(
+insert into res
+select 'revoke', api.revoke_agent_runner(
   'agent-runner:evidence-extraction', 'Prøve 790: kjøreren tas ut av bruk.');
 reset role;
+
+-- Arbeidet kjøreren holdt, blir ledig med det samme.
+--
+-- Uten dette ville uttaket stått til leien løp ut — normalt et kvarter, opptil
+-- et døgn om kjøringen ba om det — mens kjøreren som holdt det, var død i det
+-- samme øyeblikket. Erstatteren ville ikke fått gjort arbeidet i mellomtiden,
+-- og køen ville meldt det som pågående hos noen som ikke lenger fantes.
+select is(
+  (select (payload ->> 'released_tasks')::int from res where label = 'revoke'),
+  1,
+  'tilbaketrekkingen frigir uttaket kjøreren holdt'
+);
+select ok(
+  (select j.state = 'ready'
+            and j.lease_token is null
+            and j.lease_expires_at is null
+            and j.leased_by_agent_identity_id is null
+            and j.runner_connection_id is null
+   from workflow.pipeline_jobs j
+   where j.id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task2')),
+  'oppgaven står som ledig igjen, uten en holder som ikke holder noe'
+);
+-- Forsøket står, som når en kjører selv gir oppgaven fra seg: uttaket ER et
+-- forsøk, og et tall som telles ned igjen, ville vært en historikk skrevet om
+-- til å se penere ut enn den var.
+select is(
+  (select j.attempts from workflow.pipeline_jobs j
+   where j.id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task2')),
+  2,
+  'forsøket står: uttaket var et forsøk, og et tall telles ikke ned igjen'
+);
+select ok(
+  exists (
+    select 1 from workflow.pipeline_job_events pe
+    where pe.pipeline_job_id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task2')
+      and pe.to_state = 'ready'
+      and pe.actor_id is not null
+      and pe.agent_identity_id is null
+      and pe.note = 'Uttaket ble frigitt fordi kjøreren som holdt det, ble trukket tilbake.'
+  ),
+  'frigivelsen føres på mennesket som trakk kjøreren tilbake, med Antideps egen setning'
+);
+select ok(
+  exists (
+    select 1 from workflow.agent_runner_events e
+    where e.tool_name = 'revoke_agent_runner'
+      and e.outcome = 'lease_lost'
+      and e.pipeline_job_id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task2')
+  ),
+  'sporet skiller et tapt uttak fra de andre utfallene, så det kan telles for seg'
+);
+-- Og oppgaven er utførbar igjen for den som overtar leddet. Det var nettopp
+-- dette den løpende leien hindret.
+select is(
+  (select workflow.agent_task_problem(j) from workflow.pipeline_jobs j
+   where j.id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task2')),
+  null,
+  'oppgaven kan tas av erstatteren med det samme, framfor å vente ut leien'
+);
+
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+insert into res select 'queue2', jsonb_build_object('rows', api.agent_work_queue());
+reset role;
+
+-- Køen leser holderen av raden og ikke av en antakelse om hvem som pleier å
+-- ta arbeid i rollen. Utledningen den erstattet, pekte etter en tilbaketrekking
+-- på den NYE kjøreren — som aldri hadde tatt oppgaven.
+select is(
+  (select q ->> 'held_by_runner'
+   from res, jsonb_array_elements(payload -> 'rows') as q
+   where label = 'queue2'
+     and q ->> 'pipeline_job_id' = (select payload ->> 'pipeline_job_id' from res where label = 'task2')),
+  null,
+  'og køen sier ikke lenger at noen holder den'
+);
+
+-- En holder uten et uttak er ikke en tilstand tabellen godtar, og regelen
+-- ligger to steder med vilje: triggeren glemmer holderen i det raden forlater
+-- «leased», slik at ingen skrivevei trenger å huske det, og CHECK-en står igjen
+-- som fasit for den dagen noen skriver forbi triggeren.
+update workflow.pipeline_jobs
+set runner_connection_id = (select id from workflow.agent_runner_connections
+                            where connection_key = 'agent-runner:evidence-extraction' limit 1)
+where id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task2');
+
+select is(
+  (select j.runner_connection_id from workflow.pipeline_jobs j
+   where j.id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task2')),
+  null,
+  'en holder skrevet på en oppgave som ikke er tatt ut, blir glemt av triggeren'
+);
+
+-- Og uten triggeren: tabellen selv avviser den. Triggeren slås av for nøyaktig
+-- denne ene setningen i prøvens egen transaksjon, slik at CHECK-en kan prøves
+-- for seg — regelen skal holde også uten hjelperen.
+set local session_replication_role = replica;
+select throws_ok(
+  format(
+    $$ update workflow.pipeline_jobs
+       set runner_connection_id = %L::uuid
+       where id = %L::uuid $$,
+    (select id from workflow.agent_runner_connections
+     where connection_key = 'agent-runner:evidence-extraction' limit 1),
+    (select payload ->> 'pipeline_job_id' from res where label = 'task2')
+  ),
+  '23514',
+  null,
+  'og tabellen selv avviser den, også om noen skriver forbi triggeren'
+);
+set local session_replication_role = origin;
 
 set local role anon;
 select throws_ok(

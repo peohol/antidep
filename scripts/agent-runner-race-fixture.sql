@@ -64,6 +64,24 @@ where a.capacity = 'semantic' and a.provider = 'antidep-test'
 
 set local session_replication_role = origin;
 
+-- Ett agentledd har høyst én gjeldende kjører. En annen prøve i den samme
+-- databasen kan ha lagt igjen sin egen i dette leddet; den trekkes tilbake
+-- gjennom de vanlige kolonnene framfor å slettes, så regelen prøves og ikke
+-- omgås — og prøvene kan kjøres i hvilken som helst rekkefølge.
+update workflow.agent_runner_connections c
+set valid_to = statement_timestamp(),
+    revoked_by_actor_id = (select a.id from provenance.actors a
+                           where a.actor_key = 'human:peder-holman'),
+    revocation_reason = 'Ryddet av samtidighetsprøven av den autonome kjøreren.'
+where c.agent_role = 'evidence_extraction' and c.valid_to is null;
+
+update workflow.agent_runner_secrets s
+set revoked_at = statement_timestamp()
+where s.revoked_at is null
+  and s.connection_id in (
+    select c.id from workflow.agent_runner_connections c
+    where c.agent_role = 'evidence_extraction' and c.valid_to is not null);
+
 -- ----------------------------------------------------------------------------
 -- Redaktøren. Den manuelle importveien i prøve 17 krever editor-mandat, og den
 -- skal avvises av uttaket — ikke av en manglende rettighet.
@@ -205,13 +223,23 @@ values ('7e000000-0000-4000-8000-00000000000a', '7e000000-0000-4000-8000-0000000
 -- Databasen lagrer bare fingeravtrykket. Verdien står i db-lock-test.sh, og den
 -- gir arbeid i nøyaktig ett agentledd i en lokal testdatabase.
 -- ----------------------------------------------------------------------------
+-- Perioden begynner der den forrige sluttet, som i api.register_agent_runner:
+-- to perioder i det samme leddet kan ikke overlappe, og en kjører ryddet bort
+-- rett over ble avsluttet i dette øyeblikket.
 insert into workflow.agent_runner_connections
   (id, connection_key, display_name, agent_role, platform_agent_reference,
-   platform_model_disclosure, registered_by_actor_id, registration_reason)
-values ('7e000000-0000-4000-8000-0000000000c1', 'agent-runner:laaseprove',
-        'Kjøreren i samtidighetsprøven', 'evidence_extraction',
-        'Låseprøvens agent', 'not_exposed', '7e000000-0000-4000-8000-0000000000e1',
-        'Bare til scripts/db-lock-test.sh.');
+   platform_model_disclosure, valid_from, registered_by_actor_id, registration_reason)
+select '7e000000-0000-4000-8000-0000000000c1', 'agent-runner:laaseprove',
+       'Kjøreren i samtidighetsprøven', 'evidence_extraction',
+       'Låseprøvens agent', 'not_exposed',
+       greatest(statement_timestamp(),
+                coalesce(max(c.valid_to), statement_timestamp())),
+       '7e000000-0000-4000-8000-0000000000e1',
+       'Bare til scripts/db-lock-test.sh.'
+from workflow.agent_runner_connections c
+where c.agent_role = 'evidence_extraction'
+   or c.connection_key = 'agent-runner:laaseprove'
+   or c.platform_agent_reference = 'Låseprøvens agent';
 
 insert into workflow.agent_runner_clients (client_id, client_name, redirect_uris)
 values ('7e000000000000000000000000000e11', 'Klienten i samtidighetsprøven',
