@@ -103,9 +103,27 @@ export function parseJsonRpcMessage(value: unknown): JsonRpcRequest {
     throw new JsonRpcMessageError(JSON_RPC_INVALID_REQUEST, 'Meldingen er ikke et JSON-objekt.')
   }
 
+  // En notifikasjon er en melding UTEN `id` — ikke en melding med `id: null`.
+  //
+  // Skillet er ikke pedanteri her: verktøyene har sideeffekter. Leses `id: null`
+  // som en notifikasjon, blir kallet utført og besvart med en tom 202, mens
+  // klienten venter på et resultat den aldri får og prøver på nytt etter at
+  // uttaket eller leveringen allerede er gjennomført.
+  //
+  // Revisjonen er dessuten eksplisitt: «Requests MUST include a string or
+  // integer ID» og «Unlike base JSON-RPC, the ID MUST NOT be null». En `id` som
+  // finnes og ikke er en streng eller et tall, er derfor en ugyldig
+  // forespørsel — ikke en notifikasjon, og ikke noe som skal utføres.
+  const hasId = Object.prototype.hasOwnProperty.call(value, 'id')
   const rawId = value['id']
+  const isNotification = !hasId
+  if (hasId && typeof rawId !== 'string' && typeof rawId !== 'number') {
+    throw new JsonRpcMessageError(
+      JSON_RPC_INVALID_REQUEST,
+      'Feltet «id» må være en streng eller et tall. En melding uten id er en notifikasjon; «id: null» er ingen av delene.',
+    )
+  }
   const id: JsonRpcId = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : null
-  const isNotification = rawId === undefined || rawId === null
 
   if (value['jsonrpc'] !== '2.0') {
     throw new JsonRpcMessageError(

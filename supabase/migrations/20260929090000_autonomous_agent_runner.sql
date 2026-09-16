@@ -635,7 +635,8 @@ create function workflow.authenticated_runner_connection(
 )
   returns workflow.agent_runner_connections
   language plpgsql
-  stable
+  -- volatile, ikke stable: kallet tar en radlås, og en lås er en skrivning.
+  volatile
   set search_path = ''
 as $$
 declare
@@ -658,6 +659,19 @@ begin
   -- et implisitt valg med sin egen observerbare oppførsel. Publikum er en av
   -- dem: et token utstedt for en annen tjeneste skal ikke virke her, uansett
   -- hvor gyldig det er der det hører hjemme (RFC 8707).
+  -- Delt lås på tilkoblingsraden, og den holdes ut hele kallet.
+  --
+  -- Uten den var autentiseringen en lesning av et øyeblikk: en tilbaketrekking
+  -- kunne bli ferdig ETTER at kallet hadde autentisert seg, men FØR det tok en
+  -- oppgave — og uttaket som fulgte, ble ikke frigitt av tilbaketrekkingen, som
+  -- allerede var forbi. Oppgaven ville da stått som opptatt av en kjører som
+  -- aldri kommer tilbake, helt til leien løp ut.
+  --
+  -- Delt, ikke eksklusiv: flere planlagte kjøringer på den samme tilkoblingen
+  -- skal kunne arbeide samtidig. Det er tilbaketrekkingen som må vente, fordi
+  -- det er den som gjør tilstanden om — og når den slipper til, ser den uttaket
+  -- som ble tatt i mellomtiden og frigir det. Kommer den først, treffer
+  -- vilkårene her ingenting, og kallet blir avvist som det skal.
   select c.* into v_connection
   from workflow.agent_runner_secrets s
   join workflow.agent_runner_connections c on c.id = s.connection_id
@@ -667,7 +681,8 @@ begin
     and s.expires_at > statement_timestamp()
     and s.resource = v_resource
     and c.valid_from <= statement_timestamp()
-    and (c.valid_to is null or c.valid_to > statement_timestamp());
+    and (c.valid_to is null or c.valid_to > statement_timestamp())
+  for share of c;
 
   if v_connection.id is null then
     perform workflow.reject_agent_runner_authentication();
@@ -678,7 +693,7 @@ end;
 $$;
 
 comment on function workflow.authenticated_runner_connection(text, text) is
-  'Tilkoblingen et access-token tilhører, eller et avslag (ANTIDEP_CONSTITUTION.md regel 7). Kontrollerer tokenets gyldighet, publikumet og tilkoblingens gyldighet i ett predikat, på kallets eget tidspunkt, slik at en tilbaketrekking virker umiddelbart. p_resource er den kanoniske adressen kalleren bruker tokenet mot, og er PÅKREVD uten standardverdi: med en standardverdi ville publikumskontrollen bare vært kjørt av de kallerne som husket å oppgi den, og de kontrollerte veiene er gitt til anon — en som holder et token, kunne kalt Data API-et direkte uten den og sluppet forbi (RFC 8707, MCP 2026-07-28 «Token Handling»). Returnerer aldri noe delvis: en kaller som kommer forbi denne, har en gyldig tilkobling med en rolle.';
+  'Tilkoblingen et access-token tilhører, eller et avslag (ANTIDEP_CONSTITUTION.md regel 7). Kontrollerer tokenets gyldighet, publikumet og tilkoblingens gyldighet i ett predikat, på kallets eget tidspunkt, slik at en tilbaketrekking virker umiddelbart. p_resource er den kanoniske adressen kalleren bruker tokenet mot, og er PÅKREVD uten standardverdi: med en standardverdi ville publikumskontrollen bare vært kjørt av de kallerne som husket å oppgi den, og de kontrollerte veiene er gitt til anon — en som holder et token, kunne kalt Data API-et direkte uten den og sluppet forbi (RFC 8707, MCP 2026-07-28 «Token Handling»). Returnerer aldri noe delvis: en kaller som kommer forbi denne, har en gyldig tilkobling med en rolle. Tar en delt lås på tilkoblingsraden og holder den ut kallet, slik at en tilbaketrekking ikke kan bli ferdig mellom autentiseringen og arbeidet: uttaket som fulgte, ville ikke blitt frigitt av en tilbaketrekking som allerede var forbi.';
 
 revoke execute on function workflow.authenticated_runner_connection(text, text) from public;
 

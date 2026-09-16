@@ -1291,4 +1291,24 @@ proev 'en samtidig utstedelse av engangskode må vente på den første (55P03)' 
    select api.issue_agent_runner_pairing_code('agent-runner:laaseprove');" \
   'Uten låsen på tilkoblingsraden kunne to samtidige utstedelser gitt hver sin gyldige engangskode for den samme kjøreren (migrasjon 011a).'
 
+# Prøve 21 — en tilbaketrekking kan ikke skje midt i et kall
+#
+# Autentiseringen var en lesning av et øyeblikk: en tilbaketrekking kunne bli
+# ferdig ETTER at et kall hadde autentisert seg, men FØR det tok en oppgave — og
+# uttaket som fulgte, ble ikke frigitt av tilbaketrekkingen, som allerede var
+# forbi. Oppgaven sto da som opptatt av en kjører som aldri kommer tilbake.
+#
+# Den delte låsen på tilkoblingsraden holdes ut hele kallet. Flere kjøringer kan
+# arbeide samtidig; det er tilbaketrekkingen som må vente.
+#
+# Prøven går rett på autentiseringen, og det er med vilje: et helt RPC-kall
+# rekker å skrive sporet sitt, og FK-en fra sporet tar sin egen lås på
+# tilkoblingsraden. Prøven ville da passert uten rettingen, og målt feil ting.
+# Vinduet den handler om, er nettopp mellom autentiseringen og arbeidet.
+proev 'en tilbaketrekking må vente på et kall som allerede er autentisert (55P03)' \
+  "select workflow.authenticated_runner_connection('$kjorer_token', '$kjorer_res');" \
+  "$kode_sesjon
+   select api.revoke_agent_runner('agent-runner:laaseprove', 'Samtidighetsprøven.');" \
+  'Uten den delte låsen kunne en tilbaketrekking bli ferdig mellom autentiseringen og arbeidet, og uttaket som fulgte, ville aldri blitt frigitt (migrasjon 011a).'
+
 printf '\nAlle samtidighetsprøvene passerte.\n'

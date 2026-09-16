@@ -1112,6 +1112,21 @@ describe('argumentene til et verktøykall', () => {
     expect(gateway.claims).toBe(1)
   })
 
+  // Og «id: null» er verken en forespørsel eller en notifikasjon: revisjonen
+  // sier at en id MÅ finnes og IKKE være null. Leses den som en notifikasjon,
+  // blir kallet utført mens klienten venter på et resultat den aldri får.
+  it('avviser «id: null» framfor å utføre kallet som en notifikasjon', async () => {
+    const gateway = createFakeGateway()
+    const response = await send(
+      'mcp',
+      rpc({ jsonrpc: '2.0', id: null, method: 'tools/call', params: { name: 'claim_agent_task' } }),
+      gateway,
+    )
+    expect(response.status).toBe(400)
+    expect(errorOf((await response.json()) as Record<string, unknown>)['code']).toBe(-32600)
+    expect(gateway.claims).toBe(0)
+  })
+
   // Det samme gjelder verktøynavnet: en forespørsel som aldri ble utført, skal
   // ikke se ut som en som lyktes for en klient som leser statusen.
   it('avviser et kall uten verktøynavn med 400', async () => {
