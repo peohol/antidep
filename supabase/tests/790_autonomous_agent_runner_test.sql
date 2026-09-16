@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(95);
+select plan(96);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -1259,6 +1259,21 @@ select throws_ok(
   'og en arbeidsvei uten publikum avvises, framfor å hoppe over kontrollen'
 );
 reset role;
+
+-- Og publikumet kan ikke skrives om etter utstedelsen. Det er en del av det som
+-- ble gitt, ikke en etikett på det: en oppdatering som kunne peke et allerede
+-- utstedt token mot en annen MCP-server, ville latt raden beskrive en annen
+-- binding enn den som faktisk ble gitt.
+select throws_ok(
+  $$
+    update workflow.agent_runner_secrets
+    set resource = 'https://en-annen.example/mcp'
+    where kind = 'access_token' and revoked_at is null
+  $$,
+  '23001',
+  null,
+  'publikumet på en utstedt hemmelighet kan ikke skrives om'
+);
 
 -- Tabellen selv krever publikumet: en rad uten det er ikke en lovlig tilstand.
 select throws_ok(

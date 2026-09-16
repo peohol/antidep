@@ -869,6 +869,60 @@ describe('den moderne konvolutten', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Epoken avgjøres av meldingen, ikke bare av transporten
+//
+// En mellomtjener som stryker `MCP-Protocol-Version`, skal ikke kunne gjøre en
+// moderne melding om til en gammel. Ble epoken lest av headeren alene, ville
+// hele konvoluttkontrollen blitt hoppet over — og et verktøykall med en uenig
+// header ville blitt utført.
+// ---------------------------------------------------------------------------
+describe('epokevalget', () => {
+  it('avviser en moderne melding som har mistet versjonsheaderen', async () => {
+    const { status, body } = await modernSend(
+      'tools/list',
+      {},
+      { headers: { 'mcp-protocol-version': null } },
+    )
+    expect(status).toBe(400)
+    expect(errorOf(body)['code']).toBe(-32020)
+  })
+
+  it('avviser en moderne melding med en eldre versjon i headeren', async () => {
+    const { status, body } = await modernSend(
+      'tools/list',
+      {},
+      { headers: { 'mcp-protocol-version': '2025-11-25' } },
+    )
+    expect(status).toBe(400)
+    expect(errorOf(body)['code']).toBe(-32020)
+  })
+
+  // Og ingenting utføres: det er nettopp et verktøykall som ikke skal slippe
+  // gjennom på en uenighet mellom transporten og meldingen.
+  it('utfører ingenting når headeren er strøket bort', async () => {
+    const gateway = createFakeGateway()
+    await send(
+      'mcp',
+      modernRpc(
+        'tools/call',
+        { name: 'claim_agent_task', arguments: {} },
+        { headers: { 'mcp-protocol-version': null } },
+      ),
+      gateway,
+    )
+    expect(gateway.claims).toBe(0)
+  })
+
+  it('leser fortsatt en ekte gammel melding som gammel', async () => {
+    const gateway = createFakeGateway()
+    // Ingen versjonsheader, og ingen moderne konvolutt i kroppen: dette ER en
+    // klient fra før headeren fantes, og den skal ikke avvises.
+    const body = await callRpc(gateway, { jsonrpc: '2.0', id: 1, method: 'ping', params: {} })
+    expect(resultOf(body)).toEqual({})
+  })
+})
+
 describe('versjonsforhandlingen', () => {
   it('avviser en ukjent versjon med -32022 og listen over dem den snakker', async () => {
     const { status, body } = await modernSend('tools/list', {}, { version: '1900-01-01' })

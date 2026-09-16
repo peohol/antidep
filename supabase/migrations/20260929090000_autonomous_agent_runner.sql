@@ -442,6 +442,11 @@ begin
      or new.client_id is distinct from old.client_id
      or new.redirect_uri is distinct from old.redirect_uri
      or new.code_challenge is distinct from old.code_challenge
+     -- Publikumet er en del av det som ble utstedt, ikke en etikett på det.
+     -- Uten dette kunne en oppdatering pekt et allerede utstedt token mot en
+     -- annen MCP-server, og raden ville beskrevet en annen binding enn den som
+     -- faktisk ble gitt (RFC 8707).
+     or new.resource is distinct from old.resource
      or new.issued_by_actor_id is distinct from old.issued_by_actor_id
      or new.parent_id is distinct from old.parent_id
      or new.expires_at is distinct from old.expires_at
@@ -460,7 +465,7 @@ end;
 $$;
 
 comment on function workflow.freeze_agent_runner_secret() is
-  'Lar bare bruken (consumed_at) og tilbaketrekkingen (revoked_at) endre en utstedt hemmelighet, og bare én gang for bruken. Uten regelen ville «denne koden er brukt» vært noe som lot seg angre, og en engangskode ville ikke vært en engangskode.';
+  'Lar bare bruken (consumed_at) og tilbaketrekkingen (revoked_at) endre en utstedt hemmelighet, og bare én gang for bruken. Uten regelen ville «denne koden er brukt» vært noe som lot seg angre, og en engangskode ville ikke vært en engangskode. Publikumet (resource) er med blant de frosne feltene: det er en del av det som ble utstedt, og en oppdatering som kunne peke et allerede utstedt token mot en annen MCP-server, ville latt raden beskrive en annen binding enn den som faktisk ble gitt.';
 
 revoke execute on function workflow.freeze_agent_runner_secret() from public;
 

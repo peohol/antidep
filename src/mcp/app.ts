@@ -254,6 +254,16 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** Protokollversjonen meldingen selv oppgir, når den oppgir en. */
+function protocolVersionInBody(message: JsonRpcRequest): string | null {
+  const meta = message.params['_meta']
+  if (!isObject(meta)) {
+    return null
+  }
+  const version = meta[META_PROTOCOL_VERSION]
+  return typeof version === 'string' && version.length > 0 ? version : null
+}
+
 /** De to feilformene den moderne epoken skiller mellom. */
 interface ModernProblem {
   readonly code: number
@@ -275,11 +285,7 @@ interface ModernProblem {
  *           Den finnes fordi et sted som ruter på headeren mens serveren
  *           utfører kroppen, er en åpning.
  */
-function modernEnvelopeProblem(
-  request: Request,
-  message: JsonRpcRequest,
-  declared: string,
-): ModernProblem | null {
+function modernEnvelopeProblem(request: Request, message: JsonRpcRequest): ModernProblem | null {
   const malformed = (message: string): ModernProblem => ({
     code: JSON_RPC_INVALID_PARAMS,
     message,
@@ -308,13 +314,14 @@ function modernEnvelopeProblem(
   }
 
   // ---- Headerne, som speiler kroppen ----
+  //
+  // Headeren er påkrevd i den moderne epoken, og et fravær er ikke et smutthull
+  // her: epoken ble avgjort av kroppen, så en melding som sier 2026 uten
+  // headeren, avvises framfor å bli lest som en gammel melding.
+  // Uenighet mellom de to er allerede avvist før epoken ble valgt; det som
+  // gjenstår her, er et fravær — og headeren er påkrevd i den moderne epoken.
   if (request.headers.get('mcp-protocol-version') === null) {
     return mismatch('Forespørselen mangler MCP-Protocol-Version.')
-  }
-  if (version !== declared) {
-    return mismatch(
-      `MCP-Protocol-Version «${declared}» er ikke den samme som ${META_PROTOCOL_VERSION} «${version}».`,
-    )
   }
 
   const method = request.headers.get('mcp-method')
@@ -576,26 +583,6 @@ async function mcpEndpoint(
     }
   }
 
-  // Epoken avgjøres her, av headeren, og ikke av et håndtrykk. En forespørsel
-  // uten headeren leses som 2025-03-26: headeren kom først i 2025-06-18, og en
-  // klient som aldri fikk vite at den fantes, skal ikke avvises for å mangle den.
-  const declared = request.headers.get('mcp-protocol-version') ?? DEFAULT_LEGACY_PROTOCOL_VERSION
-  if (!isSupportedProtocolVersion(declared)) {
-    return {
-      response: json(
-        jsonRpcFailure(
-          null,
-          MCP_UNSUPPORTED_PROTOCOL_VERSION,
-          `Antidep snakker ikke protokollversjonen «${declared}».`,
-          { supported: [...SUPPORTED_PROTOCOL_VERSIONS], requested: declared },
-        ),
-        400,
-      ),
-      outcome: 'bad_request',
-    }
-  }
-  const era: McpEra = eraForProtocolVersion(declared)
-
   const accessToken = bearerToken(request)
   if (accessToken === null) {
     return {
@@ -659,9 +646,59 @@ async function mcpEndpoint(
     }
   }
 
+  // Epoken avgjøres av MELDINGEN først, og av headeren bare når meldingen ikke
+  // sier noe.
+  //
+  // Headeren alene ville vært utrygt: går forespørselen gjennom en mellomtjener
+  // som stryker `MCP-Protocol-Version`, ville en moderne melding blitt lest som
+  // en gammel — og hele konvoluttkontrollen hoppet over, slik at et
+  // verktøykall med en uenig header ble utført framfor å bli avvist. Sier
+  // kroppen 2026, er forespørselen moderne, og da må headeren være der og si
+  // det samme.
+  //
+  // Sier ingen av dem noe, leses forespørselen som 2025-03-26: headeren kom
+  // først i 2025-06-18, og en klient som aldri fikk vite at den fantes, skal
+  // ikke avvises for å mangle den.
+  const declaredInBody = protocolVersionInBody(message)
+  const declaredInHeader = request.headers.get('mcp-protocol-version')
+
+  // Sier begge noe, må de si det samme — uansett hvilken vei de er uenige.
+  // Transporten og meldingen skal aldri kunne leses av to lag som to
+  // forskjellige forespørsler.
+  if (declaredInBody !== null && declaredInHeader !== null && declaredInBody !== declaredInHeader) {
+    return {
+      response: json(
+        jsonRpcFailure(
+          message.id,
+          MCP_HEADER_MISMATCH,
+          `MCP-Protocol-Version «${declaredInHeader}» er ikke den samme som ${META_PROTOCOL_VERSION} «${declaredInBody}».`,
+        ),
+        400,
+      ),
+      outcome: 'bad_request',
+    }
+  }
+
+  const declared = declaredInBody ?? declaredInHeader ?? DEFAULT_LEGACY_PROTOCOL_VERSION
+  if (!isSupportedProtocolVersion(declared)) {
+    return {
+      response: json(
+        jsonRpcFailure(
+          message.id,
+          MCP_UNSUPPORTED_PROTOCOL_VERSION,
+          `Antidep snakker ikke protokollversjonen «${declared}».`,
+          { supported: [...SUPPORTED_PROTOCOL_VERSIONS], requested: declared },
+        ),
+        400,
+      ),
+      outcome: 'bad_request',
+    }
+  }
+  const era: McpEra = eraForProtocolVersion(declared)
+
   // Konvolutten og headerne fra 2026-07-28 kontrolleres her, før noe utføres.
   if (era === 'modern') {
-    const problem = modernEnvelopeProblem(request, message, declared)
+    const problem = modernEnvelopeProblem(request, message)
     if (problem !== null) {
       return {
         response: json(jsonRpcFailure(message.id, problem.code, problem.message), 400),
