@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(149);
+select plan(156);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1490,10 +1490,10 @@ reset role;
 
 -- --- Rollen, og grensene rundt den ---------------------------------------
 select is(
-  (select rolsuper::text || rolcreatedb::text || rolcreaterole::text
-          || rolbypassrls::text || rolinherit::text || rolcanlogin::text
+  (select format('super=%s createdb=%s createrole=%s bypassrls=%s inherit=%s login=%s',
+                 rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolinherit, rolcanlogin)
    from pg_roles where rolname = 'antidep_diagnostics'),
-  'ffffft',
+  'super=false createdb=false createrole=false bypassrls=false inherit=false login=true',
   'reserverollen kan logge inn, og er ellers hverken superbruker, oppretter noe, går utenom RLS eller arver noe'
 );
 
@@ -1508,8 +1508,9 @@ select is_empty(
     select n.nspname || '.' || c.relname || ':' || a.privilege_type
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace
-    cross join lateral aclexplode(coalesce(c.relacl, array[]::aclitem[])) a
+    cross join lateral aclexplode(c.relacl) a
     where n.nspname in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
+      and c.relacl is not null
       and a.grantee = 'antidep_diagnostics'::regrole::oid
   $$,
   'migrasjonen ga reserverollen ingen tabellrettighet i noen av de kanoniske schemaene'
@@ -1520,8 +1521,9 @@ select set_eq(
     select p.oid::regprocedure::text
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
-    cross join lateral aclexplode(coalesce(p.proacl, array[]::aclitem[])) a
+    cross join lateral aclexplode(p.proacl) a
     where n.nspname in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
+      and p.proacl is not null
       and a.grantee = 'antidep_diagnostics'::regrole::oid
       and a.privilege_type = 'EXECUTE'
   $$,
@@ -1536,8 +1538,9 @@ select set_eq(
   $$
     select n.nspname || ':' || a.privilege_type
     from pg_namespace n
-    cross join lateral aclexplode(coalesce(n.nspacl, array[]::aclitem[])) a
+    cross join lateral aclexplode(n.nspacl) a
     where n.nspname in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
+      and n.nspacl is not null
       and a.grantee = 'antidep_diagnostics'::regrole::oid
   $$,
   $$values ('workflow:USAGE')$$,
@@ -1734,6 +1737,100 @@ select is(
    where e.reporter_key = 'offentlig:' || repeat('d', 64)),
   20,
   'den anonyme veien skriver høyst tjue observasjoner i timen per avsender'
+);
+
+-- --- Maskinidentifikatorene er like lukket som på den innloggede veien -----
+--
+-- Uten disse kunne en som fikk tak i legitimasjonen, skrevet fritekst i felter
+-- som skal være lukkede vokabularer og kontrollerte former.
+select throws_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      repeat('e', 64), '7f000000-0000-4000-8000-00000000e001', 'work_queue',
+      'en oppdiktet svikttype', 'public_work_board', null, null, 'network', 'en tekst')
+  $$,
+  '22023', 'Ukjent svikttype.',
+  'reserveveien avviser en svikttype utenfor vokabularet'
+);
+select throws_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      repeat('e', 64), '7f000000-0000-4000-8000-00000000e002', 'work_queue',
+      'unavailable', 'en_oppdiktet_operasjon', null, null, 'network', 'en tekst')
+  $$,
+  '22023', 'Ukjent operasjon.',
+  'og en operasjon som ikke finnes i api'
+);
+select throws_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      repeat('e', 64), '7f000000-0000-4000-8000-00000000e003', 'work_queue',
+      'unavailable', 'public_work_board', 'en fri tekst', null, 'network', 'en tekst')
+  $$,
+  '22023', 'Ukjent kode.',
+  'og en kode som ikke har formen til en maskinkode'
+);
+select throws_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      repeat('e', 64), '7f000000-0000-4000-8000-00000000e004', 'work_queue',
+      'unavailable', 'public_work_board', null, null, 'en fri tekst', 'en tekst')
+  $$,
+  '22023', 'Ukjent transportform.',
+  'og en transportform utenfor vokabularet'
+);
+select throws_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      repeat('e', 64), '7f000000-0000-4000-8000-00000000e005', 'work_queue',
+      'unavailable', 'public_work_board', null, 9000, 'network', 'en tekst')
+  $$,
+  '22023', 'Ukjent statuskode.',
+  'og en status som ikke er en HTTP-status'
+);
+
+-- --- Grensen som gjelder om legitimasjonen lekker -------------------------
+--
+-- Avsendersummen oppgis av kalleren. En som stjeler legitimasjonen kan velge
+-- en ny gyldig sum for hvert kall, så en kvote per avsender binder ingenting
+-- alene. Prøven gjør nettopp det: sju hundre kall, hver med sin egen sum.
+do $$
+declare
+  i integer;
+begin
+  for i in 1..700 loop
+    perform workflow.ingest_client_diagnostic(
+      lpad(to_hex(i), 64, '0'),
+      ('7f000000-0000-4000-8000-' || lpad(to_hex(i), 12, '0'))::uuid,
+      'work_queue', 'unavailable', 'public_work_board', null, null, 'network',
+      'en årsak fra kall nummer ' || i::text);
+  end loop;
+end
+$$;
+select is(
+  (select count(*)::int from workflow.client_diagnostics
+   where reporter_ip_hash is not null),
+  600,
+  'reserven skriver høyst seks hundre rader i timen, uansett hvor mange avsendere kalleren finner opp'
+);
+
+-- Og det samme for den anonyme veien: to hundre i timen for veien under ett.
+do $$
+declare
+  i integer;
+begin
+  for i in 1..250 loop
+    perform workflow.ingest_public_technical_problem(
+      lpad(to_hex(i + 4096), 64, '0'),
+      'work_queue', 'unavailable', 'public_work_board');
+  end loop;
+end
+$$;
+select is(
+  (select count(*)::int from workflow.technical_incident_events
+   where reporter_key like 'offentlig:%'),
+  200,
+  'den anonyme veien skriver høyst to hundre observasjoner i timen under ett'
 );
 
 -- Og sporet for alt databasen selv observerte, bærer ingen avsender: kolonnen

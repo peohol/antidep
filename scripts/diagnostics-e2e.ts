@@ -112,8 +112,41 @@ function stored(eventId: string): number {
   )
 }
 
+/**
+ * Alt denne prøven lager, og ingenting annet.
+ *
+ * Kjøres både før og etter. Før, slik at en ny kjøring mot den samme lokale
+ * databasen starter rent — den globale timekvoten på reserven ville ellers telt
+ * forrige kjørings rader. Etter, slik at neste prøve i rekken ikke møter et
+ * teknisk problem denne laget: den anonyme veien lager et *ekte* problem, og
+ * fulltekstprøven krever at ingen finnes.
+ *
+ * Sporet og den rå årsaken er append-only i drift. I den gjenbrukbare
+ * testdatabasen må de likevel bort, og triggerne settes derfor til side på
+ * samme måte som kjedeprøven allerede gjør.
+ */
+function ryddOpp(): void {
+  psql(
+    config,
+    `set session_replication_role = replica;
+     delete from workflow.client_diagnostics
+       where reporter_ip_hash is not null or reported_by_user_id = ${q(USER)};
+     delete from workflow.technical_incident_events
+       where reporter_key like 'offentlig:%';
+     delete from workflow.technical_incident_events e
+       using workflow.technical_incidents ti
+       where ti.id = e.technical_incident_id
+         and ti.area = 'work_queue'
+         and ti.signature = 'client:public_work_board';
+     delete from workflow.technical_incidents
+       where area = 'work_queue' and signature = 'client:public_work_board';
+     reset session_replication_role;`,
+  )
+}
+
 async function main(): Promise<void> {
   console.log('Diagnostikkveien, ende til ende')
+  ryddOpp()
 
   // Radene autentiseringstjenesten faktisk slår opp i. Uten aud og role ville
   // den ikke kjent igjen brukeren tokenet peker på, og kontrollen av avsenderen
@@ -368,15 +401,17 @@ async function main(): Promise<void> {
     andreDefinere,
   )
 
+  // `bool::text` gir «false», ikke «f». Det siste er psql sin visning av
+  // verdien, og ikke verdien.
   const egenskaper = psql(
     config,
-    `select rolsuper::text || rolcreatedb::text || rolcreaterole::text
-            || rolbypassrls::text || rolinherit::text
+    `select format('super=%s createdb=%s createrole=%s bypassrls=%s inherit=%s',
+                   rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolinherit)
      from pg_roles where rolname = 'antidep_diagnostics'`,
   )
   check(
     'og er hverken superbruker, kan opprette noe eller gå utenom RLS',
-    egenskaper === 'fffff',
+    egenskaper === 'super=false createdb=false createrole=false bypassrls=false inherit=false',
     egenskaper,
   )
 
@@ -387,6 +422,11 @@ async function main(): Promise<void> {
      where has_table_privilege(r.name, 'workflow.client_diagnostics', 'SELECT')`,
   )
   check('ingen klientrolle kan lese lagringen', lesbar === '0')
+
+  // Prøven rydder opp etter seg. Den anonyme veien lager et *ekte* teknisk
+  // problem, og fulltekstprøven som kjører etter denne, krever at ingen finnes.
+  // Uten dette ville den blitt rød av noe denne prøven gjorde.
+  ryddOpp()
 }
 
 await main()
