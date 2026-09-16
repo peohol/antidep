@@ -92,6 +92,15 @@ jobs:
       - name: Ende-til-ende for den autonome kjøreren (MCP mot ekte database)
         if: always()
         run: npm run db:test:mcp
+      # Fulltekstinnboksen er den ene flaten der et menneske gjør noe for at
+      # kjeden skal gå videre, og handlingen er å velge riktig PDF. Resten —
+      # bindingen, lesbarhetskontrollen, det registrerte tekstuttrekket,
+      # registreringen og kølegging av neste ledd — er Antideps eget arbeid.
+      # Denne kjøringen går hele veien med en ekte PDF og det ekte pdftotext,
+      # gjennom de ekte api-funksjonene (issue #99).
+      - name: Ende-til-ende for fulltekstinnboksen (opplasting til kølagt arbeid)
+        if: always()
+        run: npm run db:test:intake
       - name: Stopp stacken
         if: always()
         run: npx supabase stop

@@ -46,6 +46,42 @@ reject_grep_matches \
   --include='*.ts' --include='*.tsx' --exclude='*.test.ts' --exclude='*.test.tsx' \
   '(/review|/extraction-review|Fava|Versiani)' src/app
 
+# Teknisk arbeid skal ikke komme tilbake i produkt-UI (issue #99).
+#
+# Å velge KI-tjeneste for et agentledd, registrere en «kjører», hente en
+# tilkoblingskode, laste ned en oppgavefil og laste opp et agentsvar er teknisk
+# arbeid. Det er flyttet til `src/ops/` og til kommandoene der. Søket går på de
+# api-funksjonene som *er* de handlingene: en flate som kalte en av dem, ville
+# hatt handlingen tilbake uansett hva knappen het. Selve adressen `/agentarbeid`
+# holdes borte av `src/app/routes.test.ts`, som prøver hver rute mot den — her
+# ville et søk på den også truffet forklaringene på hvorfor flaten er borte.
+reject_grep_matches \
+  'En runner-, modell- eller filtransportkontroll finnes i produkt-UI.' \
+  -R -n -E \
+  --include='*.ts' --include='*.tsx' --exclude='*.test.ts' --exclude='*.test.tsx' \
+  '(register_agent_runner|issue_agent_runner_pairing_code|revoke_agent_runner|agent_runner_connections|assign_agent_role_model|agent_task_payload|import_agent_answer|agent_work_queue)' \
+  src/app
+
+# Rå feiltekst skal aldri rendres til et menneske.
+#
+# Gatewayene formulerer setningen selv (`src/app/gateway.ts`), og sidene leser
+# den gjennom `pageMessage`. En gateway som la databasens `error.message` inn i
+# en feil den kastet, ville tatt regelen ut av kraft uten at noe annet endret
+# seg — og det er nettopp den formen issue #99 punkt 8 gjelder.
+reject_grep_matches \
+  'En gateway sender databasens egen feiltekst videre til flaten.' \
+  -R -n -E \
+  --include='*-gateway.ts' --exclude='*.test.ts' \
+  '(error|cause)\.message' \
+  src/app
+
+reject_grep_matches \
+  'En side rendrer en rå feiltekst framfor flatens egen setning.' \
+  -R -n -E \
+  --include='*.tsx' --exclude='*.test.tsx' \
+  'instanceof Error \? [a-zA-Z]+\.message' \
+  src/app
+
 # Private fulltekster og agentsvar skal aldri bli en del av repoet.
 #
 # En eksportert agentoppgave bærer hele den kontrollerte kildeteksten mellom to

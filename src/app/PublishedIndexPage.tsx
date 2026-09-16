@@ -16,6 +16,7 @@ import type { PublishedClaimEntry } from '../lib/published-claim'
 import type { PublicationGateway } from './publication-gateway'
 import { publishedClaimPath } from './routes'
 import { CERTAINTY_LABELS, label } from '../lib/vocabulary-view'
+import { pageMessage } from './gateway'
 
 export interface PublishedIndexPageProps {
   readonly gateway: PublicationGateway
@@ -38,7 +39,7 @@ export function PublishedIndexPage({ gateway }: PublishedIndexPageProps): React.
       .catch((cause: unknown) => {
         if (!cancelled) {
           setEntries(null)
-          setError(cause instanceof Error ? cause.message : String(cause))
+          setError(pageMessage(cause))
         }
       })
     return () => {

@@ -1,23 +1,31 @@
 import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router'
 
-import { AgentWorkPage } from './AgentWorkPage'
 import { CandidatePage } from './CandidatePage'
 import { CandidateQueuePage } from './CandidateQueuePage'
+import { FullTextInboxPage } from './FullTextInboxPage'
 import { PublishedClaimPage } from './PublishedClaimPage'
 import { PublishedIndexPage } from './PublishedIndexPage'
-import { createAgentWorkGateway, type AgentWorkGateway } from './agent-work-gateway'
+import { SiteNav } from './SiteNav'
+import { TechnicalProblemsPage } from './TechnicalProblemsPage'
+import { WorkBoardPage } from './WorkBoardPage'
 import { createCandidateGateway, type CandidateGateway } from './candidate-gateway'
+import { createFullTextGateway, type FullTextGateway } from './full-text-gateway'
 import { createPublicationGateway, type PublicationGateway } from './publication-gateway'
+import { createTechnicalGateway, type TechnicalGateway } from './technical-gateway'
+import { createWorkBoardGateway, type WorkBoardGateway } from './work-board-gateway'
 import {
-  AGENT_WORK_PATH,
   CANDIDATE_PATH,
   CANDIDATE_QUEUE_PATH,
+  FULL_TEXT_INBOX_PATH,
   HOME_PATH,
   PUBLISHED_CLAIM_PATH,
   PUBLISHED_PATH,
-  agentWorkPath,
+  TECHNICAL_PROBLEMS_PATH,
+  WORK_BOARD_PATH,
   candidateQueuePath,
+  fullTextInboxPath,
   publishedPath,
+  workBoardPath,
 } from './routes'
 
 export function ResetHome() {
@@ -37,6 +45,10 @@ export function ResetHome() {
         </p>
         <p className="notice">Ingen klinisk veiledning er tilgjengelig i denne versjonen.</p>
         <p>
+          <Link to={workBoardPath()}>Arbeidsoversikt</Link> — hva Antidep arbeider med nå, og hva
+          som er gjort ferdig. Åpen for alle.
+        </p>
+        <p>
           <Link to={publishedPath()}>Publisert klinikerinnhold</Link> — det Antidep faktisk sier nå,
           slik en navngitt fagperson godkjente det. Krever innlogging.
         </p>
@@ -45,8 +57,8 @@ export function ResetHome() {
           viser eksperimentelt, upublisert innhold.
         </p>
         <p>
-          <Link to={agentWorkPath()}>Agentarbeid</Link> — oppgavene som venter på en KI-agent, med
-          nedlasting og opplasting. Krever mandat.
+          <Link to={fullTextInboxPath()}>Fulltekst</Link> — artiklene Antidep mangler, og
+          opplastingen av dem. Krever mandat.
         </p>
       </section>
     </main>
@@ -91,9 +103,19 @@ function QueueRoute({ gateway }: { readonly gateway: CandidateGateway | undefine
   return <CandidateQueuePage gateway={gateway ?? createCandidateGateway()} />
 }
 
-/** Agentarbeidet, med klienten opprettet først når ruten faktisk vises. */
-function AgentWorkRoute({ gateway }: { readonly gateway: AgentWorkGateway | undefined }) {
-  return <AgentWorkPage gateway={gateway ?? createAgentWorkGateway()} />
+/** Den åpne arbeidsoversikten, med klienten opprettet først når ruten vises. */
+function WorkBoardRoute({ gateway }: { readonly gateway: WorkBoardGateway | undefined }) {
+  return <WorkBoardPage gateway={gateway ?? createWorkBoardGateway()} />
+}
+
+/** Fulltekstinnboksen, med klienten opprettet først når ruten vises. */
+function FullTextRoute({ gateway }: { readonly gateway: FullTextGateway | undefined }) {
+  return <FullTextInboxPage gateway={gateway ?? createFullTextGateway()} />
+}
+
+/** Den tekniske problemoversikten, med klienten opprettet først når ruten vises. */
+function TechnicalRoute({ gateway }: { readonly gateway: TechnicalGateway | undefined }) {
+  return <TechnicalProblemsPage gateway={gateway ?? createTechnicalGateway()} />
 }
 
 /** Den publiserte katalogen, med klienten opprettet først når ruten vises. */
@@ -126,21 +148,39 @@ export interface AppLayoutProps {
   readonly gateway?: CandidateGateway | undefined
   /** Veien til det publiserte innholdet, injisert av samme grunn som over. */
   readonly publication?: PublicationGateway | undefined
-  /** Veien til agentarbeidet, injisert av samme grunn som over. */
-  readonly agentWork?: AgentWorkGateway | undefined
+  /** Veien til den åpne arbeidsoversikten, injisert av samme grunn som over. */
+  readonly workBoard?: WorkBoardGateway | undefined
+  /** Veien til fulltekstinnboksen, injisert av samme grunn som over. */
+  readonly fullText?: FullTextGateway | undefined
+  /** Veien til den tekniske problemoversikten, injisert av samme grunn som over. */
+  readonly technical?: TechnicalGateway | undefined
 }
 
-export function AppLayout({ gateway, publication, agentWork }: AppLayoutProps = {}) {
+export function AppLayout({
+  gateway,
+  publication,
+  workBoard,
+  fullText,
+  technical,
+}: AppLayoutProps = {}) {
   return (
-    <Routes>
-      <Route element={<ResetHome />} path={HOME_PATH} />
-      <Route element={<QueueRoute gateway={gateway} />} path={CANDIDATE_QUEUE_PATH} />
-      <Route element={<CandidateRoute gateway={gateway} />} path={CANDIDATE_PATH} />
-      <Route element={<AgentWorkRoute gateway={agentWork} />} path={AGENT_WORK_PATH} />
-      <Route element={<PublishedRoute gateway={publication} />} path={PUBLISHED_PATH} />
-      <Route element={<PublishedClaimRoute gateway={publication} />} path={PUBLISHED_CLAIM_PATH} />
-      <Route element={<NotFound />} path="*" />
-    </Routes>
+    <>
+      <SiteNav technical={technical} />
+      <Routes>
+        <Route element={<ResetHome />} path={HOME_PATH} />
+        <Route element={<QueueRoute gateway={gateway} />} path={CANDIDATE_QUEUE_PATH} />
+        <Route element={<CandidateRoute gateway={gateway} />} path={CANDIDATE_PATH} />
+        <Route element={<WorkBoardRoute gateway={workBoard} />} path={WORK_BOARD_PATH} />
+        <Route element={<FullTextRoute gateway={fullText} />} path={FULL_TEXT_INBOX_PATH} />
+        <Route element={<TechnicalRoute gateway={technical} />} path={TECHNICAL_PROBLEMS_PATH} />
+        <Route element={<PublishedRoute gateway={publication} />} path={PUBLISHED_PATH} />
+        <Route
+          element={<PublishedClaimRoute gateway={publication} />}
+          path={PUBLISHED_CLAIM_PATH}
+        />
+        <Route element={<NotFound />} path="*" />
+      </Routes>
+    </>
   )
 }
 

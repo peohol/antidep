@@ -328,6 +328,87 @@ export type Database = {
       // Migrasjon 009f: publiseringen, tilbaketrekkingen og rollbacken.
       //
       // Det som publiseres er et forseglet kandidatinnhold, ikke en revisjon:
+      // Den klinikervennlige arbeidsflaten (migrasjon 012a).
+      //
+      // `public_work_board` er den ene funksjonen `anon` får: hva Antidep
+      // arbeider med, i et lukket produktvokabular og uten en eneste intern
+      // verdi. De øvrige krever mandat, og `technical_problem_summary` svarer
+      // stille «ikke synlig» til alle som ikke har admin — et avslag der ville
+      // blitt til en feilmelding på hver side for hver innlogget bruker.
+      public_work_board: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      // Fulltekstinnboksen. Referansen er databasens eget ugjennomsiktige
+      // håndtak og aldri en uuid: flaten skal kunne peke på en artikkel uten at
+      // en intern id står på skjermen.
+      full_text_inbox: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      submit_full_text: {
+        Args: {
+          p_reference: string
+          p_document_base64: string
+        }
+        Returns: unknown
+      }
+      // Forespørselen bærer den redaksjonelle avgrensningen ekstraksjonsoppgaven
+      // senere bygges av, slik at den som laster opp PDF-en ikke blir spurt om
+      // noe som allerede er bestemt.
+      request_full_text: {
+        Args: {
+          p_source_id: Uuid
+          p_drug_ids: readonly Uuid[]
+          p_outcome_concept_ids: readonly Uuid[]
+          p_population_ids?: readonly Uuid[]
+          p_retrieved_from?: string | null
+        }
+        Returns: unknown
+      }
+      // Antideps eget tekstuttrekk. Kalles av den tekniske arbeideren
+      // (`npm run ops:full-text`), aldri av nettleseren: oppskriften må kjøres
+      // der `pdftotext` faktisk finnes.
+      claim_full_text_extraction: {
+        Args: {
+          p_lease_seconds?: number
+        }
+        Returns: unknown
+      }
+      complete_full_text_extraction: {
+        Args: {
+          p_handle: Uuid
+          p_extracted_text: string
+          p_text_extraction_tool_version: string
+        }
+        Returns: unknown
+      }
+      fail_full_text_extraction: {
+        Args: {
+          p_handle: Uuid
+          p_stage: string
+        }
+        Returns: unknown
+      }
+      // Den tekniske problemoversikten. Diagnosen er ikke med i noen av dem, og
+      // kan ikke leses gjennom noe api-objekt.
+      technical_problem_board: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      technical_problem_summary: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      // Selvmeldingen fra en brukerflate. To lukkede vokabularer og ingen
+      // tekst: databasen skriver setningen selv.
+      report_technical_problem: {
+        Args: {
+          p_area: string
+          p_kind: string
+        }
+        Returns: unknown
+      }
       // `p_seen_candidate_digest` er avtrykket flaten faktisk viste, sendt
       // tilbake uendret. Databasen stoler ikke på det — den krever at det er
       // kandidatens eget, og at kandidaten fortsatt er den gjeldende.

@@ -1,12 +1,11 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './App'
-import type { AgentWorkGateway } from './agent-work-gateway'
+import { GatewayFailure } from './gateway'
 import type { CandidateGateway } from './candidate-gateway'
 import type { PublicationGateway } from './publication-gateway'
-import { parseAgentWorkQueue } from '../agents/agent-task'
 import { parseCandidateView } from '../lib/candidate-view'
 import { parsePublicationOutcome } from '../lib/published-claim'
 import {
@@ -289,17 +288,48 @@ describe('klinikerflaten', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('viser en avvisning fra databasen ordrett framfor en tom side', async () => {
+  // Tidligere sto databasens egen melding her ordrett. Issue #99 punkt 8 gjør
+  // om på det: setningen er nå Antideps egen, valgt av hva slags avvisning det
+  // var, og den rå årsaken går til observability (`gateway.ts`). En tom side er
+  // fortsatt ikke et alternativ — den som står her, skal få vite hva som skjer.
+  it('viser en stabil menneskelig setning framfor databasens egen tekst', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     render(
       <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
         <AppLayout
           gateway={port({
-            read: () => Promise.reject(new Error('Kandidatinnhold er tilgangsbegrenset.')),
+            read: () =>
+              Promise.reject(
+                new GatewayFailure(
+                  'Du har ikke mandat til denne handlingen i Antidep.',
+                  'not_authorized',
+                  'clinical_content',
+                ),
+              ),
           })}
         />
       </MemoryRouter>,
     )
-    expect(await screen.findByText(/tilgangsbegrenset/)).toBeVisible()
+    expect(await screen.findByText(/ikke mandat til denne handlingen/)).toBeVisible()
+    spy.mockRestore()
+  })
+
+  it('viser aldri en rå feiltekst, heller ikke fra en uventet feil', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    render(
+      <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
+        <AppLayout
+          gateway={port({
+            read: () => Promise.reject(new Error('permission denied for function api.candidate')),
+          })}
+        />
+      </MemoryRouter>,
+    )
+    expect(
+      await screen.findByText('Antidep svarte ikke akkurat nå. Prøv igjen om litt.'),
+    ).toBeVisible()
+    expect(screen.queryByText(/permission denied/)).not.toBeInTheDocument()
+    spy.mockRestore()
   })
 })
 
@@ -332,14 +362,21 @@ describe('publiseringen', () => {
     })
   })
 
-  it('viser databasens avvisning ordrett når mandatet mangler', async () => {
+  // Handlingen den som står her skal gjøre, står fortsatt i setningen — den
+  // kommer bare fra Antidep og ikke fra databasen (issue #99, punkt 8).
+  it('sier at publisering krever mandat, uten å gjenta databasens ordlyd', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     render(
       <MemoryRouter initialEntries={[`/kandidater/${CANDIDATE}`]}>
         <AppLayout
           gateway={port({
             publish: () =>
               Promise.reject(
-                new Error('Brukeren har ikke gyldig publisher-rolle for dette innholdsområdet.'),
+                new GatewayFailure(
+                  'Publisering krever publisher-mandat, og du har det ikke i Antidep.',
+                  'not_authorized',
+                  'clinical_content',
+                ),
               ),
           })}
         />
@@ -352,7 +389,9 @@ describe('publiseringen', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Publiser kandidaten' }))
 
-    expect(await screen.findByText(/ikke gyldig publisher-rolle/)).toBeVisible()
+    expect(await screen.findByText(/krever publisher-mandat/)).toBeVisible()
+    expect(screen.queryByText(/workflow\.user_roles/)).not.toBeInTheDocument()
+    spy.mockRestore()
   })
 })
 
@@ -494,39 +533,23 @@ describe('den publiserte klinikerflaten', () => {
     })
   })
 
-  // Agentarbeidet er en egen flate med et eget mandat, og forsiden skal peke
-  // dit: uten lenken finnes siden bare for den som kjenner adressen.
-  it('viser agentarbeidet på sin egen adresse, og lenker dit fra forsiden', async () => {
-    const agentWork: AgentWorkGateway = {
-      listQueue: () => Promise.resolve(parseAgentWorkQueue([])),
-      assignRoleModel: () => Promise.reject(new Error('ingen oppgave')),
-      readTask: () => Promise.reject(new Error('ingen oppgave')),
-      importAnswer: () => Promise.reject(new Error('ingen oppgave')),
-      listRunners: () => Promise.resolve([]),
-      registerRunner: () => Promise.reject(new Error('ingen oppgave')),
-      issuePairingCode: () => Promise.reject(new Error('ingen oppgave')),
-      revokeRunner: () => Promise.reject(new Error('ingen oppgave')),
-    }
-
+  // Forsiden skal peke til de flatene som finnes: uten lenken finnes en side
+  // bare for den som kjenner adressen. Den tekniske agentarbeidsflaten er
+  // avviklet, og lenken dit skal ikke komme tilbake (issue #99).
+  it('lenker fra forsiden til arbeidsoversikten og fulltekstinnboksen, og ikke til agentarbeid', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <AppLayout />
       </MemoryRouter>,
     )
-    expect(screen.getByRole('link', { name: 'Agentarbeid' })).toHaveAttribute(
+    // Oppslaget går gjennom hovedinnholdet og ikke gjennom hele siden, fordi
+    // navigasjonen har de samme lenkene: et treff der ville prøvd menyen.
+    const innhold = within(screen.getByRole('main'))
+    expect(innhold.getByRole('link', { name: 'Arbeidsoversikt' })).toHaveAttribute(
       'href',
-      '/agentarbeid',
+      '/arbeid',
     )
-
-    cleanup()
-    render(
-      <MemoryRouter initialEntries={['/agentarbeid']}>
-        <AppLayout agentWork={agentWork} />
-      </MemoryRouter>,
-    )
-    expect(
-      await screen.findByRole('heading', { level: 1, name: 'Oppgaver til KI-agentene' }),
-    ).toBeInTheDocument()
-    expect(await screen.findByText('Ingen agentoppgaver venter nå.')).toBeInTheDocument()
+    expect(innhold.getByRole('link', { name: 'Fulltekst' })).toHaveAttribute('href', '/fulltekst')
+    expect(screen.queryByRole('link', { name: 'Agentarbeid' })).not.toBeInTheDocument()
   })
 })

@@ -27,6 +27,7 @@ import { rollbackTargets, type PublishedClaimView } from '../lib/published-claim
 import { PUBLICATION_ACTION_LABELS, label } from '../lib/vocabulary-view'
 import type { PublicationGateway } from './publication-gateway'
 import { SealedContentView } from './SealedContentView'
+import { pageMessage } from './gateway'
 
 export interface PublishedClaimPageProps {
   readonly claimId: string
@@ -58,7 +59,7 @@ export function PublishedClaimPage({
       .catch((cause: unknown) => {
         if (!cancelled) {
           setView(null)
-          setError(cause instanceof Error ? cause.message : String(cause))
+          setError(pageMessage(cause))
         }
       })
     return () => {
@@ -78,7 +79,7 @@ export function PublishedClaimPage({
         load()
       })
       .catch((cause: unknown) => {
-        setActionError(cause instanceof Error ? cause.message : String(cause))
+        setActionError(pageMessage(cause))
       })
       .finally(() => {
         setBusy(false)
