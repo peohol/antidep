@@ -354,11 +354,23 @@ som mangler.
 
 ## Drift
 
-MCP-appen deployes med resten av Antidep og trenger to miljøvariabler:
-`ANTIDEP_SUPABASE_URL` og `ANTIDEP_SUPABASE_PUBLISHABLE_KEY`. Ingen av dem er
-hemmelige, og appen avviser en nøkkel som gir mer enn en klient skal ha.
+MCP-appen deployes med resten av Antidep og trenger to verdier: adressen til
+Data API-et og den publishable nøkkelen. Ingen av dem er hemmelige, og appen
+avviser en nøkkel som gir mer enn en klient skal ha.
+
+I en utrulling som allerede kjører nettklienten, er begge to satt fra før under
+navnene `VITE_SUPABASE_URL` og `VITE_SUPABASE_PUBLISHABLE_KEY`, og MCP-appen
+leser dem derfra. Da kreves ingen ny konfigurasjon for å komme i gang. Skal
+MCP-appen peke et annet sted enn nettklienten, settes `ANTIDEP_SUPABASE_URL` og
+`ANTIDEP_SUPABASE_PUBLISHABLE_KEY` — de vinner alltid over de felles.
+
 `ANTIDEP_MCP_BASE_URL` er valgfri og settes bare dersom appen står bak noe som
 gjør at den ikke kjenner sin egen adresse.
+
+Oppdagelsesdokumentene under `/.well-known/` svarer uansett om databaseoppsettet
+mangler. Det er med vilje: det er der en MCP-klient leser hvor den skal
+autentisere seg, og en utrulling som svarte «500» på alt, ville ikke fortalt
+noen hvorfor.
 
 `ANTIDEP_MCP_ALLOWED_ORIGINS` er også valgfri, og er tom i det vanlige
 oppsettet. Tre ting slipper gjennom opprinnelseskontrollen uten at noen setter
