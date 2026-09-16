@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(148);
+select plan(149);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1497,21 +1497,22 @@ select is(
   'reserverollen kan logge inn, og er ellers hverken superbruker, oppretter noe, går utenom RLS eller arver noe'
 );
 
--- Uttømmende over alle de kanoniske schemaene, framfor en håndholdt liste: en
--- ny tabell skal ikke kunne bli skrivbar for reserverollen ved at noen glemmer
--- å føre den opp her.
+-- Vaktpostene under leser ACL-en framfor den effektive rettigheten, og det er
+-- et bevisst valg: has_table_privilege tar med alt som er gitt til PUBLIC, så
+-- en uttømmende påstand på den ville blitt rød av en urelatert grant et helt
+-- annet sted. Her skal det stå hva *migrasjonen* ga denne rollen — uttømmende
+-- over alle de kanoniske schemaene, slik at en ny tabell ikke kan bli skrivbar
+-- for den ved at noen glemmer å føre den opp.
 select is_empty(
   $$
-    select c.relname, p.privilege
+    select n.nspname || '.' || c.relname || ':' || a.privilege_type
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace
-    cross join (values ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'))
-           as p(privilege)
+    cross join lateral aclexplode(coalesce(c.relacl, array[]::aclitem[])) a
     where n.nspname in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
-      and c.relkind in ('r', 'p', 'v', 'm')
-      and has_table_privilege('antidep_diagnostics', c.oid, p.privilege)
+      and a.grantee = 'antidep_diagnostics'::regrole::oid
   $$,
-  'reserverollen har ingen tabellrettighet av noe slag i noen av de kanoniske schemaene'
+  'migrasjonen ga reserverollen ingen tabellrettighet i noen av de kanoniske schemaene'
 );
 
 select set_eq(
@@ -1519,28 +1520,61 @@ select set_eq(
     select p.oid::regprocedure::text
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
+    cross join lateral aclexplode(coalesce(p.proacl, array[]::aclitem[])) a
     where n.nspname in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
-      and has_function_privilege('antidep_diagnostics', p.oid, 'execute')
+      and a.grantee = 'antidep_diagnostics'::regrole::oid
+      and a.privilege_type = 'EXECUTE'
   $$,
   $$
     values ('workflow.ingest_client_diagnostic(text,uuid,text,text,text,text,integer,text,text)'),
            ('workflow.ingest_public_technical_problem(text,text,text,text,text,integer,text)')
   $$,
-  'reserverollen kan kjøre nøyaktig de to append-funksjonene, og ingen andre'
+  'reserverollen er gitt nøyaktig de to append-funksjonene, og ingen andre'
 );
 
+select set_eq(
+  $$
+    select n.nspname || ':' || a.privilege_type
+    from pg_namespace n
+    cross join lateral aclexplode(coalesce(n.nspacl, array[]::aclitem[])) a
+    where n.nspname in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
+      and a.grantee = 'antidep_diagnostics'::regrole::oid
+  $$,
+  $$values ('workflow:USAGE')$$,
+  'reserverollen er gitt usage på workflow alene, og create på ingenting'
+);
+
+-- Og den effektive kontrollen der den betyr mest: rollen skal ikke kunne røre
+-- de tre tabellene denne veien skriver til, uansett hvor rettigheten måtte
+-- kommet fra.
 select is_empty(
   $$
-    select s.schema_name, p.privilege
-    from (values ('catalog'), ('knowledge'), ('provenance'), ('audit'), ('api')) as s(schema_name)
-    cross join (values ('usage'), ('create')) as p(privilege)
-    where has_schema_privilege('antidep_diagnostics', s.schema_name, p.privilege)
+    select t.name, p.privilege
+    from (values ('workflow.client_diagnostics'),
+                 ('workflow.technical_incidents'),
+                 ('workflow.technical_incident_events')) as t(name)
+    cross join (values ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE')) as p(privilege)
+    where has_table_privilege('antidep_diagnostics', t.name, p.privilege)
   $$,
-  'reserverollen ser bare workflow, og kan ikke opprette noe der heller'
+  'og kan hverken lese eller skrive de tre tabellene den skriver til, direkte'
 );
-select ok(
-  not has_schema_privilege('antidep_diagnostics', 'workflow', 'create'),
-  'reserverollen kan ikke opprette objekter i workflow'
+
+-- Ingen SECURITY DEFINER-funksjon utenom de to skal være nåbar for rollen. Det
+-- er den eneste klassen som kan gjøre noe på egen hånd; en vanlig funksjon
+-- kjører med rollens egne rettigheter, og de er ingen.
+select is_empty(
+  $$
+    select p.oid::regprocedure::text
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
+      and p.prosecdef
+      and has_function_privilege('antidep_diagnostics', p.oid, 'execute')
+      and p.oid::regprocedure::text not in (
+        'workflow.ingest_client_diagnostic(text,uuid,text,text,text,text,integer,text,text)',
+        'workflow.ingest_public_technical_problem(text,text,text,text,text,integer,text)')
+  $$,
+  'og kan ikke kjøre noen annen SECURITY DEFINER-funksjon, uansett hvor granten kom fra'
 );
 
 -- --- Raden reserven skriver ------------------------------------------------
@@ -1564,10 +1598,11 @@ select is(
   'og stacken er i behold, linjeskift og alt'
 );
 select is(
-  (select reported_by_user_id::text || '|' || reporter_ip_hash || '|' || reporter_key
+  (select coalesce(reported_by_user_id::text, '(ingen)') || '|' || reporter_ip_hash
+          || '|' || reporter_key
    from workflow.client_diagnostics
    where client_event_id = '7f000000-0000-4000-8000-00000000d001'),
-  '|' || repeat('a', 64) || '|ip:' || repeat('a', 64),
+  '(ingen)|' || repeat('a', 64) || '|ip:' || repeat('a', 64),
   'raden er merket som serverens observasjon, og nøkkelen er utledet av den'
 );
 
@@ -1582,7 +1617,7 @@ select lives_ok(
   $$,
   'reserveveien tar imot en observasjon med en tokenformet streng'
 );
-select unlike(
+select unalike(
   (select detail from workflow.client_diagnostics
    where client_event_id = '7f000000-0000-4000-8000-00000000d002'),
   '%hemmelig.signatur%',
