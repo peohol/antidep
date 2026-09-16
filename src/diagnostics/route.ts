@@ -406,18 +406,10 @@ export async function serveDiagnostics(
     return await servePublic(envelope, ipHash, journal, store)
   }
 
-  // De to grensene som står *før* både kjøreloggen og autentiseringstjenesten.
-  //
-  // En ukontrollert avsender når aldri databasen, så databasekvotene binder den
-  // ikke. Uten disse kunne den fylle den private kjøreloggen med linjer og
-  // autentiseringstjenesten med rundturer, og betale ingenting for det.
-  //
-  // Svaret skiller seg ikke ut. Ruten er ikke et sted å lese noe ut av.
-  if (ipHash === null || !withinAttemptBudget(ipHash)) {
-    return nothing()
-  }
-  if (!TOKEN_SHAPE.test(envelope.accessToken ?? '')) {
-    // Ikke en token i det hele tatt. Et Auth-kall kunne uansett ikke lykkes.
+  // Formen til en token. Et kall som uansett ikke kan lykkes, skal ikke koste
+  // en rundtur. Svaret skiller seg ikke ut — ruten er ikke et sted å lese noe
+  // ut av.
+  if (ipHash === null || !TOKEN_SHAPE.test(envelope.accessToken ?? '')) {
     return nothing()
   }
 
@@ -426,19 +418,16 @@ export async function serveDiagnostics(
   // ikke kontrollerer.
   const detail = scrubDetail(envelope.detail).slice(0, MAX_DETAIL_CHARS)
 
-  // Maskinidentifikatorene, og ikke ett tegn av teksten. Linjen skrives ikke
-  // her, men først når kontrollen har svart: en avsender som ikke er den den
-  // utgir seg for, skal ikke etterlate seg noe i det hele tatt.
-  const unverified: JournalLine = {
+  const line: JournalLine = {
     event: envelope.eventId,
-    reporter: 'ukjent',
+    reporter: 'innlogget',
     area: envelope.area,
     kind: envelope.kind,
     operation: envelope.operation,
     code: envelope.code,
     httpStatus: envelope.httpStatus,
     transport: envelope.transport,
-    detail: NO_UNVERIFIED_TEXT,
+    detail,
   }
 
   let target: ForwardTarget
@@ -452,37 +441,23 @@ export async function serveDiagnostics(
       accessToken: envelope.accessToken ?? '',
     }
   } catch {
-    // Uten adresse finnes ingen autentiseringstjeneste heller, og da kan ingen
-    // bekrefte avsenderen. Teksten blir liggende i nettleserens utboks.
-    journal({ ...unverified, bareILoggen: true })
+    // Uten adresse finnes verken Data API eller autentiseringstjeneste, og da
+    // kan ingen bekrefte avsenderen. Ingen tekst skrives, og nettleseren
+    // beholder årsaken.
+    journal({ ...line, reporter: 'ukjent', detail: NO_UNVERIFIED_TEXT, bareILoggen: true })
     return new Response(null, { status: 503 })
   }
 
-  // En påstand om å være innlogget er ikke en innlogging. Kontrollen går til
-  // autentiseringstjenesten, som er en annen tjeneste enn Data API-et.
-  const verdict = await verify(target)
-  if (verdict === 'rejected') {
-    // Et endelig svar: avsenderen er ikke den den utgir seg for. Ingenting
-    // skrives, og svaret skiller seg ikke ut — ruten er ikke et sted å prøve
-    // seg fram fra utsiden.
-    return nothing()
-  }
-  if (verdict !== 'verified') {
-    // Ingen kunne bekrefte avsenderen. Da skal ingen tekst skrives ned, og
-    // nettleseren beholder årsaken til den kan bekreftes senere.
-    journal({ ...unverified, bareILoggen: true })
-    return new Response(null, { status: 503 })
-  }
-
-  // Herfra er avsenderen kontrollert, og teksten kan skrives ned. Linjen går
-  // før kallet videre: blir prosessen revet ned der, er årsaken likevel skrevet
-  // ned et sted som overlever at fanen lukkes.
-  const line: JournalLine = { ...unverified, reporter: 'innlogget', detail }
-  journal(line)
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  // Data API-et først, og det *er* kontrollen av avsenderen.
+  //
+  // `api.record_client_diagnostic(...)` krever `auth.uid()` selv. Kom kallet
+  // gjennom, er avsenderen bekreftet av den som faktisk avgjør — ikke av en
+  // påstand, og uten en eneste ekstra rundtur. En oppdiktet token får 42501,
+  // som er et endelig svar og ikke utilgjengelighet.
+  let cause = { delivered: false, retry: true }
+  for (let i = 0; i < 2; i += 1) {
     try {
-      const outcome = await forward(target, {
+      cause = await forward(target, {
         p_event_id: envelope.eventId,
         p_area: envelope.area,
         p_kind: envelope.kind,
@@ -492,19 +467,50 @@ export async function serveDiagnostics(
         p_transport: envelope.transport,
         p_detail: detail,
       })
-      if (outcome.delivered || !outcome.retry) {
-        // Levert, eller avvist av databasen. En avvisning er dens avgjørelse,
-        // og et nytt forsøk ville gitt det samme svaret.
-        return nothing()
-      }
     } catch {
       // Et brudd i nettet mellom ruten og Data API-et. Verdt ett forsøk til.
+      cause = { delivered: false, retry: true }
+    }
+    if (cause.delivered || !cause.retry) {
+      break
     }
   }
 
-  // Data API-et tok ikke imot. Dette er øyeblikket reserven finnes for: den
-  // samme raden, i den samme private tabellen, uten PostgREST i veien.
-  if (store !== null && ipHash !== null) {
+  if (cause.delivered) {
+    journal(line)
+    return nothing()
+  }
+  if (!cause.retry) {
+    // Databasen svarte, og svaret var nei. Ingenting skrives: en avsender som
+    // ikke er den den utgir seg for, skal ikke etterlate seg noe.
+    return nothing()
+  }
+
+  // Data API-et svarte ikke. Dette er den ene grenen der reserven finnes — og
+  // den eneste der autentiseringstjenesten må spørres, siden databasen ikke
+  // fikk sagt noe om hvem dette er. En utenforstående kan ikke utløse den:
+  // den krever at Data API-et faktisk er nede.
+  if (!withinAttemptBudget(ipHash)) {
+    return nothing()
+  }
+
+  const verdict = await verify(target)
+  if (verdict === 'rejected') {
+    return nothing()
+  }
+  if (verdict !== 'verified') {
+    // Ingen kunne bekrefte avsenderen. Da skal ingen tekst skrives ned, og
+    // nettleseren beholder årsaken til den kan bekreftes senere.
+    journal({ ...line, reporter: 'ukjent', detail: NO_UNVERIFIED_TEXT, bareILoggen: true })
+    return new Response(null, { status: 503 })
+  }
+
+  // Avsenderen er kontrollert. Linjen går før kallet videre: blir prosessen
+  // revet ned der, er årsaken likevel skrevet ned et sted som overlever at
+  // fanen lukkes.
+  journal(line)
+
+  if (store !== null) {
     const kept = await store.keep({
       reporterIpHash: ipHash,
       eventId: envelope.eventId,
@@ -576,8 +582,9 @@ async function servePublic(
   }
   journal(line)
 
-  if (store !== null) {
-    await store.keepPublicProblem({
+  const meldt =
+    store !== null &&
+    (await store.keepPublicProblem({
       reporterIpHash: ipHash,
       area: envelope.area,
       kind: envelope.kind,
@@ -585,10 +592,16 @@ async function servePublic(
       code: envelope.code,
       httpStatus: envelope.httpStatus,
       transport: envelope.transport,
-    })
+    }))
+
+  if (!meldt) {
+    // Ikke meldt. Et 204 her ville fått nettleseren til å slette observasjonen
+    // fordi den trodde den var kommet fram — den samme stille tapsmåten
+    // utboksen finnes for å fjerne, bare på den offentlige flaten. Veien er
+    // idempotent, så et nytt forsøk koster ingenting.
+    journal({ ...line, bareILoggen: true })
+    return new Response(null, { status: 503 })
   }
 
-  // Ferdig behandlet uansett utfall: en melding uten tekst finnes det ikke noe
-  // eksemplar av å berge, og nettleseren skal ikke prøve igjen i det uendelige.
   return nothing()
 }

@@ -273,7 +273,7 @@ select is_empty(
         -- maskinidentifikatorer og ingen tekst. Ingen av dem leser diagnosen.
         'api.technical_problem_board()',
         'api.technical_problem_summary()',
-        'api.report_technical_problem(text,text,text,text,integer,text)',
+        'api.report_technical_problem(text,text,text,text,integer,text,uuid)',
         'api.record_client_diagnostic(uuid,text,text,text,text,integer,text,text)'
       )
   $$,

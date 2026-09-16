@@ -269,7 +269,11 @@ describe('ruten', () => {
 // den finnes selv om prosessen blir revet ned i kallet videre.
 // ============================================================================
 describe('serverloggen', () => {
-  it('skriver observasjonen før den prøver databasen', async () => {
+  // Linjen skrives når databasen har bekreftet at avsenderen er ekte, og ikke
+  // før. En tekst fra en ukontrollert avsender skal ikke stå i kjøreloggen — og
+  // skulle prosessen dø før bekreftelsen, holder nettleseren fortsatt på
+  // observasjonen, for den har ikke fått noe svar.
+  it('skriver observasjonen når databasen har tatt imot den', async () => {
     const logg = fangLoggen()
     let skrevetFørKallet = 0
     const forward: ForwardDiagnostic = () => {
@@ -278,15 +282,15 @@ describe('serverloggen', () => {
     }
     await svar(post(KONVOLUTT), MILJØ, forward, logg.journal)
 
-    // Linjen skrives etter at kontrollen har sagt ja, og før databasen ses.
-    expect(skrevetFørKallet).toBe(1)
-    expect(logg.linjer.at(-1)).toMatchObject({
+    expect(skrevetFørKallet).toBe(0)
+    expect(logg.linjer).toHaveLength(1)
+    expect(logg.linjer[0]).toMatchObject({
       event: '4a1d0f2e-9c33-4b71-8f5a-2b6c7d8e9f01',
       reporter: 'innlogget',
       area: 'work_queue',
       operation: 'public_work_board',
     })
-    expect(logg.linjer.at(-1)?.detail).toContain('Failed to fetch')
+    expect(logg.linjer[0]?.detail).toContain('Failed to fetch')
   })
 
   // Tokenen er avsenderens legitimasjon og har ingenting i en logg å gjøre.
@@ -638,18 +642,50 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
   })
 
   // En avsender som ikke er den den utgir seg for, skal ikke etterlate seg noe
-  // i det hele tatt — heller ikke en linje som sier at den prøvde.
-  it('skriver ingenting når kontrollen sier nei', async () => {
+  // i det hele tatt — heller ikke en linje som sier at den prøvde. Og den som
+  // avviser, er databasen selv: `auth.uid()` er null, og svaret er 42501.
+  it('skriver ingenting når databasen sier nei', async () => {
     const logg = fangLoggen()
     await serveDiagnostics(
       post(PÅFØRT),
       MILJØ,
-      () => Promise.resolve({ delivered: true, retry: false }),
+      () => Promise.resolve({ delivered: false, retry: false }),
       logg.journal,
       null,
-      () => Promise.resolve('rejected'),
+      () => {
+        throw new Error('autentiseringstjenesten skal ikke spørres når databasen svarte')
+      },
     )
     expect(logg.linjer).toHaveLength(0)
+  })
+
+  // Og det som gjør hele flaten billig: så lenge Data API-et svarer, spørres
+  // autentiseringstjenesten aldri — hverken på et ja eller et nei. En
+  // utenforstående kan ikke utløse den grenen, for den krever at Data API-et
+  // faktisk er nede.
+  it('spør ikke autentiseringstjenesten når Data API-et svarer', async () => {
+    let spurt = 0
+    const tell: VerifyReporter = () => {
+      spurt += 1
+      return Promise.resolve('verified')
+    }
+    await serveDiagnostics(
+      post(KONVOLUTT),
+      MILJØ,
+      () => Promise.resolve({ delivered: true, retry: false }),
+      () => undefined,
+      null,
+      tell,
+    )
+    await serveDiagnostics(
+      post(PÅFØRT),
+      MILJØ,
+      () => Promise.resolve({ delivered: false, retry: false }),
+      () => undefined,
+      null,
+      tell,
+    )
+    expect(spurt).toBe(0)
   })
 
   // Men når ingen *kunne* svare, er det en opplysning verdt å ha: da er det
@@ -712,9 +748,9 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
       await serveDiagnostics(
         post(PÅFØRT),
         MILJØ,
-        () => {
-          throw new Error('skal ikke videresendes')
-        },
+        // Data API-et er nede. Det er den eneste grenen der
+        // autentiseringstjenesten spørres i det hele tatt.
+        () => Promise.resolve({ delivered: false, retry: true }),
         () => undefined,
         null,
         tell,
@@ -731,9 +767,7 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
       await serveDiagnostics(
         post(PÅFØRT),
         MILJØ,
-        () => {
-          throw new Error('skal ikke videresendes')
-        },
+        () => Promise.resolve({ delivered: false, retry: true }),
         () => undefined,
         null,
         () => Promise.resolve('rejected'),

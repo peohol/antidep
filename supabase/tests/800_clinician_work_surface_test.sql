@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(161);
+select plan(167);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -64,7 +64,7 @@ select is_empty(
                  ('api.resume_blocked_full_text_extractions()'),
                  ('api.technical_problem_board()'),
                  ('api.technical_problem_summary()'),
-                 ('api.report_technical_problem(text,text,text,text,integer,text)'),
+                 ('api.report_technical_problem(text,text,text,text,integer,text,uuid)'),
                  ('api.record_client_diagnostic(uuid,text,text,text,text,integer,text,text)')) as f(name)
     where has_function_privilege('anon', f.name, 'EXECUTE')
        or has_function_privilege('public', f.name, 'EXECUTE')
@@ -1838,6 +1838,75 @@ select throws_ok(
   $$,
   '22023', 'Ukjent statuskode.',
   'og en status som ikke er en HTTP-status'
+);
+
+-- --- Den samme svikten, meldt to veier, er én svikt ------------------------
+--
+-- Meldingen om problemet går over Data API-et, og den rå årsaken går sin egen
+-- vei. Det er et helt realistisk kappløp: meldingen kom fram, mens årsaken møtte
+-- en forbigående PostgREST-feil og måtte over reserven — og reserven melder
+-- problemet selv, fordi den ikke kan vite at meldingen kom fram. Uten et felles
+-- nummer ville det gitt to «seen» for én observasjon, og en teller ett for høyt.
+-- Nummeret flaten allerede gir hver observasjon, er det som binder de to.
+create temporary table kapplop_800 (merke text primary key, tall integer);
+insert into kapplop_800
+select 'foer', ti.occurrence_count
+from workflow.technical_incidents ti
+where ti.area = 'work_queue' and ti.signature = 'client:public_work_board';
+
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
+set local role authenticated;
+do $$ begin
+  perform api.report_technical_problem(
+    'work_queue', 'unavailable', 'public_work_board', 'PGRST002', 503, 'http',
+    '7f000000-0000-4000-8000-00000000f001');
+end $$;
+reset role;
+
+select is(
+  (select ti.occurrence_count from workflow.technical_incidents ti
+   where ti.area = 'work_queue' and ti.signature = 'client:public_work_board'),
+  (select tall + 1 from kapplop_800 where merke = 'foer'),
+  'meldingen over Data API-et teller observasjonen én gang'
+);
+select is(
+  (select count(*)::int from workflow.technical_incident_events e
+   where e.client_event_id = '7f000000-0000-4000-8000-00000000f001'),
+  1,
+  'og sporet bærer flatens eget nummer på den'
+);
+
+-- Og så den samme observasjonen inn den andre veien, slik reserven ville
+-- gjort det når PostgREST ikke svarte på årsakens kall.
+select lives_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      repeat('c', 64), '7f000000-0000-4000-8000-00000000f001', 'work_queue', 'unavailable',
+      'public_work_board', 'PGRST002', 503, 'http', 'TypeError: Failed to fetch')
+  $$,
+  'reserveveien tar imot den samme observasjonen'
+);
+select is(
+  (select ti.occurrence_count from workflow.technical_incidents ti
+   where ti.area = 'work_queue' and ti.signature = 'client:public_work_board'),
+  (select tall + 1 from kapplop_800 where merke = 'foer'),
+  'men telleren står stille: den samme svikten er ikke to svikt'
+);
+select is(
+  (select count(*)::int from workflow.technical_incident_events e
+   where e.client_event_id = '7f000000-0000-4000-8000-00000000f001'),
+  1,
+  'og sporet har fortsatt nøyaktig én observasjon med det nummeret'
+);
+
+-- Men årsaken skal like fullt være berget. Det er hele grunnen til at reserven
+-- finnes, og idempotensen på sporet skal ikke koste teksten.
+select is(
+  (select count(*)::int from workflow.client_diagnostics
+   where client_event_id = '7f000000-0000-4000-8000-00000000f001'),
+  1,
+  'og den rå årsaken ble lagret, selv om problemet allerede var talt'
 );
 
 -- --- Grensen som gjelder om legitimasjonen lekker -------------------------

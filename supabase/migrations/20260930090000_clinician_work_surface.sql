@@ -374,6 +374,14 @@ create table workflow.technical_incident_events (
   -- telle ville den anonyme veien kunnet skrive append-only rader i det
   -- uendelige, og en append-only tabell er nettopp den som ikke kan ryddes.
   reporter_key text,
+  -- Flatens eget nummer på observasjonen, når den kom fra en brukerflate.
+  --
+  -- Den samme svikten meldes to steder — problemet og den rå årsaken — og de
+  -- to har hver sin vei fram. Uten et felles nummer kunne den ene veien telle
+  -- en observasjon den andre allerede hadde talt, og én svikt ville blitt to.
+  -- Med nummeret er tellingen idempotent, og rekkefølgen mellom veiene spiller
+  -- ingen rolle.
+  client_event_id uuid,
   occurred_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
 
@@ -387,6 +395,8 @@ comment on table workflow.technical_incident_events is
   'Append-only spor over hver overgang på et teknisk problem (DATABASE_ARCHITECTURE.md §33). Selve problemet er tilstand og endres; overgangene er historikk og overskrives ikke. Uten sporet ville «har dette kommet tilbake» vært ubesvarlig så snart raden var oppdatert. Hver observasjon bærer sin egen diagnose, slik at rekken av dem er lesbar for en teknisk agent lenge etter at tilstandsraden er skrevet over.';
 comment on column workflow.technical_incident_events.diagnosis is
   'Antideps egen setning om denne ene observasjonen, med de maskinidentifikatorene som fantes. Aldri en videreformidlet feiltekst. Null for overgangen resolved, som ikke er en observasjon av noe galt.';
+comment on column workflow.technical_incident_events.client_event_id is
+  'Flatens eget nummer på observasjonen, for de observasjonene som kom fra en brukerflate. Finnes fordi den samme svikten meldes to steder — problemet og den rå årsaken — med hver sin vei fram: uten et felles nummer kunne den ene veien telle en observasjon den andre allerede hadde talt. Null for alt databasen selv observerte.';
 comment on column workflow.technical_incident_events.reporter_key is
   'Avsenderen, bare for observasjoner som kom inn gjennom Antideps egen serverrute: «offentlig:» for en uinnlogget besøkende, «ip:» for en innlogget hvis melding ikke nådde fram over Data API-et — begge etterfulgt av en SHA-256 av ip-adressen ruten observerte. Adressen selv lagres aldri, og verdien kan ikke oppgis av en kaller. Finnes utelukkende for at mengdegrensen i workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) skal kunne telles per avsender. Null for alt databasen selv observerte.';
 
@@ -400,6 +410,12 @@ create index technical_incident_events_incident_idx
 create index technical_incident_events_reporter_idx
   on workflow.technical_incident_events (reporter_key, occurred_at desc)
   where reporter_key is not null;
+
+-- Den samme observasjonen telles én gang. Delvis, fordi kolonnen er null for
+-- alt databasen selv observerte — og de skal kunne være så mange de vil.
+create unique index technical_incident_events_client_event_key
+  on workflow.technical_incident_events (client_event_id)
+  where client_event_id is not null;
 
 create trigger technical_incident_events_set_created_at
   before insert on workflow.technical_incident_events
@@ -455,7 +471,8 @@ create function workflow.record_technical_incident(
   p_signature text,
   p_diagnosis text,
   p_self_reported boolean default false,
-  p_reporter_key text default null
+  p_reporter_key text default null,
+  p_client_event_id uuid default null
 )
   returns uuid
   language plpgsql
@@ -464,7 +481,27 @@ as $$
 declare
   v_row workflow.technical_incidents;
   v_transition workflow.technical_incident_transition;
+  v_already uuid;
 begin
+  -- Den samme observasjonen, meldt to veier, er én observasjon.
+  --
+  -- Problemet og den rå årsaken har hver sin vei fram, og reserveveien vet bare
+  -- at *årsakens* vei sviktet — ikke om meldingen kom fram. Uten dette ville et
+  -- kappløp der den ene lyktes og den andre ikke, gitt to «seen» og en teller
+  -- ett for høyt. Låsen gjør oppslaget og skrivingen til ett udelelig steg.
+  if p_client_event_id is not null then
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('antidep:incident-event:' || p_client_event_id::text, 0));
+
+    select e.technical_incident_id into v_already
+    from workflow.technical_incident_events e
+    where e.client_event_id = p_client_event_id;
+
+    if v_already is not null then
+      return v_already;
+    end if;
+  end if;
+
   select ti.* into v_row
   from workflow.technical_incidents ti
   where ti.area = p_area and ti.signature = p_signature
@@ -529,17 +566,17 @@ begin
   end if;
 
   insert into workflow.technical_incident_events
-    (technical_incident_id, transition, diagnosis, reporter_key)
-  values (v_row.id, v_transition, p_diagnosis, p_reporter_key);
+    (technical_incident_id, transition, diagnosis, reporter_key, client_event_id)
+  values (v_row.id, v_transition, p_diagnosis, p_reporter_key, p_client_event_id);
 
   return v_row.id;
 end;
 $$;
 
-comment on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean, text) is
-  'Registrerer at noe teknisk er galt, eller at det samme problemet er observert igjen. Idempotent på (område, signatur): det samme problemet blir én rad med en teller, og et problem som var løst, åpnes på nytt med sporet opened framfor seen. En selvmeldt episode hjerteslaget allerede har erklært over, avsluttes her — før den nye observasjonen gjenbruker raden — slik at lukkingen ikke henger på at en admin tilfeldigvis åpner oversikten, og slik at sporet får både resolved og en ny opened. En ny episode teller fra sin egen begynnelse: «oppsto» og antallet beskriver det som pågår nå, mens hele forløpet står i workflow.technical_incident_events, der avsenderen føres for de observasjonene som kom fra en uinnlogget besøkende. Diagnosen er Antideps egen setning og lagres privat — på tilstandsraden som den siste, og på sporet som denne ene observasjonen, slik at rekken av dem er lesbar senere. Kalles fra innsiden av en funksjon som allerede har kontrollert kalleren, og er derfor ikke SECURITY DEFINER.';
+comment on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean, text, uuid) is
+  'Registrerer at noe teknisk er galt, eller at det samme problemet er observert igjen. Idempotent på (område, signatur): det samme problemet blir én rad med en teller, og et problem som var løst, åpnes på nytt med sporet opened framfor seen. En selvmeldt episode hjerteslaget allerede har erklært over, avsluttes her — før den nye observasjonen gjenbruker raden — slik at lukkingen ikke henger på at en admin tilfeldigvis åpner oversikten, og slik at sporet får både resolved og en ny opened. En ny episode teller fra sin egen begynnelse: «oppsto» og antallet beskriver det som pågår nå, mens hele forløpet står i workflow.technical_incident_events, der avsenderen føres for de observasjonene som kom gjennom serverruten. Idempotent på flatens eget nummer på observasjonen: den samme svikten meldes to steder — problemet og den rå årsaken — med hver sin vei fram, og uten det ville den ene veien kunnet telle en observasjon den andre allerede hadde talt. Diagnosen er Antideps egen setning og lagres privat — på tilstandsraden som den siste, og på sporet som denne ene observasjonen, slik at rekken av dem er lesbar senere. Kalles fra innsiden av en funksjon som allerede har kontrollert kalleren, og er derfor ikke SECURITY DEFINER.';
 
-revoke execute on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean, text) from public;
+revoke execute on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean, text, uuid) from public;
 
 create function workflow.resolve_technical_incident(
   p_area workflow.technical_area,
@@ -2541,7 +2578,11 @@ create function api.report_technical_problem(
   p_operation text default null,
   p_code text default null,
   p_http_status integer default null,
-  p_transport text default null
+  p_transport text default null,
+  -- Flatens eget nummer på observasjonen. Den samme svikten meldes også som en
+  -- rå årsak, og de to har hver sin vei fram; nummeret er det som gjør at én
+  -- observasjon telles én gang uansett hvilken av dem som kom fram først.
+  p_event_id uuid default null
 )
   returns void
   language plpgsql
@@ -2648,15 +2689,17 @@ begin
            coalesce(p_code, '(ingen)'),
            coalesce(p_http_status::text, '(ingen)'),
            coalesce(v_transport, 'Transportformen ble ikke oppgitt.')),
-    true);
+    true,
+    null,
+    p_event_id);
 end;
 $$;
 
-comment on function api.report_technical_problem(text, text, text, text, integer, text) is
+comment on function api.report_technical_problem(text, text, text, text, integer, text, uuid) is
   'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom. Alle seks argumentene er maskinidentifikatorer og aldri tekst: området, svikttypen og transportformen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, koden må være en SQLSTATE eller en PostgREST-kode, og statusen må være en HTTP-status. Antidep skriver setningen selv. Den rå årsaken hører ikke hjemme her: den går sin egen vei, gjennom api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text), fordi den skal kunne nå fram selv når dette kallet ikke gjør det. Raden merkes self_reported og gjelder bare så lenge den fornyes (workflow.self_report_heartbeat()). En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
 
-revoke execute on function api.report_technical_problem(text, text, text, text, integer, text) from public;
-grant execute on function api.report_technical_problem(text, text, text, text, integer, text) to authenticated;
+revoke execute on function api.report_technical_problem(text, text, text, text, integer, text, uuid) from public;
+grant execute on function api.report_technical_problem(text, text, text, text, integer, text, uuid) to authenticated;
 
 -- ----------------------------------------------------------------------------
 -- Den rå årsaken, som sin egen skrivevei
@@ -2746,7 +2789,7 @@ begin
         and d.occurred_at > statement_timestamp() - interval '1 hour') >= 60
   then
     -- Over grensen droppes teksten i stillhet. Problemet telles fortsatt av
-    -- api.report_technical_problem(text, text, text, text, integer, text), og
+    -- api.report_technical_problem(text, text, text, text, integer, text, uuid), og
     -- det er riktig vei å tape på: en flate som svikter i en løkke, skal ikke
     -- kunne fylle tabellen.
     return;
@@ -3034,7 +3077,8 @@ begin
              coalesce(p_http_status::text, '(ingen)'),
              coalesce(workflow.describe_transport(p_transport), 'Transportformen ble ikke oppgitt.')),
       true,
-      v_key);
+      v_key,
+      p_event_id);
   else
     select ti.id into v_incident_id
     from workflow.technical_incidents ti

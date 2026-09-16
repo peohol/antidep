@@ -218,6 +218,16 @@ export type TransportShape =
 
 /** Én rå observasjon, slik den går til observability og aldri til en side. */
 export interface TechnicalDetail {
+  /**
+   * Nummeret på denne ene observasjonen, gitt her og delt av begge veiene ut.
+   *
+   * Den samme svikten meldes to steder — problemet på det tekniske sporet og
+   * den rå årsaken i den private lagringen — og de to har hver sin vei fram.
+   * Uten et felles nummer kunne den ene veien telle en observasjon den andre
+   * allerede hadde talt, og én svikt ville blitt til to på tellingen. Med det
+   * er tellingen idempotent, og rekkefølgen mellom veiene spiller ingen rolle.
+   */
+  readonly eventId: string
   readonly area: TechnicalArea
   readonly operation: string
   readonly kind: GatewayFailureKind
@@ -329,6 +339,7 @@ export function recordTechnicalDetail(
   httpStatus: number | null = null,
 ): TechnicalDetail | null {
   const entry: TechnicalDetail = {
+    eventId: newEventId(),
     area,
     operation,
     kind,
@@ -414,7 +425,8 @@ function fail<T>(
 /**
  * Melder fra til Antidep at ett kall ikke gikk gjennom.
  *
- * Seks maskinidentifikatorer og ingen tekst: databasen skriver setningen selv,
+ * Seks maskinidentifikatorer, nummeret på observasjonen og ingen tekst:
+ * databasen skriver setningen selv,
  * og kontrollerer hver av dem. En uinnlogget kaller blir avvist der, og det er
  * riktig — en melding som ikke kan tilskrives noen, skal ikke kunne få merket i
  * navigasjonen til å lyse.
@@ -436,6 +448,10 @@ function reportTechnicalProblem(client: AntidepClient, entry: TechnicalDetail): 
       p_code: MACHINE_CODE.test(entry.code ?? '') ? entry.code : null,
       p_http_status: entry.httpStatus,
       p_transport: entry.transport,
+      // Det samme nummeret som den rå årsaken bærer. Databasen teller denne
+      // observasjonen én gang uansett hvilken av de to veiene som kom fram
+      // først, og uansett om den andre kom fram i det hele tatt.
+      p_event_id: entry.eventId,
     }),
   ).then(
     () => undefined,
@@ -466,7 +482,7 @@ function recordRawCause(client: AntidepClient, entry: TechnicalDetail): void {
       const session = data.session ?? null
       const userId = session?.user.id ?? null
       remember({
-        eventId: newEventId(),
+        eventId: entry.eventId,
         userId,
         area: entry.area,
         kind: entry.kind,
