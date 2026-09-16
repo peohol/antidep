@@ -524,6 +524,15 @@ async function main(): Promise<void> {
     fabricated.text,
   )
 
+  // Leveringen leser oppgaven én gang til for de deterministiske kontrollene.
+  // Den lesningen skal føres under leveringen, ikke som et `get_agent_task`
+  // klienten aldri kalte — og her prøves nettopp sammensetningen, mot en ekte
+  // database: verktøyet, gatewayen og funksjonen.
+  const readsBefore = psql(
+    config,
+    `select count(*)::text from workflow.agent_runner_events where tool_name = 'get_agent_task'`,
+  )
+
   const submitted = await callTool(accessToken, 'submit_agent_answer', {
     task_handle: taskHandle,
     answer,
@@ -532,6 +541,15 @@ async function main(): Promise<void> {
     'svaret registreres gjennom Antideps egen kontrollerte skrivevei',
     !submitted.isError && submitted.structured['imported'] === true,
     submitted.text,
+  )
+
+  check(
+    'leveringen skriver ingen get_agent_task-rad for et kall ingen klient gjorde',
+    psql(
+      config,
+      `select count(*)::text from workflow.agent_runner_events where tool_name = 'get_agent_task'`,
+    ) === readsBefore,
+    `før: ${readsBefore}`,
   )
 
   const again = await callTool(accessToken, 'submit_agent_answer', {
