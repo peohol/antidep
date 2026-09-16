@@ -77,6 +77,18 @@ const altNede = {
   ANTIDEP_DIAGNOSTICS_DATABASE_URL: reserveUrl,
 }
 
+/**
+ * En avsender som er kontrollert.
+ *
+ * Den ekte autentiseringstjenesten prøves der det betyr mest, og den retningen
+ * er avvisningen: en oppdiktet token skal ikke slippe gjennom, og det går
+ * lenger nede uten noen dobbel i det hele tatt. Den motsatte retningen krever
+ * at prøven gjenskaper en hel innlogging mot tjenesten — en annen prøve enn
+ * denne, som handler om hvor årsaken blir av etterpå. Påstandene om lagringen
+ * bruker derfor en injisert kontroll.
+ */
+const GODKJENT = (): Promise<'verified'> => Promise.resolve('verified')
+
 /** Serverloggen, lest av prøven i stedet for av utrullingen. */
 function fangLoggen(): { linjer: JournalLine[]; journal: (line: JournalLine) => void } {
   const linjer: JournalLine[] = []
@@ -132,7 +144,7 @@ function ryddOpp(): void {
      delete from workflow.client_diagnostics
        where reporter_ip_hash is not null or reported_by_user_id = ${q(USER)};
      delete from workflow.technical_incident_events
-       where reporter_key like 'offentlig:%';
+       where reporter_key like 'offentlig:%' or reporter_key like 'ip:%';
      delete from workflow.technical_incident_events e
        using workflow.technical_incidents ti
        where ti.id = e.technical_incident_id
@@ -165,7 +177,14 @@ async function main(): Promise<void> {
     'TypeError: Failed to fetch\n    at callRpc (gateway.ts:1:1)\n' +
     'authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.hemmelig.signatur'
 
-  const first = await serveDiagnostics(envelope(eventId, token, detail), environment)
+  const first = await serveDiagnostics(
+    envelope(eventId, token, detail),
+    environment,
+    undefined,
+    undefined,
+    undefined,
+    GODKJENT,
+  )
   check('ruten tar imot observasjonen', first.status === 204, String(first.status))
   check('og årsaken ligger i den private lagringen', stored(eventId) === 1)
 
@@ -183,7 +202,14 @@ async function main(): Promise<void> {
   check('men med linjen den sto på', lagret.includes('authorization:'), lagret)
 
   // Et ubekreftet forsøk prøves på nytt. Det skal ikke bli to rader.
-  const again = await serveDiagnostics(envelope(eventId, token, detail), environment)
+  const again = await serveDiagnostics(
+    envelope(eventId, token, detail),
+    environment,
+    undefined,
+    undefined,
+    undefined,
+    GODKJENT,
+  )
   check('den samme observasjonen levert igjen svarer likt', again.status === 204)
   check('og blir fortsatt én rad', stored(eventId) === 1)
 
@@ -197,7 +223,13 @@ async function main(): Promise<void> {
   const påstått = randomUUID()
   const påførtLogg = fangLoggen()
   const refused = await serveDiagnostics(
-    envelope(påstått, 'ikke-en-gyldig-token', 'HEMMELIG-PÅFØRT-TEKST fra en fremmed'),
+    envelope(
+      påstått,
+      // Formen til en token, men ikke en ekte. Den når derfor helt fram til
+      // den ekte autentiseringstjenesten, som er nettopp det som prøves.
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJvcHBkaWt0ZXQifQ.ugyldig-signatur',
+      'HEMMELIG-PÅFØRT-TEKST fra en fremmed',
+    ),
     environment,
     undefined,
     påførtLogg.journal,
@@ -225,6 +257,8 @@ async function main(): Promise<void> {
     environment,
     postgrestSvikter,
     uteLogg.journal,
+    undefined,
+    GODKJENT,
   )
   check('et sviktende Data API svarer likevel 204', nede.status === 204, String(nede.status))
   check('fordi raden gikk gjennom den egne forbindelsen', stored(utenDataApi) === 1)
@@ -254,10 +288,40 @@ async function main(): Promise<void> {
     uteLogg.linjer.some((linje) => linje.detail.includes('at callRpc (gateway.ts:1:1)')),
     JSON.stringify(uteLogg.linjer.map((linje) => linje.reporter)),
   )
+  // Punkt 1 fra ellevte gjennomgang: meldingen om at området ikke svarer, går
+  // normalt over Data API-et — og kom altså ikke fram. Uten at reserven også
+  // melder problemet, ville nettopp en Data API-svikt vært varig diagnostisert
+  // uten at merket eller problemoversikten viste noe.
+  const problem = psql(
+    config,
+    `select ti.resolved_at is null and ti.self_reported
+     from workflow.technical_incidents ti
+     where ti.area = 'work_queue' and ti.signature = 'client:public_work_board'`,
+  )
+  check('og svikten er meldt som et pågående teknisk problem', problem === 't', problem)
+
+  const påSporet = psql(
+    config,
+    `select count(*) from workflow.technical_incident_events e
+     where e.reporter_key like 'ip:%'`,
+  )
+  check('med reserveveien navngitt på sporet', Number(påSporet) >= 1, påSporet)
+
+  const diagnosen = psql(
+    config,
+    `select ti.diagnosis from workflow.technical_incidents ti
+     where ti.area = 'work_queue' and ti.signature = 'client:public_work_board'`,
+  )
   check(
-    'og den første linjen, før avsenderen var kontrollert, bar ingen tekst',
-    uteLogg.linjer[0]?.reporter === 'ukjent' && !uteLogg.linjer[0].detail.includes('callRpc'),
-    JSON.stringify(uteLogg.linjer[0]),
+    'og diagnosen er Antideps egen setning, uten feilteksten',
+    diagnosen.includes('Data API-et ikke tok imot') && !diagnosen.includes('callRpc'),
+    diagnosen,
+  )
+
+  check(
+    'og loggen skrev ingen linje før avsenderen var kontrollert',
+    uteLogg.linjer.every((linje) => linje.reporter === 'innlogget'),
+    JSON.stringify(uteLogg.linjer.map((linje) => linje.reporter)),
   )
   check(
     'og loggen sier ikke at den er det eneste stedet, for raden kom fram',
@@ -274,6 +338,8 @@ async function main(): Promise<void> {
     environment,
     postgrestSvikter,
     fangLoggen().journal,
+    undefined,
+    GODKJENT,
   )
   check('et nytt forsøk svarer likt', igjen.status === 204)
   check('og blir fortsatt én rad', stored(utenDataApi) === 1)
@@ -287,6 +353,8 @@ async function main(): Promise<void> {
     { ...environment, ANTIDEP_DIAGNOSTICS_DATABASE_URL: '' },
     postgrestSvikter,
     utenLogg.journal,
+    undefined,
+    GODKJENT,
   )
   check('uten noen vei igjen svarer ruten 503', helt.status === 503, String(helt.status))
   check('og ingenting ble lagret', stored(uten) === 0)
@@ -406,7 +474,8 @@ async function main(): Promise<void> {
   const egenskaper = psql(
     config,
     `select format('super=%s createdb=%s createrole=%s bypassrls=%s inherit=%s',
-                   rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolinherit)
+                   rolsuper::text, rolcreatedb::text, rolcreaterole::text,
+                   rolbypassrls::text, rolinherit::text)
      from pg_roles where rolname = 'antidep_diagnostics'`,
   )
   check(

@@ -380,7 +380,7 @@ create table workflow.technical_incident_events (
   constraint technical_incident_events_diagnosis_shape_check
     check ((diagnosis is null) = (transition = 'resolved')),
   constraint technical_incident_events_reporter_key_shape_check
-    check (reporter_key is null or reporter_key ~ '^offentlig:[0-9a-f]{64}$')
+    check (reporter_key is null or reporter_key ~ '^(offentlig|ip):[0-9a-f]{64}$')
 );
 
 comment on table workflow.technical_incident_events is
@@ -388,7 +388,7 @@ comment on table workflow.technical_incident_events is
 comment on column workflow.technical_incident_events.diagnosis is
   'Antideps egen setning om denne ene observasjonen, med de maskinidentifikatorene som fantes. Aldri en videreformidlet feiltekst. Null for overgangen resolved, som ikke er en observasjon av noe galt.';
 comment on column workflow.technical_incident_events.reporter_key is
-  'Avsenderen, bare for observasjoner meldt av en uinnlogget besøkende gjennom Antideps egen serverrute: «offentlig:» og en SHA-256 av ip-adressen serveren observerte. Adressen selv lagres aldri, og verdien kan ikke oppgis av en kaller. Finnes utelukkende for at mengdegrensen i workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) skal kunne telles per avsender. Null for alt databasen selv observerte.';
+  'Avsenderen, bare for observasjoner som kom inn gjennom Antideps egen serverrute: «offentlig:» for en uinnlogget besøkende, «ip:» for en innlogget hvis melding ikke nådde fram over Data API-et — begge etterfulgt av en SHA-256 av ip-adressen ruten observerte. Adressen selv lagres aldri, og verdien kan ikke oppgis av en kaller. Finnes utelukkende for at mengdegrensen i workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) skal kunne telles per avsender. Null for alt databasen selv observerte.';
 
 alter table workflow.technical_incident_events enable row level security;
 
@@ -418,6 +418,38 @@ create trigger technical_incident_events_are_append_only
 -- mange steder å glemme sporet. Den er ikke SECURITY DEFINER: den kalles alltid
 -- fra innsiden av en funksjon som allerede har kontrollert kalleren.
 -- ----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+-- Transportformen, som én setning
+--
+-- Vokabularet er lukket, og Antidep skriver setningen selv. Den brukes av tre
+-- skriveveier — den innloggede, reserven og den anonyme — og en kopi per vei
+-- ville vært tre steder å komme i utakt.
+--
+-- Svarer null, er verdien ukjent. Den som kaller, avgjør om det er en feil.
+-- ----------------------------------------------------------------------------
+create function workflow.describe_transport(p_transport text)
+  returns text
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select case p_transport
+    when 'offline' then 'Nettleseren hadde ingen nettforbindelse.'
+    when 'network' then 'Forespørselen nådde aldri fram.'
+    when 'aborted' then 'Forespørselen ble avbrutt før svaret kom.'
+    when 'timeout' then 'Svaret kom ikke innen tiden.'
+    when 'http' then 'Tjenesten svarte, men med en feilkode.'
+    when 'contract' then 'Svaret kom fram, men stemte ikke med kontrakten flaten leser det med.'
+    when 'unknown' then 'Formen på svikten lot seg ikke bestemme.'
+    else null
+  end
+$$;
+
+comment on function workflow.describe_transport(text) is
+  'Antideps egen setning om hvordan et kall sviktet, utledet av et lukket vokabular. Null for en verdi utenfor vokabularet, slik at den som kaller kan avvise den. Finnes for at de tre skriveveiene ikke skal ha hver sin kopi av den samme setningen.';
+
+revoke execute on function workflow.describe_transport(text) from public;
+
 create function workflow.record_technical_incident(
   p_area workflow.technical_area,
   p_signature text,
@@ -2796,7 +2828,20 @@ $$;
 -- Bare det en ikke-superbruker faktisk kan sette står her. `nosuperuser`,
 -- `nobypassrls` og `noreplication` krever selv superbruker — også når de bare
 -- skal skrus av — og migrasjonen kjører ikke som en, og skal ikke gjøre det.
-alter role antidep_diagnostics with login noinherit;
+alter role antidep_diagnostics with login noinherit connection limit 4;
+
+-- Kvotene binder hvor mange rader som kan skrives. De binder ikke hvor mye
+-- plass en forbindelse kan oppta, og en stjålet legitimasjon trenger ikke bruke
+-- Antideps egen klient — tidsgrensene i `src/diagnostics/store.ts` beskytter
+-- bare vår egen kode. Grensene må derfor stå i databasen, på rollen, der de
+-- gjelder uansett hvem som kobler til.
+--
+-- Fire forbindelser er rundhåndet for en vei som brukes når Data API-et
+-- svikter, og smalt nok til at den ikke kan spise databasens forbindelser.
+alter role antidep_diagnostics set statement_timeout = '5s';
+alter role antidep_diagnostics set idle_in_transaction_session_timeout = '5s';
+alter role antidep_diagnostics set idle_session_timeout = '30s';
+alter role antidep_diagnostics set lock_timeout = '5s';
 
 -- Resten kontrolleres i stedet. Det er strengere enn å sette dem: en rolle som
 -- mot formodning har fått en av dem, skal stoppe migrasjonen høyt framfor å
@@ -2888,9 +2933,7 @@ begin
       message = 'Ukjent svikttype.';
   end if;
 
-  if p_transport is not null and p_transport not in
-    ('offline', 'network', 'aborted', 'timeout', 'http', 'contract', 'unknown')
-  then
+  if p_transport is not null and workflow.describe_transport(p_transport) is null then
     raise exception using
       errcode = 'invalid_parameter_value',
       message = 'Ukjent transportform.';
@@ -2964,6 +3007,42 @@ begin
     return;
   end if;
 
+  -- Problemet meldes her, og ikke bare årsaken.
+  --
+  -- Meldingen om at området ikke svarer, går normalt over Data API-et. Kommer
+  -- denne veien i bruk, betyr det at nettopp den meldingen ikke kom fram — og
+  -- uten dette ville en Data API-svikt vært varig *diagnostisert* uten at
+  -- merket eller problemoversikten viste noe som helst. Det er den svikten som
+  -- trenger å være synlig aller mest.
+  --
+  -- Ingen dobling: reserven brukes bare når normalveien ikke kom fram, og en
+  -- observasjon som allerede er lagret, har returnert lenger opp.
+  --
+  -- Sporet er append-only, så også denne veien trenger en grense. Den telles på
+  -- reserveveiens egne rader, under den samme låsen som alt annet her.
+  if (select count(*)
+      from workflow.technical_incident_events e
+      where e.reporter_key like 'ip:%'
+        and e.occurred_at > statement_timestamp() - interval '1 hour') < 600
+  then
+    v_incident_id := workflow.record_technical_incident(
+      v_area,
+      'client:' || coalesce(p_operation, 'ukjent'),
+      format('En brukerflate fikk ikke svar fra Antidep. Kallet var api.%s, svaret bar koden %s, og HTTP-statusen var %s. %s Meldingen kom gjennom Antideps egen serverforbindelse fordi Data API-et ikke tok imot den; selve feilteksten står i den private diagnostikktabellen.',
+             coalesce(p_operation, '(ikke oppgitt)'),
+             coalesce(p_code, '(ingen)'),
+             coalesce(p_http_status::text, '(ingen)'),
+             coalesce(workflow.describe_transport(p_transport), 'Transportformen ble ikke oppgitt.')),
+      true,
+      v_key);
+  else
+    select ti.id into v_incident_id
+    from workflow.technical_incidents ti
+    where ti.area = v_area and ti.signature = 'client:' || coalesce(p_operation, 'ukjent');
+  end if;
+
+  -- Og så teksten, med sine egne grenser. Er de brukt opp, er problemet
+  -- likevel meldt over — det er riktig vei å tape på.
   if (select count(*)
       from workflow.client_diagnostics d
       where d.reporter_key = v_key
@@ -2971,10 +3050,6 @@ begin
   then
     return;
   end if;
-
-  select ti.id into v_incident_id
-  from workflow.technical_incidents ti
-  where ti.area = v_area and ti.signature = 'client:' || coalesce(p_operation, 'ukjent');
 
   insert into workflow.client_diagnostics
     (technical_incident_id, reporter_ip_hash, client_event_id, area, kind, operation, code,
@@ -3101,17 +3176,7 @@ begin
       message = 'Ukjent statuskode.';
   end if;
 
-  v_transport := case p_transport
-    when 'offline' then 'Nettleseren hadde ingen nettforbindelse.'
-    when 'network' then 'Forespørselen nådde aldri fram.'
-    when 'aborted' then 'Forespørselen ble avbrutt før svaret kom.'
-    when 'timeout' then 'Svaret kom ikke innen tiden.'
-    when 'http' then 'Tjenesten svarte, men med en feilkode.'
-    when 'contract' then 'Svaret kom fram, men stemte ikke med kontrakten flaten leser det med.'
-    when 'unknown' then 'Formen på svikten lot seg ikke bestemme.'
-    else null
-  end;
-
+  v_transport := workflow.describe_transport(p_transport);
   if p_transport is not null and v_transport is null then
     raise exception using
       errcode = 'invalid_parameter_value',

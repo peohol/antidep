@@ -247,6 +247,61 @@ const MAX_BODY_BYTES = 16 * 1024
 /** En adresse er aldri i nærheten av dette. Taket står for at summen skal være billig. */
 const MAX_ADDRESS_CHARS = 100
 
+/**
+ * Formen en token har. Ikke en kontroll av at den er ekte — bare av at den er
+ * en token i det hele tatt.
+ *
+ * Står før Auth-kallet, fordi et kall som uansett ikke kan lykkes, ikke skal
+ * koste en rundtur til autentiseringstjenesten.
+ */
+const TOKEN_SHAPE = /^[\w-]+\.[\w-]+\.[\w-]+$/
+
+/**
+ * Hvor mange ganger én avsender får prøve i minuttet før den er kontrollert.
+ *
+ * En nettleser sender en håndfull. Et forsøk på å fylle kjøreloggen eller
+ * autentiseringstjenesten sender flere.
+ */
+const ATTEMPTS_PER_MINUTE = 30
+
+/** Hvor mange avsendere budsjettet husker av gangen. Minnet skal være bundet. */
+const MAX_REMEMBERED_REPORTERS = 5000
+
+const attempts = new Map<string, { minute: number; count: number }>()
+
+/**
+ * Forsøksbudsjettet, og hva det faktisk er verdt.
+ *
+ * Det er per instans og lever i minnet: en serverless funksjon har ingen delt
+ * tilstand, og to instanser teller hver for seg. Det gjør det til en demper og
+ * ikke en garanti — den varige grensen er kvotene i databasen, som gjelder
+ * uansett hvor kallet kom fra.
+ *
+ * Men det er nettopp denne grensen som mangler for *ukontrollerte* kall: de når
+ * aldri databasen, så databasekvotene binder dem ikke. Her binder de det de kan
+ * koste — en linje i kjøreloggen og en rundtur til autentiseringstjenesten.
+ */
+export function withinAttemptBudget(reporter: string, now = Date.now()): boolean {
+  const minute = Math.floor(now / 60_000)
+  const seen = attempts.get(reporter)
+  if (seen === undefined || seen.minute !== minute) {
+    if (attempts.size >= MAX_REMEMBERED_REPORTERS) {
+      // Heller glemme alle enn å vokse uten tak. Et budsjett som spiser minnet,
+      // er en verre feil enn et budsjett som nullstilles.
+      attempts.clear()
+    }
+    attempts.set(reporter, { minute, count: 1 })
+    return true
+  }
+  seen.count += 1
+  return seen.count <= ATTEMPTS_PER_MINUTE
+}
+
+/** Bare for prøver: glem alt budsjettet har sett. */
+export function forgetAttempts(): void {
+  attempts.clear()
+}
+
 function pick(
   env: DiagnosticsEnvironment,
   names: readonly (keyof DiagnosticsEnvironment)[],
@@ -351,14 +406,29 @@ export async function serveDiagnostics(
     return await servePublic(envelope, ipHash, journal, store)
   }
 
+  // De to grensene som står *før* både kjøreloggen og autentiseringstjenesten.
+  //
+  // En ukontrollert avsender når aldri databasen, så databasekvotene binder den
+  // ikke. Uten disse kunne den fylle den private kjøreloggen med linjer og
+  // autentiseringstjenesten med rundturer, og betale ingenting for det.
+  //
+  // Svaret skiller seg ikke ut. Ruten er ikke et sted å lese noe ut av.
+  if (ipHash === null || !withinAttemptBudget(ipHash)) {
+    return nothing()
+  }
+  if (!TOKEN_SHAPE.test(envelope.accessToken ?? '')) {
+    // Ikke en token i det hele tatt. Et Auth-kall kunne uansett ikke lykkes.
+    return nothing()
+  }
+
   // Vaskes her også, uavhengig av hva nettleseren gjorde. Databasen vasker
   // uansett; dette er den samme grensen ett ledd tidligere, for en kaller vi
   // ikke kontrollerer.
   const detail = scrubDetail(envelope.detail).slice(0, MAX_DETAIL_CHARS)
 
-  // Maskinidentifikatorene, og ikke ett tegn av teksten. Denne linjen skrives
-  // først og alltid: den sier at noe sviktet, uten å skrive ned ord fra en
-  // avsender ingen ennå har kontrollert.
+  // Maskinidentifikatorene, og ikke ett tegn av teksten. Linjen skrives ikke
+  // her, men først når kontrollen har svart: en avsender som ikke er den den
+  // utgir seg for, skal ikke etterlate seg noe i det hele tatt.
   const unverified: JournalLine = {
     event: envelope.eventId,
     reporter: 'ukjent',
@@ -370,7 +440,6 @@ export async function serveDiagnostics(
     transport: envelope.transport,
     detail: NO_UNVERIFIED_TEXT,
   }
-  journal(unverified)
 
   let target: ForwardTarget
   try {
@@ -405,7 +474,9 @@ export async function serveDiagnostics(
     return new Response(null, { status: 503 })
   }
 
-  // Herfra er avsenderen kontrollert, og teksten kan skrives ned.
+  // Herfra er avsenderen kontrollert, og teksten kan skrives ned. Linjen går
+  // før kallet videre: blir prosessen revet ned der, er årsaken likevel skrevet
+  // ned et sted som overlever at fanen lukkes.
   const line: JournalLine = { ...unverified, reporter: 'innlogget', detail }
   journal(line)
 

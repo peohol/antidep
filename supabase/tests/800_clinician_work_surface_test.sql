@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(156);
+select plan(161);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1491,7 +1491,8 @@ reset role;
 -- --- Rollen, og grensene rundt den ---------------------------------------
 select is(
   (select format('super=%s createdb=%s createrole=%s bypassrls=%s inherit=%s login=%s',
-                 rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolinherit, rolcanlogin)
+                 rolsuper::text, rolcreatedb::text, rolcreaterole::text,
+                 rolbypassrls::text, rolinherit::text, rolcanlogin::text)
    from pg_roles where rolname = 'antidep_diagnostics'),
   'super=false createdb=false createrole=false bypassrls=false inherit=false login=true',
   'reserverollen kan logge inn, og er ellers hverken superbruker, oppretter noe, går utenom RLS eller arver noe'
@@ -1580,6 +1581,28 @@ select is_empty(
   'og kan ikke kjøre noen annen SECURITY DEFINER-funksjon, uansett hvor granten kom fra'
 );
 
+-- Kvotene binder hvor mange rader som kan skrives, men ikke hvor mye plass en
+-- forbindelse kan oppta. En stjålet legitimasjon bruker ikke Antideps egen
+-- klient, så tidsgrensene der beskytter ingenting mot den. Grensene må stå på
+-- rollen, i databasen.
+select is(
+  (select rolconnlimit from pg_roles where rolname = 'antidep_diagnostics'),
+  4,
+  'reserverollen kan holde høyst fire forbindelser samtidig'
+);
+select set_eq(
+  $$
+    select unnest(rolconfig) from pg_roles where rolname = 'antidep_diagnostics'
+  $$,
+  $$
+    values ('statement_timeout=5s'),
+           ('idle_in_transaction_session_timeout=5s'),
+           ('idle_session_timeout=30s'),
+           ('lock_timeout=5s')
+  $$,
+  'og databasen river ned en forbindelse som henger, uansett hvilken klient som åpnet den'
+);
+
 -- --- Raden reserven skriver ------------------------------------------------
 --
 -- Den skal være den samme raden som normalveien skriver, i den samme private
@@ -1607,6 +1630,34 @@ select is(
    where client_event_id = '7f000000-0000-4000-8000-00000000d001'),
   '(ingen)|' || repeat('a', 64) || '|ip:' || repeat('a', 64),
   'raden er merket som serverens observasjon, og nøkkelen er utledet av den'
+);
+
+-- Og det som manglet: selve problemet.
+--
+-- Meldingen om at området ikke svarer, går normalt over Data API-et. Kommer
+-- reserveveien i bruk, betyr det at nettopp den meldingen ikke kom fram — så
+-- uten dette ville en Data API-svikt vært varig *diagnostisert* uten at merket
+-- eller problemoversikten viste noe som helst.
+select is(
+  (select ti.resolved_at is null and ti.self_reported
+   from workflow.technical_incidents ti
+   where ti.area = 'work_queue' and ti.signature = 'client:public_work_board'),
+  true,
+  'reserveveien melder også selve problemet, ikke bare årsaken'
+);
+select is(
+  (select count(*)::int from workflow.technical_incident_events e
+   where e.reporter_key = 'ip:' || repeat('a', 64)),
+  1,
+  'og sporet navngir reserveveien som avsender, slik at mengden kan telles'
+);
+select is(
+  (select count(*)::int from workflow.technical_incidents ti
+   where ti.area = 'work_queue' and ti.signature = 'client:public_work_board'
+     and ti.diagnosis like '%Data API-et ikke tok imot%'
+     and ti.diagnosis not like '%callRpc%'),
+  1,
+  'og diagnosen er Antideps egen setning, uten feilteksten'
 );
 
 -- Vaskingen gjelder her også. En token som havnet i en feilmelding, skal ikke

@@ -7,10 +7,11 @@
 // 503. I alle tilfeller skal ruten være taus utad og aldri kaste.
 // ============================================================================
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { parseDiagnosticEnvelope } from './envelope.ts'
 import {
+  forgetAttempts,
   isAvailabilityCode,
   reporterIpHash,
   serveDiagnostics,
@@ -29,7 +30,7 @@ const MILJØ = {
 
 const KONVOLUTT = {
   eventId: '4a1d0f2e-9c33-4b71-8f5a-2b6c7d8e9f01',
-  accessToken: 'brukerens-egen-token',
+  accessToken: 'brukerens.egen.token',
   area: 'work_queue',
   kind: 'unavailable',
   operation: 'public_work_board',
@@ -63,6 +64,11 @@ function svar(
 ): Promise<Response> {
   return serveDiagnostics(request, env, forward, journal, store ?? null, GODKJENT)
 }
+
+// Forsøksbudsjettet lever i minnet og deles av hele filen. Uten dette ville
+// prøve nummer tretti-én fra den samme adressen blitt dempet, og feilet av en
+// grunn som ikke hadde noe med den å gjøre.
+beforeEach(forgetAttempts)
 
 /** Adressen plattformen setter. Uten den kan serveren ikke telle avsenderen. */
 const AVSENDER = { 'x-real-ip': '198.51.100.7' }
@@ -154,7 +160,7 @@ describe('ruten', () => {
     expect(response.status).toBe(204)
     expect(sendt).toHaveLength(1)
     expect(sendt[0]?.target.url).toBe('https://prosjekt.supabase.co')
-    expect(sendt[0]?.target.accessToken).toBe('brukerens-egen-token')
+    expect(sendt[0]?.target.accessToken).toBe('brukerens.egen.token')
     expect(sendt[0]?.target.publishableKey).toBe('sb_publishable_prøve')
     expect(sendt[0]?.args).toMatchObject({
       p_event_id: '4a1d0f2e-9c33-4b71-8f5a-2b6c7d8e9f01',
@@ -272,9 +278,8 @@ describe('serverloggen', () => {
     }
     await svar(post(KONVOLUTT), MILJØ, forward, logg.journal)
 
-    // To linjer før databasen ses: maskinidentifikatorene før kontrollen av
-    // avsenderen, og hele observasjonen etter at den sa ja.
-    expect(skrevetFørKallet).toBe(2)
+    // Linjen skrives etter at kontrollen har sagt ja, og før databasen ses.
+    expect(skrevetFørKallet).toBe(1)
     expect(logg.linjer.at(-1)).toMatchObject({
       event: '4a1d0f2e-9c33-4b71-8f5a-2b6c7d8e9f01',
       reporter: 'innlogget',
@@ -293,7 +298,7 @@ describe('serverloggen', () => {
       () => Promise.resolve({ delivered: true, retry: false }),
       logg.journal,
     )
-    expect(JSON.stringify(logg.linjer)).not.toContain('brukerens-egen-token')
+    expect(JSON.stringify(logg.linjer)).not.toContain('brukerens.egen.token')
   })
 
   it('vasker teksten før den skrives ned', async () => {
@@ -321,7 +326,7 @@ describe('serverloggen', () => {
       logg.journal,
     )
     expect(response.status).toBe(503)
-    expect(logg.linjer).toHaveLength(3)
+    expect(logg.linjer).toHaveLength(2)
     expect(logg.linjer.filter((linje) => linje.bareILoggen === true)).toHaveLength(1)
     expect(logg.linjer.at(-1)?.bareILoggen).toBe(true)
     expect(logg.linjer.at(-1)?.detail).toContain('Failed to fetch')
@@ -335,7 +340,7 @@ describe('serverloggen', () => {
       () => Promise.resolve({ delivered: true, retry: false }),
       logg.journal,
     )
-    expect(logg.linjer).toHaveLength(2)
+    expect(logg.linjer).toHaveLength(1)
     expect(logg.linjer.some((linje) => linje.bareILoggen === true)).toBe(false)
   })
 })
@@ -583,7 +588,11 @@ describe('reserveveien', () => {
 // Data API-et samtidig var nede.
 // ============================================================================
 describe('avsenderen må være kontrollert før teksten brukes', () => {
-  const PÅFØRT = { ...KONVOLUTT, accessToken: 'x', detail: 'HEMMELIG-PÅFØRT-TEKST fra en fremmed' }
+  const PÅFØRT = {
+    ...KONVOLUTT,
+    accessToken: 'paastatt.men-ikke.ekte',
+    detail: 'HEMMELIG-PÅFØRT-TEKST fra en fremmed',
+  }
 
   it('skriver ingen tekst når kontrollen sier nei', async () => {
     const logg = fangLoggen()
@@ -628,9 +637,9 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
     )
   })
 
-  // Linjen som skrives før kontrollen, sier at noe sviktet — og ikke ett ord av
-  // det avsenderen påstod.
-  it('skriver maskinidentifikatorene før kontrollen, og aldri teksten', async () => {
+  // En avsender som ikke er den den utgir seg for, skal ikke etterlate seg noe
+  // i det hele tatt — heller ikke en linje som sier at den prøvde.
+  it('skriver ingenting når kontrollen sier nei', async () => {
     const logg = fangLoggen()
     await serveDiagnostics(
       post(PÅFØRT),
@@ -640,12 +649,109 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
       null,
       () => Promise.resolve('rejected'),
     )
+    expect(logg.linjer).toHaveLength(0)
+  })
+
+  // Men når ingen *kunne* svare, er det en opplysning verdt å ha: da er det
+  // Antidep som ikke virker, ikke avsenderen som lyver.
+  it('skriver maskinidentifikatorene når ingen kunne svare, og aldri teksten', async () => {
+    const logg = fangLoggen()
+    await serveDiagnostics(
+      post(PÅFØRT),
+      MILJØ,
+      () => Promise.resolve({ delivered: false, retry: true }),
+      logg.journal,
+      null,
+      () => Promise.resolve('unknown'),
+    )
+    expect(logg.linjer).toHaveLength(1)
     expect(logg.linjer[0]).toMatchObject({
       reporter: 'ukjent',
       area: 'work_queue',
       operation: 'public_work_board',
       detail: '(ingen tekst: avsenderen er ikke kontrollert ennå)',
+      bareILoggen: true,
     })
+  })
+
+  // Formkontrollen står før Auth-kallet: et kall som uansett ikke kan lykkes,
+  // skal ikke koste en rundtur til autentiseringstjenesten.
+  it.each(['x', 'bare.to', 'fire.ledd.er.for.mange', 'ikke en token'])(
+    'spør ikke autentiseringstjenesten om «%s», som ikke er en token',
+    async (påstand) => {
+      const logg = fangLoggen()
+      let spurt = 0
+      const response = await serveDiagnostics(
+        post({ ...KONVOLUTT, accessToken: påstand }),
+        MILJØ,
+        () => {
+          throw new Error('skal ikke videresendes')
+        },
+        logg.journal,
+        null,
+        () => {
+          spurt += 1
+          return Promise.resolve('verified')
+        },
+      )
+      expect(response.status).toBe(204)
+      expect(spurt).toBe(0)
+      expect(logg.linjer).toHaveLength(0)
+    },
+  )
+
+  // Og grensen som gjør at en ukontrollert avsender ikke kan fylle hverken
+  // kjøreloggen eller autentiseringstjenesten.
+  it('demper en avsender som prøver om og om igjen', async () => {
+    let spurt = 0
+    const tell: VerifyReporter = () => {
+      spurt += 1
+      return Promise.resolve('rejected')
+    }
+    for (let i = 0; i < 40; i += 1) {
+      await serveDiagnostics(
+        post(PÅFØRT),
+        MILJØ,
+        () => {
+          throw new Error('skal ikke videresendes')
+        },
+        () => undefined,
+        null,
+        tell,
+      )
+    }
+    // Tretti i minuttet, og ikke førti rundturer til autentiseringstjenesten.
+    expect(spurt).toBe(30)
+  })
+
+  // Budsjettet er per avsender: én som prøver for mye, skal ikke stenge ute en
+  // annen som bare møtte en feil.
+  it('demper bare den avsenderen som prøver for mye', async () => {
+    for (let i = 0; i < 40; i += 1) {
+      await serveDiagnostics(
+        post(PÅFØRT),
+        MILJØ,
+        () => {
+          throw new Error('skal ikke videresendes')
+        },
+        () => undefined,
+        null,
+        () => Promise.resolve('rejected'),
+      )
+    }
+
+    const logg = fangLoggen()
+    const response = await serveDiagnostics(
+      post(KONVOLUTT, { 'x-real-ip': '203.0.113.9' }),
+      MILJØ,
+      () => Promise.resolve({ delivered: true, retry: false }),
+      logg.journal,
+      null,
+      GODKJENT,
+    )
+    expect(response.status).toBe(204)
+    expect(logg.linjer).toHaveLength(1)
+    expect(logg.linjer[0]?.reporter).toBe('innlogget')
   })
 
   it('skriver teksten først etter at kontrollen har sagt ja', async () => {
@@ -658,11 +764,9 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
       null,
       GODKJENT,
     )
-    expect(logg.linjer).toHaveLength(2)
-    expect(logg.linjer[0]?.reporter).toBe('ukjent')
-    expect(logg.linjer[0]?.detail).not.toContain('Failed to fetch')
-    expect(logg.linjer[1]?.reporter).toBe('innlogget')
-    expect(logg.linjer[1]?.detail).toContain('Failed to fetch')
+    expect(logg.linjer).toHaveLength(1)
+    expect(logg.linjer[0]?.reporter).toBe('innlogget')
+    expect(logg.linjer[0]?.detail).toContain('Failed to fetch')
   })
 
   // Kontrollen går til autentiseringstjenesten, og ikke til Data API-et. Det er
@@ -688,7 +792,7 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
     }
 
     expect(spurt[0]?.url).toBe('https://prosjekt.supabase.co/auth/v1/user')
-    expect(spurt[0]?.headers.authorization).toBe('Bearer brukerens-egen-token')
+    expect(spurt[0]?.headers.authorization).toBe('Bearer brukerens.egen.token')
     expect(spurt[0]?.headers.apikey).toBe('sb_publishable_prøve')
   })
 })
