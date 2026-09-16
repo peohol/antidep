@@ -1017,6 +1017,39 @@ describe('argumentene til et verktøykall', () => {
     expect(gateway.claims).toBe(0)
   })
 
+  // Det samme gjelder verktøynavnet: en forespørsel som aldri ble utført, skal
+  // ikke se ut som en som lyktes for en klient som leser statusen.
+  it('avviser et kall uten verktøynavn med 400', async () => {
+    const response = await send(
+      'mcp',
+      rpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {} }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(400)
+    expect(errorOf((await response.json()) as Record<string, unknown>)['code']).toBe(-32602)
+  })
+
+  // I den moderne epoken tar headerkontrollen den først: `Mcp-Name` er påkrevd
+  // for `tools/call`, og en forespørsel uten et navn har heller ikke headeren.
+  // Statusen er den samme, og den er det som betyr noe her.
+  it('avviser det også i den moderne epoken, ett lag tidligere', async () => {
+    const { status, body } = await modernSend('tools/call', {}, { headers: { 'mcp-name': null } })
+    expect(status).toBe(400)
+    expect(errorOf(body)['code']).toBe(-32020)
+  })
+
+  // Et ukjent VERKTØY er noe annet enn en ukjent metode: `tools/call` finnes,
+  // og svaret er et vanlig JSON-RPC-feilsvar på 200.
+  it('svarer 200 på et ukjent verktøy, som er en verktøyfeil og ikke en transportfeil', async () => {
+    const response = await send(
+      'mcp',
+      rpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'finnes_ikke' } }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(200)
+    expect(errorOf((await response.json()) as Record<string, unknown>)['code']).toBe(-32601)
+  })
+
   // Men et utelatt felt er lovlig, og skal fortsatt virke.
   it('godtar et kall uten arguments', async () => {
     const gateway = createFakeGateway()
@@ -1201,5 +1234,189 @@ describe('ressursbindingen', () => {
     const metadata = (await response.json()) as Record<string, unknown>
     expect(metadata['resource_indicators_supported']).toBe(true)
     expect(metadata['authorization_response_iss_parameter_supported']).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Opprinnelsen
+//
+// Streamable HTTP krever at serveren kontrollerer `Origin` på hver innkommende
+// forbindelse, og svarer 403 når den finnes og ikke er tillatt. Grensen ligger
+// foran autentiseringen og dispatchen, og prøvene her viser nettopp
+// rekkefølgen: en fremmed opprinnelse når verken tokenkontrollen eller
+// verktøyet.
+// ---------------------------------------------------------------------------
+const FOREIGN_ORIGIN = 'https://angriper.example'
+
+function originRequest(
+  origin: string | null,
+  url = `${BASE}/mcp`,
+  token: string | null = FAKE_ACCESS_TOKEN,
+): Request {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+  }
+  if (origin !== null) {
+    headers['origin'] = origin
+  }
+  if (token !== null) {
+    headers['authorization'] = `Bearer ${token}`
+  }
+  return new Request(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'claim_agent_task' },
+    }),
+  })
+}
+
+describe('opprinnelsen', () => {
+  it('avviser en fremmed opprinnelse med 403', async () => {
+    const gateway = createFakeGateway()
+    const response = await send('mcp', originRequest(FOREIGN_ORIGIN), gateway)
+    expect(response.status).toBe(403)
+    const body = (await response.json()) as Record<string, unknown>
+    // Transporten tillater et JSON-RPC-feilsvar uten `id` her.
+    expect(body['id']).toBeNull()
+    expect(errorOf(body)['code']).toBe(-32600)
+  })
+
+  // Selve poenget: grensen ligger foran alt, og en fremmed opprinnelse får
+  // ingen virkning i databasen.
+  it('lar ingen fremmed opprinnelse ta en oppgave ut', async () => {
+    const gateway = createFakeGateway()
+    await send('mcp', originRequest(FOREIGN_ORIGIN), gateway)
+    expect(gateway.claims).toBe(0)
+  })
+
+  // Og den ligger foran autentiseringen: uten token ville svaret ellers vært
+  // 401, som er kontrollen etter denne.
+  it('avviser før tokenet i det hele tatt leses', async () => {
+    const gateway = createFakeGateway()
+    const response = await send('mcp', originRequest(FOREIGN_ORIGIN, `${BASE}/mcp`, null), gateway)
+    expect(response.status).toBe(403)
+  })
+
+  it('ekkoer ingen opprinnelse i et avslag', async () => {
+    const response = await send('mcp', originRequest(FOREIGN_ORIGIN), createFakeGateway())
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
+  // En planlagt kjøring er tjener-til-tjener og oppgir ingen opprinnelse.
+  // Spesifikasjonen krever avslag bare når headeren FINNES og ikke er tillatt.
+  it('slipper en forespørsel uten opprinnelse gjennom', async () => {
+    const gateway = createFakeGateway()
+    const response = await send('mcp', originRequest(null), gateway)
+    expect(response.status).toBe(200)
+    expect(gateway.claims).toBe(1)
+  })
+
+  it('slipper appens egen adresse gjennom, og ekkoer nøyaktig den', async () => {
+    const response = await send('mcp', originRequest(BASE), createFakeGateway())
+    expect(response.status).toBe(200)
+    expect(response.headers.get('access-control-allow-origin')).toBe(BASE)
+    expect(response.headers.get('vary')?.toLowerCase()).toContain('origin')
+  })
+
+  it('slipper en opprinnelse miljøet har navngitt', async () => {
+    const gateway = createFakeGateway()
+    const response = await handleMcpRequest('mcp', originRequest(FOREIGN_ORIGIN), {
+      gateway,
+      baseUrl: BASE,
+      allowedOrigins: [FOREIGN_ORIGIN],
+      logger: silentRunnerLogger,
+    })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('access-control-allow-origin')).toBe(FOREIGN_ORIGIN)
+  })
+
+  // Loopback er utviklingsoppsettet og inspektøren. En fremmed nettside kan
+  // ikke ha en slik opprinnelse.
+  it('slipper loopback gjennom', async () => {
+    const response = await send('mcp', originRequest('http://localhost:6274'), createFakeGateway())
+    expect(response.status).toBe(200)
+  })
+
+  // «null» er en lovlig Origin-verdi fra en sandkasset kontekst, og den er
+  // ingen adresse å slippe inn.
+  it('avviser en opprinnelse som ikke er en adresse', async () => {
+    const response = await send('mcp', originRequest('null'), createFakeGateway())
+    expect(response.status).toBe(403)
+  })
+
+  // Tilkoblingssiden poster sitt eget skjema til seg selv, og skal virke uten
+  // at noen har satt en variabel — men bare over https, der en DNS
+  // rebinding-angriper ikke kan presentere et gyldig sertifikat for sitt eget
+  // navn fra vår vert.
+  it('godtar sin egen opprinnelse over https uten konfigurasjon', async () => {
+    const gateway = createFakeGateway()
+    const response = await handleMcpRequest('mcp', originRequest(BASE), {
+      gateway,
+      logger: silentRunnerLogger,
+    })
+    expect(response.status).toBe(200)
+    expect(gateway.claims).toBe(1)
+  })
+
+  it('godtar den ikke over rent http, som er der angrepet lever', async () => {
+    const gateway = createFakeGateway()
+    const response = await handleMcpRequest(
+      'mcp',
+      originRequest('http://antidep.example', 'http://antidep.example/mcp'),
+      { gateway, logger: silentRunnerLogger },
+    )
+    expect(response.status).toBe(403)
+    expect(gateway.claims).toBe(0)
+  })
+
+  it('lar preflighten følge den samme grensen', async () => {
+    const response = await send(
+      'mcp',
+      new Request(`${BASE}/mcp`, { method: 'OPTIONS', headers: { origin: FOREIGN_ORIGIN } }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(403)
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
+  it('svarer på en tillatt preflight uten wildcard', async () => {
+    const response = await send(
+      'mcp',
+      new Request(`${BASE}/mcp`, { method: 'OPTIONS', headers: { origin: BASE } }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(204)
+    expect(response.headers.get('access-control-allow-origin')).toBe(BASE)
+  })
+
+  // Metadatadokumentene er offentlige, men annonserer ikke lenger at hvem som
+  // helst kan lese dem fra en nettleser — og de varierer med opprinnelsen, slik
+  // at en delt mellomtjener ikke kan gi det ene svaret til den andre.
+  it('annonserer ingen wildcard på metadatadokumentene', async () => {
+    const response = await send(
+      'protected-resource-metadata',
+      new Request(`${BASE}/.well-known/oauth-protected-resource/mcp`, {
+        headers: { origin: FOREIGN_ORIGIN },
+      }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(403)
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
+  it('bærer vary: origin også der ingen opprinnelse ble ekkoet', async () => {
+    const response = await send(
+      'protected-resource-metadata',
+      new Request(`${BASE}/.well-known/oauth-protected-resource/mcp`),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(200)
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
+    expect(response.headers.get('vary')?.toLowerCase()).toContain('origin')
   })
 })

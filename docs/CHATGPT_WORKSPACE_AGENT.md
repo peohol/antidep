@@ -52,6 +52,13 @@ har per definisjon ikke lest revisjonen som fjernet kallet, og skal ikke få et
 versjonsnummer den ville tolket som noe annet enn det er. En ukjent versjon
 avvises med `-32022` og listen over dem appen faktisk snakker.
 
+Under begge epokene ligger den samme transportgrensen: appen kontrollerer
+`Origin` på hver innkommende forespørsel, og svarer 403 når den finnes og ikke
+er tillatt — før autentiseringen, før dispatchen og før databasen. Uten den
+kunne en fremmed nettside fått nettleseren til å kalle appen på vegne av den
+som var innlogget (DNS rebinding). En planlagt kjøring er tjener-til-tjener og
+oppgir ingen opprinnelse, og den merker ingenting.
+
 ## Sikkerheten, kort
 
 - **Ingen hemmelighet i ChatGPT-prompten.** Tilkoblingen bruker OAuth 2.1 med
@@ -341,6 +348,15 @@ MCP-appen deployes med resten av Antidep og trenger to miljøvariabler:
 hemmelige, og appen avviser en nøkkel som gir mer enn en klient skal ha.
 `ANTIDEP_MCP_BASE_URL` er valgfri og settes bare dersom appen står bak noe som
 gjør at den ikke kjenner sin egen adresse.
+
+`ANTIDEP_MCP_ALLOWED_ORIGINS` er også valgfri, og er tom i det vanlige
+oppsettet. Tre ting slipper gjennom opprinnelseskontrollen uten at noen setter
+den: en forespørsel uten `Origin` (som er den planlagte kjøringen), appens egen
+adresse over https (som er tilkoblingssiden som poster skjemaet sitt til seg
+selv) og loopback (som er utviklingsoppsettet og MCP-inspektøren). Skal en
+nettleserklient på en annen adresse kalle appen, listes den opp der, atskilt med
+komma. En ugyldig verdi stopper appen ved oppstart framfor å bli et hull ingen
+oppdager.
 
 Se [evidenskjeden](EVIDENCE_PIPELINE.md), [databasearkitekturen](DATABASE_ARCHITECTURE.md)
 og [styringsreglene](ANTIDEP_CONSTITUTION.md).

@@ -328,6 +328,11 @@ export async function dispatchMcpMessage(
             'Kallet mangler et verktøynavn.',
           ),
           trace: null,
+          // Et kall uten verktøynavn er malformet på nøyaktig samme måte som et
+          // ugyldig `arguments`, og skal ha den samme statusen. Uten den ville
+          // en klient fått 200 på en forespørsel som aldri ble utført — og en
+          // klient som leser statusen framfor kroppen, ville trodd den lyktes.
+          status: 400,
         }
       }
       if (!TOOL_DEFINITIONS.some((tool) => tool.name === name)) {

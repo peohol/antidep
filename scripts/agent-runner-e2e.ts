@@ -333,6 +333,44 @@ async function main(): Promise<void> {
   // ------------------------------------------------------------------
   // 3. Den planlagte kjøringen
   // ------------------------------------------------------------------
+
+  // Først grensen som ligger foran alt annet: en forespørsel fra en fremmed
+  // opprinnelse skal stoppes av transporten, med et ekte token og mot en ekte
+  // database. At den ikke fikk noen virkning, viser uttaket lenger nede — det
+  // lykkes, og det kunne det ikke gjort om oppgaven allerede var tatt.
+  const foreign = await serve(
+    'mcp',
+    new Request(`${BASE}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${accessToken}`,
+        origin: 'https://angriper.example',
+        'mcp-protocol-version': PROTOCOL_VERSION,
+        'mcp-method': 'tools/call',
+        'mcp-name': 'claim_agent_task',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'claim_agent_task',
+          arguments: {},
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': PROTOCOL_VERSION,
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },
+      }),
+    }),
+  )
+  check(
+    'en fremmed opprinnelse stoppes av transporten, før tokenet og databasen',
+    foreign.status === 403,
+    `status ${foreign.status}`,
+  )
+
   const discovered = await rpc(accessToken, 'server/discover', {})
   const discoverResult = discovered['result'] as Record<string, unknown>
   check(

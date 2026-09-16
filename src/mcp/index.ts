@@ -12,6 +12,7 @@
 import { assertPublishableKey } from '../lib/publishable-key.ts'
 import { handleMcpRequest, type McpAppDependencies, type McpRoute } from './app.ts'
 import { createSupabaseRunnerGateway, type RunnerGateway } from './gateway.ts'
+import { parseAllowedOrigins } from './origin.ts'
 
 export { MCP_ROUTES, RUNNER_SCOPE, handleMcpRequest } from './app.ts'
 export type { McpRoute, McpAppDependencies } from './app.ts'
@@ -22,12 +23,14 @@ export interface McpEnvironment {
   readonly ANTIDEP_SUPABASE_URL?: string | undefined
   readonly ANTIDEP_SUPABASE_PUBLISHABLE_KEY?: string | undefined
   readonly ANTIDEP_MCP_BASE_URL?: string | undefined
+  readonly ANTIDEP_MCP_ALLOWED_ORIGINS?: string | undefined
 }
 
 export interface McpConfig {
   readonly supabaseUrl: string
   readonly publishableKey: string
   readonly baseUrl: string | undefined
+  readonly allowedOrigins: readonly string[]
 }
 
 function required(env: McpEnvironment, name: keyof McpEnvironment): string {
@@ -58,6 +61,12 @@ export function readMcpConfig(env: McpEnvironment): McpConfig {
     supabaseUrl,
     publishableKey,
     baseUrl: baseUrl === undefined || baseUrl.length === 0 ? undefined : baseUrl,
+    // Kastes her, ved oppstart, framfor å bli en opprinnelse ingen slipper inn
+    // og ingen skjønner hvorfor.
+    allowedOrigins: parseAllowedOrigins(
+      env.ANTIDEP_MCP_ALLOWED_ORIGINS,
+      'ANTIDEP_MCP_ALLOWED_ORIGINS',
+    ),
   }
 }
 
@@ -70,7 +79,7 @@ function dependencies(env: McpEnvironment): McpAppDependencies {
       supabaseUrl: config.supabaseUrl,
       publishableKey: config.publishableKey,
     })
-    cached = { gateway, baseUrl: config.baseUrl }
+    cached = { gateway, baseUrl: config.baseUrl, allowedOrigins: config.allowedOrigins }
   }
   return cached
 }

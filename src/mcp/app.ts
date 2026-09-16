@@ -30,6 +30,7 @@ import type { RunnerGateway } from './gateway.ts'
 import { renderConnectPage, type ConnectPageFields } from './html.ts'
 import {
   JSON_RPC_INVALID_PARAMS,
+  JSON_RPC_INVALID_REQUEST,
   JSON_RPC_PARSE_ERROR,
   JsonRpcMessageError,
   MCP_HEADER_MISMATCH,
@@ -39,6 +40,7 @@ import {
   type JsonRpcRequest,
 } from './json-rpc.ts'
 import { consoleRunnerLogger, type RunnerLogger } from './logging.ts'
+import { judgeOrigin, originPolicy, type OriginVerdict } from './origin.ts'
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   META_CLIENT_CAPABILITIES,
@@ -75,6 +77,11 @@ export interface McpAppDependencies {
    * kalte. Utledes ellers av forespørselen selv.
    */
   readonly baseUrl?: string | undefined
+  /**
+   * Klientopprinnelser som får kalle appen fra en nettleser, i tillegg til
+   * appens egen adresse og loopback. Se `origin.ts` for hele grensen.
+   */
+  readonly allowedOrigins?: readonly string[] | undefined
   readonly logger?: RunnerLogger | undefined
 }
 
@@ -102,10 +109,11 @@ function json(body: unknown, status = 200, headers: Record<string, string> = {})
 }
 
 function publicJson(body: unknown): Response {
-  return json(body, 200, {
-    'cache-control': 'public, max-age=300',
-    'access-control-allow-origin': '*',
-  })
+  // Ingen `access-control-allow-origin: *` her heller. Dokumentet er offentlig
+  // og bærer ingen hemmelighet, men en wildcard ville sagt at appen ikke bryr
+  // seg om hvem som spør — og det gjør den, fra og med denne grensen. Den
+  // tillatte opprinnelsen ekkoes i stedet av `withCors`.
+  return json(body, 200, { 'cache-control': 'public, max-age=300' })
 }
 
 function html(body: string, status = 200): Response {
@@ -141,6 +149,47 @@ function unauthorized(baseUrl: string, description: string): Response {
 
 function oauthError(status: number, error: string, description: string): Response {
   return json({ error, error_description: description }, status)
+}
+
+/**
+ * Svaret på en opprinnelse appen ikke slipper inn.
+ *
+ * Transporten sier at kroppen KAN være et JSON-RPC-feilsvar uten `id`, og på
+ * protokollendepunktet er det den formen klienten kan lese. De andre rutene er
+ * ikke JSON-RPC, og svarer på OAuth-formen de ellers svarer på.
+ */
+function forbiddenOrigin(route: McpRoute): Response {
+  const description =
+    'Forespørselen kom fra en opprinnelse Antidep ikke slipper inn. ' +
+    'Se docs/CHATGPT_WORKSPACE_AGENT.md.'
+  return route === 'mcp'
+    ? json(jsonRpcFailure(null, JSON_RPC_INVALID_REQUEST, description), 403)
+    : json({ error: 'access_denied', error_description: description }, 403)
+}
+
+/**
+ * CORS-svaret, utledet av den samme dommen som slapp forespørselen inn.
+ *
+ * `Vary: Origin` står på hvert svar, også der ingen opprinnelse ble ekkoet:
+ * uten den kunne en delt mellomtjener gitt et svar laget for én opprinnelse til
+ * en annen, og metadatadokumentene er nettopp de som får ligge i en cache.
+ */
+function withCors(response: Response, verdict: OriginVerdict): Response {
+  const headers = new Headers(response.headers)
+  const vary = headers.get('vary')
+  headers.set('vary', vary === null || vary.length === 0 ? 'origin' : `${vary}, origin`)
+  if (verdict.kind === 'allowed') {
+    headers.set('access-control-allow-origin', verdict.origin)
+    // Uten dette kunne en nettleserklient ikke lese henvisningen til
+    // metadatadokumentet i et 401-svar, og ville ikke visst hvor den skulle
+    // autorisere seg (RFC 9728).
+    headers.set('access-control-expose-headers', 'www-authenticate')
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
 }
 
 function bearerToken(request: Request): string | null {
@@ -763,16 +812,32 @@ export async function handleMcpRequest(
   const logger = deps.logger ?? consoleRunnerLogger
   const baseUrl = baseUrlOf(request, deps.baseUrl)
 
+  // Opprinnelsen avgjøres først av alt, og for hver rute.
+  //
+  // Den ligger foran autentiseringen med vilje: en fremmed opprinnelse skal
+  // ikke nå fram til tokenkontrollen, verktøyflaten eller databasen i det hele
+  // tatt. Rekkefølgen ER kontrollen — en grense som først gjaldt etter at noe
+  // var utført, ville ikke vært en grense.
+  const verdict = judgeOrigin(
+    request.headers.get('origin'),
+    originPolicy({ baseUrl, allowedOrigins: deps.allowedOrigins }),
+  )
+
   let response: Response
   let tool: string | undefined
   let outcome: RunnerOutcome | 'auth_failed' | 'bad_request' = 'ok'
 
   try {
-    if (request.method === 'OPTIONS') {
+    if (verdict.kind === 'forbidden') {
+      outcome = 'bad_request'
+      response = forbiddenOrigin(route)
+    } else if (request.method === 'OPTIONS') {
+      // Preflighten følger den samme grensen: er vi her, er opprinnelsen enten
+      // fraværende eller tillatt, og `withCors` ekkoer nøyaktig den ene som ble
+      // sluppet inn. Ingen wildcard.
       response = new Response(null, {
         status: 204,
         headers: {
-          'access-control-allow-origin': '*',
           'access-control-allow-methods': 'GET, POST, OPTIONS',
           'access-control-allow-headers':
             'authorization, content-type, mcp-protocol-version, mcp-method, mcp-name',
@@ -840,5 +905,5 @@ export async function handleMcpRequest(
     durationMs: Date.now() - started,
   })
 
-  return response
+  return withCors(response, verdict)
 }
