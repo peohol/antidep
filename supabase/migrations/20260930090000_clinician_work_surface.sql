@@ -2792,14 +2792,33 @@ $$;
 
 -- Skrevet ut hver gang, og ikke bare ved opprettelsen: finnes rollen allerede
 -- fra før, er det nettopp da grensene må settes framfor å antas.
-alter role antidep_diagnostics with
-  login nosuperuser nocreatedb nocreaterole noinherit nobypassrls noreplication;
+--
+-- Bare det en ikke-superbruker faktisk kan sette står her. `nosuperuser`,
+-- `nobypassrls` og `noreplication` krever selv superbruker — også når de bare
+-- skal skrus av — og migrasjonen kjører ikke som en, og skal ikke gjøre det.
+alter role antidep_diagnostics with login noinherit;
+
+-- Resten kontrolleres i stedet. Det er strengere enn å sette dem: en rolle som
+-- mot formodning har fått en av dem, skal stoppe migrasjonen høyt framfor å
+-- passere som om grensen sto. Standard for en ny rolle er at ingen av dem er
+-- satt, så dette er en vaktpost og ikke en forventet gren.
+do $$
+begin
+  if exists (
+    select 1 from pg_catalog.pg_roles
+    where rolname = 'antidep_diagnostics'
+      and (rolsuper or rolbypassrls or rolreplication or rolcreatedb or rolcreaterole)
+  ) then
+    raise exception using
+      errcode = 'insufficient_privilege',
+      message = 'Reserverollen for diagnostikk har en fullmakt den ikke skal ha.',
+      hint = 'Rollen skal kunne logge inn og kjøre to append-funksjoner. Ingenting mer.';
+  end if;
+end
+$$;
 
 revoke all on schema workflow from antidep_diagnostics;
 grant usage on schema workflow to antidep_diagnostics;
-
-comment on role antidep_diagnostics is
-  'Antideps egen serverrute, når den skriver uten å gå gjennom Data API-et. Kan kjøre nøyaktig to append-funksjoner i workflow og ingenting annet: ingen tabellrettigheter, ingen lesevei, ingen bypass av RLS, ingen create. Passordet settes i utrullingen og finnes ikke i repoet.';
 
 -- ----------------------------------------------------------------------------
 -- Reserven for den rå årsaken
