@@ -100,7 +100,9 @@ begin
   -- representation label. Hosted legacy data can therefore never be admitted
   -- merely because mutable/backfilled metadata says "abstract"; conversely, a
   -- representation mismatch cannot hide that the evidence root actually points
-  -- at a different source snapshot.
+  -- at a different source snapshot. If the roots are also proven pre-agent and
+  -- pre-audit, include only bounded, non-sensitive metadata in DETAIL so hosted
+  -- drift can be diagnosed without weakening the identity check.
   if exists (
     select 1
     from knowledge.evidence_items e
@@ -114,7 +116,57 @@ begin
   ) then
     raise exception using
       errcode = '23001',
-      message = 'Antidep 2-resetten stoppet: kildeversjonen er ikke ett av de to autoriserte, uforanderlige legacy-snapshotene.';
+      message = 'Antidep 2-resetten stoppet: kildeversjonen er ikke ett av de to autoriserte, uforanderlige legacy-snapshotene.',
+      detail = case
+        when not exists (
+          select 1
+          from knowledge.evidence_items e
+          where e.agent_run_id is not null
+             or exists (
+               select 1
+               from audit.events ae
+               where ae.operation = 'evidence_item_created'
+                 and ae.object_id = e.id
+             )
+        ) then (
+          select format(
+            'Sikker snapshot-diagnostikk: virkestoff=%s; faktisk_hash=%s; forventet_pmid_match=%s; hentetid_match=%s; kildeadresse_match=%s; ekstern_versjon_match=%s; representasjon=%s.',
+            d.canonical_name,
+            coalesce(sv.content_hash, 'NULL'),
+            exists (
+              select 1
+              from knowledge.source_identifiers si
+              where si.source_id = e.source_id
+                and si.identifier_system = 'pmid'
+                and si.identifier_value = case d.canonical_name
+                  when 'sertralin' then '11105740'
+                  when 'mirtazapin' then '15697327'
+                end
+            ),
+            sv.retrieved_at is not distinct from timestamptz '2026-08-19T06:17:31Z',
+            sv.retrieved_from is not distinct from case d.canonical_name
+              when 'sertralin' then 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=11105740&retmode=xml'
+              when 'mirtazapin' then 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=15697327&retmode=xml'
+            end,
+            sv.external_version is not distinct from case d.canonical_name
+              when 'sertralin' then 'MEDLINE DateRevised 2026-01-28'
+              when 'mirtazapin' then 'MEDLINE DateRevised 2018-12-01'
+            end,
+            coalesce(sv.representation::text, 'NULL')
+          )
+          from knowledge.evidence_items e
+          join knowledge.source_versions sv on sv.id = e.source_version_id
+          join catalog.drugs d on d.id = e.intervention_drug_id
+          where case d.canonical_name
+            when 'sertralin' then sv.content_hash is distinct from 'sha256:797e91b6c4a6c075bdde4113d263608d708fb07c3c0a7b656ff3c231d12895d3'
+            when 'mirtazapin' then sv.content_hash is distinct from 'sha256:c62a66215fc51b8c164cda70072ea30ff055b7c8e565a173a0be17cdf4e75722'
+            else true
+          end
+          order by d.canonical_name
+          limit 1
+        )
+        else 'Snapshot-avvik registrert; sikker diagnostikk er undertrykt fordi evidensrøttene ikke er bevist historiske.'
+      end;
   end if;
 
   -- representation was added after the two source snapshots and was backfilled
