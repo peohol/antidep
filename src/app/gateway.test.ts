@@ -371,12 +371,10 @@ describe('kallet gjennom gatewayen', () => {
     senere.restore()
   })
 
-  // En observasjon som ikke kan tilskrives noen, skal ikke sendes: det ville
-  // vært en åpen skrivevei. Den blir liggende, så en fornyet innlogging tar den.
-  // Den uinnloggede flaten. Årsaken står i konsollen, og der blir den: en rad
-  // uten noen å tilskrive den ville vært en åpen skrivevei, og en som ble
-  // tilskrevet neste innlogging, ville vært feil person.
-  it('legger ingenting bort når det ikke finnes noen innlogget bruker', async () => {
+  // Arbeidsoversikten er offentlig. Svikter den for noen som ikke er innlogget,
+  // skal årsaken fortsatt komme fram — men uten en token, for det finnes ingen
+  // å tilskrive den. Ruten skriver den da i serverloggen og aldri som en rad.
+  it('sender observasjonen anonymt når ingen er innlogget', async () => {
     const levering = fangLevering({ ok: true })
     const uinnlogget = {
       rpc: () => Promise.resolve({ data: null, error: { code: 'PGRST301' } }),
@@ -384,16 +382,63 @@ describe('kallet gjennom gatewayen', () => {
     } as unknown as AntidepClient
 
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    await callRpc(uinnlogget, { fn: 'noe', area: 'work_queue', parse: () => undefined }).catch(
-      () => undefined,
-    )
-    await Promise.resolve()
-    await Promise.resolve()
+    await callRpc(uinnlogget, {
+      fn: 'public_work_board',
+      area: 'work_queue',
+      parse: () => undefined,
+    }).catch(() => undefined)
+    await vi.waitFor(() => expect(levering.sendt).toHaveLength(1))
     spy.mockRestore()
 
-    expect(levering.sendt).toHaveLength(0)
-    expect(pending()).toHaveLength(0)
+    const sendt: unknown = JSON.parse(levering.sendt[0]?.body ?? '{}')
+    const konvolutt = sendt as { accessToken: unknown; userId: unknown; area: unknown }
+    // Ingen token, og ingen den kunne blitt tilskrevet senere heller.
+    expect(konvolutt.accessToken).toBeNull()
+    expect(konvolutt.userId).toBeNull()
+    expect(konvolutt.area).toBe('work_queue')
+
+    // Bekreftet levert, altså ute av utboksen.
+    await vi.waitFor(() => expect(pending()).toHaveLength(0))
     levering.restore()
+  })
+
+  // Og den anonyme restansen skal aldri bli den innloggedes: logger noen inn på
+  // den samme maskinen etterpå, går den fortsatt uten token.
+  it('lar en anonym restanse forbli anonym etter en innlogging', async () => {
+    const ryker = fangLevering('ryker')
+    const uinnlogget = {
+      rpc: () => Promise.reject(new TypeError('Failed to fetch')),
+      auth: { getSession: () => Promise.resolve({ data: { session: null } }) },
+    } as unknown as AntidepClient
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(uinnlogget, {
+      fn: 'public_work_board',
+      area: 'work_queue',
+      parse: () => undefined,
+    }).catch(() => undefined)
+    await vi.waitFor(() => expect(ryker.sendt).toHaveLength(1))
+    spy.mockRestore()
+    ryker.restore()
+    expect(pending()).toHaveLength(1)
+
+    const innlogget = {
+      rpc: () => Promise.resolve({ data: null, error: null }),
+      auth: {
+        getSession: () =>
+          Promise.resolve({
+            data: { session: { access_token: 'en-annens-token', user: { id: BRUKER } } },
+          }),
+      },
+    } as unknown as AntidepClient
+
+    const senere = fangLevering({ ok: true })
+    flushPendingDiagnostics(innlogget)
+    await vi.waitFor(() => expect(senere.sendt).toHaveLength(1))
+    await vi.waitFor(() => expect(pending()).toHaveLength(0))
+    const konvolutt: unknown = JSON.parse(senere.sendt[0]?.body ?? '{}')
+    expect((konvolutt as { accessToken: unknown }).accessToken).toBeNull()
+    senere.restore()
   })
 
   // En delt maskin på et kontor: én brukers restanse skal aldri følge med den

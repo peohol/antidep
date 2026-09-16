@@ -637,8 +637,17 @@ revoke execute on function workflow.close_stale_self_reports() from public;
 -- åpent for forgiftning eller avhengig av en hemmelighet en klient ikke kan
 -- holde. Antidep har allerede en autentisert, serverkontrollert skrivevei med
 -- hele autorisasjonen i databasen, og den er den tryggeste som finnes her.
--- Prisen er ærlig: svikter Data API-et selv, når heller ikke denne raden fram.
--- Da er *det* hendelsen, og den ser man på tjenestens egen status.
+-- Raden nås likevel over Data API-et, og et Data API som er nede er nettopp en
+-- av tingene den rå årsaken skal forklare. Derfor er raden ikke den eneste
+-- lagringen: `/diagnostics` skriver alltid observasjonen som én linje i
+-- utrullingens egen private kjørelogg *før* den prøver databasen, og merker
+-- linjen når raden ikke kom fram. Den veien går ikke gjennom Supabase i det
+-- hele tatt. Denne tabellen er den varige og søkbare kopien av det som kom
+-- fram; loggen er det som finnes når den ikke gjorde det (src/diagnostics/).
+--
+-- Den uinnloggede besøkende blir aldri en rad her. Det finnes ingen å tilskrive
+-- den, og en rad uten avsender ville vært en åpen skrivevei inn i en privat
+-- tabell. Observasjonen skrives i kjøreloggen i stedet.
 -- ----------------------------------------------------------------------------
 create table workflow.client_diagnostics (
   id uuid primary key default gen_random_uuid(),

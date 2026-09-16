@@ -21,6 +21,17 @@ export const TECHNICAL_AREAS = [
   'clinical_content',
 ] as const
 
+/**
+ * Områdene en uinnlogget besøkende faktisk kan se svikte.
+ *
+ * Arbeidsoversikten og det publiserte innholdet er åpne for alle. De tre andre
+ * finnes bare bak innlogging, så en observasjon uten token som melder om dem,
+ * beskriver noe avsenderen ikke kan ha sett. Den avvises framfor å bli skrevet
+ * ned — ikke fordi den er farlig i seg selv, men fordi en anonym vei inn skal
+ * være så smal som den kan være og fortsatt gjøre nytte.
+ */
+export const PUBLIC_TECHNICAL_AREAS = ['work_queue', 'clinical_content'] as const
+
 export const FAILURE_KINDS = ['unavailable', 'unreadable_answer'] as const
 
 export const TRANSPORT_SHAPES = [
@@ -42,6 +53,16 @@ export const TRANSPORT_SHAPES = [
  * inn i databasen først.
  */
 export const MAX_DETAIL_CHARS = 4000
+
+/**
+ * Det samme taket for en observasjon ingen kan tilskrives.
+ *
+ * Strammere med vilje. En anonym observasjon kan ikke følges opp med den som
+ * sendte den, og den blir aldri en rad — den koster bare plass i kjøreloggen.
+ * Toppen av en stack er der svaret ligger, så en kortere utgave sier nesten det
+ * samme, og gjør den åpne veien inn tilsvarende mindre verdt å misbruke.
+ */
+export const MAX_ANONYMOUS_DETAIL_CHARS = 1000
 
 /**
  * Fjerner det som ser ut som en hemmelighet, før teksten lagres noe sted.
@@ -71,8 +92,15 @@ export interface DiagnosticEnvelope {
    * ville den samme årsaken blitt liggende i to eksemplarer hver gang.
    */
   readonly eventId: string
-  /** Brukerens egen Supabase-token. Ingen klienthemmelighet: den er allerede i fanen. */
-  readonly accessToken: string
+  /**
+   * Brukerens egen Supabase-token, videresendt. Ingen klienthemmelighet: den
+   * ligger allerede i fanen.
+   *
+   * `null` når ingen er innlogget. Da er observasjonen anonym, og den kan ikke
+   * tilskrives noen — den blir derfor aldri en rad i databasen, bare en linje i
+   * Antideps egen serverlogg.
+   */
+  readonly accessToken: string | null
   readonly area: string
   readonly kind: string
   readonly operation: string | null
@@ -129,7 +157,7 @@ export function parseDiagnosticEnvelope(value: unknown): DiagnosticEnvelope {
   }
   return {
     eventId,
-    accessToken: text(raw.accessToken, 'accessToken'),
+    accessToken: optionalText(raw.accessToken, 'accessToken'),
     area: oneOf(raw.area, TECHNICAL_AREAS, 'area'),
     kind: oneOf(raw.kind, FAILURE_KINDS, 'kind'),
     operation: optionalText(raw.operation, 'operation'),

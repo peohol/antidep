@@ -61,9 +61,22 @@
 // (`diagnostics-outbox.ts`). Nummeret på observasjonen gjør at et nytt forsøk
 // blir den samme raden og ikke en til.
 //
-// En `console.error` er ingen erstatning: fanen lukkes, og da er årsaken borte.
-// Konsollen skrives til uansett, fordi den er det den som feilsøker lokalt
-// leser — men det varige er raden.
+// En `console.error` i nettleseren er ingen erstatning: fanen lukkes, og da er
+// årsaken borte. Konsollen skrives til uansett, fordi den er det den som
+// feilsøker lokalt leser — men det som overlever, er raden og linjen ruten
+// skriver i Antideps egen serverlogg.
+//
+// ----------------------------------------------------------------------------
+// Den uinnloggede besøkende
+//
+// Arbeidsoversikten er offentlig, og svikter den for noen som ikke er innlogget,
+// er det like verdt å forstå. Observasjonen kan bare ikke bli en rad: det finnes
+// ingen å tilskrive den, og en rad uten avsender ville vært en åpen skrivevei
+// inn i den private lagringen.
+//
+// Den sendes derfor som anonym. Ruten tar imot den, skriver den i serverloggen
+// og lagrer ingenting — og fordi den er merket anonym i utboksen, kan den aldri
+// bli tilskrevet den som logger inn på maskinen etterpå.
 //
 // En kode alene er ikke nok, for koden mangler nettopp når svaret aldri kom.
 // Meldingen bærer derfor også HTTP-statusen og en *transportform* fra et lukket
@@ -433,11 +446,15 @@ function reportTechnicalProblem(client: AntidepClient, entry: TechnicalDetail): 
 /**
  * Legger den rå årsaken i utboksen, og tømmer den.
  *
- * Sesjonen hentes først, av to grunner. Observasjonen merkes med hvem den
- * tilhørte, slik at en restanse aldri følger med neste innlogging på den samme
- * maskinen. Og finnes det ingen innlogget bruker, legges den ikke bort i det
- * hele tatt: en observasjon som ikke kan tilskrives noen, kan verken sendes
- * eller tilskrives senere uten å bli feil.
+ * Sesjonen hentes først, fordi observasjonen merkes med hvem den tilhørte:
+ * uten det ville en restanse fulgt med neste innlogging på den samme maskinen,
+ * og på et delt kontor blitt tilskrevet feil person.
+ *
+ * Er ingen innlogget, legges den likevel bort — som anonym. Arbeidsoversikten
+ * er offentlig, og en svikt der er like verdt å forstå. Den kan ikke bli en rad
+ * i den private lagringen, for det finnes ingen å tilskrive den, men ruten
+ * skriver den i Antideps egen serverlogg. En anonym observasjon merkes som
+ * nettopp det og kan derfor aldri bli tilskrevet noen senere.
  *
  * Teksten vaskes før den lagres. Databasen vasker uansett, men årsaken ligger i
  * nettleserens eget lager i mellomtiden, og en token som havnet i en feilmelding
@@ -446,16 +463,11 @@ function reportTechnicalProblem(client: AntidepClient, entry: TechnicalDetail): 
 function recordRawCause(client: AntidepClient, entry: TechnicalDetail): void {
   void Promise.resolve(client.auth.getSession())
     .then(({ data }) => {
-      const session = data.session
-      if (session === null || session === undefined) {
-        // Den uinnloggede flaten. Årsaken står i konsollen, og der blir den:
-        // en rad uten noen å tilskrive den ville vært en åpen skrivevei, og en
-        // som ble tilskrevet neste innlogging, ville vært feil person.
-        return
-      }
+      const session = data.session ?? null
+      const userId = session?.user.id ?? null
       remember({
         eventId: newEventId(),
-        userId: session.user.id,
+        userId,
         area: entry.area,
         kind: entry.kind,
         operation: entry.operation,
@@ -464,7 +476,7 @@ function recordRawCause(client: AntidepClient, entry: TechnicalDetail): void {
         transport: entry.transport,
         detail: scrubDetail(entry.detail),
       })
-      return deliverPending(session.access_token, session.user.id)
+      return deliverPending(session?.access_token ?? null, userId)
     })
     .catch(() => undefined)
 }
@@ -482,17 +494,19 @@ function recordRawCause(client: AntidepClient, entry: TechnicalDetail): void {
  */
 export function flushPendingDiagnostics(client: AntidepClient): void {
   void Promise.resolve(client.auth.getSession())
-    .then(({ data }) => {
-      const session = data.session
-      if (session === null || session === undefined) {
-        return undefined
+    .then(async ({ data }) => {
+      const session = data.session ?? null
+      // De anonyme går uansett: de tilhører ingen, og venter bare på at ruten
+      // skal være nåbar.
+      await deliverPending(null, null)
+      if (session !== null) {
+        await deliverPending(session.access_token, session.user.id)
       }
-      return deliverPending(session.access_token, session.user.id)
     })
     .catch(() => undefined)
 }
 
-async function deliverPending(accessToken: string, userId: string): Promise<void> {
+async function deliverPending(accessToken: string | null, userId: string | null): Promise<void> {
   for (const entry of pendingFor(userId)) {
     if (await deliver(accessToken, entry)) {
       forget(entry.eventId)
@@ -529,7 +543,7 @@ function newEventId(): string {
  * `sendBeacon` er reserven der `fetch` ikke finnes; da er leveringen ubekreftet,
  * og observasjonen blir liggende til en senere kjøring bekrefter den.
  */
-async function deliver(accessToken: string, entry: PendingDiagnostic): Promise<boolean> {
+async function deliver(accessToken: string | null, entry: PendingDiagnostic): Promise<boolean> {
   const body = JSON.stringify({ accessToken, ...entry })
   try {
     const response = await fetch(DIAGNOSTICS_PATH, {

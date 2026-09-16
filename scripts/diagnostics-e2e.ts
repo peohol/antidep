@@ -9,18 +9,21 @@
 // Data API-en og den ekte databasen, og leser resultatet med psql — altså
 // utenom enhver leservei appen har.
 //
-// Den prøver fire ting som betyr noe:
+// Den prøver det som betyr noe:
 //
 //   * at årsaken havner i workflow.client_diagnostics, med stacken i behold
 //   * at den samme observasjonen levert to ganger blir én rad, slik at et
 //     ubekreftet forsøk kan gjentas uten å doble noe
 //   * at en tokenformet streng er vasket bort før lagring
 //   * at et kall uten gyldig token ikke legger igjen noe
+//   * at årsaken finnes i Antideps egen serverlogg **også når Data API-et er
+//     slått ut** — den ene lagringen som ikke går gjennom Supabase
+//   * at en uinnlogget besøkende blir skrevet ned i loggen og aldri som en rad
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
 
-import { serveDiagnostics } from '../src/diagnostics/route.ts'
+import { serveDiagnostics, type JournalLine } from '../src/diagnostics/route.ts'
 import { check, psql, q, readLocalStackConfig, userToken } from './local-stack.ts'
 
 const config = readLocalStackConfig(process.argv.slice(2))
@@ -31,7 +34,13 @@ const environment = {
   ANTIDEP_SUPABASE_PUBLISHABLE_KEY: config.anonKey,
 }
 
-function envelope(eventId: string, accessToken: string, detail: string): Request {
+/** Serverloggen, lest av prøven i stedet for av utrullingen. */
+function fangLoggen(): { linjer: JournalLine[]; journal: (line: JournalLine) => void } {
+  const linjer: JournalLine[] = []
+  return { linjer, journal: (line) => linjer.push(line) }
+}
+
+function envelope(eventId: string, accessToken: string | null, detail: string): Request {
   return new Request('https://antidep.example/diagnostics', {
     method: 'POST',
     body: JSON.stringify({
@@ -109,13 +118,55 @@ async function main(): Promise<void> {
   // Og den ene forskjellen som må finnes: når lagringen ikke er tilgjengelig,
   // skal ruten si fra, slik at nettleseren beholder årsaken framfor å slette
   // den. Dette er tapsmåten utboksen finnes for å fjerne.
+  //
+  // Her slås Data API-et ut for ekte — adressen peker på en port ingen lytter
+  // på — og det er nettopp da den andre lagringen må bevise seg: linjen i
+  // Antideps egen serverlogg går ikke gjennom Supabase i det hele tatt.
   const utilgjengelig = randomUUID()
-  const nede = await serveDiagnostics(envelope(utilgjengelig, token, detail), {
-    ANTIDEP_SUPABASE_URL: 'http://127.0.0.1:1/ingen-tjeneste',
-    ANTIDEP_SUPABASE_PUBLISHABLE_KEY: config.anonKey,
-  })
+  const uteLogg = fangLoggen()
+  const nede = await serveDiagnostics(
+    envelope(utilgjengelig, token, detail),
+    {
+      ANTIDEP_SUPABASE_URL: 'http://127.0.0.1:1/ingen-tjeneste',
+      ANTIDEP_SUPABASE_PUBLISHABLE_KEY: config.anonKey,
+    },
+    undefined,
+    uteLogg.journal,
+  )
   check('en utilgjengelig lagring svarer 503, ikke 204', nede.status === 503, String(nede.status))
   check('og ingenting ble lagret', stored(utilgjengelig) === 0)
+  check(
+    'men årsaken står i serverloggen, med stacken i behold',
+    uteLogg.linjer[0]?.detail.includes('at callRpc (gateway.ts:1:1)') === true,
+    JSON.stringify(uteLogg.linjer[0]?.detail),
+  )
+  check(
+    'og uten den tokenformede strengen',
+    uteLogg.linjer.every((linje) => !linje.detail.includes('hemmelig.signatur')),
+  )
+  check(
+    'og linjen sier at loggen er det eneste stedet den finnes',
+    uteLogg.linjer.at(-1)?.bareILoggen === true,
+  )
+  check(
+    'og loggen bærer aldri tokenen',
+    !JSON.stringify(uteLogg.linjer).includes(token.slice(0, 40)),
+  )
+
+  // Den offentlige arbeidsoversikten svikter også for noen som ikke er
+  // innlogget. Det finnes ingen å tilskrive en rad, men årsaken er like verdt å
+  // forstå — og den skal aldri kunne bli en rad i den private lagringen.
+  const anonymtNummer = randomUUID()
+  const anonymLogg = fangLoggen()
+  const anonym = await serveDiagnostics(
+    envelope(anonymtNummer, null, detail),
+    environment,
+    undefined,
+    anonymLogg.journal,
+  )
+  check('en uinnlogget observasjon tas imot', anonym.status === 204, String(anonym.status))
+  check('og står i serverloggen', anonymLogg.linjer[0]?.reporter === 'anonym')
+  check('men ble aldri en rad', stored(anonymtNummer) === 0)
 
   // Og ingen leservei: kontrollen er på grants, ikke på tilfellet.
   const lesbar = psql(

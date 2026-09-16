@@ -10,7 +10,13 @@
 import { describe, expect, it } from 'vitest'
 
 import { parseDiagnosticEnvelope } from './envelope.ts'
-import { serveDiagnostics, type ForwardDiagnostic, type ForwardTarget } from './route.ts'
+import {
+  serveDiagnostics,
+  type DiagnosticsJournal,
+  type ForwardDiagnostic,
+  type ForwardTarget,
+  type JournalLine,
+} from './route.ts'
 
 const MILJØ = {
   ANTIDEP_SUPABASE_URL: 'https://prosjekt.supabase.co',
@@ -27,6 +33,12 @@ const KONVOLUTT = {
   httpStatus: null,
   transport: 'network',
   detail: 'TypeError: Failed to fetch\n    at callRpc (gateway.ts:1:1)',
+}
+
+/** Serverloggen, lest av prøven i stedet for av utrullingen. */
+function fangLoggen(): { linjer: JournalLine[]; journal: DiagnosticsJournal } {
+  const linjer: JournalLine[] = []
+  return { linjer, journal: (line) => linjer.push(line) }
 }
 
 function post(body: unknown): Request {
@@ -180,9 +192,192 @@ describe('ruten', () => {
   })
 
   it('svarer 503 framfor å kaste når utrullingen mangler oppsett', async () => {
-    const response = await serveDiagnostics(post(KONVOLUTT), {}, () => {
-      throw new Error('skal ikke videresendes')
-    })
+    const logg = fangLoggen()
+    const response = await serveDiagnostics(
+      post(KONVOLUTT),
+      {},
+      () => {
+        throw new Error('skal ikke videresendes')
+      },
+      logg.journal,
+    )
     expect(response.status).toBe(503)
+    // Uten oppsett finnes ingen rad, og loggen er alt som er igjen.
+    expect(logg.linjer.at(-1)?.bareILoggen).toBe(true)
+  })
+})
+
+// ============================================================================
+// Serverloggen
+//
+// Raden nås over Data API-et, og et Data API som er nede er nettopp det den rå
+// årsaken skal forklare. Linjen skrives derfor på Antideps egen opprinnelse,
+// uten å gå gjennom Supabase i det hele tatt — og den skrives først, slik at
+// den finnes selv om prosessen blir revet ned i kallet videre.
+// ============================================================================
+describe('serverloggen', () => {
+  it('skriver observasjonen før den prøver databasen', async () => {
+    const logg = fangLoggen()
+    let skrevetFørKallet = false
+    const forward: ForwardDiagnostic = () => {
+      skrevetFørKallet = logg.linjer.length === 1
+      return Promise.resolve({ delivered: true, retry: false })
+    }
+    await serveDiagnostics(post(KONVOLUTT), MILJØ, forward, logg.journal)
+    expect(skrevetFørKallet).toBe(true)
+    expect(logg.linjer[0]).toMatchObject({
+      event: '4a1d0f2e-9c33-4b71-8f5a-2b6c7d8e9f01',
+      reporter: 'innlogget',
+      area: 'work_queue',
+      operation: 'public_work_board',
+    })
+    expect(logg.linjer[0]?.detail).toContain('Failed to fetch')
+  })
+
+  // Tokenen er avsenderens legitimasjon og har ingenting i en logg å gjøre.
+  it('bærer aldri tokenen, og aldri hvem avsenderen var', async () => {
+    const logg = fangLoggen()
+    await serveDiagnostics(
+      post(KONVOLUTT),
+      MILJØ,
+      () => Promise.resolve({ delivered: true, retry: false }),
+      logg.journal,
+    )
+    expect(JSON.stringify(logg.linjer)).not.toContain('brukerens-egen-token')
+  })
+
+  it('vasker teksten før den skrives ned', async () => {
+    const logg = fangLoggen()
+    await serveDiagnostics(
+      post({
+        ...KONVOLUTT,
+        detail: 'authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.hemmelig.signatur',
+      }),
+      MILJØ,
+      () => Promise.resolve({ delivered: true, retry: false }),
+      logg.journal,
+    )
+    expect(logg.linjer[0]?.detail).not.toContain('hemmelig.signatur')
+  })
+
+  // Dette er hele grunnen til at loggen finnes: raden kom ikke fram, og den som
+  // leter skal kunne se nøyaktig hvilke observasjoner som bare ligger her.
+  it('merker linjen når raden ikke kom fram', async () => {
+    const logg = fangLoggen()
+    const response = await serveDiagnostics(
+      post(KONVOLUTT),
+      MILJØ,
+      () => Promise.resolve({ delivered: false, retry: true }),
+      logg.journal,
+    )
+    expect(response.status).toBe(503)
+    expect(logg.linjer).toHaveLength(2)
+    expect(logg.linjer[0]?.bareILoggen).toBeUndefined()
+    expect(logg.linjer[1]?.bareILoggen).toBe(true)
+  })
+
+  it('merker den ikke når raden kom fram', async () => {
+    const logg = fangLoggen()
+    await serveDiagnostics(
+      post(KONVOLUTT),
+      MILJØ,
+      () => Promise.resolve({ delivered: true, retry: false }),
+      logg.journal,
+    )
+    expect(logg.linjer).toHaveLength(1)
+    expect(logg.linjer[0]?.bareILoggen).toBeUndefined()
+  })
+})
+
+// ============================================================================
+// Den uinnloggede besøkende
+//
+// Arbeidsoversikten er offentlig. Svikter den for noen som ikke er innlogget,
+// finnes det ingen å tilskrive en rad — men årsaken er like verdt å forstå.
+// Observasjonen tas imot og skrives bare i serverloggen.
+// ============================================================================
+describe('en anonym observasjon', () => {
+  const ANONYM = { ...KONVOLUTT, accessToken: null }
+
+  it('tas imot og skrives i loggen, men aldri i databasen', async () => {
+    const logg = fangLoggen()
+    const response = await serveDiagnostics(
+      post(ANONYM),
+      MILJØ,
+      () => {
+        throw new Error('en anonym observasjon skal aldri nå databasen')
+      },
+      logg.journal,
+    )
+    expect(response.status).toBe(204)
+    expect(logg.linjer).toHaveLength(1)
+    expect(logg.linjer[0]?.reporter).toBe('anonym')
+    expect(logg.linjer[0]?.detail).toContain('Failed to fetch')
+  })
+
+  // Veien inn er så smal som den kan bli: de tre andre områdene finnes bare bak
+  // innlogging, så en anonym melding om dem beskriver noe avsenderen ikke kan
+  // ha sett.
+  it.each(['automatic_task', 'agent_service', 'full_text_intake'])(
+    'skriver ingenting ned om %s, som en uinnlogget ikke kan se',
+    async (område) => {
+      const logg = fangLoggen()
+      const response = await serveDiagnostics(
+        post({ ...ANONYM, area: område }),
+        MILJØ,
+        () => {
+          throw new Error('skal ikke videresendes')
+        },
+        logg.journal,
+      )
+      // Svaret skiller seg ikke ut: ruten er ikke et sted å kartlegge noe fra.
+      expect(response.status).toBe(204)
+      expect(logg.linjer).toHaveLength(0)
+    },
+  )
+
+  it.each(['work_queue', 'clinical_content'])('tar imot %s, som er offentlig', async (område) => {
+    const logg = fangLoggen()
+    const response = await serveDiagnostics(
+      post({ ...ANONYM, area: område }),
+      MILJØ,
+      () => {
+        throw new Error('skal ikke videresendes')
+      },
+      logg.journal,
+    )
+    expect(response.status).toBe(204)
+    expect(logg.linjer).toHaveLength(1)
+  })
+
+  // Den kan ikke følges opp med den som sendte den, og den blir aldri en rad.
+  // Da er en kortere utgave nesten like mye verdt, og den åpne veien inn
+  // tilsvarende mindre verdt å misbruke.
+  it('klippes kortere enn en innlogget observasjon', async () => {
+    const logg = fangLoggen()
+    await serveDiagnostics(
+      post({ ...ANONYM, detail: 'x'.repeat(4000) }),
+      MILJØ,
+      () => {
+        throw new Error('skal ikke videresendes')
+      },
+      logg.journal,
+    )
+    expect(logg.linjer[0]?.detail).toHaveLength(1000)
+
+    const innlogget = fangLoggen()
+    await serveDiagnostics(
+      post({ ...KONVOLUTT, detail: 'x'.repeat(4000) }),
+      MILJØ,
+      () => Promise.resolve({ delivered: true, retry: false }),
+      innlogget.journal,
+    )
+    expect(innlogget.linjer[0]?.detail).toHaveLength(4000)
+  })
+
+  // En tom token er ikke det samme som ingen token: den er en påstand om en
+  // innlogging, og den skal fortsatt avvises.
+  it('er ikke det samme som en tom token', () => {
+    expect(() => parseDiagnosticEnvelope({ ...KONVOLUTT, accessToken: '' })).toThrow(/ugyldig/)
   })
 })
