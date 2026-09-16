@@ -1638,6 +1638,9 @@ begin
   --   verktøyet kjørte og fikk ikke brukbar tekst ut av filen, tre ganger
   --     → filen er problemet, og en annen utgave av artikkelen kan hjelpe.
   --       Den avvises med sin egen grunn, og innboksen ber om en ny fil.
+  --       Da er det tekniske problemet om *denne raden* avgjort, og lukkes:
+  --       et problem som står åpent for alltid etter at systemet selv har
+  --       konkludert, er et problem ingen kan gjøre noe med.
   --
   --   uttakene ble brukt opp uten at verktøyet noen gang rakk å si fra
   --     → driften er problemet, ikke filen. Raden blokkeres med filen i behold,
@@ -1662,10 +1665,23 @@ begin
           completed_at = now()
       where i.id = v_intake.id;
 
+      -- Raden er ferdig, og dens eget problem er over: utfallet ble en
+      -- produkttilstand, ikke en åpen teknisk sak.
+      perform workflow.resolve_technical_incident(
+        'full_text_intake', 'intake:' || v_intake.id::text);
+
+      -- Men *leddet* er ikke friskmeldt av det. Én rar PDF er én ting; et
+      -- verktøy som ikke får tekst ut av noen fil, er noe helt annet — og
+      -- utenfra ser de to likt ut rad for rad. Signaturen er derfor leddets og
+      -- ikke radens: hver avvisning teller opp den samme raden, og et
+      -- tekstuttrekk som faktisk gir tekst, lukker den
+      -- (api.complete_full_text_extraction(uuid, text, text)). En fil som var
+      -- rar, etterlater da et lukket problem; et verktøy som er i stykker,
+      -- etterlater et som vokser.
       perform workflow.record_technical_incident(
         'full_text_intake',
-        'intake:' || v_intake.id::text,
-        format('Det registrerte tekstuttrekket kjørte %s ganger på innboksrad %s (kilde %s, fil %s) og fikk ingen brukbar tekst ut av filen. Filen er avvist, og innboksen ber om en annen utgave av artikkelen.',
+        'extraction',
+        format('Det registrerte tekstuttrekket kjørte %s ganger på innboksrad %s (kilde %s, fil %s) og fikk ingen brukbar tekst ut av filen. Filen er avvist som en produkttilstand, og innboksen ber om en annen utgave. Står denne raden åpen og teller oppover, er det ikke filene det står på.',
                v_intake.tool_failures, v_intake.id, v_intake.source_id, v_intake.sha256));
     else
       update workflow.full_text_intake i
@@ -1753,6 +1769,13 @@ begin
       message = 'Uttrekksoppdraget gjelder ikke lenger.',
       hint = 'Leien er utløpt eller overtatt. Ta et nytt oppdrag med api.claim_full_text_extraction(integer).';
   end if;
+
+  -- Å komme hit er beviset på at leddet virker: den registrerte oppskriften
+  -- kjørte og ga tekst. Hva teksten så viser seg å være, er en annen sak — en
+  -- fil som ikke er artikkelen, avvises like etter, og det er fortsatt et
+  -- fungerende tekstuttrekk. Derfor lukkes leddets eget problem her, og ikke
+  -- først når noe registreres.
+  perform workflow.resolve_technical_incident('full_text_intake', 'extraction');
 
   select r.* into v_request
   from workflow.full_text_requests r

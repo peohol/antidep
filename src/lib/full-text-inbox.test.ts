@@ -87,20 +87,23 @@ describe('avvisningen som produkttilstand', () => {
     ['unreadable', /lese/],
     ['not_a_pdf', /PDF/],
     ['other_document_same_text', /allerede registrert/],
-    ['extraction_failed', /teknisk problem/],
+    ['extraction_failed', /annen utgave/],
   ])('oversetter %s til en setning om hva som kan gjøres', (code, expected) => {
     expect(rejectionSentence(code)).toMatch(expected)
   })
 
-  it.each(['not_this_article', 'unreadable', 'not_a_pdf', 'other_document_same_text'])(
-    'bærer ingen teknisk verdi i setningen for %s',
-    (code) => {
-      const sentence = rejectionSentence(code).toLowerCase()
-      for (const teknisk of ['sha256', 'uuid', 'sqlstate', 'pdftotext', 'rpc', 'json']) {
-        expect(sentence).not.toContain(teknisk)
-      }
-    },
-  )
+  it.each([
+    'not_this_article',
+    'unreadable',
+    'not_a_pdf',
+    'other_document_same_text',
+    'extraction_failed',
+  ])('bærer ingen teknisk verdi i setningen for %s', (code) => {
+    const sentence = rejectionSentence(code).toLowerCase()
+    for (const teknisk of ['sha256', 'uuid', 'sqlstate', 'pdftotext', 'rpc', 'json']) {
+      expect(sentence).not.toContain(teknisk)
+    }
+  })
 
   it('lar en ukjent grunn bli en sann, generell setning framfor å forsvinne', () => {
     expect(rejectionSentence('noe_nytt')).toMatch(/kunne ikke brukes/)

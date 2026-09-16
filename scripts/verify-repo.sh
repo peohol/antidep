@@ -109,6 +109,16 @@ while IFS= read -r workflow; do
   fi
 done < <(find .github/workflows -type f -name '*.yml' | sort)
 
+# Den planlagte kjøringen skal ikke be om den rå årsaken.
+#
+# `--diagnostics` tar med feilteksten fra verktøyet og fra databasen. Den er
+# nyttig for den som feilsøker lokalt, og feil i en GitHub Actions-logg i et
+# offentlig repo: en videreformidlet feiltekst kan bære et beskrankningsnavn,
+# en adresse eller en del av dokumentet (AGENTS.md).
+reject_grep_matches \
+  'Den planlagte kjøringen ber om den rå årsaken, og loggen er offentlig.' \
+  -n -E -- '--diagnostics' .github/workflows/full-text-extraction.yml
+
 # Private fulltekster og agentsvar skal aldri bli en del av repoet.
 #
 # En eksportert agentoppgave bærer hele den kontrollerte kildeteksten mellom to

@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(107);
+select plan(112);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -766,6 +766,93 @@ select is(
    where e.transition = 'resolved'),
   null,
   'mens en lukking ikke er en observasjon av noe galt, og bærer ingen'
+);
+
+-- ===========================================================================
+-- Del 8b — Grensen mellom teknisk svikt og produktavvisning går bare én vei
+--
+-- Når verktøyet faktisk har lest filen tre ganger uten å få brukbar tekst, er
+-- filen svaret, og den avvises. Da er det tekniske problemet *om den raden*
+-- avgjort og skal lukkes: et problem som blir stående åpent for alltid etter at
+-- systemet selv har konkludert, er et problem ingen kan gjøre noe med.
+--
+-- Men leddet er ikke friskmeldt av det. Én rar PDF og et verktøy som er i
+-- stykker, ser like ut rad for rad — derfor får leddet sin egen rad, som teller
+-- oppover og lukkes av at et tekstuttrekk faktisk gir tekst.
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000b"}', true);
+set local role authenticated;
+insert into result select 'inbox_e', jsonb_build_object('items', api.full_text_inbox());
+insert into result select 'submitted_e', api.submit_full_text(
+  (select payload -> 'items' -> 0 ->> 'reference' from result where label = 'inbox_e'),
+  (select value from fixture where name = 'pdf'));
+
+-- Tre ganger der verktøyet kjørte og ikke fikk brukbar tekst ut av filen.
+do $$
+declare
+  v_claim jsonb;
+begin
+  for i in 1..3 loop
+    v_claim := api.claim_full_text_extraction(600);
+    perform api.fail_full_text_extraction((v_claim ->> 'handle')::uuid, 'tool_failed');
+  end loop;
+end;
+$$;
+
+-- Og det fjerde uttaket, der grensen passeres.
+insert into result select 'claim_after_three', api.claim_full_text_extraction(600);
+reset role;
+
+-- Raden identifiseres av håndtaket opplastingen svarte med. Alt i prøven skjer
+-- i én transaksjon, så now() er det samme for hver rad: en sortering på
+-- tidspunkt ville pekt på en vilkårlig av dem.
+select is(
+  (select i.state::text from workflow.full_text_intake i
+   where i.reference = (select payload ->> 'reference' from result where label = 'submitted_e')),
+  'rejected',
+  'tre mislykkede kjøringer på den samme filen gjør filen til svaret'
+);
+select is(
+  (select i.rejection::text from workflow.full_text_intake i
+   where i.reference = (select payload ->> 'reference' from result where label = 'submitted_e')),
+  'extraction_failed',
+  'med sin egen grunn, som innboksen oversetter til «prøv en annen utgave»'
+);
+select isnt(
+  (select ti.resolved_at
+   from workflow.technical_incidents ti
+   join workflow.full_text_intake i on ti.signature = 'intake:' || i.id::text
+   where i.reference = (select payload ->> 'reference' from result where label = 'submitted_e')),
+  null,
+  'og radens eget tekniske problem lukkes, framfor å bli stående for alltid'
+);
+select ok(
+  (select ti.resolved_at is null from workflow.technical_incidents ti
+   where ti.area = 'full_text_intake' and ti.signature = 'extraction'),
+  'men leddet får sin egen rad, som står til et tekstuttrekk faktisk gir tekst'
+);
+
+-- Og det er nettopp det som lukker den: en ny fil som lar seg lese. Hva teksten
+-- viser seg å være, er en annen sak — dette er fortsatt et fungerende uttrekk.
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000b"}', true);
+set local role authenticated;
+insert into result select 'inbox_f', jsonb_build_object('items', api.full_text_inbox());
+insert into result select 'submitted_f', api.submit_full_text(
+  (select payload -> 'items' -> 0 ->> 'reference' from result where label = 'inbox_f'),
+  (select value from fixture where name = 'pdf'));
+insert into result select 'claim_f', api.claim_full_text_extraction(600);
+insert into result select 'completed_f', api.complete_full_text_extraction(
+  (select (payload ->> 'handle')::uuid from result where label = 'claim_f'),
+  pg_temp.bound_800(),
+  '24.02.0');
+reset role;
+
+select ok(
+  (select ti.resolved_at is not null from workflow.technical_incidents ti
+   where ti.area = 'full_text_intake' and ti.signature = 'extraction'),
+  'et tekstuttrekk som gir tekst, friskmelder leddet — også når filen avvises'
 );
 
 -- ===========================================================================

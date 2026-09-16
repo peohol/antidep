@@ -31,6 +31,8 @@ import { createClient } from '@supabase/supabase-js'
 
 import type { Database } from '../types/database.ts'
 import {
+  apiFailure,
+  describeUnexpectedFailure,
   describeWorkerReport,
   runFullTextWorker,
   type FailureStage,
@@ -115,7 +117,9 @@ function required(name: string): string {
 }
 
 /** Redaktørens klient: enten en ferdig token, eller en innlogging. */
-async function editorClient(): Promise<ReturnType<typeof createClient<Database, 'api'>>> {
+async function editorClient(
+  diagnostics: boolean,
+): Promise<ReturnType<typeof createClient<Database, 'api'>>> {
   const url = required('ANTIDEP_SUPABASE_URL')
   const key = required('ANTIDEP_SUPABASE_PUBLISHABLE_KEY')
   const token = process.env['ANTIDEP_EDITOR_ACCESS_TOKEN']?.trim()
@@ -137,7 +141,7 @@ async function editorClient(): Promise<ReturnType<typeof createClient<Database, 
     password: required('ANTIDEP_EDITOR_PASSWORD'),
   })
   if (error !== null) {
-    throw new Error(`Innloggingen som redaktør mislyktes: ${error.message}`)
+    throw apiFailure('Innloggingen som redaktør mislyktes.', error, diagnostics)
   }
   return client
 }
@@ -145,21 +149,25 @@ async function editorClient(): Promise<ReturnType<typeof createClient<Database, 
 type Client = Awaited<ReturnType<typeof editorClient>>
 
 /**
- * Avvisninger fra databasen når fram ordrett her.
+ * Hvilket ledd som sviktet og med hvilken kode — og den rå årsaken bare når
+ * noen har bedt om den.
  *
- * Dette er en terminal og ikke en brukerflate: den som kjører kommandoen, er
- * Claude Code, ChatGPT eller repo-eieren, og for dem er den rå årsaken
- * nettopp det som trengs. Regelen om stabile menneskelige formuleringer gjelder
- * produkt-UI (`src/app/gateway.ts`), ikke teknisk drift.
+ * Dette var en ren terminalkommando da den ble skrevet, og da nådde
+ * avvisningene fra databasen fram ordrett: den som kjørte den, var Claude Code,
+ * ChatGPT eller repo-eieren, og for dem er den rå årsaken nettopp det som
+ * trengs. Nå kjører den også planlagt i GitHub Actions, i et offentlig repo,
+ * der loggen er offentlig — og da holder ikke den begrunnelsen lenger. Den rå
+ * årsaken er derfor bak `--diagnostics`, og koden, som ikke kan bære innhold,
+ * står alltid.
  */
-function intakeApi(client: Client): FullTextIntakeApi {
+function intakeApi(client: Client, diagnostics: boolean): FullTextIntakeApi {
   return {
     claim: async (leaseSeconds: number): Promise<unknown> => {
       const { data, error } = await client.rpc('claim_full_text_extraction', {
         p_lease_seconds: leaseSeconds,
       })
       if (error !== null) {
-        throw new Error(`Uttrekksoppdraget ble ikke hentet: ${error.message}`)
+        throw apiFailure('Uttrekksoppdraget ble ikke hentet.', error, diagnostics)
       }
       return data
     },
@@ -174,7 +182,7 @@ function intakeApi(client: Client): FullTextIntakeApi {
         p_text_extraction_tool_version: toolVersion,
       })
       if (error !== null) {
-        throw new Error(`Teksten ble ikke levert: ${error.message}`)
+        throw apiFailure('Teksten ble ikke levert.', error, diagnostics)
       }
       return data
     },
@@ -184,14 +192,14 @@ function intakeApi(client: Client): FullTextIntakeApi {
         p_stage: stage,
       })
       if (error !== null) {
-        throw new Error(`Stopppunktet ble ikke meldt: ${error.message}`)
+        throw apiFailure('Stopppunktet ble ikke meldt.', error, diagnostics)
       }
       return data
     },
     resume: async (): Promise<unknown> => {
       const { data, error } = await client.rpc('resume_blocked_full_text_extractions', {})
       if (error !== null) {
-        throw new Error(`Blokkert arbeid ble ikke satt i gang igjen: ${error.message}`)
+        throw apiFailure('Blokkert arbeid ble ikke satt i gang igjen.', error, diagnostics)
       }
       return data
     },
@@ -208,6 +216,8 @@ async function main(): Promise<number> {
     }
     options = parsed
   } catch (cause) {
+    // Valgene kommer fra kommandolinjen og ikke fra databasen, så feilen her er
+    // kommandoens egen setning om et ugyldig valg.
     console.error(cause instanceof Error ? cause.message : String(cause))
     console.error(`\n${USAGE}`)
     return 1
@@ -215,7 +225,7 @@ async function main(): Promise<number> {
 
   try {
     const report = await runFullTextWorker({
-      api: intakeApi(await editorClient()),
+      api: intakeApi(await editorClient(options.diagnostics), options.diagnostics),
       maxTasks: options.maxTasks,
       leaseSeconds: options.leaseSeconds,
       diagnostics: options.diagnostics,
@@ -226,7 +236,7 @@ async function main(): Promise<number> {
     console.log(describeWorkerReport(report))
     return 0
   } catch (cause) {
-    console.error(cause instanceof Error ? cause.message : String(cause))
+    console.error(describeUnexpectedFailure(cause, options.diagnostics))
     return 1
   }
 }

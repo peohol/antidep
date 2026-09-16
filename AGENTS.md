@@ -20,7 +20,9 @@ Dette er en varig produktregel, og den går foran bekvemmelighet i enhver flate:
 
 Teknisk drift gjøres av kommandoer og aldri av en flate. Tekstuttrekket av opplastede fulltekster kjøres planlagt av `.github/workflows/full-text-extraction.yml` hvert kvarter; ingen starter det for hånd. `npm run ops:full-text` er den samme kommandoen, tilgjengelig for feilsøking. `npm run ops:agents` dekker modelltildeling, kjøreroppsett og manuell handoff som recovery.
 
-En teknisk svikt skal aldri bli en menneskeoppgave. Får Antidep ikke kjørt tekstuttrekket, blir innboksraden stående som `blocked` med filen i behold, og `api.resume_blocked_full_text_extractions()` setter den i gang igjen når driften svarer. Først når det registrerte tekstuttrekket faktisk har lest filen tre ganger uten å få brukbar tekst, ber innboksen om en annen utgave.
+En teknisk svikt skal aldri bli en menneskeoppgave. Får Antidep ikke kjørt tekstuttrekket, blir innboksraden stående som `blocked` med filen i behold, og `api.resume_blocked_full_text_extractions()` setter den i gang igjen når driften svarer. Først når det registrerte tekstuttrekket faktisk har lest filen tre ganger uten å få brukbar tekst, ber innboksen om en annen utgave — og da er radens eget tekniske problem avgjort og lukkes. Leddet har sin egen rad (`signature = 'extraction'`) som teller oppover og lukkes av at et tekstuttrekk faktisk gir tekst, slik at én rar PDF og et verktøy som er i stykker, kan skilles fra hverandre.
+
+Den planlagte kjøringen logger offentlig. `npm run ops:full-text` skriver derfor bare stabile driftssetninger og en maskinkode; den rå årsaken fra verktøyet og fra databasen er bak `--diagnostics`, som aldri settes i arbeidsflyten (håndhevet av `npm run verify:repo`).
 
 ## Ufravikelig
 

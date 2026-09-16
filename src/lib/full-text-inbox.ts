@@ -84,9 +84,8 @@ const REJECTION_SENTENCES: Readonly<Record<string, string>> = {
     'Den samme teksten er allerede registrert for denne artikkelen, fra en annen fil. Bruk den ' +
     'filen artikkelen faktisk ble registrert fra.',
   extraction_failed:
-    'Antidep prøvde flere ganger og fikk ikke hentet tekst ut av forrige fil. Det er meldt ' +
-    'videre som et teknisk problem, og det beste du kan gjøre, er å prøve en annen utgave av ' +
-    'artikkelen.',
+    'Antidep prøvde flere ganger og fikk ikke hentet tekst ut av forrige fil. Forsøkene er ' +
+    'lagret, og det beste du kan gjøre, er å prøve en annen utgave av artikkelen.',
 }
 
 export function rejectionSentence(code: string): string {

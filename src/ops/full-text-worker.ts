@@ -40,6 +40,66 @@ import { asText, fieldsOf, raw, type Fields } from '../agents/strict-fields.ts'
 
 const SUBJECT = 'Uttrekksoppdraget'
 
+/**
+ * En svikt kommandoen allerede har formulert trygt.
+ *
+ * Finnes fordi kjøringen er planlagt i et offentlig repo, og GitHub Actions-
+ * loggen er offentlig. En videreformidlet feiltekst fra databasen eller
+ * innloggingen kan bære et beskrankningsnavn, en adresse eller en verdi fra en
+ * rad, og en offentlig logg skal ikke bli et sted slikt samler seg (AGENTS.md).
+ *
+ * Klassen skiller de setningene kommandoen selv har skrevet, fra alt annet som
+ * måtte komme: de første kan skrives ut som de står, de andre ikke.
+ */
+export class OperationalFailure extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'OperationalFailure'
+  }
+}
+
+/** Det databasegrensen svarer med når noe ikke gikk gjennom. */
+export interface ApiFailure {
+  readonly message: string
+  readonly code?: string | null | undefined
+}
+
+/**
+ * Hvilket ledd som sviktet, og med hvilken kode — og den rå årsaken bare når
+ * noen har bedt om den.
+ *
+ * Koden er en maskinidentifikator og kan ikke bære innhold, så den står alltid:
+ * uten den ville en rød kjøring i CI vært helt uten spor. Selve feilteksten er
+ * bak `--diagnostics`, som den som feilsøker lokalt slår på selv — samme grense
+ * som `src/app/gateway.ts` trekker for en brukerflate, og av samme grunn.
+ */
+export function apiFailure(
+  step: string,
+  failure: ApiFailure,
+  diagnostics: boolean,
+): OperationalFailure {
+  const code = typeof failure.code === 'string' && failure.code.length > 0 ? failure.code : 'ingen'
+  const raw = diagnostics ? ` ${failure.message}` : ' Kjør med --diagnostics for den rå årsaken.'
+  return new OperationalFailure(`${step} Kode: ${code}.${raw}`)
+}
+
+/**
+ * Setningen en kjøring avslutter med når noe uventet stoppet den.
+ *
+ * En svikt kommandoen selv har formulert, er allerede trygg og går uendret
+ * gjennom. Alt annet — en feil fra et bibliotek, en kastet verdi som ikke er en
+ * feil — får en stabil setning, fordi kommandoen ikke vet hva den bærer.
+ */
+export function describeUnexpectedFailure(cause: unknown, diagnostics: boolean): string {
+  if (cause instanceof OperationalFailure) {
+    return cause.message
+  }
+  if (!diagnostics) {
+    return 'Kjøringen stoppet uventet. Kjør med --diagnostics for den rå årsaken.'
+  }
+  return cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)
+}
+
 /** Hva kommandoen trenger av databasen, som en injiserbar grenseflate. */
 export interface FullTextIntakeApi {
   claim(leaseSeconds: number): Promise<unknown>

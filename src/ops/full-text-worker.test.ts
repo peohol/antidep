@@ -15,7 +15,10 @@ import { describe, expect, it } from 'vitest'
 import type { RunTool, ToolRun } from '../agents/document-text.ts'
 import { syntheticLayoutPdf } from '../agents/test-support.ts'
 import {
+  apiFailure,
+  describeUnexpectedFailure,
   describeWorkerReport,
+  OperationalFailure,
   parseClaimedTask,
   parseCompletionOutcome,
   runFullTextWorker,
@@ -255,6 +258,42 @@ describe('kjøringen', () => {
     const report = await runFullTextWorker({ api: database.api, maxTasks: 3 })
     expect(claimed).toBe(3)
     expect(report.claimed).toBe(3)
+  })
+
+  // Kjøringen er planlagt i et offentlig repo, og GitHub Actions-loggen er
+  // offentlig. En videreformidlet feiltekst fra databasen kan bære et
+  // beskrankningsnavn, en adresse eller en verdi fra en rad, og den skal ikke
+  // stå der uten at noen har bedt om den (AGENTS.md).
+  it('holder databasens egen feiltekst utenfor loggen med mindre den bes om', () => {
+    const feil = { message: 'duplicate key value violates unique constraint "x"', code: '23505' }
+
+    const stille = apiFailure('Teksten ble ikke levert.', feil, false).message
+    expect(stille).toContain('Teksten ble ikke levert.')
+    expect(stille).not.toContain('duplicate key')
+    // Koden er en maskinidentifikator og kan ikke bære innhold. Uten den ville
+    // en rød kjøring i CI vært helt uten spor.
+    expect(stille).toContain('23505')
+
+    expect(apiFailure('Teksten ble ikke levert.', feil, true).message).toContain('duplicate key')
+  })
+
+  it('sier «ingen» framfor å late som om det fantes en kode', () => {
+    expect(apiFailure('Noe.', { message: 'x' }, false).message).toContain('Kode: ingen.')
+  })
+
+  // En setning kommandoen selv har skrevet, er allerede trygg. Alt annet vet
+  // den ikke hva bærer, og får derfor en stabil setning.
+  it('slipper sine egne setninger gjennom, og ingen andres', () => {
+    expect(describeUnexpectedFailure(new OperationalFailure('Min egen setning.'), false)).toBe(
+      'Min egen setning.',
+    )
+    expect(describeUnexpectedFailure(new Error('rå tekst fra et bibliotek'), false)).not.toContain(
+      'rå tekst',
+    )
+    expect(describeUnexpectedFailure(new Error('rå tekst fra et bibliotek'), true)).toContain(
+      'rå tekst',
+    )
+    expect(describeUnexpectedFailure('en kastet streng', false)).toMatch(/stoppet uventet/)
   })
 
   it('sier hva kjøringen gjorde, i én setning', () => {
