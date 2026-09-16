@@ -16,9 +16,11 @@
 //     ubekreftet forsøk kan gjentas uten å doble noe
 //   * at en tokenformet streng er vasket bort før lagring
 //   * at et kall uten gyldig token ikke legger igjen noe
-//   * at årsaken finnes i Antideps egen serverlogg **også når Data API-et er
-//     slått ut** — den ene lagringen som ikke går gjennom Supabase
-//   * at en uinnlogget besøkende blir skrevet ned i loggen og aldri som en rad
+//   * at årsaken **fortsatt blir en varig rad når Data API-et er slått ut**,
+//     gjennom Antideps egen databaseforbindelse — og at den kan leses tilbake
+//   * at den samme årsaken også står i serverloggen
+//   * at en uinnlogget besøkende melder problemet uten ett tegn fritekst
+//   * at reserverollen ikke kan lese én rad, heller ikke sine egne
 // ============================================================================
 
 import { randomUUID } from 'node:crypto'
@@ -29,9 +31,32 @@ import { check, psql, q, readLocalStackConfig, userToken } from './local-stack.t
 const config = readLocalStackConfig(process.argv.slice(2))
 const USER = '9f000000-0000-4000-8000-00000000000d'
 
+// Reserverollen får passord bare her, mot den lokale stacken. I en utrulling
+// settes det én gang av den som drifter, og det finnes ikke i repoet.
+const RESERVE_PASSORD = 'lokal-proeve-antidep-diagnostikk'
+psql(config, `alter role antidep_diagnostics password ${q(RESERVE_PASSORD)};`)
+
+const reserveUrl = config.dbUrl.replace(
+  'postgresql://postgres:postgres@',
+  `postgresql://antidep_diagnostics:${RESERVE_PASSORD}@`,
+)
+if (
+  !/^postgresql:\/\/antidep_diagnostics:[^@]+@(127\.0\.0\.1|localhost|\[::1\]):/.test(reserveUrl)
+) {
+  throw new Error('Reserveadressen peker ikke på den lokale stacken.')
+}
+
 const environment = {
   ANTIDEP_SUPABASE_URL: config.apiUrl,
   ANTIDEP_SUPABASE_PUBLISHABLE_KEY: config.anonKey,
+  ANTIDEP_DIAGNOSTICS_DATABASE_URL: reserveUrl,
+}
+
+/** Data API-et pekt på en port ingen lytter på. Utilgjengelig for ekte. */
+const dataApiNede = {
+  ANTIDEP_SUPABASE_URL: 'http://127.0.0.1:1/ingen-tjeneste',
+  ANTIDEP_SUPABASE_PUBLISHABLE_KEY: config.anonKey,
+  ANTIDEP_DIAGNOSTICS_DATABASE_URL: reserveUrl,
 }
 
 /** Serverloggen, lest av prøven i stedet for av utrullingen. */
@@ -43,6 +68,9 @@ function fangLoggen(): { linjer: JournalLine[]; journal: (line: JournalLine) => 
 function envelope(eventId: string, accessToken: string | null, detail: string): Request {
   return new Request('https://antidep.example/diagnostics', {
     method: 'POST',
+    // Adressen plattformen setter. Serveren teller avsenderen på en sum av
+    // den, siden ingen token kan kontrolleres når PostgREST er nede.
+    headers: { 'x-real-ip': '198.51.100.7' },
     body: JSON.stringify({
       eventId,
       accessToken,
@@ -115,58 +143,153 @@ async function main(): Promise<void> {
   check('et kall uten gyldig token svarer det samme utad', refused.status === 204)
   check('men legger ingenting igjen', stored(anonymous) === 0)
 
-  // Og den ene forskjellen som må finnes: når lagringen ikke er tilgjengelig,
-  // skal ruten si fra, slik at nettleseren beholder årsaken framfor å slette
-  // den. Dette er tapsmåten utboksen finnes for å fjerne.
+  // ==========================================================================
+  // Selve poenget: Data API-et er nede, og raden kommer fram likevel.
   //
-  // Her slås Data API-et ut for ekte — adressen peker på en port ingen lytter
-  // på — og det er nettopp da den andre lagringen må bevise seg: linjen i
-  // Antideps egen serverlogg går ikke gjennom Supabase i det hele tatt.
-  const utilgjengelig = randomUUID()
+  // Adressen peker på en port ingen lytter på, så PostgREST er utilgjengelig
+  // for ekte. Observasjonen skal da gå gjennom Antideps egen
+  // databaseforbindelse — og den skal kunne leses tilbake etterpå, som en rad
+  // og ikke bare som en linje i en logg.
+  // ==========================================================================
+  const utenDataApi = randomUUID()
   const uteLogg = fangLoggen()
   const nede = await serveDiagnostics(
-    envelope(utilgjengelig, token, detail),
-    {
-      ANTIDEP_SUPABASE_URL: 'http://127.0.0.1:1/ingen-tjeneste',
-      ANTIDEP_SUPABASE_PUBLISHABLE_KEY: config.anonKey,
-    },
+    envelope(utenDataApi, token, detail),
+    dataApiNede,
     undefined,
     uteLogg.journal,
   )
-  check('en utilgjengelig lagring svarer 503, ikke 204', nede.status === 503, String(nede.status))
-  check('og ingenting ble lagret', stored(utilgjengelig) === 0)
+  check('en utilgjengelig Data API svarer likevel 204', nede.status === 204, String(nede.status))
+  check('fordi raden gikk gjennom den egne forbindelsen', stored(utenDataApi) === 1)
+
+  const varig = psql(
+    config,
+    `select replace(detail, chr(10), ' / ')
+     from workflow.client_diagnostics where client_event_id = ${q(utenDataApi)}`,
+  )
   check(
-    'men årsaken står i serverloggen, med stacken i behold',
+    'og den kan leses tilbake, med stacken i behold',
+    varig.includes('at callRpc (gateway.ts:1:1)'),
+    varig,
+  )
+  check('og uten den tokenformede strengen', !varig.includes('hemmelig.signatur'), varig)
+
+  const avsender = psql(
+    config,
+    `select coalesce(reported_by_user_id::text, '') || '|' || coalesce(reporter_ip_hash, '')
+     from workflow.client_diagnostics where client_event_id = ${q(utenDataApi)}`,
+  )
+  check('raden er merket som serverens observasjon', /^\|[0-9a-f]{64}$/.test(avsender), avsender)
+  check('og adressen selv er aldri lagret', !avsender.includes('198.51.100.7'), avsender)
+
+  check(
+    'den samme årsaken står også i serverloggen',
     uteLogg.linjer[0]?.detail.includes('at callRpc (gateway.ts:1:1)') === true,
     JSON.stringify(uteLogg.linjer[0]?.detail),
   )
   check(
-    'og uten den tokenformede strengen',
-    uteLogg.linjer.every((linje) => !linje.detail.includes('hemmelig.signatur')),
-  )
-  check(
-    'og linjen sier at loggen er det eneste stedet den finnes',
-    uteLogg.linjer.at(-1)?.bareILoggen === true,
+    'og loggen sier ikke at den er det eneste stedet, for raden kom fram',
+    uteLogg.linjer.every((linje) => linje.bareILoggen !== true),
   )
   check(
     'og loggen bærer aldri tokenen',
     !JSON.stringify(uteLogg.linjer).includes(token.slice(0, 40)),
   )
 
-  // Den offentlige arbeidsoversikten svikter også for noen som ikke er
-  // innlogget. Det finnes ingen å tilskrive en rad, men årsaken er like verdt å
-  // forstå — og den skal aldri kunne bli en rad i den private lagringen.
+  // Det samme forsøket en gang til blir den samme raden, ikke en til.
+  const igjen = await serveDiagnostics(
+    envelope(utenDataApi, token, detail),
+    dataApiNede,
+    undefined,
+    fangLoggen().journal,
+  )
+  check('et nytt forsøk svarer likt', igjen.status === 204)
+  check('og blir fortsatt én rad', stored(utenDataApi) === 1)
+
+  // Og når heller ikke den egne forbindelsen finnes, skal ruten si fra framfor
+  // å la nettleseren slette årsaken.
+  const uten = randomUUID()
+  const utenLogg = fangLoggen()
+  const helt = await serveDiagnostics(
+    envelope(uten, token, detail),
+    { ...dataApiNede, ANTIDEP_DIAGNOSTICS_DATABASE_URL: '' },
+    undefined,
+    utenLogg.journal,
+  )
+  check('uten noen vei igjen svarer ruten 503', helt.status === 503, String(helt.status))
+  check('og ingenting ble lagret', stored(uten) === 0)
+  check('men loggen sier at den er det eneste stedet', utenLogg.linjer.at(-1)?.bareILoggen === true)
+
+  // ==========================================================================
+  // Den uinnloggede besøkende: et problem meldt, og ikke ett tegn fritekst.
+  // ==========================================================================
   const anonymtNummer = randomUUID()
   const anonymLogg = fangLoggen()
   const anonym = await serveDiagnostics(
-    envelope(anonymtNummer, null, detail),
+    envelope(anonymtNummer, null, 'HEMMELIG-PÅFØRT-TEKST fra en fremmed'),
     environment,
     undefined,
     anonymLogg.journal,
   )
-  check('en uinnlogget observasjon tas imot', anonym.status === 204, String(anonym.status))
+  check('en uinnlogget melding tas imot', anonym.status === 204, String(anonym.status))
   check('og står i serverloggen', anonymLogg.linjer[0]?.reporter === 'anonym')
-  check('men ble aldri en rad', stored(anonymtNummer) === 0)
+  check('men ble aldri en rå-årsak-rad', stored(anonymtNummer) === 0)
+  check(
+    'og ingenting av kallerens egen tekst finnes noe sted',
+    !JSON.stringify(anonymLogg.linjer).includes('HEMMELIG-PÅFØRT-TEKST'),
+  )
+
+  const meldt = psql(
+    config,
+    `select count(*) from workflow.technical_incident_events
+     where reporter_key like 'offentlig:%'
+       and occurred_at > now() - interval '5 minutes'`,
+  )
+  check('problemet er meldt på det offentlige sporet', Number(meldt) >= 1, meldt)
+
+  const forurenset = psql(
+    config,
+    `select count(*) from workflow.technical_incident_events
+     where diagnosis like '%HEMMELIG-PÅFØRT-TEKST%'`,
+  )
+  check('og sporet bærer ingen tekst fra avsenderen', forurenset === '0', forurenset)
+
+  // ==========================================================================
+  // Reserverollen kan legge til, og ingenting mer.
+  // ==========================================================================
+  const kanLese = psql(
+    config,
+    `select count(*) from (values
+       ('workflow.client_diagnostics'),
+       ('workflow.technical_incidents'),
+       ('workflow.technical_incident_events')) as t(name)
+     where has_table_privilege('antidep_diagnostics', t.name, 'SELECT')
+        or has_table_privilege('antidep_diagnostics', t.name, 'INSERT')
+        or has_table_privilege('antidep_diagnostics', t.name, 'UPDATE')
+        or has_table_privilege('antidep_diagnostics', t.name, 'DELETE')`,
+  )
+  check('reserverollen har ingen tabellrettigheter i det hele tatt', kanLese === '0', kanLese)
+
+  const kanKjøre = psql(
+    config,
+    `select count(*) from pg_proc p
+     join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname in ('workflow', 'provenance', 'knowledge', 'catalog', 'audit', 'api')
+       and has_function_privilege('antidep_diagnostics', p.oid, 'execute')`,
+  )
+  check('og kan kjøre nøyaktig de to append-funksjonene', kanKjøre === '2', kanKjøre)
+
+  const egenskaper = psql(
+    config,
+    `select rolsuper::text || rolcreatedb::text || rolcreaterole::text
+            || rolbypassrls::text || rolinherit::text
+     from pg_roles where rolname = 'antidep_diagnostics'`,
+  )
+  check(
+    'og er hverken superbruker, kan opprette noe eller gå utenom RLS',
+    egenskaper === 'fffff',
+    egenskaper,
+  )
 
   // Og ingen leservei: kontrollen er på grants, ikke på tilfellet.
   const lesbar = psql(

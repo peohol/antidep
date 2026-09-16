@@ -55,16 +55,6 @@ export const TRANSPORT_SHAPES = [
 export const MAX_DETAIL_CHARS = 4000
 
 /**
- * Det samme taket for en observasjon ingen kan tilskrives.
- *
- * Strammere med vilje. En anonym observasjon kan ikke følges opp med den som
- * sendte den, og den blir aldri en rad — den koster bare plass i kjøreloggen.
- * Toppen av en stack er der svaret ligger, så en kortere utgave sier nesten det
- * samme, og gjør den åpne veien inn tilsvarende mindre verdt å misbruke.
- */
-export const MAX_ANONYMOUS_DETAIL_CHARS = 1000
-
-/**
  * Fjerner det som ser ut som en hemmelighet, før teksten lagres noe sted.
  *
  * Den samme vaskingen finnes i databasen, og den er den autoritative. Denne
@@ -107,6 +97,12 @@ export interface DiagnosticEnvelope {
   readonly code: string | null
   readonly httpStatus: number | null
   readonly transport: string
+  /**
+   * Stacken og meldingen slik flaten så dem.
+   *
+   * Alltid tom når `accessToken` er `null`: en anonym vei inn for fritekst
+   * ville vært en logg hvem som helst kunne fylle med sine egne ord.
+   */
   readonly detail: string
 }
 
@@ -155,15 +151,20 @@ export function parseDiagnosticEnvelope(value: unknown): DiagnosticEnvelope {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventId)) {
     throw new Error('Diagnostikkonvolutten er ugyldig: eventId er ikke en uuid.')
   }
+  const accessToken = optionalText(raw.accessToken, 'accessToken')
   return {
     eventId,
-    accessToken: optionalText(raw.accessToken, 'accessToken'),
+    accessToken,
     area: oneOf(raw.area, TECHNICAL_AREAS, 'area'),
     kind: oneOf(raw.kind, FAILURE_KINDS, 'kind'),
     operation: optionalText(raw.operation, 'operation'),
     code: optionalText(raw.code, 'code'),
     httpStatus: typeof status === 'number' ? status : null,
     transport: oneOf(raw.transport, TRANSPORT_SHAPES, 'transport'),
-    detail: text(raw.detail, 'detail').slice(0, MAX_DETAIL_CHARS),
+    // Uten en token finnes det ingen å tilskrive teksten, og da leses den ikke
+    // i det hele tatt — den kastes her, før noe annet ser konvolutten. Den
+    // sterkeste formen: ikke «teksten filtreres», men «teksten finnes ikke på
+    // denne veien», uansett hva kalleren la ved.
+    detail: accessToken === null ? '' : text(raw.detail, 'detail').slice(0, MAX_DETAIL_CHARS),
   }
 }

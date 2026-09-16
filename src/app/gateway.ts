@@ -474,7 +474,11 @@ function recordRawCause(client: AntidepClient, entry: TechnicalDetail): void {
         code: MACHINE_CODE.test(entry.code ?? '') ? entry.code : null,
         httpStatus: entry.httpStatus,
         transport: entry.transport,
-        detail: scrubDetail(entry.detail),
+        // Uten en innlogget bruker sendes ingen tekst i det hele tatt. Den
+        // ville ikke kunnet tilskrives noen, og en anonym vei inn for fritekst
+        // ville vært en logg hvem som helst kunne fylle med sine egne ord.
+        // Maskinidentifikatorene over sier uansett hva som sviktet og hvordan.
+        detail: userId === null ? '' : scrubDetail(entry.detail),
       })
       return deliverPending(session?.access_token ?? null, userId)
     })

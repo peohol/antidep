@@ -135,6 +135,35 @@ reject_grep_matches \
   '<kildetekst nonce="[0-9a-f]{16}">|"answer_version": ?"antidep/agent-answer@' \
   .
 
+# Reserveveiens legitimasjon skal aldri nå en nettleser.
+#
+# `ANTIDEP_DIAGNOSTICS_DATABASE_URL` er den ene hemmeligheten i Antidep som gir
+# en forbindelse rett til databasen. Den er smal — rollen kan bare legge til
+# rader gjennom to funksjoner og kan ikke lese én tilbake — men den hører
+# utelukkende hjemme på serversiden.
+#
+# Et `VITE_`-prefiks ville lagt den i klartekst i nettleserbygget. Kontrollen
+# står her slik at den ikke kan glemmes ved neste variabel.
+reject_grep_matches \
+  'Reserveveiens databaseadresse er gitt et VITE_-prefiks og ville havnet i nettleserbygget.' \
+  -R -n -E \
+  --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist \
+  'VITE_[A-Z_]*DIAGNOSTICS_DATABASE' \
+  .
+
+# Og modulen som holder forbindelsen, skal ikke kunne importeres av en flate.
+#
+# `src/diagnostics/store.ts` åpner en Postgres-forbindelse. Havnet den i
+# nettleserbygget — gjennom en import fra `src/app/` eller `src/lib/` — ville
+# bunteren tatt med den, og adressen måtte vært en `VITE_`-verdi for at den
+# skulle virke. Kontrollen fanger importen framfor å vente på variabelen.
+reject_grep_matches \
+  'En nettleserflate importerer den server-side databaseforbindelsen.' \
+  -R -n -E \
+  --include='*.ts' --include='*.tsx' \
+  "from '.*diagnostics/store'" \
+  src/app src/lib src/components
+
 operational_docs=(
   .env.example
   assignments/README.md

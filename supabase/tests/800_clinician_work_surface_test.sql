@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(126);
+select plan(148);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1476,6 +1476,240 @@ select is(
   'tallet er null, så ingenting lekker den veien'
 );
 reset role;
+
+-- ===========================================================================
+-- Del 14 — Veien som ikke går gjennom Data API-et
+--
+-- Den rå årsaken skal komme fram også når PostgREST ikke svarer. Reserven er
+-- en egen databaserolle med en egen forbindelse, og hele poenget med den er at
+-- den skal kunne *nesten ingenting*: legge til rader gjennom to funksjoner, og
+-- ikke lese én rad tilbake — heller ikke sine egne.
+--
+-- Prøvene her er derfor like mye på hva rollen ikke kan, som på hva den gjør.
+-- ===========================================================================
+
+-- --- Rollen, og grensene rundt den ---------------------------------------
+select is(
+  (select rolsuper::text || rolcreatedb::text || rolcreaterole::text
+          || rolbypassrls::text || rolinherit::text || rolcanlogin::text
+   from pg_roles where rolname = 'antidep_diagnostics'),
+  'ffffft',
+  'reserverollen kan logge inn, og er ellers hverken superbruker, oppretter noe, går utenom RLS eller arver noe'
+);
+
+-- Uttømmende over alle de kanoniske schemaene, framfor en håndholdt liste: en
+-- ny tabell skal ikke kunne bli skrivbar for reserverollen ved at noen glemmer
+-- å føre den opp her.
+select is_empty(
+  $$
+    select c.relname, p.privilege
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    cross join (values ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'))
+           as p(privilege)
+    where n.nspname in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
+      and c.relkind in ('r', 'p', 'v', 'm')
+      and has_table_privilege('antidep_diagnostics', c.oid, p.privilege)
+  $$,
+  'reserverollen har ingen tabellrettighet av noe slag i noen av de kanoniske schemaene'
+);
+
+select set_eq(
+  $$
+    select p.oid::regprocedure::text
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('catalog', 'knowledge', 'workflow', 'provenance', 'audit', 'api')
+      and has_function_privilege('antidep_diagnostics', p.oid, 'execute')
+  $$,
+  $$
+    values ('workflow.ingest_client_diagnostic(text,uuid,text,text,text,text,integer,text,text)'),
+           ('workflow.ingest_public_technical_problem(text,text,text,text,text,integer,text)')
+  $$,
+  'reserverollen kan kjøre nøyaktig de to append-funksjonene, og ingen andre'
+);
+
+select is_empty(
+  $$
+    select s.schema_name, p.privilege
+    from (values ('catalog'), ('knowledge'), ('provenance'), ('audit'), ('api')) as s(schema_name)
+    cross join (values ('usage'), ('create')) as p(privilege)
+    where has_schema_privilege('antidep_diagnostics', s.schema_name, p.privilege)
+  $$,
+  'reserverollen ser bare workflow, og kan ikke opprette noe der heller'
+);
+select ok(
+  not has_schema_privilege('antidep_diagnostics', 'workflow', 'create'),
+  'reserverollen kan ikke opprette objekter i workflow'
+);
+
+-- --- Raden reserven skriver ------------------------------------------------
+--
+-- Den skal være den samme raden som normalveien skriver, i den samme private
+-- tabellen — bare med en annen avsender, siden ingen token kan kontrolleres
+-- når PostgREST er nede.
+select lives_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      repeat('a', 64), '7f000000-0000-4000-8000-00000000d001', 'work_queue', 'unavailable',
+      'public_work_board', 'PGRST301', 503, 'http',
+      'TypeError: Failed to fetch' || chr(10) || '    at callRpc (gateway.ts:1:1)')
+  $$,
+  'reserveveien tar imot en observasjon'
+);
+select is(
+  (select detail from workflow.client_diagnostics
+   where client_event_id = '7f000000-0000-4000-8000-00000000d001'),
+  'TypeError: Failed to fetch' || chr(10) || '    at callRpc (gateway.ts:1:1)',
+  'og stacken er i behold, linjeskift og alt'
+);
+select is(
+  (select reported_by_user_id::text || '|' || reporter_ip_hash || '|' || reporter_key
+   from workflow.client_diagnostics
+   where client_event_id = '7f000000-0000-4000-8000-00000000d001'),
+  '|' || repeat('a', 64) || '|ip:' || repeat('a', 64),
+  'raden er merket som serverens observasjon, og nøkkelen er utledet av den'
+);
+
+-- Vaskingen gjelder her også. En token som havnet i en feilmelding, skal ikke
+-- bli liggende lesbar fordi den kom inn på reserveveien.
+select lives_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      repeat('b', 64), '7f000000-0000-4000-8000-00000000d002', 'work_queue', 'unavailable',
+      'public_work_board', null, null, 'network',
+      'authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.hemmelig.signatur')
+  $$,
+  'reserveveien tar imot en observasjon med en tokenformet streng'
+);
+select unlike(
+  (select detail from workflow.client_diagnostics
+   where client_event_id = '7f000000-0000-4000-8000-00000000d002'),
+  '%hemmelig.signatur%',
+  'og den er vasket bort før lagring, som på normalveien'
+);
+
+-- Idempotens: et ubekreftet forsøk prøves på nytt, og skal ikke bli to rader.
+select lives_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      repeat('a', 64), '7f000000-0000-4000-8000-00000000d001', 'work_queue', 'unavailable',
+      'public_work_board', 'PGRST301', 503, 'http', 'en annen tekst')
+  $$,
+  'det samme nummeret levert igjen går gjennom'
+);
+select is(
+  (select count(*)::int from workflow.client_diagnostics
+   where client_event_id = '7f000000-0000-4000-8000-00000000d001'),
+  1,
+  'og blir fortsatt én rad'
+);
+
+-- Avsendersummen er serverens egen observasjon. En verdi som ikke har formen,
+-- er ikke en sum, og da finnes ingen å telle på.
+select throws_ok(
+  $$
+    select workflow.ingest_client_diagnostic(
+      'ikke-en-sum', '7f000000-0000-4000-8000-00000000d003', 'work_queue', 'unavailable')
+  $$,
+  '22023',
+  'Observasjonen mangler serverens egen avsendersum.',
+  'reserveveien krever en avsendersum av riktig form'
+);
+
+-- --- Den uinnloggede besøkende --------------------------------------------
+--
+-- Ingen fritekst i det hele tatt, og bare de to flatene en uinnlogget kan se.
+select throws_ok(
+  $$
+    select workflow.ingest_public_technical_problem(
+      repeat('c', 64), 'full_text_intake', 'unavailable', 'full_text_inbox')
+  $$,
+  '22023',
+  'Området er ikke offentlig.',
+  'en anonym melding om en flate bak innlogging avvises'
+);
+select lives_ok(
+  $$
+    select workflow.ingest_public_technical_problem(
+      repeat('c', 64), 'work_queue', 'unavailable', 'public_work_board', 'PGRST301', 503, 'http')
+  $$,
+  'en anonym melding om den offentlige arbeidsoversikten tas imot'
+);
+select is(
+  (select count(*)::int from workflow.technical_incident_events e
+   where e.reporter_key = 'offentlig:' || repeat('c', 64)),
+  1,
+  'og den står på sporet med avsenderen serveren observerte'
+);
+select is(
+  (select ti.self_reported::text from workflow.technical_incidents ti
+   where ti.area = 'work_queue' and ti.signature = 'client:public_work_board'),
+  'true',
+  'problemet er selvmeldt, altså et hjerteslag databasen selv lukker'
+);
+
+-- Signaturen bærer bare operasjonen, og diagnosen er Antideps egen setning.
+-- Ingen av delene kan bære et ord fra den som meldte.
+select is(
+  (select count(*)::int from workflow.technical_incident_events e
+   where e.reporter_key = 'offentlig:' || repeat('c', 64)
+     and e.diagnosis like '%uinnlogget besøkende%'
+     and e.diagnosis like '%bærer derfor ingen feiltekst%'),
+  1,
+  'diagnosen er Antideps egen setning, og sier selv at den ikke bærer noen feiltekst'
+);
+
+-- Operasjonen må treffe en api-funksjon som faktisk finnes. Det er denne
+-- kontrollen som gjør antallet problemrader den anonyme veien kan skape,
+-- endelig: uten den kunne hver oppdiktede operasjon blitt en ny rad, og kvoten
+-- per avsender ville ikke hjulpet mot mange avsendere.
+select throws_ok(
+  $$
+    select workflow.ingest_public_technical_problem(
+      repeat('c', 64), 'work_queue', 'unavailable', 'en_oppdiktet_operasjon')
+  $$,
+  '22023',
+  'Ukjent operasjon.',
+  'en anonym melding om en operasjon som ikke finnes, avvises'
+);
+select throws_ok(
+  $$
+    select workflow.ingest_public_technical_problem(
+      repeat('c', 64), 'work_queue', 'unavailable', 'public_work_board', 'en fri tekst')
+  $$,
+  '22023',
+  'Ukjent kode.',
+  'og koden må ha formen til en maskinkode, ikke være fritekst'
+);
+
+-- Kvoten: tjue i timen per avsender, og den tjueførste skrives ikke.
+do $$
+declare
+  i integer;
+begin
+  for i in 1..25 loop
+    perform workflow.ingest_public_technical_problem(
+      repeat('d', 64), 'clinical_content', 'unavailable', 'published_claim_index');
+  end loop;
+end
+$$;
+select is(
+  (select count(*)::int from workflow.technical_incident_events e
+   where e.reporter_key = 'offentlig:' || repeat('d', 64)),
+  20,
+  'den anonyme veien skriver høyst tjue observasjoner i timen per avsender'
+);
+
+-- Og sporet for alt databasen selv observerte, bærer ingen avsender: kolonnen
+-- finnes for kvoten på den ene veien, og ikke som en ny opplysning om alle.
+select is(
+  (select count(*)::int from workflow.technical_incident_events e
+   join workflow.technical_incidents ti on ti.id = e.technical_incident_id
+   where ti.signature like 'runner:%' and e.reporter_key is not null),
+  0,
+  'observasjoner databasen selv gjorde, har ingen avsender på sporet'
+);
 
 select * from finish();
 rollback;

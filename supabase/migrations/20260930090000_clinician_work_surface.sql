@@ -364,22 +364,42 @@ create table workflow.technical_incident_events (
   -- «samme område, men en annen kode hver gang» er et helt annet problem enn
   -- «samme kode femti ganger».
   diagnosis text,
+  -- Avsenderen, bare når observasjonen kom fra en uinnlogget besøkende gjennom
+  -- Antideps egen serverrute. Da er den «offentlig:» etterfulgt av en sum av
+  -- ip-adressen serveren faktisk så — aldri adressen selv, og aldri noe
+  -- kalleren oppgir. Null for alt annet, som er det store flertallet: en
+  -- observasjon databasen selv gjorde, har ingen avsender utenfra.
+  --
+  -- Finnes for at mengden skal kunne begrenses per avsender. Uten et sted å
+  -- telle ville den anonyme veien kunnet skrive append-only rader i det
+  -- uendelige, og en append-only tabell er nettopp den som ikke kan ryddes.
+  reporter_key text,
   occurred_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
 
   constraint technical_incident_events_diagnosis_shape_check
-    check ((diagnosis is null) = (transition = 'resolved'))
+    check ((diagnosis is null) = (transition = 'resolved')),
+  constraint technical_incident_events_reporter_key_shape_check
+    check (reporter_key is null or reporter_key ~ '^offentlig:[0-9a-f]{64}$')
 );
 
 comment on table workflow.technical_incident_events is
   'Append-only spor over hver overgang på et teknisk problem (DATABASE_ARCHITECTURE.md §33). Selve problemet er tilstand og endres; overgangene er historikk og overskrives ikke. Uten sporet ville «har dette kommet tilbake» vært ubesvarlig så snart raden var oppdatert. Hver observasjon bærer sin egen diagnose, slik at rekken av dem er lesbar for en teknisk agent lenge etter at tilstandsraden er skrevet over.';
 comment on column workflow.technical_incident_events.diagnosis is
   'Antideps egen setning om denne ene observasjonen, med de maskinidentifikatorene som fantes. Aldri en videreformidlet feiltekst. Null for overgangen resolved, som ikke er en observasjon av noe galt.';
+comment on column workflow.technical_incident_events.reporter_key is
+  'Avsenderen, bare for observasjoner meldt av en uinnlogget besøkende gjennom Antideps egen serverrute: «offentlig:» og en SHA-256 av ip-adressen serveren observerte. Adressen selv lagres aldri, og verdien kan ikke oppgis av en kaller. Finnes utelukkende for at mengdegrensen i workflow.ingest_public_technical_problem(text, text, text, text, text, integer, text) skal kunne telles per avsender. Null for alt databasen selv observerte.';
 
 alter table workflow.technical_incident_events enable row level security;
 
 create index technical_incident_events_incident_idx
   on workflow.technical_incident_events (technical_incident_id, occurred_at);
+
+-- Delvis, fordi kolonnen er null for alt annet enn den anonyme veien: indeksen
+-- skal bære kvotetellingen og ikke hele sporet.
+create index technical_incident_events_reporter_idx
+  on workflow.technical_incident_events (reporter_key, occurred_at desc)
+  where reporter_key is not null;
 
 create trigger technical_incident_events_set_created_at
   before insert on workflow.technical_incident_events
@@ -402,7 +422,8 @@ create function workflow.record_technical_incident(
   p_area workflow.technical_area,
   p_signature text,
   p_diagnosis text,
-  p_self_reported boolean default false
+  p_self_reported boolean default false,
+  p_reporter_key text default null
 )
   returns uuid
   language plpgsql
@@ -475,17 +496,18 @@ begin
     where ti.id = v_row.id;
   end if;
 
-  insert into workflow.technical_incident_events (technical_incident_id, transition, diagnosis)
-  values (v_row.id, v_transition, p_diagnosis);
+  insert into workflow.technical_incident_events
+    (technical_incident_id, transition, diagnosis, reporter_key)
+  values (v_row.id, v_transition, p_diagnosis, p_reporter_key);
 
   return v_row.id;
 end;
 $$;
 
-comment on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean) is
-  'Registrerer at noe teknisk er galt, eller at det samme problemet er observert igjen. Idempotent på (område, signatur): det samme problemet blir én rad med en teller, og et problem som var løst, åpnes på nytt med sporet opened framfor seen. En selvmeldt episode hjerteslaget allerede har erklært over, avsluttes her — før den nye observasjonen gjenbruker raden — slik at lukkingen ikke henger på at en admin tilfeldigvis åpner oversikten, og slik at sporet får både resolved og en ny opened. En ny episode teller fra sin egen begynnelse: «oppsto» og antallet beskriver det som pågår nå, mens hele forløpet står i workflow.technical_incident_events. Diagnosen er Antideps egen setning og lagres privat — på tilstandsraden som den siste, og på sporet som denne ene observasjonen, slik at rekken av dem er lesbar senere. Kalles fra innsiden av en funksjon som allerede har kontrollert kalleren, og er derfor ikke SECURITY DEFINER.';
+comment on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean, text) is
+  'Registrerer at noe teknisk er galt, eller at det samme problemet er observert igjen. Idempotent på (område, signatur): det samme problemet blir én rad med en teller, og et problem som var løst, åpnes på nytt med sporet opened framfor seen. En selvmeldt episode hjerteslaget allerede har erklært over, avsluttes her — før den nye observasjonen gjenbruker raden — slik at lukkingen ikke henger på at en admin tilfeldigvis åpner oversikten, og slik at sporet får både resolved og en ny opened. En ny episode teller fra sin egen begynnelse: «oppsto» og antallet beskriver det som pågår nå, mens hele forløpet står i workflow.technical_incident_events, der avsenderen føres for de observasjonene som kom fra en uinnlogget besøkende. Diagnosen er Antideps egen setning og lagres privat — på tilstandsraden som den siste, og på sporet som denne ene observasjonen, slik at rekken av dem er lesbar senere. Kalles fra innsiden av en funksjon som allerede har kontrollert kalleren, og er derfor ikke SECURITY DEFINER.';
 
-revoke execute on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean) from public;
+revoke execute on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean, text) from public;
 
 create function workflow.resolve_technical_incident(
   p_area workflow.technical_area,
@@ -655,7 +677,25 @@ create table workflow.client_diagnostics (
   technical_incident_id uuid
     references workflow.technical_incidents (id) on update restrict on delete restrict,
 
-  reported_by_user_id uuid not null,
+  -- Hvem observasjonen kunne tilskrives, og hvordan den kom inn.
+  --
+  -- Normalveien går over Data API-et, der databasen selv har kontrollert
+  -- tokenen: da står brukeren her, og ip-summen er null. Svikter Data API-et,
+  -- kommer den samme observasjonen inn gjennom Antideps egen serverforbindelse
+  -- i stedet, og da finnes ingen kontrollert bruker — serveren kan ikke selv
+  -- avgjøre om en token er ekte. Da står ip-summen her og brukeren er null.
+  --
+  -- Nøyaktig én av dem, aldri begge og aldri ingen: en rad skal alltid kunne
+  -- si hvilken av de to veiene den kom inn på, og hvilken grense som gjaldt.
+  reported_by_user_id uuid,
+  reporter_ip_hash text,
+  -- Avsenderen raden telles og avdupliseres under, utledet av de to over.
+  --
+  -- Generert og ikke oppgitt: kunne en kaller valgt nøkkelen selv, kunne den
+  -- også valgt hvilken kvote den brukte, eller skrevet over en annens rad.
+  reporter_key text generated always as (
+    coalesce('bruker:' || reported_by_user_id::text, 'ip:' || reporter_ip_hash)
+  ) stored,
   -- Flatens eget nummer på observasjonen.
   --
   -- Finnes fordi en levering som ikke ble bekreftet, prøves på nytt: en fane
@@ -680,7 +720,11 @@ create table workflow.client_diagnostics (
   constraint client_diagnostics_detail_shape_check
     check (length(detail) between 1 and 4000),
   constraint client_diagnostics_http_status_check
-    check (http_status is null or http_status between 100 and 599)
+    check (http_status is null or http_status between 100 and 599),
+  constraint client_diagnostics_reporter_check
+    check (num_nonnulls(reported_by_user_id, reporter_ip_hash) = 1),
+  constraint client_diagnostics_reporter_ip_hash_shape_check
+    check (reporter_ip_hash is null or reporter_ip_hash ~ '^[0-9a-f]{64}$')
 );
 
 comment on table workflow.client_diagnostics is
@@ -688,7 +732,11 @@ comment on table workflow.client_diagnostics is
 comment on column workflow.client_diagnostics.detail is
   'Stacken og meldingen slik flaten så dem. Klippet til 4000 tegn og vasket for tokenformede strenger før lagring. Aldri lesbar gjennom noe api-objekt.';
 comment on column workflow.client_diagnostics.reported_by_user_id is
-  'Den innloggede brukeren raden er skrevet av. Finnes for at mengdegrensen skal kunne håndheves per bruker, og for at en rad ikke skal kunne skrives av noen som ikke kan tilskrives.';
+  'Den innloggede brukeren raden er skrevet av, når observasjonen kom over Data API-et og databasen selv kontrollerte tokenen. Finnes for at mengdegrensen skal kunne håndheves per bruker. Null når raden kom inn gjennom Antideps egen serverforbindelse, som er reserven for at Data API-et kan være nede.';
+comment on column workflow.client_diagnostics.reporter_ip_hash is
+  'SHA-256 av avsenderens ip-adresse, satt bare når raden kom inn gjennom Antideps egen serverforbindelse. Adressen selv lagres aldri. Finnes for at mengdegrensen skal kunne håndheves også når ingen bruker kan kontrolleres, og er derfor serverens egen observasjon av hvem som sendte, ikke noe kalleren oppgir.';
+comment on column workflow.client_diagnostics.reporter_key is
+  'Den avsenderen raden telles og avdupliseres under: brukeren når Data API-et kontrollerte tokenen, ellers ip-summen. Utledet og ikke oppgitt, slik at ingen kaller kan velge hvilken kvote den bruker.';
 
 alter table workflow.client_diagnostics enable row level security;
 
@@ -696,12 +744,12 @@ create index client_diagnostics_incident_idx
   on workflow.client_diagnostics (technical_incident_id, occurred_at desc);
 
 create index client_diagnostics_reporter_idx
-  on workflow.client_diagnostics (reported_by_user_id, occurred_at desc);
+  on workflow.client_diagnostics (reporter_key, occurred_at desc);
 
--- Den samme observasjonen levert to ganger er én rad. Nøkkelen er brukerens
--- egen, så to brukere kan ikke kollidere, og ingen kan skrive over en annens.
+-- Den samme observasjonen levert to ganger er én rad. Nøkkelen er avsenderens
+-- egen, så to avsendere kan ikke kollidere, og ingen kan skrive over en annens.
 create unique index client_diagnostics_event_key
-  on workflow.client_diagnostics (reported_by_user_id, client_event_id);
+  on workflow.client_diagnostics (reporter_key, client_event_id);
 
 -- Append-only, som sporet ved siden av. En observasjon av hva som gikk galt,
 -- skal ikke kunne endres eller fjernes av den samme veien som skrev den — og
@@ -2688,7 +2736,7 @@ begin
   -- Beltet i tillegg til selene: låsen over gjør kappløpet umulig innen én
   -- bruker, og denne gjør en samtidig levering av det samme nummeret til én rad
   -- uansett.
-  on conflict (reported_by_user_id, client_event_id) do nothing;
+  on conflict (reporter_key, client_event_id) do nothing;
 end;
 $$;
 
@@ -2696,6 +2744,332 @@ comment on function api.record_client_diagnostic(uuid, text, text, text, text, i
   'Tar imot den rå årsaken — feilteksten og stacken — fra en brukerflate, og lagrer den privat i workflow.client_diagnostics. Egen skrivevei fordi den har et annet krav til å komme fram enn meldingen om selve problemet: en tilstandsrad kan gjentas ved neste svikt, mens den rå årsaken finnes bare denne ene gangen. Fire grenser gjør en klientskrevet tekst forsvarlig: attribusjon til en innlogget bruker, en kvote per bruker og time som serialiseres med en radlås slik at den ikke kan omgås med parallelle kall, en lengdegrense, og vasking av tokenformede strenger. Over kvoten droppes teksten i stillhet — problemet telles uansett. Idempotent på flatens eget nummer, slik at en levering som ikke ble bekreftet kan prøves på nytt uten å bli to rader. Ingen api-funksjon leser tabellen ut igjen. Bare authenticated.';
 
 revoke execute on function api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text) from public;
+
+-- ----------------------------------------------------------------------------
+-- 1c. Veien som ikke går gjennom Data API-et
+--
+-- Alt over nås med PostgREST. Det er riktig for produktet — hele
+-- autorisasjonen ligger i databasen, og ingen flate holder en hemmelighet — men
+-- det gjør lagringen av den rå årsaken avhengig av nøyaktig den tjenesten
+-- årsaken ofte handler om. Er Data API-et nede, kommer raden ikke fram, og en
+-- observasjon som bare overlever når det den beskriver ikke skjedde, er ingen
+-- observasjon.
+--
+-- Antideps egen serverrute har derfor en forbindelse rett til databasen, uten
+-- PostgREST i veien. Normalveien er fortsatt Data API-et, der databasen selv
+-- kontrollerer tokenen; denne er reserven, og den brukes når den første ikke
+-- kom fram.
+--
+-- ----------------------------------------------------------------------------
+-- Hvorfor dette ikke er service_role, og ikke i nærheten
+--
+-- Rollen under kan én ting: kjøre to funksjoner som *legger til* rader. Den har
+-- ingen tabellrettigheter, ingen lesevei, ingen bypass av RLS, og kan ikke
+-- opprette noe. Lekker legitimasjonen, er det verste noen kan gjøre å skrive
+-- vaskede, klippede og mengdebegrensede observasjoner inn i en privat tabell
+-- ingen brukerflate leser. Den kan ikke lese én rad ut igjen — heller ikke sine
+-- egne.
+--
+-- Det er mindre fullmakt enn en innlogget redaktør har, og langt mindre enn
+-- service_role, som fortsatt er forbudt overalt (ANTIDEP_CONSTITUTION.md
+-- regel 7).
+--
+-- Rollen får ikke passord her. Et passord i en migrasjon ville vært en
+-- hemmelighet i git, og da ville det ikke vært en hemmelighet. Det settes én
+-- gang i utrullingen; uten det kan rollen ikke logge inn i det hele tatt, og
+-- reserven er bare ubrukt.
+-- ----------------------------------------------------------------------------
+do $$
+begin
+  -- Roller er felles for hele klyngen og overlever at databasen bygges opp på
+  -- nytt. Uten denne kontrollen ville en ny `supabase db reset` mot den samme
+  -- lokale klyngen stoppet på «role already exists».
+  if not exists (select 1 from pg_catalog.pg_roles where rolname = 'antidep_diagnostics') then
+    create role antidep_diagnostics;
+  end if;
+end
+$$;
+
+-- Skrevet ut hver gang, og ikke bare ved opprettelsen: finnes rollen allerede
+-- fra før, er det nettopp da grensene må settes framfor å antas.
+alter role antidep_diagnostics with
+  login nosuperuser nocreatedb nocreaterole noinherit nobypassrls noreplication;
+
+revoke all on schema workflow from antidep_diagnostics;
+grant usage on schema workflow to antidep_diagnostics;
+
+comment on role antidep_diagnostics is
+  'Antideps egen serverrute, når den skriver uten å gå gjennom Data API-et. Kan kjøre nøyaktig to append-funksjoner i workflow og ingenting annet: ingen tabellrettigheter, ingen lesevei, ingen bypass av RLS, ingen create. Passordet settes i utrullingen og finnes ikke i repoet.';
+
+-- ----------------------------------------------------------------------------
+-- Reserven for den rå årsaken
+--
+-- Samme grenser som over — vasking, lengde, mengde og idempotens — men
+-- avsenderen er en annen. Serveren kan ikke selv avgjøre om en token er ekte,
+-- så raden tilskrives ingen bruker. I stedet telles den på en sum av
+-- avsenderens ip-adresse, som er serverens egen observasjon og ikke noe
+-- kalleren oppgir.
+--
+-- Prisen står her framfor å bli glattet over: mens Data API-et er nede, er det
+-- ingen som har kontrollert at avsenderen er en Antidep-bruker. Det er derfor
+-- den samme mengdegrensen gjelder per ip, og derfor teksten vaskes og klippes
+-- likevel. Alternativet — å miste årsaken til nettopp den svikten som er
+-- vanskeligst å forstå i ettertid — er verre.
+-- ----------------------------------------------------------------------------
+create function workflow.ingest_client_diagnostic(
+  p_reporter_ip_hash text,
+  p_event_id uuid,
+  p_area text,
+  p_kind text,
+  p_operation text default null,
+  p_code text default null,
+  p_http_status integer default null,
+  p_transport text default null,
+  p_detail text default null
+)
+  returns void
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_area workflow.technical_area;
+  v_detail text;
+  v_key text;
+  v_incident_id uuid;
+begin
+  if p_reporter_ip_hash is null or p_reporter_ip_hash !~ '^[0-9a-f]{64}$' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Observasjonen mangler serverens egen avsendersum.';
+  end if;
+
+  if p_event_id is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Observasjonen mangler et nummer.';
+  end if;
+
+  begin
+    v_area := p_area::workflow.technical_area;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Ukjent område.';
+  end;
+
+  v_detail := workflow.scrub_diagnostic_detail(p_detail);
+  if length(coalesce(v_detail, '')) = 0 then
+    return;
+  end if;
+
+  v_key := 'ip:' || p_reporter_ip_hash;
+
+  -- En levering som allerede kom fram, er ferdig. Kontrollen står før kvoten,
+  -- slik at et nytt forsøk ikke bruker opp plass.
+  if exists (
+    select 1 from workflow.client_diagnostics d
+    where d.reporter_key = v_key and d.client_event_id = p_event_id
+  ) then
+    return;
+  end if;
+
+  -- Samme kappløpsgrense som på normalveien: «tell, og sett inn hvis tallet er
+  -- lavt nok» er to steg to samtidige kall begge vinner. Låsen er per avsender
+  -- og holdes ut transaksjonen.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('antidep:client_diagnostics:' || v_key, 0));
+
+  if (select count(*)
+      from workflow.client_diagnostics d
+      where d.reporter_key = v_key
+        and d.occurred_at > statement_timestamp() - interval '1 hour') >= 60
+  then
+    return;
+  end if;
+
+  select ti.id into v_incident_id
+  from workflow.technical_incidents ti
+  where ti.area = v_area and ti.signature = 'client:' || coalesce(p_operation, 'ukjent');
+
+  insert into workflow.client_diagnostics
+    (technical_incident_id, reporter_ip_hash, client_event_id, area, kind, operation, code,
+     http_status, transport, detail)
+  values
+    (v_incident_id, p_reporter_ip_hash, p_event_id, v_area, p_kind, p_operation, p_code,
+     p_http_status, p_transport, v_detail)
+  on conflict (reporter_key, client_event_id) do nothing;
+end;
+$$;
+
+comment on function workflow.ingest_client_diagnostic(text, uuid, text, text, text, text, integer, text, text) is
+  'Reserveveien for den rå årsaken, brukt av Antideps egen serverrute når Data API-et ikke svarer. Samme vasking, lengdegrense, mengdegrense og idempotens som api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text), men avsenderen er en SHA-256 av ip-adressen serveren faktisk så, siden ingen token kan kontrolleres når PostgREST er nede. Kjørbar bare av rollen antidep_diagnostics, som ikke kan lese én rad ut igjen.';
+
+revoke execute on function workflow.ingest_client_diagnostic(text, uuid, text, text, text, text, integer, text, text) from public;
+grant execute on function workflow.ingest_client_diagnostic(text, uuid, text, text, text, text, integer, text, text) to antidep_diagnostics;
+
+-- ----------------------------------------------------------------------------
+-- Den uinnloggede besøkende, uten ett eneste tegn fritekst
+--
+-- Arbeidsoversikten og det publiserte innholdet er åpne for alle. Svikter de
+-- for noen som ikke er innlogget, finnes det ingen å tilskrive noe — og en åpen
+-- vei inn for *tekst* ville vært en logg hvem som helst kunne fylle med sine
+-- egne ord. Det er ikke observability; det er et oppslagstavle.
+--
+-- Derfor tar denne ikke imot tekst i det hele tatt. Bare de samme
+-- maskinidentifikatorene api.report_technical_problem(...) allerede
+-- kontrollerer, og Antidep skriver setningen selv av dem. Ingen av dem kan bære
+-- et filnavn, en adresse eller en del av et svar.
+--
+-- Tre grenser gjør den anonyme veien forsvarlig, og de er strukturelle framfor
+-- å hvile på en teller alene:
+--
+--   * ingen fritekst, så ingenting kan forurenses med noens egne ord
+--   * bare de to områdene en uinnlogget faktisk kan se
+--   * høyst tjue observasjoner per time per ip-sum serveren selv observerte
+--
+-- Det som kommer ut, er nettopp signalet som trengs: at den offentlige flaten
+-- svikter, hvordan, og hvor ofte.
+-- ----------------------------------------------------------------------------
+create function workflow.ingest_public_technical_problem(
+  p_reporter_ip_hash text,
+  p_area text,
+  p_kind text,
+  p_operation text default null,
+  p_code text default null,
+  p_http_status integer default null,
+  p_transport text default null
+)
+  returns void
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_area workflow.technical_area;
+  v_key text;
+  v_description text;
+  v_transport text;
+begin
+  if p_reporter_ip_hash is null or p_reporter_ip_hash !~ '^[0-9a-f]{64}$' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Meldingen mangler serverens egen avsendersum.';
+  end if;
+
+  begin
+    v_area := p_area::workflow.technical_area;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Ukjent område.';
+  end;
+
+  -- Bare de to flatene en uinnlogget faktisk kan se. En anonym melding om et
+  -- område bak innlogging beskriver noe avsenderen ikke kan ha sett.
+  if v_area not in ('work_queue', 'clinical_content') then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Området er ikke offentlig.';
+  end if;
+
+  v_description := case p_kind
+    when 'unavailable' then 'En offentlig flate fikk ikke svar fra Antidep.'
+    when 'unreadable_answer' then 'En offentlig flate fikk et svar den ikke kunne lese.'
+    else null
+  end;
+
+  if v_description is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent svikttype.';
+  end if;
+
+  -- Operasjonen må være en funksjon som faktisk finnes i api, akkurat som på
+  -- den innloggede veien. Kontrollen er ikke en formalitet her, den er selve
+  -- grensen: signaturen utledes av operasjonen, så en fri verdi ville latt en
+  -- avsender lage en ny problemrad for hver oppdiktede operasjon. Med
+  -- kontrollen er antallet rader denne veien kan skape, bundet av antallet
+  -- api-funksjoner — uansett hvor mange avsendere som prøver.
+  if p_operation is not null and not exists (
+    select 1
+    from pg_catalog.pg_proc pr
+    join pg_catalog.pg_namespace ns on ns.oid = pr.pronamespace
+    where ns.nspname = 'api' and pr.proname = p_operation
+  ) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent operasjon.';
+  end if;
+
+  -- Samme stramme form som på den innloggede veien: en SQLSTATE på fem tegn,
+  -- eller en PostgREST-kode. En kode som må se slik ut, kan ikke bære innhold.
+  if p_code is not null and p_code !~ '^([0-9A-Z]{5}|PGRST[0-9]{3})$' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent kode.';
+  end if;
+
+  if p_http_status is not null and p_http_status not between 100 and 599 then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent statuskode.';
+  end if;
+
+  v_transport := case p_transport
+    when 'offline' then 'Nettleseren hadde ingen nettforbindelse.'
+    when 'network' then 'Forespørselen nådde aldri fram.'
+    when 'aborted' then 'Forespørselen ble avbrutt før svaret kom.'
+    when 'timeout' then 'Svaret kom ikke innen tiden.'
+    when 'http' then 'Tjenesten svarte, men med en feilkode.'
+    when 'contract' then 'Svaret kom fram, men stemte ikke med kontrakten flaten leser det med.'
+    when 'unknown' then 'Formen på svikten lot seg ikke bestemme.'
+    else null
+  end;
+
+  if p_transport is not null and v_transport is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent transportform.';
+  end if;
+
+  v_key := 'offentlig:' || p_reporter_ip_hash;
+
+  -- Kvoten er på det append-only sporet, fordi det er der radene faktisk blir
+  -- liggende. Låsen gjør tellingen og skrivingen til ett udelelig steg, slik at
+  -- parallelle kall fra den samme avsenderen ikke kan gå forbi grensen.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('antidep:public_problem:' || v_key, 0));
+
+  if (select count(*)
+      from workflow.technical_incident_events e
+      where e.reporter_key = v_key
+        and e.occurred_at > statement_timestamp() - interval '1 hour') >= 20
+  then
+    return;
+  end if;
+
+  perform workflow.record_technical_incident(
+    v_area,
+    'client:' || coalesce(p_operation, 'ukjent'),
+    format('%s Kallet var api.%s, svaret bar koden %s, og HTTP-statusen var %s. %s Meldingen kom fra en uinnlogget besøkende gjennom Antideps egen serverrute, og bærer derfor ingen feiltekst i det hele tatt.',
+           v_description,
+           coalesce(p_operation, '(ikke oppgitt)'),
+           coalesce(p_code, '(ingen)'),
+           coalesce(p_http_status::text, '(ingen)'),
+           coalesce(v_transport, 'Transportformen ble ikke oppgitt.')),
+    true,
+    v_key);
+end;
+$$;
+
+comment on function workflow.ingest_public_technical_problem(text, text, text, text, integer, text) is
+  'Melder at en offentlig flate svikter for en uinnlogget besøkende. Tar maskinidentifikatorer og ingen tekst i det hele tatt — en anonym vei inn for fritekst ville vært en logg hvem som helst kunne fylle med sine egne ord. Bare de to offentlige områdene godtas, operasjonen må treffe en funksjon som faktisk finnes i api — så antallet problemrader denne veien kan skape er bundet av antallet api-funksjoner, uansett hvor mange avsendere som prøver — og mengden er begrenset til tjue i timen per SHA-256 av ip-adressen serveren selv observerte. Kjørbar bare av rollen antidep_diagnostics.';
+
+revoke execute on function workflow.ingest_public_technical_problem(text, text, text, text, integer, text) from public;
+grant execute on function workflow.ingest_public_technical_problem(text, text, text, text, integer, text) to antidep_diagnostics;
 grant execute on function api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text) to authenticated;
 
 -- ----------------------------------------------------------------------------
