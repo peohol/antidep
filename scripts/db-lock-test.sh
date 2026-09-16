@@ -1311,4 +1311,41 @@ proev 'en tilbaketrekking må vente på et kall som allerede er autentisert (55P
    select api.revoke_agent_runner('agent-runner:laaseprove', 'Samtidighetsprøven.');" \
   'Uten den delte låsen kunne en tilbaketrekking bli ferdig mellom autentiseringen og arbeidet, og uttaket som fulgte, ville aldri blitt frigitt (migrasjon 011a).'
 
+# Prøve 22 — og den motsatte rekkefølgen: etter en fullført tilbaketrekking
+# kan det ikke oppstå en ny leie i det hele tatt.
+#
+# Prøve 21 viser at tilbaketrekkingen venter på et kall som allerede er i gang.
+# Denne viser den andre siden: når tilbaketrekkingen først er ferdig, blir
+# kallet avvist av autentiseringen, og ingen oppgave blir tatt. De to
+# rekkefølgene er hele garantien — det finnes ikke et tredje utfall der en leie
+# oppstår uten at noen frigir den.
+psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > /dev/null <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$kjorer_redaktor"}', true);
+set local role authenticated;
+select api.revoke_agent_runner('agent-runner:laaseprove', 'Samtidighetsprøven, andre rekkefølge.');
+commit;
+SQL
+
+etter_revoke="$arbeid/etter-revoke.log"
+set +e
+psql "$DB_URL" -X -tA > "$etter_revoke" 2>&1 <<SQL
+\set VERBOSITY verbose
+select api.claim_agent_task('$kjorer_token', '$kjorer_res', '$kjorer_ref', 900);
+SQL
+set -e
+
+nye_leier=$(les "select count(*)::text from workflow.pipeline_jobs
+                 where id = '$kjorer_jobb' and state = 'leased'")
+
+if grep -q '42501' "$etter_revoke" && [ "$nye_leier" = '0' ]; then
+  printf 'ok       etter en fullført tilbaketrekking oppstår det ingen ny leie\n'
+else
+  printf 'AVVIK    etter en fullført tilbaketrekking oppstår det ingen ny leie\n' >&2
+  printf '         Et kall med et tilbaketrukket tokens legitimasjon tok en oppgave ingen ville frigitt (migrasjon 011a).\n' >&2
+  printf '         Leide jobber etterpå: %s. Svaret fra kallet:\n' "$nye_leier" >&2
+  sed 's/^/         /' "$etter_revoke" >&2
+  exit 1
+fi
+
 printf '\nAlle samtidighetsprøvene passerte.\n'
