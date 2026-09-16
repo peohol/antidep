@@ -1571,3 +1571,109 @@ describe('opprinnelsen', () => {
     expect(response.headers.get('vary')?.toLowerCase()).toContain('origin')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Adressen klienten skal sendes tilbake til
+//
+// To spørsmål som ser like ut, og som eies av hvert sitt lag. Databasen
+// avgjør hva som er TILLATT — https, eller loopback — og den regelen blir
+// værende der, fordi den er sikkerhetsregelen. Serveren avgjør hva som er
+// LESBART, fordi det er serverens URL-parser som senere skal lese adressen.
+//
+// Skillet er ikke pedanteri. WHATWG normaliserer og avviser verter på måter et
+// mønster ikke kan følge uten å bli en ny parser, og en adresse som slipper
+// gjennom uten å kunne leses, blir en feil først i autorisasjonen — etter at
+// engangskoden er brukt opp.
+// ---------------------------------------------------------------------------
+describe('redirect-adressen', () => {
+  const GRENSEVERDIER = [
+    'https://chatgpt.example/callback',
+    'https://chatgpt.example:65535/cb',
+    'https://chatgpt.example:65536/cb',
+    'https://999.999.999.999/callback',
+    'https://255.255.255.255/cb',
+    'https://1.2.3/cb',
+    'https://0x7f.1/cb',
+    'https://[',
+    'https://',
+    'https://chatgpt.example/callback noe helt annet',
+  ]
+
+  async function registrer(uri: string): Promise<number> {
+    const response = await send(
+      'register',
+      new Request(`${BASE}/oauth/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ client_name: 'Prøve', redirect_uris: [uri] }),
+      }),
+      createFakeGateway(),
+    )
+    return response.status
+  }
+
+  // Selve paritetsprøven: for hver grenseverdi skal registreringen si det
+  // samme som `new URL` — ikke «noe som ligner».
+  it('slipper gjennom nøyaktig de adressene URL-parseren kan lese', async () => {
+    for (const uri of GRENSEVERDIER) {
+      let lesbar: boolean
+      try {
+        const parsed = new URL(uri)
+        lesbar = parsed.protocol === 'https:' || parsed.protocol === 'http:'
+      } catch {
+        lesbar = false
+      }
+      const status = await registrer(uri)
+      expect({ uri, godtatt: status === 201 }).toEqual({ uri, godtatt: lesbar })
+    }
+  })
+
+  // Og den ene formen som lurte tre runder på rad, navngitt for seg: en vert
+  // med oktetter som ikke finnes.
+  it('avviser en vert med oktetter som ikke finnes', async () => {
+    expect(await registrer('https://999.999.999.999/callback')).toBe(400)
+  })
+
+  // Det avgjørende er HVOR avvisningen skjer. Kommer den etter at
+  // engangskoden er konsumert, må redaktøren hente en ny for noe som var
+  // ulovlig fra starten.
+  it('avviser den før en engangskode kan brukes opp', async () => {
+    const gateway = createFakeGateway()
+    const response = await send(
+      'authorize',
+      new Request(`${BASE}/oauth/authorize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: FAKE_CLIENT_ID,
+          redirect_uri: 'https://999.999.999.999/callback',
+          code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+          code_challenge_method: 'S256',
+          resource: FAKE_RESOURCE,
+          pairing_code: FAKE_PAIRING_CODE,
+        }).toString(),
+      }),
+      gateway,
+    )
+    expect(response.status).toBe(400)
+    expect(await response.text()).toContain('kan ikke leses som en nettadresse')
+    // Og koden er urørt: den virker fortsatt etterpå.
+    const igjen = await send(
+      'authorize',
+      new Request(`${BASE}/oauth/authorize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: FAKE_CLIENT_ID,
+          redirect_uri: FAKE_REDIRECT_URI,
+          code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+          code_challenge_method: 'S256',
+          resource: FAKE_RESOURCE,
+          pairing_code: FAKE_PAIRING_CODE,
+        }).toString(),
+      }),
+      gateway,
+    )
+    expect(igjen.status).toBe(302)
+  })
+})

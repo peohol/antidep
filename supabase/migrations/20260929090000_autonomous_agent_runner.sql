@@ -266,16 +266,23 @@ create trigger agent_runner_connections_are_not_deleted
 -- Adressekravet som en egen regel, fordi en check constraint ikke kan bære en
 -- subquery. Den står her og ikke i to kopier: registreringen og constrainten
 -- skal ikke kunne bli uenige om hva en lovlig redirect-adresse er.
--- Én adresse, prøvd mot den samme grensen serveren har.
+-- Én adresse, målt mot regelen databasen HÅNDHEVER — ikke mot URL-parseren.
 --
--- Målet er ikke «ser ut som en adresse», men «kan leses som en adresse av
--- URL-leseren i serveren». Alt annet blir en feil som først dukker opp midt i
--- tilkoblingen, etter at engangskoden er brukt opp — og da må redaktøren hente
--- en ny for noe som var ulovlig allerede da det ble registrert.
+-- Her ligger sikkerhetsregelen, og bare den: skjemaet må være https, eller
+-- loopback for MCP-inspektøren og lokal feilsøking. Formen er forankret i begge
+-- ender og porten leses som et tall, så en adresse som ikke er en adresse, ikke
+-- kan snike seg inn som en https-adresse.
 --
--- Derfor to ting, ikke én: formen er forankret i BEGGE ender, og porten leses
--- som et TALL. Et mønster som bare teller siffer, ville godtatt `:99999`, og
--- den finnes ikke — portene stopper på 65535.
+-- Den er med vilje IKKE en gjenskaping av WHATWGs URL-parser. Den normaliserer
+-- og avviser verter på måter et regulært uttrykk ikke kan følge uten å bli en
+-- ny parser — `https://1.2.3/cb` blir `1.2.0.3`, `https://0x7f.1/cb` blir
+-- `127.0.0.1`, `https://999.999.999.999/cb` avvises. At en adresse kan LESES,
+-- avgjøres derfor av parseren selv, i `parseableRedirectUri` i MCP-appen, og
+-- den spør FØR en engangskode kan brukes opp.
+--
+-- Arbeidsdelingen er poenget: databasen eier hva som er TILLATT, serveren eier
+-- hva som er LESBART. Å la den ene late som den er den andre, er hvordan man
+-- ender med å jage det samme problemet ett syntaksledd om gangen.
 create function workflow.agent_runner_redirect_uri_is_valid(p_uri text)
   returns boolean
   language sql
@@ -295,7 +302,7 @@ as $$
 $$;
 
 comment on function workflow.agent_runner_redirect_uri_is_valid(text) is
-  'Om én redirect-adresse er lovlig: https, eller loopback for MCP-inspektøren og lokal feilsøking. Formen er forankret i begge ender og porten leses som et tall, fordi grensen her skal være den samme som serverens URL-leser har — en adresse databasen godtar og serveren ikke kan lese, blir en feil som først dukker opp etter at engangskoden er brukt opp.';
+  'Om én redirect-adresse er TILLATT: https, eller loopback for MCP-inspektøren og lokal feilsøking. Formen er forankret i begge ender og porten leses som et tall, så noe som ikke er en adresse, ikke kan snike seg inn som en https-adresse. Den avgjør ikke om adressen kan LESES — WHATWGs vertstolkning kan ikke gjenskapes i et mønster, og MCP-appen spør derfor parseren selv før en engangskode kan brukes opp. Databasen eier hva som er tillatt; serveren eier hva som er lesbart.';
 
 revoke execute on function workflow.agent_runner_redirect_uri_is_valid(text) from public;
 

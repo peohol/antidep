@@ -255,12 +255,43 @@ function canonicalResource(baseUrl: string): string {
   return `${baseUrl}/mcp`
 }
 
+/**
+ * Adressen lest av den parseren som faktisk skal lese den.
+ *
+ * Databasen håndhever sikkerhetsregelen: en autorisasjon må navngi nøyaktig en
+ * adresse klienten har registrert, og bare https eller loopback. Den regelen
+ * hører hjemme der og blir værende der.
+ *
+ * Men «kan denne strengen leses som en adresse» er et annet spørsmål, og det
+ * eier URL-parseren — ikke et mønster. WHATWG normaliserer og avviser verter
+ * på måter et regulært uttrykk ikke kan gjenskape uten å bli en ny parser:
+ * `https://1.2.3/cb` blir `1.2.0.3`, `https://0x7f.1/cb` blir `127.0.0.1`, og
+ * `https://999.999.999.999/cb` avvises fordi oktettene ikke finnes.
+ *
+ * Derfor spør vi parseren, og vi spør FØR noe blir brukt opp. Å jage den ene
+ * formen etter den andre i et mønster ville bare flyttet feilen ett syntaksledd
+ * om gangen — og feilen dukker opp på det verst tenkelige stedet: etter at
+ * engangskoden er konsumert.
+ */
+function parseableRedirectUri(value: string): URL | null {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return null
+  }
+  return url.protocol === 'https:' || url.protocol === 'http:' ? url : null
+}
+
 function missingConnectField(fields: ConnectPageFields, baseUrl: string): string | null {
   if (fields.clientId.length === 0) {
     return 'Forespørselen mangler client_id.'
   }
   if (fields.redirectUri.length === 0) {
     return 'Forespørselen mangler redirect_uri.'
+  }
+  if (parseableRedirectUri(fields.redirectUri) === null) {
+    return `Adressen «${fields.redirectUri}» kan ikke leses som en nettadresse. Ingen kode er brukt opp.`
   }
   if (fields.codeChallenge.length === 0) {
     return 'Forespørselen mangler code_challenge. Antidep godtar bare OAuth med PKCE.'
@@ -468,6 +499,17 @@ async function registerClient(request: Request, deps: McpAppDependencies): Promi
   const rawUris = record['redirect_uris']
   if (!Array.isArray(rawUris) || rawUris.some((uri) => typeof uri !== 'string')) {
     return oauthError(400, 'invalid_redirect_uri', 'redirect_uris må være en liste med adresser.')
+  }
+  // Og hver av dem må kunne leses av den parseren som skal lese dem senere. En
+  // adresse som kommer gjennom registreringen uten å kunne leses, blir en feil
+  // først i autorisasjonen — etter at engangskoden er brukt opp.
+  const unreadable = (rawUris as string[]).find((uri) => parseableRedirectUri(uri) === null)
+  if (unreadable !== undefined) {
+    return oauthError(
+      400,
+      'invalid_redirect_uri',
+      `Adressen «${unreadable}» kan ikke leses som en nettadresse.`,
+    )
   }
   const name = record['client_name']
 
