@@ -268,16 +268,39 @@ async function main(): Promise<void> {
         or has_table_privilege('antidep_diagnostics', t.name, 'UPDATE')
         or has_table_privilege('antidep_diagnostics', t.name, 'DELETE')`,
   )
-  check('reserverollen har ingen tabellrettigheter i det hele tatt', kanLese === '0', kanLese)
+  check('reserverollen kan hverken lese eller skrive de tre tabellene', kanLese === '0', kanLese)
 
-  const kanKjøre = psql(
+  // Lest av ACL-en framfor av den effektive rettigheten: has_function_privilege
+  // tar med alt som er gitt til PUBLIC, og en telling på den ville sagt noe om
+  // resten av databasen framfor om denne rollen.
+  const gitt = psql(
+    config,
+    `select count(*) from pg_proc p
+     join pg_namespace n on n.oid = p.pronamespace
+     cross join lateral aclexplode(coalesce(p.proacl, array[]::aclitem[])) a
+     where n.nspname in ('workflow', 'provenance', 'knowledge', 'catalog', 'audit', 'api')
+       and a.grantee = 'antidep_diagnostics'::regrole::oid
+       and a.privilege_type = 'EXECUTE'`,
+  )
+  check('og er gitt nøyaktig de to append-funksjonene', gitt === '2', gitt)
+
+  // Og den som betyr noe uansett hvor granten kom fra: ingen annen
+  // SECURITY DEFINER-funksjon er nåbar. En vanlig funksjon kjører med rollens
+  // egne rettigheter, og de er ingen.
+  const andreDefinere = psql(
     config,
     `select count(*) from pg_proc p
      join pg_namespace n on n.oid = p.pronamespace
      where n.nspname in ('workflow', 'provenance', 'knowledge', 'catalog', 'audit', 'api')
-       and has_function_privilege('antidep_diagnostics', p.oid, 'execute')`,
+       and p.prosecdef
+       and has_function_privilege('antidep_diagnostics', p.oid, 'execute')
+       and p.proname not in ('ingest_client_diagnostic', 'ingest_public_technical_problem')`,
   )
-  check('og kan kjøre nøyaktig de to append-funksjonene', kanKjøre === '2', kanKjøre)
+  check(
+    'og kan ikke kjøre noen annen SECURITY DEFINER-funksjon',
+    andreDefinere === '0',
+    andreDefinere,
+  )
 
   const egenskaper = psql(
     config,
