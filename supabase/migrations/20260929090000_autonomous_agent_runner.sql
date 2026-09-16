@@ -345,6 +345,14 @@ create table workflow.agent_runner_secrets (
   redirect_uri text,
   code_challenge text,
 
+  -- Hvilken MCP-server hemmeligheten gjelder for (RFC 8707).
+  --
+  -- Et token uten publikum passer overalt. Med publikum kan Antidep avvise et
+  -- token som ble utstedt for en annen tjeneste, og en tjeneste som tar imot
+  -- andres tokens, er nettopp den forvirrede stedfortrederen MCP-spesifikasjonen
+  -- krever at en server ikke skal være (2026-07-28, «Token Handling»).
+  resource text,
+
   -- Hvem som satte kjeden i gang. Bare tilkoblingskoden har en: de tre andre
   -- utledes av den, og et menneske er aldri involvert i dem.
   issued_by_actor_id uuid
@@ -371,18 +379,30 @@ create table workflow.agent_runner_secrets (
         when 'pairing_code' then
           issued_by_actor_id is not null and client_id is null
           and redirect_uri is null and code_challenge is null and parent_id is null
+          -- Tilkoblingskoden er ikke et token og har intet publikum: den beviser
+          -- bare at et menneske med editor-mandat ville denne tilkoblingen.
+          and resource is null
         when 'authorization_code' then
           issued_by_actor_id is null and client_id is not null
           and redirect_uri is not null and code_challenge is not null
+          and resource is not null
         else
           issued_by_actor_id is null and client_id is not null
           and redirect_uri is null and code_challenge is null
+          and resource is not null
       end
     ),
   -- PKCE er påkrevd og alltid S256: en kode utstedt mot en ren tekst-utfordring
   -- ville vært en kode uten PKCE i praksis.
   constraint agent_runner_secrets_code_challenge_format_check
     check (code_challenge is null or code_challenge ~ '^[A-Za-z0-9_-]{43}$'),
+  -- Den kanoniske formen RFC 8707 og RFC 9728 beskriver: en absolutt adresse,
+  -- uten fragment. En verdi med fragment ville vært to adresser som så like ut.
+  constraint agent_runner_secrets_resource_format_check
+    check (
+      resource is null
+      or (resource ~ '^https?://[^\s#]+$' and length(resource) between 8 and 300)
+    ),
   constraint agent_runner_secrets_expiry_check
     check (expires_at > created_at),
   constraint agent_runner_secrets_consumed_check
@@ -395,6 +415,8 @@ comment on column workflow.agent_runner_secrets.parent_id is
   'Hvilken hemmelighet denne ble utledet av: autorisasjonskoden av tilkoblingskoden, tokenparet av autorisasjonskoden, og det fornyede paret av det forrige refresh-tokenet. Kjeden gjør det mulig å se hvor en tilgang faktisk kom fra, og å trekke hele grenen tilbake i ett.';
 comment on column workflow.agent_runner_secrets.code_challenge is
   'PKCE-utfordringen (S256, base64url) autorisasjonskoden er bundet til. Uten den kunne en avlyttet kode innløses av en annen enn den som ba om den.';
+comment on column workflow.agent_runner_secrets.resource is
+  'Den kanoniske adressen til MCP-serveren hemmeligheten gjelder for (RFC 8707, MCP 2026-07-28 «Token Handling»). Følger hele kjeden: klienten oppgir den i autorisasjonsforespørselen, den samme må oppgis når koden veksles inn, og den arves av tokenparet. MCP-serveren godtar bare et token som bærer nettopp dens egen adresse, slik at et token utstedt for en annen tjeneste ikke kan brukes her. NULL bare for tilkoblingskoden, som ikke er et token.';
 
 alter table workflow.agent_runner_secrets enable row level security;
 
@@ -589,7 +611,10 @@ comment on function workflow.reject_agent_runner_authentication() is
 revoke execute on function workflow.reject_agent_runner_authentication() from public;
 
 -- Tokenet lest som en tilkobling, eller et avslag.
-create function workflow.authenticated_runner_connection(p_access_token text)
+create function workflow.authenticated_runner_connection(
+  p_access_token text,
+  p_resource text default null
+)
   returns workflow.agent_runner_connections
   language plpgsql
   stable
@@ -604,6 +629,11 @@ begin
 
   -- Alle betingelsene i ett predikat, med ett svar: rekkefølgen skal ikke bli
   -- et implisitt valg med sin egen observerbare oppførsel.
+  --
+  -- Publikum er en av dem. Oppgir kalleren hvilken MCP-server den er, må tokenet
+  -- være utstedt for nettopp den (RFC 8707): et token utstedt for en annen
+  -- tjeneste skal ikke virke her, uansett hvor gyldig det er der det hører
+  -- hjemme.
   select c.* into v_connection
   from workflow.agent_runner_secrets s
   join workflow.agent_runner_connections c on c.id = s.connection_id
@@ -611,6 +641,7 @@ begin
     and s.secret_hash = workflow.agent_runner_secret_hash('access_token', p_access_token)
     and s.revoked_at is null
     and s.expires_at > statement_timestamp()
+    and (p_resource is null or s.resource = p_resource)
     and c.valid_from <= statement_timestamp()
     and (c.valid_to is null or c.valid_to > statement_timestamp());
 
@@ -622,10 +653,10 @@ begin
 end;
 $$;
 
-comment on function workflow.authenticated_runner_connection(text) is
-  'Tilkoblingen et access-token tilhører, eller et avslag (ANTIDEP_CONSTITUTION.md regel 7). Kontrollerer tokenets gyldighet og tilkoblingens i ett predikat, på kallets eget tidspunkt, slik at en tilbaketrekking virker umiddelbart. Returnerer aldri noe delvis: en kaller som kommer forbi denne, har en gyldig tilkobling med en rolle.';
+comment on function workflow.authenticated_runner_connection(text, text) is
+  'Tilkoblingen et access-token tilhører, eller et avslag (ANTIDEP_CONSTITUTION.md regel 7). Kontrollerer tokenets gyldighet, publikumet og tilkoblingens gyldighet i ett predikat, på kallets eget tidspunkt, slik at en tilbaketrekking virker umiddelbart. p_resource er den kanoniske adressen kalleren er: oppgis den, må tokenet være utstedt for nettopp den (RFC 8707, MCP 2026-07-28 «Token Handling»). Returnerer aldri noe delvis: en kaller som kommer forbi denne, har en gyldig tilkobling med en rolle.';
 
-revoke execute on function workflow.authenticated_runner_connection(text) from public;
+revoke execute on function workflow.authenticated_runner_connection(text, text) from public;
 
 -- Den ugjennomsiktige oppgavehenvisningen.
 --
@@ -1969,12 +2000,51 @@ revoke execute on function api.register_agent_runner_client(text, text[]) from p
 grant execute on function api.register_agent_runner_client(text, text[]) to anon, authenticated;
 
 -- Innløsningen: tilkoblingskoden byttes i en autorisasjonskode.
+-- ----------------------------------------------------------------------------
+-- Publikumet, lest én gang
+--
+-- RFC 8707 krever at klienten navngir MCP-serveren tokenet skal gjelde for, og
+-- MCP-spesifikasjonen krever at serveren avviser et token som ble utstedt for en
+-- annen. Formen kontrolleres her, slik at alle tre stedene som tar imot en
+-- `resource`, leser den likt.
+-- ----------------------------------------------------------------------------
+create function workflow.assert_agent_runner_resource(p_resource text)
+  returns text
+  language plpgsql
+  immutable
+  set search_path = ''
+as $$
+declare
+  v_resource text := btrim(coalesce(p_resource, ''));
+begin
+  if v_resource = '' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'resource mangler.',
+      hint = 'Et token skal utstedes for én navngitt MCP-server (RFC 8707). Et token uten publikum passer overalt.';
+  end if;
+  if v_resource !~ '^https?://[^\s#]+$' or length(v_resource) > 300 then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('%L er ikke en kanonisk ressursadresse.', v_resource),
+      hint = 'Adressen skal være absolutt og uten fragment, slik RFC 8707 og RFC 9728 beskriver.';
+  end if;
+  return v_resource;
+end;
+$$;
+
+comment on function workflow.assert_agent_runner_resource(text) is
+  'Leser og kontrollerer den kanoniske adressen et token skal gjelde for (RFC 8707). Én implementasjon, slik at autorisasjonen, innvekslingen og fornyelsen ikke kan bli uenige om hva en gyldig ressursadresse er.';
+
+revoke execute on function workflow.assert_agent_runner_resource(text) from public;
+
 create function api.authorize_agent_runner(
   p_pairing_code text,
   p_client_id text,
   p_redirect_uri text,
   p_code_challenge text,
-  p_code_challenge_method text default 'S256'
+  p_code_challenge_method text default 'S256',
+  p_resource text default null
 )
   returns jsonb
   language plpgsql
@@ -1987,7 +2057,10 @@ declare
   v_client workflow.agent_runner_clients;
   v_code text;
   v_expires timestamptz;
+  v_resource text;
 begin
+  v_resource := workflow.assert_agent_runner_resource(p_resource);
+
   if p_code_challenge_method is distinct from 'S256' then
     raise exception using
       errcode = 'invalid_parameter_value',
@@ -2040,11 +2113,11 @@ begin
 
   insert into workflow.agent_runner_secrets
     (kind, secret_hash, connection_id, client_id, redirect_uri, code_challenge,
-     parent_id, expires_at)
+     resource, parent_id, expires_at)
   values
     ('authorization_code', workflow.agent_runner_secret_hash('authorization_code', v_code),
      v_connection.id, v_client.client_id, p_redirect_uri, p_code_challenge,
-     v_secret.id, v_expires);
+     v_resource, v_secret.id, v_expires);
 
   return jsonb_build_object(
     'authorization_code', v_code,
@@ -2056,17 +2129,18 @@ begin
 end;
 $$;
 
-comment on function api.authorize_agent_runner(text, text, text, text, text) is
-  'Bytter én engangs tilkoblingskode i én OAuth-autorisasjonskode, bundet til klienten, redirect-adressen og PKCE-utfordringen (ANTIDEP_CONSTITUTION.md regel 7). Tilkoblingskoden brukes opp i det samme kallet. En ukjent klient, en uregistrert adresse og en ugyldig kode svares på med det samme avslaget: en kaller som kunne skille dem, kunne kartlagt registrerte klienter. EXECUTE går til anon fordi tilkoblingen skjer uten brukersesjon; koden og ikke Data API-rollen er kontrollen.';
+comment on function api.authorize_agent_runner(text, text, text, text, text, text) is
+  'Bytter én engangs tilkoblingskode i én OAuth-autorisasjonskode, bundet til klienten, redirect-adressen, PKCE-utfordringen og den MCP-serveren tokenet skal gjelde for (ANTIDEP_CONSTITUTION.md regel 7, RFC 8707). Tilkoblingskoden brukes opp i det samme kallet. p_resource er påkrevd og arves av tokenparet: uten den ville tokenet vært uten publikum, og et token uten publikum passer overalt. En ukjent klient, en uregistrert adresse og en ugyldig kode svares på med det samme avslaget: en kaller som kunne skille dem, kunne kartlagt registrerte klienter. EXECUTE går til anon fordi tilkoblingen skjer uten brukersesjon; koden og ikke Data API-rollen er kontrollen.';
 
-revoke execute on function api.authorize_agent_runner(text, text, text, text, text) from public;
-grant execute on function api.authorize_agent_runner(text, text, text, text, text) to anon, authenticated;
+revoke execute on function api.authorize_agent_runner(text, text, text, text, text, text) from public;
+grant execute on function api.authorize_agent_runner(text, text, text, text, text, text) to anon, authenticated;
 
 -- Tokenutstedelsen, felles for den første utvekslingen og for fornyelsen.
 create function workflow.issue_agent_runner_tokens(
   p_connection_id uuid,
   p_client_id text,
-  p_parent_id uuid
+  p_parent_id uuid,
+  p_resource text
 )
   returns jsonb
   language plpgsql
@@ -2079,12 +2153,12 @@ declare
   v_access_expires timestamptz := statement_timestamp() + interval '1 hour';
 begin
   insert into workflow.agent_runner_secrets
-    (kind, secret_hash, connection_id, client_id, parent_id, expires_at)
+    (kind, secret_hash, connection_id, client_id, parent_id, resource, expires_at)
   values
     ('access_token', workflow.agent_runner_secret_hash('access_token', v_access),
-     p_connection_id, p_client_id, p_parent_id, v_access_expires),
+     p_connection_id, p_client_id, p_parent_id, p_resource, v_access_expires),
     ('refresh_token', workflow.agent_runner_secret_hash('refresh_token', v_refresh),
-     p_connection_id, p_client_id, p_parent_id,
+     p_connection_id, p_client_id, p_parent_id, p_resource,
      statement_timestamp() + interval '90 days');
 
   return jsonb_build_object(
@@ -2097,16 +2171,17 @@ begin
 end;
 $$;
 
-comment on function workflow.issue_agent_runner_tokens(uuid, text, uuid) is
-  'Utsteder ett access-token og ett refresh-token for en tilkobling, og lagrer bare fingeravtrykkene. Access-tokenet lever i én time, refresh-tokenet i nitti dager: en planlagt kjøring skal overleve en ferie uten at noen kobler til på nytt, mens et lekket access-token blir ubrukelig av seg selv.';
+comment on function workflow.issue_agent_runner_tokens(uuid, text, uuid, text) is
+  'Utsteder ett access-token og ett refresh-token for en tilkobling og én navngitt MCP-server, og lagrer bare fingeravtrykkene. Access-tokenet lever i én time, refresh-tokenet i nitti dager: en planlagt kjøring skal overleve en ferie uten at noen kobler til på nytt, mens et lekket access-token blir ubrukelig av seg selv. p_resource arves fra autorisasjonskoden eller fra det refresh-tokenet som ble rotert, slik at publikumet aldri kan skifte underveis i en tilkobling.';
 
-revoke execute on function workflow.issue_agent_runner_tokens(uuid, text, uuid) from public;
+revoke execute on function workflow.issue_agent_runner_tokens(uuid, text, uuid, text) from public;
 
 create function api.exchange_agent_runner_code(
   p_code text,
   p_code_verifier text,
   p_client_id text,
-  p_redirect_uri text
+  p_redirect_uri text,
+  p_resource text default null
 )
   returns jsonb
   language plpgsql
@@ -2116,7 +2191,13 @@ as $$
 declare
   v_secret workflow.agent_runner_secrets;
   v_connection workflow.agent_runner_connections;
+  v_resource text;
 begin
+  -- `resource` skal følge tokenforespørselen og ikke bare autorisasjonen
+  -- (RFC 8707), og den må være den samme begge steder: en kode utstedt for
+  -- denne appen skal ikke kunne veksles inn i et token for en annen.
+  v_resource := workflow.assert_agent_runner_resource(p_resource);
+
   select s.* into v_secret
   from workflow.agent_runner_secrets s
   where s.kind = 'authorization_code'
@@ -2126,6 +2207,7 @@ begin
     and s.expires_at > statement_timestamp()
     and s.client_id = p_client_id
     and s.redirect_uri = p_redirect_uri
+    and s.resource = v_resource
   for update;
 
   if not found then
@@ -2151,18 +2233,23 @@ begin
   set consumed_at = statement_timestamp()
   where id = v_secret.id;
 
-  return workflow.issue_agent_runner_tokens(v_connection.id, p_client_id, v_secret.id)
+  return workflow.issue_agent_runner_tokens(
+      v_connection.id, p_client_id, v_secret.id, v_secret.resource)
     || jsonb_build_object('scope', 'antidep.agent-runner');
 end;
 $$;
 
-comment on function api.exchange_agent_runner_code(text, text, text, text) is
-  'Bytter en autorisasjonskode i et token-par (OAuth 2.1 med PKCE). Koden brukes opp, er bundet til klienten, redirect-adressen og PKCE-utfordringen, og lever i to minutter. Ethvert avvik svares på med det samme avslaget. EXECUTE går til anon fordi utvekslingen skjer uten brukersesjon.';
+comment on function api.exchange_agent_runner_code(text, text, text, text, text) is
+  'Bytter en autorisasjonskode i et token-par (OAuth 2.1 med PKCE). Koden brukes opp, er bundet til klienten, redirect-adressen, PKCE-utfordringen og ressursen, og lever i to minutter. p_resource er påkrevd og må være den samme som autorisasjonen ble gjort for (RFC 8707): en kode utstedt for denne appen skal ikke kunne veksles inn i et token for en annen. Ethvert avvik svares på med det samme avslaget. EXECUTE går til anon fordi utvekslingen skjer uten brukersesjon.';
 
-revoke execute on function api.exchange_agent_runner_code(text, text, text, text) from public;
-grant execute on function api.exchange_agent_runner_code(text, text, text, text) to anon, authenticated;
+revoke execute on function api.exchange_agent_runner_code(text, text, text, text, text) from public;
+grant execute on function api.exchange_agent_runner_code(text, text, text, text, text) to anon, authenticated;
 
-create function api.refresh_agent_runner_token(p_refresh_token text, p_client_id text)
+create function api.refresh_agent_runner_token(
+  p_refresh_token text,
+  p_client_id text,
+  p_resource text default null
+)
   returns jsonb
   language plpgsql
   security definer
@@ -2171,7 +2258,10 @@ as $$
 declare
   v_secret workflow.agent_runner_secrets;
   v_connection workflow.agent_runner_connections;
+  v_resource text;
 begin
+  v_resource := workflow.assert_agent_runner_resource(p_resource);
+
   select s.* into v_secret
   from workflow.agent_runner_secrets s
   where s.kind = 'refresh_token'
@@ -2180,6 +2270,9 @@ begin
     and s.revoked_at is null
     and s.expires_at > statement_timestamp()
     and s.client_id = p_client_id
+    -- Publikumet kan ikke skifte i en fornyelse: et refresh-token for denne
+    -- appen skal ikke kunne veksles inn i et access-token for en annen.
+    and s.resource = v_resource
   for update;
 
   if not found then
@@ -2218,16 +2311,17 @@ begin
     and revoked_at is null
     and expires_at > statement_timestamp();
 
-  return workflow.issue_agent_runner_tokens(v_connection.id, p_client_id, v_secret.id)
+  return workflow.issue_agent_runner_tokens(
+      v_connection.id, p_client_id, v_secret.id, v_secret.resource)
     || jsonb_build_object('scope', 'antidep.agent-runner');
 end;
 $$;
 
-comment on function api.refresh_agent_runner_token(text, text) is
+comment on function api.refresh_agent_runner_token(text, text, text) is
   'Fornyer et token-par mot et refresh-token, med rotasjon: det brukte refresh-tokenet er brukt opp, og access-tokenet som ble utstedt sammen med det, trekkes tilbake i samme kall (ANTIDEP_CONSTITUTION.md regel 7). Uten rotasjonen ville et lekket refresh-token vært en varig tilgang ingen kunne se at fantes. Rotasjonen gjelder nøyaktig det ene paret, funnet på felles parent_id: en tilkobling kan ha flere levende par, og en fornyelse som trakk tilbake alle, ville latt to lovlige kjøringer slå hverandre ut annenhver gang. En tilkobling som er trukket tilbake, kan ikke fornyes — tilbaketrekkingen virker da med det samme framfor når tokenet tilfeldigvis løper ut.';
 
-revoke execute on function api.refresh_agent_runner_token(text, text) from public;
-grant execute on function api.refresh_agent_runner_token(text, text) to anon, authenticated;
+revoke execute on function api.refresh_agent_runner_token(text, text, text) from public;
+grant execute on function api.refresh_agent_runner_token(text, text, text) to anon, authenticated;
 
 -- ============================================================================
 -- 10. Arbeidsflaten den autonome kjøreren ser
@@ -2246,7 +2340,10 @@ grant execute on function api.refresh_agent_runner_token(text, text) to anon, au
 -- utløpt eller trukket tilbake, gir 401 med det samme framfor å se ut som en
 -- levende tilkobling helt til det første verktøykallet. Klienten trenger nettopp
 -- den 401-en for å vite at den skal fornye.
-create function api.agent_runner_identity(p_access_token text)
+create function api.agent_runner_identity(
+  p_access_token text,
+  p_resource text default null
+)
   returns jsonb
   language plpgsql
   security definer
@@ -2255,7 +2352,7 @@ as $$
 declare
   v_connection workflow.agent_runner_connections;
 begin
-  v_connection := workflow.authenticated_runner_connection(p_access_token);
+  v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
   return jsonb_build_object(
     'connection_key', v_connection.connection_key,
     'display_name', v_connection.display_name,
@@ -2265,11 +2362,11 @@ begin
 end;
 $$;
 
-comment on function api.agent_runner_identity(text) is
-  'Hvilken tilkobling et access-token tilhører, og hvilket agentledd den utfører. Bærer ingen hemmelighet og skriver ingenting. Transportlaget kaller den på hver forespørsel, slik at et utløpt eller tilbaketrukket token gir et avslag med det samme framfor å se ut som en levende tilkobling helt til det første verktøykallet — klienten trenger nettopp det avslaget for å vite at den skal fornye. EXECUTE går til anon: tokenet og ikke Data API-rollen er kontrollen.';
+comment on function api.agent_runner_identity(text, text) is
+  'Hvilken tilkobling et access-token tilhører, og hvilket agentledd den utfører. Bærer ingen hemmelighet og skriver ingenting. Transportlaget kaller den på hver forespørsel med sin egen kanoniske adresse som p_resource, slik at publikumet kontrolleres i det samme predikatet som tokenet (RFC 8707): et token utstedt for en annen MCP-server avvises her, før noe utføres. Et utløpt eller tilbaketrukket token gir på samme vis et avslag med det samme framfor å se ut som en levende tilkobling helt til det første verktøykallet — klienten trenger nettopp det avslaget for å vite at den skal fornye. EXECUTE går til anon: tokenet og ikke Data API-rollen er kontrollen.';
 
-revoke execute on function api.agent_runner_identity(text) from public;
-grant execute on function api.agent_runner_identity(text) to anon, authenticated;
+revoke execute on function api.agent_runner_identity(text, text) from public;
+grant execute on function api.agent_runner_identity(text, text) to anon, authenticated;
 
 create function api.list_pending_agent_tasks(p_access_token text)
   returns jsonb

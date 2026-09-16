@@ -34,10 +34,34 @@ En tilkobling er bundet til nøyaktig **ett** agentledd. Rollen er ikke en
 parameter modellen kan oppgi; den er tilkoblingens egen, registrert av et
 menneske med redaktørmandat.
 
+## Protokollen appen faktisk snakker
+
+Appen svarer i to epoker, og skillet er skarpt.
+
+**2026-07-28** er den en nåværende klient bruker. Revisjonen fjernet
+`initialize`-håndtrykket og gjorde protokollen tilstandsløs: hver forespørsel
+bærer sin egen protokollversjon og klientens evner i `_meta`, serveren svarer på
+`server/discover`, hvert resultat bærer `resultType`, og listekallene bærer
+`ttlMs` og `cacheScope`. HTTP-headerne `Mcp-Method` og `Mcp-Name` speiler
+kroppen, og appen avviser et avvik med `-32020` før noe utføres — et sted som
+ruter på headeren mens serveren utfører kroppen, er en åpning.
+
+**2025-03-26 til 2025-11-25** består som fallback, med håndtrykket og `ping`.
+Håndtrykket kan aldri forhandle fram 2026: en klient som kaller `initialize`,
+har per definisjon ikke lest revisjonen som fjernet kallet, og skal ikke få et
+versjonsnummer den ville tolket som noe annet enn det er. En ukjent versjon
+avvises med `-32022` og listen over dem appen faktisk snakker.
+
 ## Sikkerheten, kort
 
 - **Ingen hemmelighet i ChatGPT-prompten.** Tilkoblingen bruker OAuth 2.1 med
   PKCE. Tokenet lever i ChatGPTs egen tilkobling, ikke i en instruks.
+- **Tokenet gjelder bare denne appen.** `resource` følger både autorisasjons- og
+  tokenforespørselen (RFC 8707), tokenet bærer adressen det ble utstedt for, og
+  hvert MCP-kall kontrollerer at den er nettopp denne appens. Et token utstedt
+  for en annen MCP-server virker ikke her, uansett hvor gyldig det er der det
+  hører hjemme. Autorisasjonssvaret navngir utstederen sin (`iss`, RFC 9207),
+  slik at klienten kan se at koden kom fra den serveren den faktisk spurte.
 - **MCP-serveren holder ingen databasehemmelighet.** Den videresender tokenet
   kalleren la ved, og databasen avgjør hva det får gjøre. En kompromittert
   server er ikke en kompromittert database.

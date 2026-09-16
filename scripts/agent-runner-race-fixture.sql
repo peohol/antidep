@@ -246,13 +246,17 @@ values ('7e000000000000000000000000000e11', 'Klienten i samtidighetsprøven',
         array['https://laaseprove.example/callback'])
 on conflict (client_id) do nothing;
 
+-- Tokenet bærer den MCP-serveren det gjelder for (RFC 8707). Prøven kaller
+-- databasefunksjonene direkte og oppgir ingen adresse å kontrollere mot, men
+-- raden skal likevel være en lovlig token-rad.
 insert into workflow.agent_runner_secrets
-  (kind, secret_hash, connection_id, client_id, expires_at)
+  (kind, secret_hash, connection_id, client_id, resource, expires_at)
 values ('access_token',
         workflow.agent_runner_secret_hash(
           'access_token',
           '7e00000000000000000000000000000000000000000000000000000000000001'),
         '7e000000-0000-4000-8000-0000000000c1', '7e000000000000000000000000000e11',
+        'https://laaseprove.example/mcp',
         now() + interval '1 day');
 
 commit;

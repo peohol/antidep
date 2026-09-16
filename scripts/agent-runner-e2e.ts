@@ -44,6 +44,10 @@ const SOURCE_TITLE = 'Syntetisk kilde for ende-til-ende-prøven av kjøreren'
 
 const BASE = 'https://antidep.test'
 const REDIRECT_URI = 'https://chatgpt.test/oauth/callback'
+/** Den kanoniske adressen tokenet utstedes for, og kontrolleres mot (RFC 8707). */
+const RESOURCE = `${BASE}/mcp`
+/** Prøven kjører den moderne epoken. Det er den en nåværende klient bruker. */
+const PROTOCOL_VERSION = '2026-07-28'
 
 // RFC 7636 sitt eget eksempel. En prøve skal ikke finne på sin egen kryptografi.
 const CODE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
@@ -73,23 +77,44 @@ function serve(route: McpRoute, request: Request): Promise<Response> {
   })
 }
 
+/**
+ * Ett JSON-RPC-kall, formet slik 2026-revisjonen krever.
+ *
+ * Hver forespørsel bærer sin egen protokollversjon i `_meta`, og headerne
+ * speiler kroppen: `Mcp-Method` alltid, `Mcp-Name` for et verktøykall. En prøve
+ * som utelot dem, ville ikke prøvd den veien en nåværende klient faktisk går.
+ */
 async function rpc(
   token: string,
   method: string,
   params: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${token}`,
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+    'mcp-protocol-version': PROTOCOL_VERSION,
+    'mcp-method': method,
+  }
+  if (method === 'tools/call' && typeof params['name'] === 'string') {
+    headers['mcp-name'] = params['name']
+  }
+  const body = {
+    jsonrpc: '2.0',
+    id: 1,
+    method,
+    params: {
+      ...params,
+      _meta: {
+        'io.modelcontextprotocol/protocolVersion': PROTOCOL_VERSION,
+        'io.modelcontextprotocol/clientInfo': { name: 'antidep-e2e', version: '1' },
+        'io.modelcontextprotocol/clientCapabilities': {},
+      },
+    },
+  }
   const response = await serve(
     'mcp',
-    new Request(`${BASE}/mcp`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-        'mcp-protocol-version': '2025-11-25',
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    }),
+    new Request(`${BASE}/mcp`, { method: 'POST', headers, body: JSON.stringify(body) }),
   )
   return (await response.json()) as Record<string, unknown>
 }
@@ -270,6 +295,7 @@ async function main(): Promise<void> {
         code_challenge: CODE_CHALLENGE,
         code_challenge_method: 'S256',
         state: 'e2e',
+        resource: RESOURCE,
         pairing_code: pairingCode,
       }).toString(),
     }),
@@ -293,6 +319,7 @@ async function main(): Promise<void> {
         code_verifier: CODE_VERIFIER,
         client_id: String(client['client_id'] ?? ''),
         redirect_uri: REDIRECT_URI,
+        resource: RESOURCE,
       }).toString(),
     }),
   )
@@ -306,26 +333,31 @@ async function main(): Promise<void> {
   // ------------------------------------------------------------------
   // 3. Den planlagte kjøringen
   // ------------------------------------------------------------------
-  const initialized = await rpc(accessToken, 'initialize', {
-    protocolVersion: '2025-11-25',
-    capabilities: {},
-    clientInfo: { name: 'antidep-e2e', version: '1' },
-  })
-  const initResult = initialized['result'] as Record<string, unknown>
+  const discovered = await rpc(accessToken, 'server/discover', {})
+  const discoverResult = discovered['result'] as Record<string, unknown>
+  check(
+    'serveren svarer på server/discover, og annonserer versjonen den faktisk snakker',
+    discoverResult?.['resultType'] === 'complete' &&
+      (discoverResult['supportedVersions'] as string[]).includes(PROTOCOL_VERSION),
+    JSON.stringify(discoverResult?.['supportedVersions']),
+  )
   check(
     'agenten får vite hvilket ledd tilkoblingen utfører, og at materialet er data',
-    String(initResult['instructions']).includes('evidence_extraction') &&
-      String(initResult['instructions']).includes('DATA'),
+    String(discoverResult['instructions']).includes('evidence_extraction') &&
+      String(discoverResult['instructions']).includes('DATA'),
   )
 
   const listed = await rpc(accessToken, 'tools/list', {})
-  const toolNames = ((listed['result'] as { tools: { name: string }[] }).tools ?? []).map(
-    (tool) => tool.name,
-  )
+  const listResult = listed['result'] as Record<string, unknown>
+  const toolNames = ((listResult['tools'] ?? []) as { name: string }[]).map((tool) => tool.name)
   check(
     'verktøyflaten er de fem smale operasjonene, og ingen flere',
     toolNames.length === 5 && toolNames.includes('submit_agent_answer'),
     toolNames.join(', '),
+  )
+  check(
+    'listen bærer cachefeltene 2026-revisjonen krever',
+    typeof listResult['ttlMs'] === 'number' && listResult['cacheScope'] === 'private',
   )
 
   const pending = await callTool(accessToken, 'list_pending_agent_tasks', {})

@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(84);
+select plan(91);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -63,7 +63,7 @@ select is_empty(
       ('api.agent_task_for_runner(text,uuid)'),
       ('api.submit_agent_answer(text,uuid,jsonb)'),
       ('api.release_agent_task(text,uuid,text)'),
-      ('api.agent_runner_identity(text)')
+      ('api.agent_runner_identity(text,text)')
     ) as f(name)
     where not has_function_privilege('anon', f.name, 'EXECUTE')
        or has_function_privilege('public', f.name, 'EXECUTE')
@@ -274,7 +274,8 @@ select throws_ok(
 select throws_ok(
   format(
     $$ select api.authorize_agent_runner(%L, %L, 'https://chatgpt.example/callback',
-                                         'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'plain') $$,
+                                         'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'plain',
+                                         'https://antidep.example/mcp') $$,
     (select payload ->> 'pairing_code' from res where label = 'pairing'),
     (select payload ->> 'client_id' from res where label = 'client')
   ),
@@ -288,7 +289,8 @@ select throws_ok(
 select throws_ok(
   format(
     $$ select api.authorize_agent_runner(%L, %L, 'https://angriper.example/cb',
-                                         'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'S256') $$,
+                                         'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'S256',
+                                         'https://antidep.example/mcp') $$,
     (select payload ->> 'pairing_code' from res where label = 'pairing'),
     (select payload ->> 'client_id' from res where label = 'client')
   ),
@@ -303,12 +305,13 @@ select 'grant', api.authorize_agent_runner(
   (select payload ->> 'client_id' from res where label = 'client'),
   'https://chatgpt.example/callback',
   (select payload ->> 'challenge' from res where label = 'pkce'),
-  'S256');
+  'S256', 'https://antidep.example/mcp');
 
 -- Engangskoden er brukt opp.
 select throws_ok(
   format(
-    $$ select api.authorize_agent_runner(%L, %L, 'https://chatgpt.example/callback', %L, 'S256') $$,
+    $$ select api.authorize_agent_runner(%L, %L, 'https://chatgpt.example/callback', %L, 'S256',
+                                         'https://antidep.example/mcp') $$,
     (select payload ->> 'pairing_code' from res where label = 'pairing'),
     (select payload ->> 'client_id' from res where label = 'client'),
     (select payload ->> 'other_challenge' from res where label = 'pkce')
@@ -322,7 +325,8 @@ select throws_ok(
 select throws_ok(
   format(
     $$ select api.exchange_agent_runner_code(%L, 'feil-verifier', %L,
-                                             'https://chatgpt.example/callback') $$,
+                                             'https://chatgpt.example/callback',
+                                             'https://antidep.example/mcp') $$,
     (select payload ->> 'authorization_code' from res where label = 'grant'),
     (select payload ->> 'client_id' from res where label = 'client')
   ),
@@ -336,7 +340,7 @@ select 'tokens', api.exchange_agent_runner_code(
   (select payload ->> 'authorization_code' from res where label = 'grant'),
   (select payload ->> 'verifier' from res where label = 'pkce'),
   (select payload ->> 'client_id' from res where label = 'client'),
-  'https://chatgpt.example/callback');
+  'https://chatgpt.example/callback', 'https://antidep.example/mcp');
 
 select is(
   (select payload ->> 'token_type' from res where label = 'tokens'),
@@ -347,7 +351,8 @@ select is(
 -- Autorisasjonskoden er også en engangskode.
 select throws_ok(
   format(
-    $$ select api.exchange_agent_runner_code(%L, %L, %L, 'https://chatgpt.example/callback') $$,
+    $$ select api.exchange_agent_runner_code(%L, %L, %L, 'https://chatgpt.example/callback',
+                                             'https://antidep.example/mcp') $$,
     (select payload ->> 'authorization_code' from res where label = 'grant'),
     (select payload ->> 'verifier' from res where label = 'pkce'),
     (select payload ->> 'client_id' from res where label = 'client')
@@ -359,13 +364,14 @@ select throws_ok(
 
 select is(
   (select payload ->> 'agent_role' from api.agent_runner_identity(
-     (select payload ->> 'access_token' from res where label = 'tokens')) as t(payload)),
+     (select payload ->> 'access_token' from res where label = 'tokens'),
+     'https://antidep.example/mcp') as t(payload)),
   'evidence_extraction',
   'tokenet identifiserer nøyaktig det agentleddet tilkoblingen er registrert for'
 );
 
 select throws_ok(
-  $$ select api.agent_runner_identity(repeat('f', 64)) $$,
+  $$ select api.agent_runner_identity(repeat('f', 64), 'https://antidep.example/mcp') $$,
   '42501',
   null,
   'et token databasen ikke kjenner, avvises med det samme avslaget'
@@ -964,7 +970,7 @@ select throws_ok(
   'et token slutter å gjelde i det samme øyeblikket kjøreren trekkes tilbake'
 );
 select throws_ok(
-  format($$ select api.refresh_agent_runner_token(%L, %L) $$,
+  format($$ select api.refresh_agent_runner_token(%L, %L, 'https://antidep.example/mcp') $$,
          (select payload ->> 'refresh_token' from res where label = 'tokens'),
          (select payload ->> 'client_id' from res where label = 'client')),
   '42501',
@@ -1041,13 +1047,13 @@ select 'grant2', api.authorize_agent_runner(
   (select payload ->> 'client_id' from res where label = 'client'),
   'https://chatgpt.example/callback',
   (select payload ->> 'challenge' from res where label = 'pkce'),
-  'S256');
+  'S256', 'https://antidep.example/mcp');
 insert into res
 select 'tokens2', api.exchange_agent_runner_code(
   (select payload ->> 'authorization_code' from res where label = 'grant2'),
   (select payload ->> 'verifier' from res where label = 'pkce'),
   (select payload ->> 'client_id' from res where label = 'client'),
-  'https://chatgpt.example/callback');
+  'https://chatgpt.example/callback', 'https://antidep.example/mcp');
 insert into res
 select 'claim3', api.claim_agent_task(
   (select payload ->> 'access_token' from res where label = 'tokens2'), null, 900);
@@ -1124,6 +1130,103 @@ select lives_ok(
 reset role;
 
 -- ===========================================================================
+-- Del 9b — Tokenet er bundet til én navngitt MCP-server (RFC 8707)
+--
+-- Et token uten publikum passer overalt. MCP-spesifikasjonen krever at
+-- klienten navngir serveren i både autorisasjons- og tokenforespørselen, og at
+-- serveren avviser et token som ble utstedt for en annen: uten den kontrollen
+-- er Antidep den forvirrede stedfortrederen som tar imot andres legitimasjon.
+-- ===========================================================================
+set local role anon;
+select throws_ok(
+  format(
+    $$ select api.authorize_agent_runner(%L, %L, 'https://chatgpt.example/callback', %L, 'S256', null) $$,
+    (select payload ->> 'pairing_code' from res where label = 'pairing2'),
+    (select payload ->> 'client_id' from res where label = 'client'),
+    (select payload ->> 'challenge' from res where label = 'pkce')
+  ),
+  '22023',
+  null,
+  'en autorisasjon uten resource avvises: et token uten publikum passer overalt'
+);
+select throws_ok(
+  format(
+    $$ select api.authorize_agent_runner(%L, %L, 'https://chatgpt.example/callback', %L, 'S256',
+                                         'antidep.example/mcp') $$,
+    (select payload ->> 'pairing_code' from res where label = 'pairing2'),
+    (select payload ->> 'client_id' from res where label = 'client'),
+    (select payload ->> 'challenge' from res where label = 'pkce')
+  ),
+  '22023',
+  null,
+  'og en adresse uten skjema er ikke en kanonisk ressursadresse'
+);
+reset role;
+
+-- Tokenet bærer publikumet sitt, og kontrollen leser det.
+select is(
+  (select s.resource from workflow.agent_runner_secrets s
+   where s.kind = 'access_token'
+     and s.secret_hash = workflow.agent_runner_secret_hash(
+       'access_token', (select payload ->> 'access_token' from res where label = 'tokens2'))),
+  'https://antidep.example/mcp',
+  'access-tokenet bærer den MCP-serveren det ble utstedt for'
+);
+
+set local role anon;
+select throws_ok(
+  format(
+    $$ select api.agent_runner_identity(%L, 'https://en-annen.example/mcp') $$,
+    (select payload ->> 'access_token' from res where label = 'tokens2')
+  ),
+  '42501',
+  null,
+  'et gyldig token avvises for en MCP-server det ikke ble utstedt for'
+);
+-- Uten publikum oppgitt er kontrollen den samme som før: kallerne inne i
+-- databasen er ikke MCP-serveren, og har ingen adresse å kontrollere mot.
+select lives_ok(
+  format(
+    $$ select api.agent_runner_identity(%L) $$,
+    (select payload ->> 'access_token' from res where label = 'tokens2')
+  ),
+  'en kaller som ikke er MCP-serveren, kontrolleres som før'
+);
+reset role;
+
+-- Publikumet kan ikke skifte underveis: verken i innvekslingen eller i
+-- fornyelsen kan en kode eller et refresh-token for denne appen bli et token
+-- for en annen.
+set local role anon;
+select throws_ok(
+  format(
+    $$ select api.refresh_agent_runner_token(%L, %L, 'https://en-annen.example/mcp') $$,
+    (select payload ->> 'refresh_token' from res where label = 'tokens2'),
+    (select payload ->> 'client_id' from res where label = 'client')
+  ),
+  '42501',
+  null,
+  'og et refresh-token kan ikke veksles inn i et token for en annen server'
+);
+reset role;
+
+-- Tabellen selv krever publikumet: en rad uten det er ikke en lovlig tilstand.
+select throws_ok(
+  $$
+    insert into workflow.agent_runner_secrets
+      (kind, secret_hash, connection_id, client_id, expires_at)
+    select 'access_token', 'sha256-v1:' || repeat('9', 64), c.id, k.client_id,
+           statement_timestamp() + interval '1 hour'
+    from workflow.agent_runner_connections c, workflow.agent_runner_clients k
+    where c.connection_key = 'agent-runner:evidence-extraction' and c.valid_to is null
+    limit 1
+  $$,
+  '23514',
+  null,
+  'et token uten publikum kan ikke lagres i det hele tatt'
+);
+
+-- ===========================================================================
 -- Del 10 — Rotasjonen gjelder ett token-par, ikke tilkoblingen
 --
 -- En tilkobling kan ha flere levende par: en ny tilkoblingskode gir en ny
@@ -1145,17 +1248,18 @@ select 'grant3', api.authorize_agent_runner(
   (select payload ->> 'client_id' from res where label = 'client'),
   'https://chatgpt.example/callback',
   (select payload ->> 'challenge' from res where label = 'pkce'),
-  'S256');
+  'S256', 'https://antidep.example/mcp');
 insert into res
 select 'tokens3', api.exchange_agent_runner_code(
   (select payload ->> 'authorization_code' from res where label = 'grant3'),
   (select payload ->> 'verifier' from res where label = 'pkce'),
   (select payload ->> 'client_id' from res where label = 'client'),
-  'https://chatgpt.example/callback');
+  'https://chatgpt.example/callback', 'https://antidep.example/mcp');
 
 select is(
   (select api.agent_runner_identity(
-     (select payload ->> 'access_token' from res where label = 'tokens3')) ->> 'agent_role'),
+     (select payload ->> 'access_token' from res where label = 'tokens3'),
+     'https://antidep.example/mcp') ->> 'agent_role'),
   'evidence_extraction',
   'den samme tilkoblingen kan ha to levende autorisasjoner'
 );
@@ -1164,26 +1268,28 @@ select is(
 insert into res
 select 'fornyet', api.refresh_agent_runner_token(
   (select payload ->> 'refresh_token' from res where label = 'tokens2'),
-  (select payload ->> 'client_id' from res where label = 'client'));
+  (select payload ->> 'client_id' from res where label = 'client'),
+  'https://antidep.example/mcp');
 
 -- `lives_ok` og ikke `is`: slår regelen feil, er utfallet en avvisning, og en
 -- avvisning midt i en `is` ville avbrutt hele filen framfor å melde nøyaktig
 -- hvilken regel som sviktet.
 select lives_ok(
-  format($$ select api.agent_runner_identity(%L) $$,
+  format($$ select api.agent_runner_identity(%L, 'https://antidep.example/mcp') $$,
          (select payload ->> 'access_token' from res where label = 'tokens3')),
   'en fornyelse av det ene paret rører ikke det andre'
 );
 select is(
   (select api.agent_runner_identity(
-     (select payload ->> 'access_token' from res where label = 'fornyet')) ->> 'agent_role'),
+     (select payload ->> 'access_token' from res where label = 'fornyet'),
+     'https://antidep.example/mcp') ->> 'agent_role'),
   'evidence_extraction',
   'og det fornyede paret har fått et nytt, gyldig access-token'
 );
 -- Men rotasjonen skal koste det paret som faktisk ble rotert: et lekket
 -- access-token skal ikke overleve at refresh-tokenet sitt ble brukt opp.
 select throws_ok(
-  format($$ select api.agent_runner_identity(%L) $$,
+  format($$ select api.agent_runner_identity(%L, 'https://antidep.example/mcp') $$,
          (select payload ->> 'access_token' from res where label = 'tokens2')),
   '42501',
   null,

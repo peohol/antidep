@@ -29,13 +29,25 @@ import { GatewayError, McpHttpError, UnauthorizedError, type RunnerOutcome } fro
 import type { RunnerGateway } from './gateway.ts'
 import { renderConnectPage, type ConnectPageFields } from './html.ts'
 import {
+  JSON_RPC_METHOD_NOT_FOUND,
   JSON_RPC_PARSE_ERROR,
   JsonRpcMessageError,
+  MCP_HEADER_MISMATCH,
+  MCP_UNSUPPORTED_PROTOCOL_VERSION,
   jsonRpcFailure,
   parseJsonRpcMessage,
+  type JsonRpcRequest,
 } from './json-rpc.ts'
 import { consoleRunnerLogger, type RunnerLogger } from './logging.ts'
-import { dispatchMcpMessage, SUPPORTED_PROTOCOL_VERSIONS } from './server.ts'
+import {
+  DEFAULT_LEGACY_PROTOCOL_VERSION,
+  META_PROTOCOL_VERSION,
+  dispatchMcpMessage,
+  eraForProtocolVersion,
+  isSupportedProtocolVersion,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  type McpEra,
+} from './server.ts'
 
 /** Rutene appen kjenner. Adapteren navngir dem; appen utleder dem ikke av en sti. */
 export const MCP_ROUTES = [
@@ -173,7 +185,20 @@ function connectFields(source: URLSearchParams | Record<string, string>): Connec
   }
 }
 
-function missingConnectField(fields: ConnectPageFields): string | null {
+/**
+ * Den kanoniske adressen tokenet utstedes for (RFC 8707, RFC 9728).
+ *
+ * Det er denne `resource` må navngi hele veien gjennom OAuth-flyten, og den
+ * samme serveren kontrollerer at et access-token faktisk ble utstedt for, før
+ * det slipper inn. Uten bindingen kunne et token utstedt for en helt annen
+ * MCP-server blitt brukt her — og en tjeneste som tar imot andres tokens, er
+ * nettopp den forvirrede stedfortrederen spesifikasjonen advarer mot.
+ */
+function canonicalResource(baseUrl: string): string {
+  return `${baseUrl}/mcp`
+}
+
+function missingConnectField(fields: ConnectPageFields, baseUrl: string): string | null {
   if (fields.clientId.length === 0) {
     return 'Forespørselen mangler client_id.'
   }
@@ -186,6 +211,87 @@ function missingConnectField(fields: ConnectPageFields): string | null {
   if (fields.codeChallengeMethod !== 'S256') {
     return 'Antidep godtar bare PKCE med S256.'
   }
+  if (fields.resource.length === 0) {
+    return 'Forespørselen mangler resource. Et token skal utstedes for én navngitt MCP-server, ikke for hvem som helst.'
+  }
+  if (fields.resource !== canonicalResource(baseUrl)) {
+    return `Forespørselen ber om et token for «${fields.resource}», mens denne appen er ${canonicalResource(baseUrl)}.`
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Transportlagets kontroll av 2026-revisjonen
+//
+// Headerne speiler felter fra kroppen, slik at en mellomtjener kan rute uten å
+// lese den. Da må de to si det samme: et sted som ruter på headeren mens
+// serveren utfører kroppen, er en åpning, og spesifikasjonen krever derfor at
+// serveren avviser et avvik med -32020.
+// ---------------------------------------------------------------------------
+const BASE64_SENTINEL = /^=\?base64\?(?<payload>.*)\?=$/s
+
+/** Leser en headerverdi som kan være base64-innpakket, slik 2026 tillater. */
+function decodeHeaderValue(raw: string): string | null {
+  const match = BASE64_SENTINEL.exec(raw)
+  if (match === null) {
+    return raw
+  }
+  try {
+    return new TextDecoder().decode(
+      Uint8Array.from(atob(match.groups?.['payload'] ?? ''), (character) =>
+        character.charCodeAt(0),
+      ),
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Hva som er galt med de speilede headerne, eller `null`.
+ *
+ * Bare i den moderne epoken: de eldre revisjonene definerte dem ikke, og å
+ * kreve dem der ville vært å avvise en klient som følger sin egen versjon.
+ */
+function headerProblem(request: Request, message: JsonRpcRequest, declared: string): string | null {
+  const version = request.headers.get('mcp-protocol-version')
+  if (version === null) {
+    return 'Forespørselen mangler MCP-Protocol-Version.'
+  }
+  const meta = message.params['_meta']
+  const inBody =
+    typeof meta === 'object' && meta !== null && !Array.isArray(meta)
+      ? (meta as Record<string, unknown>)[META_PROTOCOL_VERSION]
+      : undefined
+  if (typeof inBody !== 'string' || inBody.length === 0) {
+    return `Forespørselen mangler ${META_PROTOCOL_VERSION} i params._meta.`
+  }
+  if (inBody !== declared) {
+    return `MCP-Protocol-Version «${declared}» er ikke den samme som ${META_PROTOCOL_VERSION} «${inBody}».`
+  }
+
+  const method = request.headers.get('mcp-method')
+  if (method === null) {
+    return 'Forespørselen mangler Mcp-Method.'
+  }
+  if (method !== message.method) {
+    return `Mcp-Method «${method}» er ikke den samme som metoden «${message.method}» i kroppen.`
+  }
+
+  if (message.method === 'tools/call') {
+    const raw = request.headers.get('mcp-name')
+    if (raw === null) {
+      return 'Forespørselen mangler Mcp-Name.'
+    }
+    const name = decodeHeaderValue(raw)
+    if (name === null) {
+      return 'Mcp-Name er base64-merket, men lar seg ikke dekode.'
+    }
+    if (name !== message.params['name']) {
+      return `Mcp-Name «${name}» er ikke det samme som verktøynavnet i kroppen.`
+    }
+  }
+
   return null
 }
 
@@ -217,6 +323,10 @@ function authorizationServerMetadata(baseUrl: string): Response {
     // lakk, og det er ikke en antakelse Antidep skal bygge på.
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none'],
+    // RFC 8707: tokens utstedes for én navngitt ressurs, og klienten skal si
+    // hvilken. RFC 9207: autorisasjonssvaret navngir utstederen sin.
+    resource_indicators_supported: true,
+    authorization_response_iss_parameter_supported: true,
     service_documentation: `${baseUrl}/agentarbeid`,
   })
 }
@@ -257,17 +367,21 @@ async function registerClient(request: Request, deps: McpAppDependencies): Promi
   )
 }
 
-async function authorize(request: Request, deps: McpAppDependencies): Promise<Response> {
+async function authorize(
+  request: Request,
+  deps: McpAppDependencies,
+  baseUrl: string,
+): Promise<Response> {
   const url = new URL(request.url)
 
   if (request.method === 'GET') {
     const fields = connectFields(url.searchParams)
-    return html(renderConnectPage(fields, missingConnectField(fields)))
+    return html(renderConnectPage(fields, missingConnectField(fields, baseUrl)))
   }
 
   const form = await formOrJsonBody(request)
   const fields = connectFields(form)
-  const missing = missingConnectField(fields)
+  const missing = missingConnectField(fields, baseUrl)
   if (missing !== null) {
     return html(renderConnectPage(fields, missing), 400)
   }
@@ -285,6 +399,7 @@ async function authorize(request: Request, deps: McpAppDependencies): Promise<Re
       redirectUri: fields.redirectUri,
       codeChallenge: fields.codeChallenge,
       codeChallengeMethod: fields.codeChallengeMethod,
+      resource: fields.resource,
     })
   } catch (error) {
     // Avvisningen er alltid den samme setningen fra databasen, og den skiller
@@ -303,19 +418,43 @@ async function authorize(request: Request, deps: McpAppDependencies): Promise<Re
   if (fields.state.length > 0) {
     target.searchParams.set('state', fields.state)
   }
+  // RFC 9207: svaret navngir utstederen sin, slik at klienten kan se at koden
+  // kom fra den autorisasjonsserveren den faktisk spurte — og ikke fra en annen
+  // som rakk å svare først.
+  target.searchParams.set('iss', baseUrl)
   return new Response(null, {
     status: 302,
     headers: { location: target.toString(), 'cache-control': 'no-store' },
   })
 }
 
-async function token(request: Request, deps: McpAppDependencies): Promise<Response> {
+async function token(
+  request: Request,
+  deps: McpAppDependencies,
+  baseUrl: string,
+): Promise<Response> {
   const form = await formOrJsonBody(request)
   const grantType = form['grant_type'] ?? ''
   const clientId = (form['client_id'] ?? '').trim()
 
   if (clientId.length === 0) {
     return oauthError(400, 'invalid_client', 'client_id mangler.')
+  }
+
+  // `resource` skal følge tokenforespørselen og ikke bare autorisasjonen
+  // (RFC 8707). Uten den her kunne en kode utstedt for denne appen blitt vekslet
+  // inn i et token uten publikum — og et token uten publikum er et token som
+  // passer overalt.
+  const resource = (form['resource'] ?? '').trim()
+  if (resource.length === 0) {
+    return oauthError(400, 'invalid_target', 'resource mangler.')
+  }
+  if (resource !== canonicalResource(baseUrl)) {
+    return oauthError(
+      400,
+      'invalid_target',
+      `Denne autorisasjonsserveren utsteder bare tokens for ${canonicalResource(baseUrl)}.`,
+    )
   }
 
   try {
@@ -325,6 +464,7 @@ async function token(request: Request, deps: McpAppDependencies): Promise<Respon
         codeVerifier: form['code_verifier'] ?? '',
         clientId,
         redirectUri: (form['redirect_uri'] ?? '').trim(),
+        resource,
       })
       return json({
         access_token: tokens.accessToken,
@@ -339,6 +479,7 @@ async function token(request: Request, deps: McpAppDependencies): Promise<Respon
       const tokens = await deps.gateway.refresh({
         refreshToken: (form['refresh_token'] ?? '').trim(),
         clientId,
+        resource,
       })
       return json({
         access_token: tokens.accessToken,
@@ -386,19 +527,25 @@ async function mcpEndpoint(
     }
   }
 
-  const declared = request.headers.get('mcp-protocol-version')
-  if (declared !== null && !(SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(declared)) {
+  // Epoken avgjøres her, av headeren, og ikke av et håndtrykk. En forespørsel
+  // uten headeren leses som 2025-03-26: headeren kom først i 2025-06-18, og en
+  // klient som aldri fikk vite at den fantes, skal ikke avvises for å mangle den.
+  const declared = request.headers.get('mcp-protocol-version') ?? DEFAULT_LEGACY_PROTOCOL_VERSION
+  if (!isSupportedProtocolVersion(declared)) {
     return {
       response: json(
-        {
-          error: 'unsupported_protocol_version',
-          supported: SUPPORTED_PROTOCOL_VERSIONS,
-        },
+        jsonRpcFailure(
+          null,
+          MCP_UNSUPPORTED_PROTOCOL_VERSION,
+          `Antidep snakker ikke protokollversjonen «${declared}».`,
+          { supported: [...SUPPORTED_PROTOCOL_VERSIONS], requested: declared },
+        ),
         400,
       ),
       outcome: 'bad_request',
     }
   }
+  const era: McpEra = eraForProtocolVersion(declared)
 
   const accessToken = bearerToken(request)
   if (accessToken === null) {
@@ -414,7 +561,9 @@ async function mcpEndpoint(
   // avslaget for å vite at den skal fornye.
   let identity
   try {
-    identity = await deps.gateway.identify(accessToken)
+    // Publikum kontrolleres sammen med tokenet: databasen godtar det bare
+    // dersom det faktisk ble utstedt for nettopp denne adressen (RFC 8707).
+    identity = await deps.gateway.identify(accessToken, canonicalResource(baseUrl))
   } catch (error) {
     if (error instanceof GatewayError || error instanceof UnauthorizedError) {
       return {
@@ -457,13 +606,33 @@ async function mcpEndpoint(
     }
   }
 
+  // Headerne speiler kroppen fra 2026-07-28. Avviket avvises her, før noe
+  // utføres: et sted som ruter på headeren mens serveren utfører kroppen, er en
+  // åpning, og det er nettopp den denne kontrollen lukker.
+  if (era === 'modern') {
+    const problem = headerProblem(request, message, declared)
+    if (problem !== null) {
+      return {
+        response: json(jsonRpcFailure(message.id, MCP_HEADER_MISMATCH, problem), 400),
+        outcome: 'bad_request',
+      }
+    }
+  }
+
   try {
-    const dispatched = await dispatchMcpMessage(message, accessToken, identity, deps)
+    const dispatched = await dispatchMcpMessage(message, era, accessToken, identity, deps)
     if (dispatched.response === null) {
       return { response: new Response(null, { status: 202 }), outcome: 'ok' }
     }
+    // En ukjent metode er 404 i den moderne epoken. Statusen er det klienten
+    // bruker til å skille en server som ikke kjenner kallet, fra en som ikke
+    // ligger her i det hele tatt.
+    const unknownMethod =
+      era === 'modern' &&
+      'error' in dispatched.response &&
+      dispatched.response.error.code === JSON_RPC_METHOD_NOT_FOUND
     const result = {
-      response: json(dispatched.response),
+      response: json(dispatched.response, unknownMethod ? 404 : 200),
       outcome: dispatched.trace?.outcome ?? 'ok',
     }
     return dispatched.trace === null ? result : { ...result, tool: dispatched.trace.tool }
@@ -506,7 +675,8 @@ export async function handleMcpRequest(
         headers: {
           'access-control-allow-origin': '*',
           'access-control-allow-methods': 'GET, POST, OPTIONS',
-          'access-control-allow-headers': 'authorization, content-type, mcp-protocol-version',
+          'access-control-allow-headers':
+            'authorization, content-type, mcp-protocol-version, mcp-method, mcp-name',
           'access-control-max-age': '600',
         },
       })
@@ -528,13 +698,13 @@ export async function handleMcpRequest(
           if (request.method !== 'GET' && request.method !== 'POST') {
             throw new McpHttpError(405, 'Bare GET og POST.')
           }
-          response = await authorize(request, deps)
+          response = await authorize(request, deps, baseUrl)
           break
         case 'token':
           if (request.method !== 'POST') {
             throw new McpHttpError(405, 'Bare POST.')
           }
-          response = await token(request, deps)
+          response = await token(request, deps, baseUrl)
           break
         case 'mcp': {
           const handled = await mcpEndpoint(request, deps, baseUrl)

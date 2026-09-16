@@ -10,12 +10,23 @@
 // framfor å bli lest med standardverdier.
 // ============================================================================
 
-/** Feilkodene JSON-RPC 2.0 definerer, og den ene MCP legger til. */
+/** Feilkodene JSON-RPC 2.0 definerer. */
 export const JSON_RPC_PARSE_ERROR = -32700
 export const JSON_RPC_INVALID_REQUEST = -32600
 export const JSON_RPC_METHOD_NOT_FOUND = -32601
 export const JSON_RPC_INVALID_PARAMS = -32602
 export const JSON_RPC_INTERNAL_ERROR = -32603
+
+// MCP-spesifikasjonen reserverer -32020 til -32099 av JSON-RPCs serverfeilområde
+// for sine egne koder (2026-07-28, «Error codes»). De tre under er dem denne
+// appen kan svare med; -32021 finnes for fullstendighetens skyld og brukes ikke,
+// fordi appen ikke krever noen klientevne.
+/** Headerne og kroppen sa ikke det samme, eller en påkrevd header manglet. */
+export const MCP_HEADER_MISMATCH = -32020
+/** Klienten mangler en evne serveren krever. Antidep krever ingen. */
+export const MCP_MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
+/** Klienten ba om en protokollversjon serveren ikke snakker. */
+export const MCP_UNSUPPORTED_PROTOCOL_VERSION = -32022
 
 export type JsonRpcId = string | number | null
 
@@ -36,7 +47,12 @@ export interface JsonRpcSuccess {
 export interface JsonRpcFailure {
   readonly jsonrpc: '2.0'
   readonly id: JsonRpcId
-  readonly error: { readonly code: number; readonly message: string }
+  readonly error: {
+    readonly code: number
+    readonly message: string
+    /** Maskinlesbare opplysninger om feilen, der spesifikasjonen definerer noen. */
+    readonly data?: unknown
+  }
 }
 
 export type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure
@@ -45,8 +61,17 @@ export function jsonRpcSuccess(id: JsonRpcId, result: unknown): JsonRpcSuccess {
   return { jsonrpc: '2.0', id, result }
 }
 
-export function jsonRpcFailure(id: JsonRpcId, code: number, message: string): JsonRpcFailure {
-  return { jsonrpc: '2.0', id, error: { code, message } }
+export function jsonRpcFailure(
+  id: JsonRpcId,
+  code: number,
+  message: string,
+  data?: unknown,
+): JsonRpcFailure {
+  return {
+    jsonrpc: '2.0',
+    id,
+    error: data === undefined ? { code, message } : { code, message, data },
+  }
 }
 
 /** En melding som ikke kan leses som en forespørsel. */

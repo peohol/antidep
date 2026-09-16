@@ -49,14 +49,20 @@ export type RunnerDatabase = {
         p_redirect_uri: string
         p_code_challenge: string
         p_code_challenge_method: string
+        p_resource: string
       }>
       exchange_agent_runner_code: RunnerRpc<{
         p_code: string
         p_code_verifier: string
         p_client_id: string
         p_redirect_uri: string
+        p_resource: string
       }>
-      refresh_agent_runner_token: RunnerRpc<{ p_refresh_token: string; p_client_id: string }>
+      refresh_agent_runner_token: RunnerRpc<{
+        p_refresh_token: string
+        p_client_id: string
+        p_resource: string
+      }>
       list_pending_agent_tasks: RunnerRpc<{ p_access_token: string }>
       claim_agent_task: RunnerRpc<{
         p_access_token: string
@@ -74,7 +80,7 @@ export type RunnerDatabase = {
         p_task_handle: string
         p_reason_code: string | null
       }>
-      agent_runner_identity: RunnerRpc<{ p_access_token: string }>
+      agent_runner_identity: RunnerRpc<{ p_access_token: string; p_resource: string | null }>
       record_agent_runner_outcome: RunnerRpc<{
         p_access_token: string
         p_tool_name: string
@@ -183,7 +189,7 @@ export interface RunnerGateway {
    * første verktøykallet — og en MCP-klient trenger nettopp avslaget for å vite
    * at den skal fornye.
    */
-  identify(accessToken: string): Promise<RunnerIdentity>
+  identify(accessToken: string, resource: string): Promise<RunnerIdentity>
 
   registerClient(input: {
     readonly clientName: string
@@ -196,6 +202,8 @@ export interface RunnerGateway {
     readonly redirectUri: string
     readonly codeChallenge: string
     readonly codeChallengeMethod: string
+    /** Den kanoniske adressen tokenet skal gjelde for (RFC 8707). */
+    readonly resource: string
   }): Promise<AuthorizationGrant>
 
   exchangeCode(input: {
@@ -203,11 +211,13 @@ export interface RunnerGateway {
     readonly codeVerifier: string
     readonly clientId: string
     readonly redirectUri: string
+    readonly resource: string
   }): Promise<RunnerTokenSet>
 
   refresh(input: {
     readonly refreshToken: string
     readonly clientId: string
+    readonly resource: string
   }): Promise<RunnerTokenSet>
 
   listPendingTasks(accessToken: string): Promise<PendingTasks>
@@ -329,10 +339,13 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
   }
 
   return {
-    async identify(accessToken) {
+    async identify(accessToken, resource) {
       const where = 'api.agent_runner_identity'
       const row = record(
-        await call('agent_runner_identity', { p_access_token: accessToken }),
+        await call('agent_runner_identity', {
+          p_access_token: accessToken,
+          p_resource: resource,
+        }),
         where,
       )
       return {
@@ -368,6 +381,7 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
           p_redirect_uri: input.redirectUri,
           p_code_challenge: input.codeChallenge,
           p_code_challenge_method: input.codeChallengeMethod,
+          p_resource: input.resource,
         }),
         where,
       )
@@ -386,6 +400,7 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
           p_code_verifier: input.codeVerifier,
           p_client_id: input.clientId,
           p_redirect_uri: input.redirectUri,
+          p_resource: input.resource,
         }),
         'api.exchange_agent_runner_code',
       )
@@ -396,6 +411,7 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
         await call('refresh_agent_runner_token', {
           p_refresh_token: input.refreshToken,
           p_client_id: input.clientId,
+          p_resource: input.resource,
         }),
         'api.refresh_agent_runner_token',
       )

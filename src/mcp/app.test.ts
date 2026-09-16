@@ -11,6 +11,7 @@ import {
   FAKE_REDIRECT_URI,
   FAKE_REFRESH_TOKEN,
   FAKE_TASK_HANDLE,
+  FAKE_RESOURCE,
   FAKE_TASK_REF,
   type FakeGateway,
 } from './fake-gateway.ts'
@@ -72,6 +73,15 @@ function textOf(body: Record<string, unknown>): string {
 
 async function send(route: McpRoute, request: Request, gateway: FakeGateway): Promise<Response> {
   return handleMcpRequest(route, request, deps(gateway))
+}
+
+/** Én rå JSON-RPC-melding gjennom transportlaget, uten moderne headere. */
+async function callRpc(
+  gateway: FakeGateway,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const response = await send('mcp', rpc(body), gateway)
+  return (await response.json()) as Record<string, unknown>
 }
 
 describe('autorisasjonen', () => {
@@ -192,6 +202,7 @@ describe('tilkoblingen', () => {
         code_challenge: challenge,
         code_challenge_method: 'S256',
         state: 'xyz',
+        resource: FAKE_RESOURCE,
         pairing_code: FAKE_PAIRING_CODE,
       }),
       gateway,
@@ -212,6 +223,7 @@ describe('tilkoblingen', () => {
         redirect_uri: FAKE_REDIRECT_URI,
         code_challenge: challenge,
         code_challenge_method: 'S256',
+        resource: FAKE_RESOURCE,
         pairing_code: 'feil'.repeat(16),
       }),
       gateway,
@@ -233,6 +245,7 @@ describe('tilkoblingen', () => {
           code_verifier: 'en-verifier',
           client_id: FAKE_CLIENT_ID,
           redirect_uri: FAKE_REDIRECT_URI,
+          resource: FAKE_RESOURCE,
         }).toString(),
       }),
       gateway,
@@ -251,6 +264,7 @@ describe('tilkoblingen', () => {
           grant_type: 'refresh_token',
           refresh_token: FAKE_REFRESH_TOKEN,
           client_id: FAKE_CLIENT_ID,
+          resource: FAKE_RESOURCE,
         }).toString(),
       }),
       gateway,
@@ -268,6 +282,7 @@ describe('tilkoblingen', () => {
         body: new URLSearchParams({
           grant_type: 'client_credentials',
           client_id: FAKE_CLIENT_ID,
+          resource: FAKE_RESOURCE,
         }).toString(),
       }),
       gateway,
@@ -570,5 +585,383 @@ describe('sporet', () => {
       logger: (record) => lines.push(record.outcome),
     })
     expect(lines).toEqual(['auth_failed'])
+  })
+})
+
+// ============================================================================
+// Den moderne epoken (2026-07-28)
+//
+// Revisjonen er et brudd: håndtrykket er borte, hver forespørsel bærer sin egen
+// versjon, serveren må svare på `server/discover`, og headerne speiler kroppen.
+// Prøvene under går gjennom transportlaget med ekte headere, fordi det er
+// nettopp der forskjellen ligger — en prøve som bare kalte dispatch-funksjonen,
+// ville ikke sagt noe om det en nåværende ChatGPT-klient faktisk møter.
+// ============================================================================
+const MODERN = '2026-07-28'
+
+function modernRpc(
+  method: string,
+  params: Record<string, unknown> = {},
+  overrides: {
+    readonly headers?: Record<string, string | null>
+    readonly metaVersion?: string | null
+    readonly version?: string
+  } = {},
+): Request {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+    authorization: `Bearer ${FAKE_ACCESS_TOKEN}`,
+    'mcp-protocol-version': overrides.version ?? MODERN,
+    'mcp-method': method,
+  }
+  if (method === 'tools/call' && typeof params['name'] === 'string') {
+    headers['mcp-name'] = params['name']
+  }
+  for (const [key, value] of Object.entries(overrides.headers ?? {})) {
+    if (value === null) {
+      delete headers[key]
+    } else {
+      headers[key] = value
+    }
+  }
+  const metaVersion =
+    overrides.metaVersion === undefined ? (overrides.version ?? MODERN) : overrides.metaVersion
+  const meta =
+    metaVersion === null
+      ? {}
+      : {
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': metaVersion,
+            'io.modelcontextprotocol/clientInfo': { name: 'prøve', version: '1' },
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        }
+  return new Request(`${BASE}/mcp`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ jsonrpc: '2.0', id: 9, method, params: { ...params, ...meta } }),
+  })
+}
+
+async function modernSend(
+  method: string,
+  params?: Record<string, unknown>,
+  overrides?: Parameters<typeof modernRpc>[2],
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await send('mcp', modernRpc(method, params, overrides), createFakeGateway())
+  return { status: response.status, body: (await response.json()) as Record<string, unknown> }
+}
+
+function errorOf(body: Record<string, unknown>): Record<string, unknown> {
+  return body['error'] as Record<string, unknown>
+}
+
+describe('den moderne epoken', () => {
+  it('svarer på server/discover med versjonene den faktisk snakker', async () => {
+    const { status, body } = await modernSend('server/discover')
+    expect(status).toBe(200)
+    const result = resultOf(body)
+    expect(result['resultType']).toBe('complete')
+    expect(result['supportedVersions']).toContain(MODERN)
+    // Serverens egen identitet hører hjemme i `_meta`, ikke i resultatroten.
+    expect(result['_meta']).toMatchObject({
+      'io.modelcontextprotocol/serverInfo': { name: 'antidep-agent-runner' },
+    })
+  })
+
+  it('bærer cachefeltene på listekallene, slik revisjonen krever', async () => {
+    const { body } = await modernSend('tools/list')
+    const result = resultOf(body)
+    expect(result['resultType']).toBe('complete')
+    expect(result['ttlMs']).toBeTypeOf('number')
+    // `private`: svaret hører til ett token, og en delt mellomtjener skal ikke
+    // kunne gi det til noen andre.
+    expect(result['cacheScope']).toBe('private')
+  })
+
+  // Håndtrykket er borte. En klient som kaller det i den moderne epoken, har
+  // misforstått hvilken epoke den er i, og skal få vite det — ikke bli møtt av
+  // et håndtrykk som ikke finnes lenger.
+  it('kjenner ikke initialize, og svarer 404 slik transporten krever', async () => {
+    const { status, body } = await modernSend('initialize', { protocolVersion: MODERN })
+    expect(status).toBe(404)
+    expect(errorOf(body)['code']).toBe(-32601)
+  })
+
+  it('kjenner ikke ping', async () => {
+    const { status, body } = await modernSend('ping')
+    expect(status).toBe(404)
+    expect(errorOf(body)['code']).toBe(-32601)
+  })
+
+  it('utfører et verktøykall når headerne og kroppen sier det samme', async () => {
+    const { status, body } = await modernSend('tools/call', {
+      name: 'list_pending_agent_tasks',
+      arguments: {},
+    })
+    expect(status).toBe(200)
+    expect(resultOf(body)['resultType']).toBe('complete')
+    // `isError` settes bare når noe gikk galt; fraværet er selve svaret.
+    expect(resultOf(body)['isError']).toBeUndefined()
+    expect(resultOf(body)['structuredContent']).toBeTypeOf('object')
+  })
+
+  it('godtar et base64-innpakket Mcp-Name, slik verdikodingen tillater', async () => {
+    const encoded = `=?base64?${btoa('list_pending_agent_tasks')}?=`
+    const { status } = await modernSend(
+      'tools/call',
+      { name: 'list_pending_agent_tasks', arguments: {} },
+      { headers: { 'mcp-name': encoded } },
+    )
+    expect(status).toBe(200)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Headerne speiler kroppen, og avviket avvises
+//
+// Et sted som ruter på headeren mens serveren utfører kroppen, er en åpning.
+// Spesifikasjonen krever derfor at serveren avviser avviket med -32020, og det
+// er hele grunnen til at hvert av tilfellene under har sin egen prøve.
+// ---------------------------------------------------------------------------
+describe('speilede headere', () => {
+  const mismatches: readonly {
+    readonly name: string
+    readonly method: string
+    readonly params: Record<string, unknown>
+    readonly overrides: Parameters<typeof modernRpc>[2]
+  }[] = [
+    {
+      name: 'Mcp-Method mangler',
+      method: 'tools/list',
+      params: {},
+      overrides: { headers: { 'mcp-method': null } },
+    },
+    {
+      name: 'Mcp-Method sier noe annet enn kroppen',
+      method: 'tools/list',
+      params: {},
+      overrides: { headers: { 'mcp-method': 'tools/call' } },
+    },
+    {
+      name: 'Mcp-Name mangler på et verktøykall',
+      method: 'tools/call',
+      params: { name: 'list_pending_agent_tasks', arguments: {} },
+      overrides: { headers: { 'mcp-name': null } },
+    },
+    {
+      name: 'Mcp-Name sier et annet verktøy enn kroppen',
+      method: 'tools/call',
+      params: { name: 'list_pending_agent_tasks', arguments: {} },
+      overrides: { headers: { 'mcp-name': 'submit_agent_answer' } },
+    },
+    {
+      name: 'protokollversjonen mangler i _meta',
+      method: 'tools/list',
+      params: {},
+      overrides: { metaVersion: null },
+    },
+    {
+      name: 'protokollversjonen i _meta er ikke den i headeren',
+      method: 'tools/list',
+      params: {},
+      overrides: { metaVersion: '2025-11-25' },
+    },
+  ]
+
+  for (const { name, method, params, overrides } of mismatches) {
+    it(`avviser med -32020 når ${name}`, async () => {
+      const { status, body } = await modernSend(method, params, overrides)
+      expect(status).toBe(400)
+      expect(errorOf(body)['code']).toBe(-32020)
+    })
+  }
+
+  it('utfører ingenting når headerne ikke holder', async () => {
+    const gateway = createFakeGateway()
+    await send(
+      'mcp',
+      modernRpc(
+        'tools/call',
+        { name: 'claim_agent_task', arguments: {} },
+        { headers: { 'mcp-name': 'list_pending_agent_tasks' } },
+      ),
+      gateway,
+    )
+    expect(gateway.claims).toBe(0)
+  })
+})
+
+describe('versjonsforhandlingen', () => {
+  it('avviser en ukjent versjon med -32022 og listen over dem den snakker', async () => {
+    const { status, body } = await modernSend('tools/list', {}, { version: '1900-01-01' })
+    expect(status).toBe(400)
+    const error = errorOf(body)
+    expect(error['code']).toBe(-32022)
+    const data = error['data'] as Record<string, unknown>
+    expect(data['requested']).toBe('1900-01-01')
+    expect(data['supported']).toContain(MODERN)
+  })
+
+  // Det eldre håndtrykket kan aldri forhandle fram 2026: en klient som kaller
+  // `initialize`, har per definisjon ikke lest revisjonen som fjernet kallet.
+  it('lar aldri initialize forhandle fram den moderne versjonen', async () => {
+    const gateway = createFakeGateway()
+    const body = await callRpc(gateway, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: MODERN, capabilities: {}, clientInfo: { name: 'x' } },
+    })
+    expect(resultOf(body)['protocolVersion']).toBe('2025-11-25')
+  })
+
+  it('leser en forespørsel uten versjonsheader som den eldste epoken', async () => {
+    const gateway = createFakeGateway()
+    const body = await callRpc(gateway, { jsonrpc: '2.0', id: 1, method: 'ping', params: {} })
+    // `ping` finnes bare i den eldre epoken, så et svar her er selve beviset.
+    expect(resultOf(body)).toEqual({})
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tokenet er bundet til denne MCP-serveren (RFC 8707)
+//
+// Et token uten publikum passer overalt. MCP-spesifikasjonen krever derfor at
+// klienten navngir serveren i både autorisasjons- og tokenforespørselen, og at
+// serveren avviser et token som ble utstedt for en annen.
+// ---------------------------------------------------------------------------
+describe('ressursbindingen', () => {
+  function tokenRequest(fields: Record<string, string>): Request {
+    return new Request(`${BASE}/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields).toString(),
+    })
+  }
+
+  const connect = {
+    client_id: FAKE_CLIENT_ID,
+    redirect_uri: FAKE_REDIRECT_URI,
+    code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+    code_challenge_method: 'S256',
+    pairing_code: FAKE_PAIRING_CODE,
+  }
+
+  it('gir ingen kode når autorisasjonen ikke sier hvilken server tokenet gjelder', async () => {
+    const response = await send(
+      'authorize',
+      new Request(`${BASE}/oauth/authorize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(connect).toString(),
+      }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(400)
+    expect(response.headers.get('location')).toBeNull()
+  })
+
+  it('gir ingen kode for en annen MCP-server enn denne', async () => {
+    const response = await send(
+      'authorize',
+      new Request(`${BASE}/oauth/authorize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          ...connect,
+          resource: 'https://en-annen.example/mcp',
+        }).toString(),
+      }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(400)
+    expect(response.headers.get('location')).toBeNull()
+  })
+
+  it('navngir utstederen i omdirigeringen, slik RFC 9207 ber om', async () => {
+    const response = await send(
+      'authorize',
+      new Request(`${BASE}/oauth/authorize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ ...connect, resource: FAKE_RESOURCE }).toString(),
+      }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(302)
+    expect(new URL(response.headers.get('location') ?? '').searchParams.get('iss')).toBe(BASE)
+  })
+
+  it('veksler ingen kode inn uten resource', async () => {
+    const response = await send(
+      'token',
+      tokenRequest({
+        grant_type: 'authorization_code',
+        code: FAKE_AUTHORIZATION_CODE,
+        code_verifier: 'en-verifier',
+        client_id: FAKE_CLIENT_ID,
+        redirect_uri: FAKE_REDIRECT_URI,
+      }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(400)
+    expect((await response.json())['error']).toBe('invalid_target')
+  })
+
+  it('veksler ingen kode inn i et token for en annen server', async () => {
+    const response = await send(
+      'token',
+      tokenRequest({
+        grant_type: 'authorization_code',
+        code: FAKE_AUTHORIZATION_CODE,
+        code_verifier: 'en-verifier',
+        client_id: FAKE_CLIENT_ID,
+        redirect_uri: FAKE_REDIRECT_URI,
+        resource: 'https://en-annen.example/mcp',
+      }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(400)
+    expect((await response.json())['error']).toBe('invalid_target')
+  })
+
+  it('fornyer ingen token uten resource', async () => {
+    const response = await send(
+      'token',
+      tokenRequest({
+        grant_type: 'refresh_token',
+        refresh_token: FAKE_REFRESH_TOKEN,
+        client_id: FAKE_CLIENT_ID,
+      }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(400)
+    expect((await response.json())['error']).toBe('invalid_target')
+  })
+
+  // Selve publikumskontrollen: appen oppgir sin egen kanoniske adresse ved hver
+  // forespørsel, og databasen — her grenseflaten som står for den — avviser et
+  // token som ikke ble utstedt for nettopp den.
+  it('avviser et token som ikke ble utstedt for denne adressen', async () => {
+    const gateway = createFakeGateway()
+    const response = await handleMcpRequest(
+      'mcp',
+      rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+      { gateway, baseUrl: 'https://en-annen.example', logger: silentRunnerLogger },
+    )
+    expect(response.status).toBe(401)
+  })
+
+  it('sier i metadataene at den både binder ressursen og navngir utstederen', async () => {
+    const response = await send(
+      'authorization-server-metadata',
+      new Request(`${BASE}/.well-known/oauth-authorization-server`),
+      createFakeGateway(),
+    )
+    const metadata = (await response.json()) as Record<string, unknown>
+    expect(metadata['resource_indicators_supported']).toBe(true)
+    expect(metadata['authorization_response_iss_parameter_supported']).toBe(true)
   })
 })

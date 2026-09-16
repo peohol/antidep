@@ -24,6 +24,9 @@ export const FAKE_REFRESH_TOKEN = 'r'.repeat(64)
 export const FAKE_AUTHORIZATION_CODE = 'c'.repeat(64)
 export const FAKE_CLIENT_ID = '0123456789abcdef0123456789abcdef'
 export const FAKE_REDIRECT_URI = 'https://chatgpt.example/callback'
+/** Basisadressen prøvene kjører appen på, og den kanoniske ressursen under den. */
+export const FAKE_BASE_URL = 'https://antidep.example'
+export const FAKE_RESOURCE = `${FAKE_BASE_URL}/mcp`
 export const FAKE_TASK_REF = 'task_0123456789abcdef01234567'
 export const FAKE_TASK_HANDLE = '11111111-2222-4333-8444-555555555555'
 
@@ -79,8 +82,13 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
       leaseValid = false
     },
 
-    identify(accessToken) {
+    identify(accessToken, resource) {
       authenticated(accessToken)
+      // Publikum er en del av tokenet, ikke av kallet: et token utstedt for en
+      // annen MCP-server skal ikke virke her (RFC 8707).
+      if (resource !== FAKE_RESOURCE) {
+        throw new GatewayError('Tokenet er ikke utstedt for denne adressen.', '42501')
+      }
       return Promise.resolve({
         connectionKey: `agent-runner:${role.replaceAll('_', '-')}`,
         displayName: 'Prøvekjøreren',
@@ -97,6 +105,9 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
       if (input.pairingCode !== FAKE_PAIRING_CODE) {
         return Promise.reject(new GatewayError('Tilkoblingen er ikke autentisert.', '42501'))
       }
+      if (input.resource !== FAKE_RESOURCE) {
+        return Promise.reject(new GatewayError('Ukjent resource.', '22023'))
+      }
       return Promise.resolve({
         authorizationCode: FAKE_AUTHORIZATION_CODE,
         connectionKey: `agent-runner:${role.replaceAll('_', '-')}`,
@@ -109,6 +120,9 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
       if (input.code !== FAKE_AUTHORIZATION_CODE) {
         return Promise.reject(new GatewayError('Tilkoblingen er ikke autentisert.', '42501'))
       }
+      if (input.resource !== FAKE_RESOURCE) {
+        return Promise.reject(new GatewayError('Ukjent resource.', '22023'))
+      }
       return Promise.resolve({
         accessToken: FAKE_ACCESS_TOKEN,
         refreshToken: FAKE_REFRESH_TOKEN,
@@ -120,6 +134,9 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
     refresh(input) {
       if (input.refreshToken !== FAKE_REFRESH_TOKEN) {
         return Promise.reject(new GatewayError('Tilkoblingen er ikke autentisert.', '42501'))
+      }
+      if (input.resource !== FAKE_RESOURCE) {
+        return Promise.reject(new GatewayError('Ukjent resource.', '22023'))
       }
       return Promise.resolve({
         accessToken: FAKE_ACCESS_TOKEN,

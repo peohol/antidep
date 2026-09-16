@@ -237,15 +237,15 @@ select is_empty(
         -- skrivevei (workflow.record_agent_handoff_answer). Kontrolleres i
         -- 790_autonomous_agent_runner_test.sql.
         'api.register_agent_runner_client(text,text[])',
-        'api.authorize_agent_runner(text,text,text,text,text)',
-        'api.exchange_agent_runner_code(text,text,text,text)',
-        'api.refresh_agent_runner_token(text,text)',
+        'api.authorize_agent_runner(text,text,text,text,text,text)',
+        'api.exchange_agent_runner_code(text,text,text,text,text)',
+        'api.refresh_agent_runner_token(text,text,text)',
         'api.list_pending_agent_tasks(text)',
         'api.claim_agent_task(text,text,integer)',
         'api.agent_task_for_runner(text,uuid)',
         'api.submit_agent_answer(text,uuid,jsonb)',
         'api.release_agent_task(text,uuid,text)',
-        'api.agent_runner_identity(text)',
+        'api.agent_runner_identity(text,text)',
         'api.record_agent_runner_outcome(text,text,text,uuid)'
       )
   $$,
