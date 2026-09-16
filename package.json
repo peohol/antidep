@@ -21,7 +21,7 @@
     "db:status": "supabase status",
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
-    "db:test:upgrade": "bash ./scripts/db-upgrade-antidep2.sh && bash ./scripts/db-upgrade-antidep2-evolved-legacy.sh && bash ./scripts/db-upgrade-antidep2-versionless-root.sh && bash ./scripts/db-upgrade-antidep2-replacement-claim.sh && bash ./scripts/db-upgrade-antidep2-replacement-evidence.sh",
+    "db:test:upgrade": "bash ./scripts/db-upgrade-antidep2.sh && bash ./scripts/db-upgrade-antidep2-evolved-legacy.sh && bash ./scripts/db-upgrade-antidep2-versionless-root.sh && bash ./scripts/db-upgrade-antidep2-source-identity-priority.sh && bash ./scripts/db-upgrade-antidep2-replacement-claim.sh && bash ./scripts/db-upgrade-antidep2-replacement-evidence.sh",
     "db:test:lock": "./scripts/db-lock-antidep2.sh",
     "db:test:quota": "./scripts/db-diagnostics-quota.sh",
     "db:test:chain": "node scripts/agent-chain-test.ts",
