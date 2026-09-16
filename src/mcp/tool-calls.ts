@@ -19,7 +19,12 @@ import { answerBindingProblem, parseAgentAnswer } from '../agents/agent-answer.t
 import type { AgentTask } from '../agents/agent-task.ts'
 import { renderAgentTaskFile, answerTemplate } from '../agents/agent-task-file.ts'
 import { handoffResultProblem } from '../agents/handoff-result.ts'
-import { GatewayError, outcomeForError, type RunnerOutcome } from './errors.ts'
+import {
+  GatewayError,
+  isAuthenticationFailure,
+  outcomeForError,
+  type RunnerOutcome,
+} from './errors.ts'
 import {
   RUNNER_RELEASE_REASONS,
   type RunnerCredentials,
@@ -227,7 +232,11 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
     case 'get_agent_task': {
       rejectUnknown(args, ['task_handle'])
       const handle = requiredText(args, 'task_handle')
-      const task = await gateway.readTask({ credentials, taskHandle: handle })
+      const task = await gateway.readTask({
+        credentials,
+        taskHandle: handle,
+        calledBy: 'get_agent_task',
+      })
       if (!task.available) {
         return {
           result: failure(
@@ -281,7 +290,13 @@ async function runTool(input: ToolCallInput): Promise<ToolCallOutput> {
       // igjen det samme svaret og registrerer ingenting nytt, mens et virkelig
       // foreldet uttak avvises der uansett. Kontrollen her er et forklarende
       // ledd, ikke grensen (ANTIDEP_CONSTITUTION.md regel 4).
-      const claimed = await gateway.readTask({ credentials, taskHandle: handle })
+      const claimed = await gateway.readTask({
+        credentials,
+        taskHandle: handle,
+        // Sporet skal navngi kallet som faktisk ble gjort. Uten dette ville hver
+        // levering skrevet en `get_agent_task`-rad ingen klient ba om.
+        calledBy: 'submit_agent_answer',
+      })
       const deterministic = claimed.available ? deterministicProblem(claimed.task, answer) : null
       if (deterministic !== null) {
         await gateway
@@ -379,6 +394,15 @@ export async function callTool(input: ToolCallInput): Promise<ToolCallOutput> {
         result: failure(error.message),
         trace: { tool: input.name, outcome: 'rejected' },
       }
+    }
+    // Legitimasjonen holder ikke lenger. Den skal forbi verktøylaget urørt:
+    // transporten gjør den om til 401 med henvisningen klienten trenger for å
+    // fornye. Et verktøyresultat på 200 ville sagt til modellen at kallet
+    // mislyktes, og til klienten at alt var i orden — og da ville ingen fornyet
+    // noe. Sporet skrives heller ikke her: det ville krevd nettopp det tokenet
+    // som nettopp sluttet å gjelde.
+    if (isAuthenticationFailure(error)) {
+      throw error
     }
     if (error instanceof GatewayError) {
       const outcome = outcomeForError(error)

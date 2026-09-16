@@ -716,6 +716,30 @@ describe('autonom kjører', () => {
     expect(screen.queryByRole('button', { name: 'Last ned oppgaven' })).not.toBeInTheDocument()
   })
 
+  // «Ingen kjører er registrert» er et svar. En kjørerliste som ikke kunne
+  // leses, er fraværet av et svar, og de to skal ikke se like ut: ellers ville
+  // et nettverksavbrudd sagt at alt agentarbeid gjøres manuelt — mens en kjører
+  // kanskje arbeider akkurat nå.
+  it('skiller en kjørerliste som ikke kunne leses, fra en tom liste', async () => {
+    const { gateway } = runnerGateway()
+    render(
+      <AgentWorkPage
+        gateway={{
+          ...gateway,
+          listRunners: () => Promise.reject(new Error('Kjørerne kunne ikke leses: ingen tilgang')),
+        }}
+        saveFile={() => {}}
+      />,
+    )
+
+    expect(await screen.findByText(/ingen tilgang/)).toBeInTheDocument()
+    expect(
+      screen.queryByText('Ingen autonom kjører er registrert. Alt agentarbeid gjøres manuelt.'),
+    ).not.toBeInTheDocument()
+    // Og den manuelle veien består: køen står der uansett.
+    expect(screen.getByText('Syntetisk testkilde')).toBeInTheDocument()
+  })
+
   it('viser engangskoden én gang, og sier at den bare vises nå', async () => {
     const { gateway } = runnerGateway()
     render(<AgentWorkPage gateway={gateway} saveFile={() => {}} />)

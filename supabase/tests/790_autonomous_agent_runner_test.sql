@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(96);
+select plan(100);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -60,7 +60,7 @@ select is_empty(
     from (values
       ('api.list_pending_agent_tasks(text,text)'),
       ('api.claim_agent_task(text,text,text,integer)'),
-      ('api.agent_task_for_runner(text,text,uuid)'),
+      ('api.agent_task_for_runner(text,text,uuid,text)'),
       ('api.submit_agent_answer(text,text,uuid,jsonb)'),
       ('api.release_agent_task(text,text,uuid,text)'),
       ('api.agent_runner_identity(text,text)')
@@ -519,6 +519,65 @@ select ok(
        from workflow.pipeline_jobs j
        where j.id = (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'task')),
   'avtrykket er nøyaktig det den manuelle veien ville gitt, av de samme radene'
+);
+
+-- ---------------------------------------------------------------------------
+-- Lesningen føres under verktøyet som forårsaket den
+--
+-- MCP-serveren leser oppgaven én gang til inne i `submit_agent_answer`, fordi
+-- de deterministiske kontrollene trenger kildeteksten og protokollen er
+-- tilstandsløs. Uten navnet ville hver levering skrevet en `get_agent_task`-rad
+-- ingen klient ba om. Klassen er lukket, og sporingen kan ikke slås av.
+-- ---------------------------------------------------------------------------
+insert into res
+select 'events_before', jsonb_build_object(
+  'get_agent_task', (select count(*) from workflow.agent_runner_events
+                     where tool_name = 'get_agent_task'),
+  'submit_agent_answer', (select count(*) from workflow.agent_runner_events
+                          where tool_name = 'submit_agent_answer'));
+
+set role anon;
+
+select lives_ok(
+  $$
+    select api.agent_task_for_runner(
+      (select payload ->> 'access_token' from res where label = 'tokens'),
+      'https://antidep.example/mcp',
+      (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
+      'submit_agent_answer')
+  $$,
+  'leveringen kan lese oppgaven under sitt eget navn'
+);
+
+-- Parameteren velger navn fra en lukket klasse. Den slår ingenting av, og et
+-- navn som ikke er et verktøy, er ikke et navn sporet tar imot.
+select throws_ok(
+  $$
+    select api.agent_task_for_runner(
+      (select payload ->> 'access_token' from res where label = 'tokens'),
+      'https://antidep.example/mcp',
+      (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
+      'noe_annet')
+  $$,
+  '22023',
+  null,
+  'et navn utenfor den lukkede klassen avvises'
+);
+
+reset role;
+
+select is(
+  (select count(*)::int from workflow.agent_runner_events
+   where tool_name = 'submit_agent_answer'),
+  (select (payload ->> 'submit_agent_answer')::int + 1 from res where label = 'events_before'),
+  'sporet fikk én rad, og den navngir leveringen'
+);
+
+select is(
+  (select count(*)::int from workflow.agent_runner_events
+   where tool_name = 'get_agent_task'),
+  (select (payload ->> 'get_agent_task')::int from res where label = 'events_before'),
+  'og ingen get_agent_task-rad ble skrevet for et kall ingen klient gjorde'
 );
 
 -- ===========================================================================

@@ -2584,10 +2584,28 @@ comment on function api.claim_agent_task(text, text, text, integer) is
 revoke execute on function api.claim_agent_task(text, text, text, integer) from public;
 grant execute on function api.claim_agent_task(text, text, text, integer) to anon, authenticated;
 
+-- ----------------------------------------------------------------------------
+-- Hvorfor oppgaven kan leses under to navn
+--
+-- MCP-serveren leser oppgaven én gang til inne i `submit_agent_answer`: de
+-- deterministiske kontrollene trenger kildeteksten, og protokollen er
+-- tilstandsløs, så det finnes ingen lesning å huske fra forrige kall.
+--
+-- Uten dette ville den lesningen skrevet en `get_agent_task`-rad i sporet som
+-- ingen klient hadde bedt om. Sporet skal si hva som faktisk skjedde, og da er
+-- navnet på verktøyet som forårsaket lesningen, opplysningen — ikke navnet på
+-- funksjonen som utførte den.
+--
+-- Klassen er lukket og kan ikke slås av: en parameter som skrudde AV sporingen,
+-- ville vært et hull en kaller kunne lese gjennom uten å etterlate seg noe, og
+-- det er nettopp det et append-only spor ikke skal ha. Det verste en kaller kan
+-- gjøre her, er å skrive sin egen lesning under det andre av to sanne navn.
+-- ----------------------------------------------------------------------------
 create function api.agent_task_for_runner(
   p_access_token text,
   p_resource text,
-  p_task_handle uuid
+  p_task_handle uuid,
+  p_tool_name text default 'get_agent_task'
 )
   returns jsonb
   language plpgsql
@@ -2598,6 +2616,13 @@ declare
   v_connection workflow.agent_runner_connections;
   v_job workflow.pipeline_jobs;
 begin
+  if p_tool_name is null or p_tool_name not in ('get_agent_task', 'submit_agent_answer') then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('%L er ikke et verktøy som leser en oppgave.', coalesce(p_tool_name, '')),
+      hint = 'Gyldige verdier er get_agent_task og submit_agent_answer. Sporet tar ikke imot et navn som ikke er et verktøy.';
+  end if;
+
   v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
 
   select j.* into v_job
@@ -2609,7 +2634,7 @@ begin
 
   if not found then
     perform workflow.record_agent_runner_event(
-      v_connection.id, 'get_agent_task', 'stale_task'::workflow.agent_runner_outcome,
+      v_connection.id, p_tool_name, 'stale_task'::workflow.agent_runner_outcome,
       v_connection.agent_role, null,
       'Håndtaket gjaldt ingen oppgave denne kjøreren holder nå.');
     return jsonb_build_object(
@@ -2620,7 +2645,7 @@ begin
   end if;
 
   perform workflow.record_agent_runner_event(
-    v_connection.id, 'get_agent_task', 'ok'::workflow.agent_runner_outcome,
+    v_connection.id, p_tool_name, 'ok'::workflow.agent_runner_outcome,
     v_connection.agent_role, v_job.id);
 
   return jsonb_build_object(
@@ -2634,11 +2659,11 @@ begin
 end;
 $$;
 
-comment on function api.agent_task_for_runner(text, text, uuid) is
-  'Hele agentoppgaven for det uttaket håndtaket navngir — nøyaktig den oppgaven api.agent_task_payload(uuid) bygger, av de samme radene og med det samme avtrykket (ANTIDEP_CONSTITUTION.md regel 2). Leveres bare til den kjøreren som faktisk holder den løpende leien, og bare i tilkoblingens eget agentledd: et håndtak fra en utløpt eller overtatt leie svarer stale_task framfor å gi fra seg en forskningsartikkel. Svarer med en tilstand framfor å kaste, fordi et foreldet håndtak er en normal ting som skjer for en planlagt kjøring og ikke en teknisk feil.';
+comment on function api.agent_task_for_runner(text, text, uuid, text) is
+  'Hele agentoppgaven for det uttaket håndtaket navngir — nøyaktig den oppgaven api.agent_task_payload(uuid) bygger, av de samme radene og med det samme avtrykket (ANTIDEP_CONSTITUTION.md regel 2). Leveres bare til den kjøreren som faktisk holder den løpende leien, og bare i tilkoblingens eget agentledd: et håndtak fra en utløpt eller overtatt leie svarer stale_task framfor å gi fra seg en forskningsartikkel. Svarer med en tilstand framfor å kaste, fordi et foreldet håndtak er en normal ting som skjer for en planlagt kjøring og ikke en teknisk feil. p_tool_name sier hvilket verktøy som forårsaket lesningen, av en lukket klasse på to: MCP-serveren leser oppgaven én gang til inne i submit_agent_answer for de deterministiske kontrollene, og sporet skal navngi det kallet som faktisk ble gjort framfor et get_agent_task ingen klient ba om. Sporingen kan ikke slås av.';
 
-revoke execute on function api.agent_task_for_runner(text, text, uuid) from public;
-grant execute on function api.agent_task_for_runner(text, text, uuid) to anon, authenticated;
+revoke execute on function api.agent_task_for_runner(text, text, uuid, text) from public;
+grant execute on function api.agent_task_for_runner(text, text, uuid, text) to anon, authenticated;
 
 create function api.submit_agent_answer(
   p_access_token text,

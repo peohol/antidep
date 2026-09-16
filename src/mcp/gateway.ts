@@ -74,6 +74,7 @@ export type RunnerDatabase = {
         p_access_token: string
         p_resource: string
         p_task_handle: string
+        p_tool_name: TaskReadCaller
       }>
       submit_agent_answer: RunnerRpc<{
         p_access_token: string
@@ -180,6 +181,18 @@ export const RUNNER_RELEASE_REASONS = [
 export type RunnerReleaseReason = (typeof RUNNER_RELEASE_REASONS)[number]
 
 /**
+ * Verktøyene som leser en oppgave, som en lukket klasse.
+ *
+ * De samme to `api.agent_task_for_runner` godtar. Klassen finnes fordi sporet
+ * skal si hva som faktisk skjedde: `submit_agent_answer` leser oppgaven på nytt
+ * for de deterministiske kontrollene, og den lesningen hører til kallet som ba
+ * om den — ikke til et `get_agent_task` ingen klient gjorde.
+ */
+export const TASK_READ_CALLERS = ['get_agent_task', 'submit_agent_answer'] as const
+
+export type TaskReadCaller = (typeof TASK_READ_CALLERS)[number]
+
+/**
  * Tokenet og den adressen det gjelder for, som én verdi.
  *
  * De to hører sammen og reiser sammen. Et token uten publikum kunne ellers ha
@@ -252,6 +265,15 @@ export interface RunnerGateway {
   readTask(input: {
     readonly credentials: RunnerCredentials
     readonly taskHandle: string
+    /**
+     * Verktøyet som forårsaket lesningen.
+     *
+     * `submit_agent_answer` leser oppgaven én gang til for de deterministiske
+     * kontrollene, fordi protokollen er tilstandsløs og det ikke finnes en
+     * lesning å huske. Sporet skal navngi det kallet som faktisk ble gjort, og
+     * ikke et `get_agent_task` ingen klient ba om.
+     */
+    readonly calledBy: TaskReadCaller
   }): Promise<TaskResult>
 
   submitAnswer(input: {
@@ -504,6 +526,7 @@ export function createSupabaseRunnerGateway(config: RunnerGatewayConfig): Runner
           p_access_token: input.credentials.accessToken,
           p_resource: input.credentials.resource,
           p_task_handle: input.taskHandle,
+          p_tool_name: input.calledBy,
         }),
         where,
       )

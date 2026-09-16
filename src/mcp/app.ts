@@ -25,7 +25,13 @@
 // databasen, og dette laget videresender dem (ANTIDEP_CONSTITUTION.md regel 7).
 // ============================================================================
 
-import { GatewayError, McpHttpError, UnauthorizedError, type RunnerOutcome } from './errors.ts'
+import {
+  GatewayError,
+  isAuthenticationFailure,
+  McpHttpError,
+  UnauthorizedError,
+  type RunnerOutcome,
+} from './errors.ts'
 import type { RunnerGateway } from './gateway.ts'
 import { renderConnectPage, type ConnectPageFields } from './html.ts'
 import {
@@ -785,12 +791,12 @@ async function mcpEndpoint(
     }
     return dispatched.trace === null ? result : { ...result, tool: dispatched.trace.tool }
   } catch (error) {
-    if (error instanceof UnauthorizedError) {
-      return { response: unauthorized(baseUrl, error.message), outcome: 'auth_failed' }
-    }
-    if (error instanceof GatewayError && error.code === '42501') {
-      // Databasen avviste tokenet. Det er en autorisasjonsfeil og ikke en
-      // verktøyfeil, og klienten skal få vite at den må koble til på nytt.
+    if (isAuthenticationFailure(error)) {
+      // Tokenet holdt ikke — enten da det ble lest, eller da databasen
+      // kontrollerte det på nytt inne i verktøykallet. Begge er
+      // autorisasjonsfeil og ikke verktøyfeil, og klienten skal få vite at den
+      // må fornye framfor å få et verktøyresultat som ser ut som en vanlig
+      // avvisning.
       return { response: unauthorized(baseUrl, error.message), outcome: 'auth_failed' }
     }
     throw error

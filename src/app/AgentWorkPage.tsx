@@ -141,20 +141,31 @@ export function AgentWorkPage({ gateway, saveFile }: AgentWorkPageProps): React.
   const [error, setError] = useState<string | null>(null)
   const [statuses, setStatuses] = useState<Readonly<Record<string, ItemStatus>>>({})
   const [busy, setBusy] = useState<string | null>(null)
-  const [runners, setRunners] = useState<readonly AgentRunnerConnection[] | null>(null)
+  const [runners, setRunners] = useState<RunnerListing>({ state: 'loading' })
   // Oppgaven som ble lastet ned sist for hver rad. Svaret kontrolleres mot den
   // før det sendes, slik at et menneske får en setning på norsk framfor en
   // SQLSTATE. Er den ikke der, hentes den på nytt ved opplasting.
   const tasks = useRef(new Map<string, AgentTask>())
 
   const loadRunners = useCallback(() => {
+    // Ingen tilbakestilling til «henter» her: en oppfriskning etter en
+    // registrering skal ikke blinke bort listen som allerede står der.
     gateway
       .listRunners()
-      .then(setRunners)
+      .then((connections) => {
+        setRunners({ state: 'loaded', connections })
+      })
       // En kjørerliste som ikke kan leses, skal ikke ta ned agentkøen: den
-      // manuelle veien virker uten den, og det er hele poenget med at den består.
-      .catch(() => {
-        setRunners([])
+      // manuelle veien virker uten den, og det er hele poenget med at den
+      // består. Men den skal heller ikke bli til en tom liste: «ingen kjører er
+      // registrert» er et svar, og et svar er nettopp det vi ikke har. Da ville
+      // et nettverksavbrudd sett ut som at alt agentarbeid gjøres manuelt —
+      // mens en kjører kanskje arbeider akkurat nå.
+      .catch((cause: unknown) => {
+        setRunners({
+          state: 'failed',
+          reason: cause instanceof Error ? cause.message : String(cause),
+        })
       })
   }, [gateway])
 
@@ -592,9 +603,20 @@ function describeReleased(count: number): string {
   return count === 1 ? 'Én oppgave den holdt,' : `${String(count)} oppgaver den holdt,`
 }
 
+/**
+ * Tre tilstander, fordi de betyr tre forskjellige ting for den som leser siden.
+ *
+ * «Henter» er ikke et svar, «ingen kjørere» er et svar, og «kunne ikke leses»
+ * er fraværet av et svar. Slås de to siste sammen, sier siden noe den ikke vet.
+ */
+type RunnerListing =
+  | { readonly state: 'loading' }
+  | { readonly state: 'loaded'; readonly connections: readonly AgentRunnerConnection[] }
+  | { readonly state: 'failed'; readonly reason: string }
+
 interface AutonomousRunnersProps {
   readonly gateway: AgentWorkGateway
-  readonly runners: readonly AgentRunnerConnection[] | null
+  readonly runners: RunnerListing
   readonly onChanged: () => void
 }
 
@@ -666,13 +688,18 @@ function AutonomousRunners({
         det. Nedlastingen og opplastingen over virker uansett.
       </p>
 
-      {runners === null ? (
+      {runners.state === 'loading' ? (
         <p>Henter kjørerne …</p>
-      ) : runners.length === 0 ? (
+      ) : runners.state === 'failed' ? (
+        <p className="notice" role="status">
+          Kjørerlisten kunne ikke leses, så siden vet ikke om noen autonom kjører finnes:{' '}
+          {runners.reason} Nedlastingen og opplastingen over virker uansett.
+        </p>
+      ) : runners.connections.length === 0 ? (
         <p>Ingen autonom kjører er registrert. Alt agentarbeid gjøres manuelt.</p>
       ) : (
         <ul>
-          {runners.map((runner) => (
+          {runners.connections.map((runner) => (
             <li key={runner.connectionKey}>
               <h3>{runner.displayName}</h3>
               <p>

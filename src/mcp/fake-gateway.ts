@@ -21,6 +21,7 @@ import type {
   RunnerCredentials,
   RunnerGateway,
   SubmitResult,
+  TaskReadCaller,
   TaskResult,
 } from './gateway.ts'
 
@@ -53,6 +54,8 @@ export interface FakeGateway extends RunnerGateway {
   readonly released: (string | null)[]
   /** Hvor mange ganger en oppgave er tatt ut. */
   claims: number
+  /** Verktøyet hver lesning av oppgaven ble ført under. */
+  readonly taskReads: TaskReadCaller[]
   expireLease(): void
 }
 
@@ -63,6 +66,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
   const submitted: Record<string, unknown>[] = []
   const recorded: string[] = []
   const released: (string | null)[] = []
+  const taskReads: TaskReadCaller[] = []
   let leaseValid = false
   let answered: string | null = null
   let claims = 0
@@ -88,6 +92,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
     submitted,
     recorded,
     released,
+    taskReads,
     get claims() {
       return claims
     },
@@ -203,6 +208,8 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
 
     readTask(input) {
       authenticated(input.credentials)
+      // Databasen fører lesningen i sporet under nettopp dette navnet.
+      taskReads.push(input.calledBy)
       if (!leaseValid || input.taskHandle !== FAKE_TASK_HANDLE) {
         return Promise.resolve({ available: false, reason: 'stale_task' } satisfies TaskResult)
       }

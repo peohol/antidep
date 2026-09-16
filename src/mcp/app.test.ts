@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { answerFor, TEST_OTHER_DRUG_ID } from '../agents/handoff-test-support.ts'
 import { handleMcpRequest, type McpAppDependencies, type McpRoute } from './app.ts'
+import { GatewayError } from './errors.ts'
 import {
   createFakeGateway,
   FAKE_ACCESS_TOKEN,
@@ -106,6 +107,30 @@ describe('autorisasjonen', () => {
       gateway,
     )
     expect(response.status).toBe(401)
+  })
+
+  // Tokenet kan slutte å gjelde ETTER at det ble lest, og før verktøykallet er
+  // ferdig: databasen kontrollerer det på nytt i hvert kall. Da må svaret bli
+  // 401 og ikke et verktøyresultat på 200 — en klient som ikke får 401, vet
+  // ikke at den skal fornye, og den planlagte kjøringen ville stoppet stille.
+  it('gjør en legitimasjonsfeil underveis i kallet om til 401, ikke til et verktøysvar', async () => {
+    const gateway = createFakeGateway()
+    const response = await send(
+      'mcp',
+      rpc({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'claim_agent_task', arguments: {} },
+      }),
+      {
+        ...gateway,
+        claimTask: () =>
+          Promise.reject(new GatewayError('Tilkoblingen ble trukket tilbake.', '42501')),
+      } as FakeGateway,
+    )
+    expect(response.status).toBe(401)
+    expect(response.headers.get('www-authenticate')).toContain('invalid_token')
   })
 
   it('peker metadatadokumentet på ressursen og på autorisasjonsserveren', async () => {
@@ -407,6 +432,27 @@ describe('arbeidsgangen', () => {
     // Svaret nådde registreringen ordrett: verken flaten eller protokollaget
     // bytter ut en verdi underveis.
     expect(gateway.submitted).toEqual([answer])
+  })
+
+  // Leveringen leser oppgaven én gang til for de deterministiske kontrollene,
+  // fordi protokollen er tilstandsløs. Den lesningen hører til kallet som ba om
+  // den: et spor som sa `get_agent_task`, ville navngitt et verktøykall klienten
+  // aldri gjorde.
+  it('fører lesningen i leveringen under leveringen, ikke som et get_agent_task', async () => {
+    const gateway = createFakeGateway()
+    await call(gateway, 'claim_agent_task')
+    await call(gateway, 'submit_agent_answer', {
+      task_handle: FAKE_TASK_HANDLE,
+      answer: answerFor('evidence_extraction', { provider: 'antidep-test', model: 'prøvemodell' }),
+    })
+    expect(gateway.taskReads).toEqual(['submit_agent_answer'])
+  })
+
+  it('fører et ekte get_agent_task under sitt eget navn', async () => {
+    const gateway = createFakeGateway()
+    await call(gateway, 'claim_agent_task')
+    await call(gateway, 'get_agent_task', { task_handle: FAKE_TASK_HANDLE })
+    expect(gateway.taskReads).toEqual(['get_agent_task'])
   })
 
   it('avslutter stille når køen er tom', async () => {
