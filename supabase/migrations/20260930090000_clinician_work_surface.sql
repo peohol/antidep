@@ -409,26 +409,25 @@ create function workflow.record_technical_incident(
   set search_path = ''
 as $$
 declare
-  v_id uuid;
-  v_resolved_at timestamptz;
+  v_row workflow.technical_incidents;
   v_transition workflow.technical_incident_transition;
 begin
-  select ti.id, ti.resolved_at into v_id, v_resolved_at
+  select ti.* into v_row
   from workflow.technical_incidents ti
   where ti.area = p_area and ti.signature = p_signature
   for update;
 
-  if v_id is null then
+  if v_row.id is null then
     begin
       insert into workflow.technical_incidents (area, signature, diagnosis, self_reported)
       values (p_area, p_signature, p_diagnosis, p_self_reported)
-      returning id into v_id;
+      returning * into v_row;
       v_transition := 'opened';
     exception
       -- To samtidige observasjoner av det samme problemet er fortsatt ett
       -- problem. Den som taper kappløpet, teller opp raden som vant.
       when unique_violation then
-        select ti.id, ti.resolved_at into v_id, v_resolved_at
+        select ti.* into v_row
         from workflow.technical_incidents ti
         where ti.area = p_area and ti.signature = p_signature
         for update;
@@ -437,28 +436,54 @@ begin
   end if;
 
   if v_transition is null then
+    -- En episode hjerteslaget allerede har erklært over, avsluttes her — før
+    -- den nye observasjonen gjenbruker raden.
+    --
+    -- Uten dette ville lukkingen hengt på at en admin tilfeldigvis åpnet
+    -- oversikten: kom den samme svikten tilbake etter en stille periode, ville
+    -- raden fortsatt hatt resolved_at null, og sporet ville fått en `seen`
+    -- framfor en `resolved` og en ny `opened`. Historikken ville da vist én
+    -- sammenhengende episode over et tidsrom der problemet ikke pågikk.
+    if v_row.resolved_at is null and not workflow.technical_incident_ongoing(v_row) then
+      update workflow.technical_incidents ti
+      set resolved_at = v_row.last_seen_at
+      where ti.id = v_row.id;
+
+      insert into workflow.technical_incident_events (technical_incident_id, transition)
+      values (v_row.id, 'resolved');
+
+      v_row.resolved_at := v_row.last_seen_at;
+    end if;
+
+    v_transition := case when v_row.resolved_at is null then 'seen' else 'opened' end;
+
     update workflow.technical_incidents ti
     set last_seen_at = now(),
-        occurrence_count = ti.occurrence_count + 1,
+        -- En ny episode teller fra sin egen begynnelse. «Oppsto» og «sist sett»
+        -- skal beskrive det som pågår nå: en rad som spente over en stille
+        -- periode, ville sagt at problemet hadde vart hele tiden. Hele
+        -- forløpet, alle episodene, står i det append-only sporet.
+        first_seen_at = case when v_transition = 'opened' then now() else ti.first_seen_at end,
+        occurrence_count = case when v_transition = 'opened' then 1
+                                else ti.occurrence_count + 1 end,
         resolved_at = null,
         diagnosis = p_diagnosis,
         -- En autoritativ observasjon av det samme problemet gjør raden
         -- autoritativ. Den motsatte veien finnes ikke: en selvmelding kan ikke
         -- gjøre en rad databasen selv skrev, til noe noen bare har påstått.
         self_reported = ti.self_reported and p_self_reported
-    where ti.id = v_id;
-    v_transition := case when v_resolved_at is null then 'seen' else 'opened' end;
+    where ti.id = v_row.id;
   end if;
 
   insert into workflow.technical_incident_events (technical_incident_id, transition, diagnosis)
-  values (v_id, v_transition, p_diagnosis);
+  values (v_row.id, v_transition, p_diagnosis);
 
-  return v_id;
+  return v_row.id;
 end;
 $$;
 
 comment on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean) is
-  'Registrerer at noe teknisk er galt, eller at det samme problemet er observert igjen. Idempotent på (område, signatur): det samme problemet blir én rad med en teller, og et problem som var løst, åpnes på nytt med sporet opened framfor seen. Diagnosen er Antideps egen setning og lagres privat — på tilstandsraden som den siste, og på sporet som denne ene observasjonen, slik at rekken av dem er lesbar senere. Kalles fra innsiden av en funksjon som allerede har kontrollert kalleren, og er derfor ikke SECURITY DEFINER.';
+  'Registrerer at noe teknisk er galt, eller at det samme problemet er observert igjen. Idempotent på (område, signatur): det samme problemet blir én rad med en teller, og et problem som var løst, åpnes på nytt med sporet opened framfor seen. En selvmeldt episode hjerteslaget allerede har erklært over, avsluttes her — før den nye observasjonen gjenbruker raden — slik at lukkingen ikke henger på at en admin tilfeldigvis åpner oversikten, og slik at sporet får både resolved og en ny opened. En ny episode teller fra sin egen begynnelse: «oppsto» og antallet beskriver det som pågår nå, mens hele forløpet står i workflow.technical_incident_events. Diagnosen er Antideps egen setning og lagres privat — på tilstandsraden som den siste, og på sporet som denne ene observasjonen, slik at rekken av dem er lesbar senere. Kalles fra innsiden av en funksjon som allerede har kontrollert kalleren, og er derfor ikke SECURITY DEFINER.';
 
 revoke execute on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean) from public;
 
@@ -2280,7 +2305,8 @@ create trigger agent_runner_events_track_technical_incident
 --
 -- Bare `authenticated`. En uinnlogget besøkende kan ikke tilskrives noe, og en
 -- åpen skrivevei til problemoversikten ville vært en vei til å få lampen til å
--- lyse. Den rå årsaken finnes i klientens egen observability uansett.
+-- lyse. Den rå årsaken går sin egen vei, til den private diagnostikk-kanalen
+-- flaten er konfigurert med (`src/app/diagnostics-sink.ts`), og aldri hit.
 -- ----------------------------------------------------------------------------
 create function api.report_technical_problem(
   p_area text,

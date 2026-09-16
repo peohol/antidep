@@ -37,6 +37,13 @@
 // selv vet (funksjonen må finnes; koden må være en SQLSTATE eller en
 // PostgREST-kode) og skriver setningen selv.
 //
+// Klassifiseringen er likevel ikke diagnosen. Den rå årsaken — stacken, den
+// faktiske meldingen — går sin egen vei, til den private kanalen deployen har
+// valgt (`diagnostics-sink.ts`). Den veien er med vilje ikke den samme RPC-en
+// som nettopp kan være nede, og den er ikke Antideps egen database: et
+// fritekstfelt en nettleser kan skrive til, ville vært nettopp den
+// samlingsplassen regelen over finnes for å unngå.
+//
 // En kode alene er ikke nok, for koden mangler nettopp når svaret aldri kom.
 // Meldingen bærer derfor også HTTP-statusen og en *transportform* fra et lukket
 // vokabular — uten nett, nådde ikke fram, avbrutt, tidsavbrudd, feilkode fra
@@ -56,6 +63,7 @@
 // ============================================================================
 
 import { getAntidepClient, type AntidepClient } from '../lib/supabase'
+import { createDiagnosticsSink, readDiagnosticsEndpoint } from './diagnostics-sink'
 
 /** Områdene Antidep melder tekniske problemer under. Lukket, som i databasen. */
 export type TechnicalArea =
@@ -184,15 +192,20 @@ export interface TechnicalDetail {
   readonly detail: string
 }
 
-type TechnicalSink = (entry: TechnicalDetail) => void
+export type TechnicalSink = (entry: TechnicalDetail) => void
 
-const consoleSink: TechnicalSink = (entry) => {
-  // Én linje, strukturert, med et prefiks som kan søkes etter. Dette er
-  // diagnostikk for Claude Code og ChatGPT, ikke noe et menneske leser i UI.
-  console.error('[antidep:teknisk]', entry)
+let sink: TechnicalSink | undefined
+
+/**
+ * Sluket, opprettet ved første bruk.
+ *
+ * Lest her og ikke ved modulimport, slik at en prøve eller et verktøy uten
+ * miljøvariabler kan importere modulen uten at noe kastes.
+ */
+function technicalSink(): TechnicalSink {
+  sink ??= createDiagnosticsSink(readDiagnosticsEndpoint(import.meta.env))
+  return sink
 }
-
-let sink: TechnicalSink = consoleSink
 
 /**
  * Formen databasen godtar en kode i: en SQLSTATE på fem tegn, eller en
@@ -245,7 +258,7 @@ function httpStatusOf(cause: unknown): number | null {
 
 /** Bare for prøver: bytt ut observability-sluket og få det tilbake etterpå. */
 export function setTechnicalSink(next: TechnicalSink | null): void {
-  sink = next ?? consoleSink
+  sink = next ?? undefined
 }
 
 function rawDetail(cause: unknown): string {
@@ -276,7 +289,7 @@ export function recordTechnicalDetail(
   cause: unknown,
   httpStatus: number | null = null,
 ): boolean {
-  sink({
+  technicalSink()({
     area,
     operation,
     kind,

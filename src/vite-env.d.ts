@@ -12,6 +12,15 @@ interface ImportMetaEnv {
    * regelen, ikke en erstatning for den.
    */
   readonly VITE_SUPABASE_PUBLISHABLE_KEY?: string
+  /**
+   * Endepunktet den rå tekniske årsaken sendes til, når et er valgt.
+   * Leses av `src/app/diagnostics-sink.ts`. Uten den går ingenting ut av
+   * nettleseren, og oppførselen er som før: én linje i konsollen.
+   *
+   * Dette er en driftsbeslutning og ingen produktflate — hvilken
+   * observability-tjeneste Antidep bruker, hører til deployen (issue #99).
+   */
+  readonly VITE_ANTIDEP_DIAGNOSTICS_URL?: string
 }
 
 interface ImportMeta {

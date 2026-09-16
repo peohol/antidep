@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(112);
+select plan(116);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1005,6 +1005,70 @@ select is(
 );
 
 -- ===========================================================================
+-- Del 9b — En episode som er over, blir lukket selv om ingen ser etter
+--
+-- Hjerteslaget regner ut at en stille rad er over, men regnestykket alene
+-- etterlater et hull i historikken: kommer den samme svikten tilbake uten at
+-- noen har åpnet oversikten i mellomtiden, ville raden fortsatt hatt
+-- resolved_at null, og sporet ville fått en `seen` framfor en `resolved` og en
+-- ny `opened`. Da ville historikken vist én sammenhengende episode over et
+-- tidsrom der problemet ikke pågikk.
+--
+-- Lukkingen skjer derfor i skriveveien selv, før den nye observasjonen
+-- gjenbruker raden — og ingen admin er involvert her.
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
+set local role authenticated;
+do $$ begin
+  perform api.report_technical_problem('clinical_content', 'unavailable', 'candidate_control_queue',
+                                       null, null, 'network');
+end $$;
+reset role;
+
+-- Den blir stille. Ingen leser oversikten.
+update workflow.technical_incidents ti
+set first_seen_at = statement_timestamp() - workflow.self_report_heartbeat() - interval '2 hours',
+    last_seen_at = statement_timestamp() - workflow.self_report_heartbeat() - interval '1 hour'
+where ti.area = 'clinical_content';
+
+-- Og så kommer den samme svikten tilbake.
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
+set local role authenticated;
+do $$ begin
+  perform api.report_technical_problem('clinical_content', 'unavailable', 'candidate_control_queue',
+                                       null, null, 'network');
+end $$;
+reset role;
+
+select is(
+  (select array_agg(e.transition::text order by e.occurred_at, e.created_at)
+   from workflow.technical_incident_events e
+   join workflow.technical_incidents ti on ti.id = e.technical_incident_id
+   where ti.area = 'clinical_content'),
+  array['opened', 'resolved', 'opened'],
+  'den stille episoden lukkes i skriveveien, og den nye åpnes — uten at noen så etter'
+);
+select ok(
+  (select ti.first_seen_at from workflow.technical_incidents ti
+   where ti.area = 'clinical_content')
+    > statement_timestamp() - workflow.self_report_heartbeat(),
+  'og «oppsto» beskriver episoden som pågår nå, ikke en som var over'
+);
+select is(
+  (select ti.occurrence_count from workflow.technical_incidents ti
+   where ti.area = 'clinical_content'),
+  1,
+  'antallet teller den nye episoden, mens hele forløpet står i sporet'
+);
+select ok(
+  (select ti.resolved_at is null from workflow.technical_incidents ti
+   where ti.area = 'clinical_content'),
+  'og raden er åpen igjen, som den skal være'
+);
+
+-- ===========================================================================
 -- Del 10 — Historikken er databasens, ikke flatens
 -- ===========================================================================
 create temporary table cred (label text primary key, secret text) on commit drop;
@@ -1197,15 +1261,12 @@ set first_seen_at = statement_timestamp() - workflow.self_report_heartbeat() - i
     last_seen_at = statement_timestamp() - workflow.self_report_heartbeat() - interval '1 day'
 where ti.area = 'automatic_task';
 
-select set_config('request.jwt.claims',
-                  '{"sub":"80000000-0000-4000-8000-00000000000c"}', true);
-set local role authenticated;
 select is(
-  (api.technical_problem_summary() ->> 'unresolved')::int,
+  (select count(*)::int from workflow.technical_incidents ti
+   where ti.area = 'automatic_task' and workflow.technical_incident_ongoing(ti)),
   1,
   'en observasjon databasen selv gjorde, blir ikke borte av at tiden går'
 );
-reset role;
 
 -- ===========================================================================
 -- Del 12 — Et teknisk kjørerkall, og det som lukker det
