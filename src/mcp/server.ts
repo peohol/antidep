@@ -133,6 +133,18 @@ export interface McpDispatchResult {
   /** `null` for en notifikasjon: den skal ikke besvares. */
   readonly response: JsonRpcResponse | null
   readonly trace: ToolCallTrace | null
+  /**
+   * HTTP-statusen svaret hører til, når protokollen krever en bestemt.
+   *
+   * Oppgis av den som vet hvorfor svaret ble som det ble, framfor å utledes av
+   * feilkoden i transportlaget: en ukjent METODE er 404, mens et ukjent
+   * VERKTØYNAVN bærer den samme koden og er ikke det — metoden fantes.
+   */
+  readonly status?: number
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 const SERVER_INFO = { name: SERVER_NAME, title: 'Antidep agentarbeid', version: SERVER_VERSION }
@@ -238,6 +250,9 @@ function methodNotFound(message: JsonRpcRequest, note: string): McpDispatchResul
       ? null
       : jsonRpcFailure(message.id, JSON_RPC_METHOD_NOT_FOUND, note),
     trace: null,
+    // 404 er transportens eget krav for en metode serveren ikke har: statusen
+    // skiller den fra en 404 fra noe som ikke er en MCP-server i det hele tatt.
+    status: 404,
   }
 }
 
@@ -325,11 +340,27 @@ export async function dispatchMcpMessage(
           trace: null,
         }
       }
+      // `arguments` kan utelates, men finnes det, MÅ det være et objekt.
+      //
+      // Å lese en ugyldig verdi som «ingen argumenter» ville gitt den en annen
+      // betydning enn den har — og her er det ikke kosmetikk: `claim_agent_task`
+      // har ingen påkrevde argumenter, så et malformet kall ville tatt den
+      // eldste oppgaven med standard leietid og brukt opp et forsøk. En ugyldig
+      // protokollmelding skal ikke kunne ha en virkning i det hele tatt.
       const rawArgs = message.params['arguments']
-      const args =
-        typeof rawArgs === 'object' && rawArgs !== null && !Array.isArray(rawArgs)
-          ? (rawArgs as Record<string, unknown>)
-          : {}
+      if (rawArgs !== undefined && !isObject(rawArgs)) {
+        return {
+          response: jsonRpcFailure(
+            message.id,
+            JSON_RPC_INVALID_PARAMS,
+            'Feltet «arguments» er til stede, men er ikke et JSON-objekt.',
+          ),
+          trace: null,
+          // En malformet forespørsel er 400, som resten av dem.
+          status: 400,
+        }
+      }
+      const args = rawArgs ?? {}
 
       const outcome = await callTool({ gateway: deps.gateway, credentials, name, args })
       return {

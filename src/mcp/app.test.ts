@@ -815,6 +815,47 @@ describe('den moderne konvolutten', () => {
         },
       },
     },
+    // `Implementation` krever både name og version. Feltet er bare til visning,
+    // men en verdi som er der og er feil, er fortsatt feil.
+    {
+      name: 'clientInfo er et tomt objekt',
+      code: -32602,
+      method: 'tools/list',
+      params: {},
+      overrides: {
+        meta: {
+          'io.modelcontextprotocol/protocolVersion': MODERN,
+          'io.modelcontextprotocol/clientCapabilities': {},
+          'io.modelcontextprotocol/clientInfo': {},
+        },
+      },
+    },
+    {
+      name: 'clientInfo mangler version',
+      code: -32602,
+      method: 'tools/list',
+      params: {},
+      overrides: {
+        meta: {
+          'io.modelcontextprotocol/protocolVersion': MODERN,
+          'io.modelcontextprotocol/clientCapabilities': {},
+          'io.modelcontextprotocol/clientInfo': { name: 'prøve' },
+        },
+      },
+    },
+    {
+      name: 'clientInfo har feil type på name',
+      code: -32602,
+      method: 'tools/list',
+      params: {},
+      overrides: {
+        meta: {
+          'io.modelcontextprotocol/protocolVersion': MODERN,
+          'io.modelcontextprotocol/clientCapabilities': {},
+          'io.modelcontextprotocol/clientInfo': { name: 7, version: '1' },
+        },
+      },
+    },
   ]
 
   for (const { name, code, method, params, overrides } of rejections) {
@@ -920,6 +961,73 @@ describe('epokevalget', () => {
     // klient fra før headeren fantes, og den skal ikke avvises.
     const body = await callRpc(gateway, { jsonrpc: '2.0', id: 1, method: 'ping', params: {} })
     expect(resultOf(body)).toEqual({})
+  })
+})
+
+// ---------------------------------------------------------------------------
+// «arguments» leses som det er, ikke som det kunne vært
+//
+// Feltet kan utelates, men finnes det, må det være et objekt. Å lese en ugyldig
+// verdi som «ingen argumenter» ville gitt den en annen betydning enn den har —
+// og `claim_agent_task` har ingen påkrevde argumenter, så et malformet kall
+// ville tatt den eldste oppgaven og brukt opp et forsøk.
+// ---------------------------------------------------------------------------
+describe('argumentene til et verktøykall', () => {
+  it('avviser et malformet arguments i den moderne epoken', async () => {
+    const { status, body } = await modernSend('tools/call', {
+      name: 'claim_agent_task',
+      arguments: 'feil',
+    })
+    expect(status).toBe(400)
+    expect(errorOf(body)['code']).toBe(-32602)
+  })
+
+  it('avviser det også i den eldre epoken', async () => {
+    const gateway = createFakeGateway()
+    const body = await callRpc(gateway, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'claim_agent_task', arguments: 'feil' },
+    })
+    expect(errorOf(body)['code']).toBe(-32602)
+  })
+
+  // Selve poenget: en ugyldig protokollmelding skal ikke ha en virkning.
+  it('tar ingen oppgave ut på et malformet kall', async () => {
+    const gateway = createFakeGateway()
+    await callRpc(gateway, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'claim_agent_task', arguments: 'feil' },
+    })
+    expect(gateway.claims).toBe(0)
+  })
+
+  it('avviser en liste like godt som en streng', async () => {
+    const gateway = createFakeGateway()
+    const body = await callRpc(gateway, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'claim_agent_task', arguments: [] },
+    })
+    expect(errorOf(body)['code']).toBe(-32602)
+    expect(gateway.claims).toBe(0)
+  })
+
+  // Men et utelatt felt er lovlig, og skal fortsatt virke.
+  it('godtar et kall uten arguments', async () => {
+    const gateway = createFakeGateway()
+    const body = await callRpc(gateway, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'claim_agent_task' },
+    })
+    expect(resultOf(body)['isError']).toBeUndefined()
+    expect(gateway.claims).toBe(1)
   })
 })
 

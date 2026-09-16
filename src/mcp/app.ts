@@ -30,7 +30,6 @@ import type { RunnerGateway } from './gateway.ts'
 import { renderConnectPage, type ConnectPageFields } from './html.ts'
 import {
   JSON_RPC_INVALID_PARAMS,
-  JSON_RPC_METHOD_NOT_FOUND,
   JSON_RPC_PARSE_ERROR,
   JsonRpcMessageError,
   MCP_HEADER_MISMATCH,
@@ -307,10 +306,23 @@ function modernEnvelopeProblem(request: Request, message: JsonRpcRequest): Moder
       `Forespørselen mangler ${META_CLIENT_CAPABILITIES} i params._meta. Et tomt objekt er nok når klienten ikke trenger noen evne.`,
     )
   }
-  // Valgfri, men ikke fri: er den der, skal den ha formen den er beskrevet med.
+  // Valgfri, men ikke fri: er den der, skal den ha formen `Implementation`, som
+  // krever `name` og `version`. Feltet er bare til visning og logging — det skal
+  // aldri styre oppførsel eller en sikkerhetsavgjørelse — men en verdi som er
+  // der og er feil, er fortsatt en melding som ikke er den protokollen beskriver.
   const clientInfo = meta[META_CLIENT_INFO]
-  if (clientInfo !== undefined && !isObject(clientInfo)) {
-    return malformed(`${META_CLIENT_INFO} er til stede, men er ikke et JSON-objekt.`)
+  if (clientInfo !== undefined) {
+    if (!isObject(clientInfo)) {
+      return malformed(`${META_CLIENT_INFO} er til stede, men er ikke et JSON-objekt.`)
+    }
+    for (const field of ['name', 'version']) {
+      const value = clientInfo[field]
+      if (typeof value !== 'string' || value.length === 0) {
+        return malformed(
+          `${META_CLIENT_INFO} mangler «${field}». Formen er Implementation, som krever både name og version.`,
+        )
+      }
+    }
   }
 
   // ---- Headerne, som speiler kroppen ----
@@ -712,15 +724,14 @@ async function mcpEndpoint(
     if (dispatched.response === null) {
       return { response: new Response(null, { status: 202 }), outcome: 'ok' }
     }
-    // En ukjent metode er 404 i den moderne epoken. Statusen er det klienten
-    // bruker til å skille en server som ikke kjenner kallet, fra en som ikke
-    // ligger her i det hele tatt.
-    const unknownMethod =
-      era === 'modern' &&
-      'error' in dispatched.response &&
-      dispatched.response.error.code === JSON_RPC_METHOD_NOT_FOUND
+    // Statusen kommer fra den som vet hvorfor svaret ble som det ble. 404 for en
+    // ukjent metode er 2026-transportens egen regel — den lar klienten skille en
+    // server som ikke kjenner kallet, fra en som ikke ligger her i det hele tatt
+    // — og gjelder derfor bare i den moderne epoken. En malformet forespørsel er
+    // 400 i begge, som resten av dem.
+    const status = dispatched.status === 404 && era !== 'modern' ? 200 : (dispatched.status ?? 200)
     const result = {
-      response: json(dispatched.response, unknownMethod ? 404 : 200),
+      response: json(dispatched.response, status),
       outcome: dispatched.trace?.outcome ?? 'ok',
     }
     return dispatched.trace === null ? result : { ...result, tool: dispatched.trace.tool }
