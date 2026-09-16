@@ -145,6 +145,38 @@ begin
       message = 'Antidep 2-resetten stoppet: en påstandsrot ligger utenfor den autoriserte legacy-prototypen.';
   end if;
 
+  -- Drug/topic identity is not historical lineage. After claim-synthesis became
+  -- an agent write path, a new claim can legitimately have the same drug, topic
+  -- and legacy evidence as a removed prototype claim. The authorized roots are
+  -- distinguishable without hard-coded random UUIDs: their revision 1 rows were
+  -- inserted by migration 004, before claim-revision agent provenance and the
+  -- claim_revision_created audit trigger existed. A later claim therefore has
+  -- agent_run_id and/or a creation audit for revision 1. Require BOTH historical
+  -- markers so a newly-created replacement root can never be swept into this
+  -- destructive one-time reset merely because it looks semantically identical.
+  if exists (
+    select 1
+    from knowledge.claims cl
+    where not exists (
+      select 1
+      from knowledge.claim_revisions r
+      where r.claim_id = cl.id
+        and r.revision_number = 1
+        and r.agent_run_id is null
+        and not exists (
+          select 1
+          from audit.events ae
+          where ae.operation = 'claim_revision_created'
+            and ae.object_id = r.id
+        )
+    )
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: en påstandsrot kan ikke bevises å være en historisk prototypepåstand.',
+      detail = 'En autorisert legacy-påstand skal ha revisjon 1 fra før agentkjørings-proveniens og revisjonsaudit ble innført.';
+  end if;
+
   -- No orphan/new claim identity is silently classified as legacy: every
   -- surviving claim must have at least one revision, every revision must be
   -- explicitly linked to an evidence root, and the claim and evidence item must
