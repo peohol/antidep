@@ -430,13 +430,14 @@ async function main(): Promise<void> {
     `select count(*) from (values
        ('workflow.client_diagnostics'),
        ('workflow.technical_incidents'),
-       ('workflow.technical_incident_events')) as t(name)
+       ('workflow.technical_incident_events'),
+       ('workflow.diagnostics_attempts')) as t(name)
      where has_table_privilege('antidep_diagnostics', t.name, 'SELECT')
         or has_table_privilege('antidep_diagnostics', t.name, 'INSERT')
         or has_table_privilege('antidep_diagnostics', t.name, 'UPDATE')
         or has_table_privilege('antidep_diagnostics', t.name, 'DELETE')`,
   )
-  check('reserverollen kan hverken lese eller skrive de tre tabellene', kanLese === '0', kanLese)
+  check('reserverollen kan hverken lese eller skrive de fire tabellene', kanLese === '0', kanLese)
 
   // Lest av ACL-en framfor av den effektive rettigheten: has_function_privilege
   // tar med alt som er gitt til PUBLIC, og en telling på den ville sagt noe om
@@ -450,7 +451,7 @@ async function main(): Promise<void> {
        and a.grantee = 'antidep_diagnostics'::regrole::oid
        and a.privilege_type = 'EXECUTE'`,
   )
-  check('og er gitt nøyaktig de to append-funksjonene', gitt === '2', gitt)
+  check('og er gitt nøyaktig de tre funksjonene, og ingen andre', gitt === '3', gitt)
 
   // Og den som betyr noe uansett hvor granten kom fra: ingen annen
   // SECURITY DEFINER-funksjon er nåbar. En vanlig funksjon kjører med rollens
@@ -462,7 +463,11 @@ async function main(): Promise<void> {
      where n.nspname in ('workflow', 'provenance', 'knowledge', 'catalog', 'audit', 'api')
        and p.prosecdef
        and has_function_privilege('antidep_diagnostics', p.oid, 'execute')
-       and p.proname not in ('ingest_client_diagnostic', 'ingest_public_technical_problem')`,
+       and p.proname not in (
+         'ingest_client_diagnostic',
+         'ingest_public_technical_problem',
+         'claim_diagnostics_attempt'
+       )`,
   )
   check(
     'og kan ikke kjøre noen annen SECURITY DEFINER-funksjon',
