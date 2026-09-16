@@ -98,14 +98,34 @@ from knowledge.evidence_items e
 join catalog.drugs d on d.id = e.intervention_drug_id
 where d.canonical_name = 'sertralin';
 
+-- Grounding became part of the evidence identity in migration 003d. The hosted
+-- rows received their matching technical digest/content hash when they were
+-- created. Because this fixture deliberately evolves an older seeded row in
+-- place, update only those database-owned technical fields under the same
+-- explicit maintenance guard used by the historical rehash migration.
+alter table knowledge.evidence_items disable trigger evidence_items_reject_mutation;
+update knowledge.evidence_items e
+set grounding_digest = knowledge.evidence_item_grounding_digest(e.id)
+from catalog.drugs d
+where d.id = e.intervention_drug_id
+  and d.canonical_name = 'sertralin';
+update knowledge.evidence_items e
+set content_hash = knowledge.evidence_item_content_hash(e.*)
+from catalog.drugs d
+where d.id = e.intervention_drug_id
+  and d.canonical_name = 'sertralin';
+alter table knowledge.evidence_items enable trigger evidence_items_reject_mutation;
+
 insert into workflow.evidence_verifications (
   evidence_item_id, verified_item_creator_actor_id, verifier_actor_id,
-  outcome, source_access, checked_fields, rationale, verified_at
+  outcome, source_access, checked_fields, rationale, verified_at,
+  verified_grounding_digest
 )
 select e.id, e.created_by_actor_id, verifier.id,
        'uncertain', 'verifiable_representation',
        array['source_locator']::workflow.evidence_check_field[],
-       'Regresjonsfikstur: senere kontroll av den gamle abstract-prototypen.', now()
+       'Regresjonsfikstur: senere kontroll av den gamle abstract-prototypen.', now(),
+       workflow.evidence_grounding_digest(e.id)
 from knowledge.evidence_items e
 join catalog.drugs d on d.id = e.intervention_drug_id
 join provenance.actors verifier on verifier.actor_key = 'agent:extraction-verification'
