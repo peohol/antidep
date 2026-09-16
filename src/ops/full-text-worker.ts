@@ -45,10 +45,20 @@ export interface FullTextIntakeApi {
   claim(leaseSeconds: number): Promise<unknown>
   complete(handle: string, extractedText: string, toolVersion: string): Promise<unknown>
   fail(handle: string, stage: FailureStage): Promise<unknown>
+  /** Setter i gang igjen alt som sto blokkert på et driftsproblem. */
+  resume(): Promise<unknown>
 }
 
 /**
  * De to stopppunktene databasen kjenner. Lukket: Antidep skriver setningen.
+ *
+ * Skillet mellom dem er ikke en nyanse — det avgjør om filen blir liggende
+ * eller om et menneske blir bedt om en ny:
+ *
+ *   tool_missing  verktøyet fantes ikke. Da vet kommandoen ingenting om filen,
+ *                 og databasen blokkerer raden med filen i behold.
+ *   tool_failed   verktøyet kjørte og fikk ingenting brukbart ut av nettopp
+ *                 denne filen. Det er en opplysning om filen, og den telles.
  *
  * Det finnes ikke et tredje for «ga ingen tekst». `extractDocumentText` avviser
  * allerede en PDF uten tekstlag og en tekst uten avgjort leserekkefølge, og
@@ -110,12 +120,26 @@ export function parseCompletionOutcome(value: unknown): CompletionOutcome {
   return { status, rejection: optional(fields, 'rejection') }
 }
 
+/** Hvor mange rader som ble satt i gang igjen. Lest med samme strenghet som resten. */
+export function parseResumedCount(value: unknown): number {
+  const fields = fieldsOf(value, 'Gjenopptakelsen', 'svaret')
+  const resumed = raw(fields, 'resumed')
+  if (typeof resumed !== 'number' || !Number.isInteger(resumed) || resumed < 0) {
+    throw new Error('Gjenopptakelsen er ugyldig: svaret.resumed er ikke et antall.')
+  }
+  return resumed
+}
+
 /** Hva én kjøring faktisk gjorde. Tallene er det kommandoen rapporterer. */
 export interface WorkerReport {
+  readonly resumed: number
   readonly claimed: number
   readonly registered: number
   readonly rejected: number
-  readonly failed: number
+  /** Filer verktøyet leste uten å få brukbar tekst ut av. Prøves igjen. */
+  readonly retried: number
+  /** Filer som ble liggende fordi verktøyet manglet. Ingen blir bedt om noe. */
+  readonly blocked: number
 }
 
 export interface WorkerOptions {
@@ -125,6 +149,16 @@ export interface WorkerOptions {
   readonly leaseSeconds?: number
   readonly runTool?: RunTool
   readonly log?: (line: string) => void
+  /**
+   * Om den rå årsaken fra verktøyet skal med i loggen.
+   *
+   * Av som standard, og det er en sikkerhetsgrense og ikke en smakssak:
+   * kjøringen er planlagt i et offentlig repo, der loggen er offentlig. En rå
+   * feiltekst fra `pdftotext` kan bære deler av dokumentet, og den kontrollerte
+   * kildeteksten skal aldri havne i en logg (AGENTS.md). Den som feilsøker
+   * lokalt, slår den på selv.
+   */
+  readonly diagnostics?: boolean
 }
 
 /**
@@ -139,10 +173,29 @@ export async function runFullTextWorker(options: WorkerOptions): Promise<WorkerR
   const maxTasks = options.maxTasks ?? 10
   const leaseSeconds = options.leaseSeconds ?? 600
 
+  let resumed = 0
   let claimed = 0
   let registered = 0
   let rejected = 0
-  let failed = 0
+  let retried = 0
+  let blocked = 0
+
+  // Oppskriften leses én gang, av verktøyet som faktisk er installert.
+  // Verktøyet og argumentene er Antideps, og kontrolleres mot den lukkede
+  // listen inne i `extractDocumentText`; versjonen er en opplysning og ikke
+  // noe som velges.
+  const recipe = await currentPdfRecipe(options.runTool)
+
+  if (recipe.status === 'ok') {
+    // Verktøyet finnes. Da er et driftsproblem som blokkerte arbeid tidligere,
+    // over — og alt som sto, går i kø igjen her. Ingen blir bedt om noe, og
+    // ingen fil lastes opp på nytt: dette er hele poenget med at en teknisk
+    // svikt aldri ble en menneskeoppgave (issue #99).
+    resumed = parseResumedCount(await options.api.resume())
+    if (resumed > 0) {
+      log(`${String(resumed)} fil(er) sto blokkert på et driftsproblem, og er satt i gang igjen.`)
+    }
+  }
 
   for (let taken = 0; taken < maxTasks; taken += 1) {
     const task = parseClaimedTask(await options.api.claim(leaseSeconds))
@@ -151,16 +204,15 @@ export async function runFullTextWorker(options: WorkerOptions): Promise<WorkerR
     }
     claimed += 1
 
-    // Oppskriften leses av verktøyet som faktisk er installert. Verktøyet og
-    // argumentene er Antideps, og kontrolleres mot den lukkede listen inne i
-    // `extractDocumentText`; versjonen er en opplysning og ikke noe som velges.
-    const recipe = await currentPdfRecipe(options.runTool)
     if (recipe.status === 'error') {
       await options.api.fail(task.handle, 'tool_missing')
-      failed += 1
-      log('Tekstuttrekkeren fant ikke verktøyet oppskriften krever. Meldt som teknisk problem.')
+      blocked += 1
+      log(
+        'Tekstuttrekkeren fant ikke verktøyet oppskriften krever. Filen blir liggende, og ' +
+          'arbeidet fortsetter av seg selv når verktøyet er på plass. Meldt som teknisk problem.',
+      )
       // Uten verktøyet er neste oppdrag like umulig. Kjøringen stopper framfor
-      // å telle ned forsøkene på hele innboksen.
+      // å blokkere hele innboksen på det samme.
       break
     }
 
@@ -173,11 +225,16 @@ export async function runFullTextWorker(options: WorkerOptions): Promise<WorkerR
 
     if (extracted.status === 'error') {
       await options.api.fail(task.handle, 'tool_failed')
-      failed += 1
-      // Den rå årsaken går til den som kjørte kommandoen, og ikke inn i
-      // databasen: et spor skal ikke bli et sted en videreformidlet feiltekst
-      // kan bære et filnavn eller en del av dokumentet.
-      log(`Oppskriften ga ingen brukbar tekst: ${extracted.message}`)
+      retried += 1
+      // Den rå årsaken går aldri inn i databasen, og ikke i en offentlig logg:
+      // et spor skal ikke bli et sted en videreformidlet feiltekst kan bære et
+      // filnavn eller en del av dokumentet. Den som feilsøker lokalt, ber om
+      // den selv.
+      log(
+        options.diagnostics === true
+          ? `Oppskriften ga ingen brukbar tekst: ${extracted.message}`
+          : 'Oppskriften ga ingen brukbar tekst av filen. Den prøves igjen.',
+      )
       continue
     }
 
@@ -193,16 +250,19 @@ export async function runFullTextWorker(options: WorkerOptions): Promise<WorkerR
     }
   }
 
-  return { claimed, registered, rejected, failed }
+  return { resumed, claimed, registered, rejected, retried, blocked }
 }
 
 /** Én setning om hva kjøringen gjorde, til den som planla den. */
 export function describeWorkerReport(report: WorkerReport): string {
   if (report.claimed === 0) {
-    return 'Ingen fulltekst ventet på tekstuttrekk.'
+    return report.resumed === 0
+      ? 'Ingen fulltekst ventet på tekstuttrekk.'
+      : `${String(report.resumed)} fil(er) satt i gang igjen. Ingen ble behandlet i denne kjøringen.`
   }
   return (
     `${String(report.claimed)} fil(er) behandlet: ${String(report.registered)} registrert, ` +
-    `${String(report.rejected)} avvist, ${String(report.failed)} stoppet teknisk.`
+    `${String(report.rejected)} avvist, ${String(report.retried)} prøves igjen, ` +
+    `${String(report.blocked)} venter på at driften rettes.`
   )
 }

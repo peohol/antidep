@@ -33,9 +33,11 @@ function api(overrides: Partial<FullTextIntakeApi> = {}): {
   readonly api: FullTextIntakeApi
   readonly completed: { handle: string; text: string; toolVersion: string }[]
   readonly failures: { handle: string; stage: FailureStage }[]
+  readonly resumes: number[]
 } {
   const completed: { handle: string; text: string; toolVersion: string }[] = []
   const failures: { handle: string; stage: FailureStage }[] = []
+  const resumes: number[] = []
   let remaining = 1
 
   const base: FullTextIntakeApi = {
@@ -57,11 +59,18 @@ function api(overrides: Partial<FullTextIntakeApi> = {}): {
     },
     fail: (handle, stage) => {
       failures.push({ handle, stage })
-      return Promise.resolve({ reference: 'abc', state: 'received' })
+      return Promise.resolve({
+        reference: 'abc',
+        state: stage === 'tool_missing' ? 'blocked' : 'received',
+      })
+    },
+    resume: () => {
+      resumes.push(resumes.length)
+      return Promise.resolve({ resumed: 0 })
     },
   }
 
-  return { api: { ...base, ...overrides }, completed, failures }
+  return { api: { ...base, ...overrides }, completed, failures, resumes }
 }
 
 const ingenVerktøy: RunTool = () =>
@@ -122,7 +131,14 @@ describe('kjøringen', () => {
     const database = api()
     const report = await runFullTextWorker({ api: database.api })
 
-    expect(report).toEqual({ claimed: 1, registered: 1, rejected: 0, failed: 0 })
+    expect(report).toEqual({
+      resumed: 0,
+      claimed: 1,
+      registered: 1,
+      rejected: 0,
+      retried: 0,
+      blocked: 0,
+    })
     expect(database.completed).toHaveLength(1)
     expect(database.completed[0]?.text).toContain('Weight rose by 1.5 kg.')
     // Versjonen leses av verktøyet som faktisk er installert, og oppgis ikke av
@@ -137,18 +153,55 @@ describe('kjøringen', () => {
       complete: () => Promise.resolve({ status: 'rejected', rejection: 'not_this_article' }),
     })
     const report = await runFullTextWorker({ api: database.api })
-    expect(report).toEqual({ claimed: 1, registered: 0, rejected: 1, failed: 0 })
+    expect(report).toEqual({
+      resumed: 0,
+      claimed: 1,
+      registered: 0,
+      rejected: 1,
+      retried: 0,
+      blocked: 0,
+    })
   })
 
   it('stopper og melder fra når verktøyet oppskriften krever, ikke finnes', async () => {
     const database = api()
     const report = await runFullTextWorker({ api: database.api, runTool: ingenVerktøy })
 
-    expect(report).toEqual({ claimed: 1, registered: 0, rejected: 0, failed: 1 })
+    expect(report).toEqual({
+      resumed: 0,
+      claimed: 1,
+      registered: 0,
+      rejected: 0,
+      retried: 0,
+      blocked: 1,
+    })
     expect(database.failures).toEqual([
       { handle: '11111111-1111-4111-8111-111111111111', stage: 'tool_missing' },
     ])
     expect(database.completed).toHaveLength(0)
+    // Og ingenting settes i gang igjen: verktøyet mangler fortsatt, så en
+    // gjenopptakelse ville bare blokkert de samme radene på nytt.
+    expect(database.resumes).toHaveLength(0)
+  })
+
+  // Dette er hele forskjellen Peder ba om: et driftsproblem skal ikke bli en ny
+  // oppgave for redaktøren. Når verktøyet er på plass igjen, går arbeidet
+  // videre av seg selv, uten at noen laster opp filen på nytt.
+  it('setter blokkert arbeid i gang igjen så snart verktøyet finnes', async () => {
+    const database = api({ resume: () => Promise.resolve({ resumed: 2 }) })
+    const lines: string[] = []
+    const report = await runFullTextWorker({
+      api: database.api,
+      log: (line) => lines.push(line),
+    })
+
+    expect(report.resumed).toBe(2)
+    expect(lines[0]).toMatch(/satt i gang igjen/)
+  })
+
+  it('avviser et gjenopptakelsessvar som ikke stemmer med kontrakten', async () => {
+    const database = api({ resume: () => Promise.resolve({ resumed: 'to' }) })
+    await expect(runFullTextWorker({ api: database.api })).rejects.toThrow(/ugyldig/)
   })
 
   // Både en PDF verktøyet ikke fikk lest, og en uten tekstlag, kommer hit som
@@ -157,8 +210,31 @@ describe('kjøringen', () => {
   it('melder fra når oppskriften kjørte uten å gi brukbar tekst', async () => {
     const database = api()
     const report = await runFullTextWorker({ api: database.api, runTool: verktøyetStopper })
-    expect(report.failed).toBe(1)
+    expect(report.retried).toBe(1)
+    expect(report.blocked).toBe(0)
     expect(database.failures[0]?.stage).toBe('tool_failed')
+  })
+
+  // Kjøringen er planlagt i et offentlig repo, og loggen er offentlig. En rå
+  // feiltekst fra verktøyet kan bære deler av dokumentet, og den skal derfor
+  // ikke stå der uten at noen har bedt om det (AGENTS.md).
+  it('holder den rå årsaken utenfor loggen med mindre den bes om', async () => {
+    const stille: string[] = []
+    await runFullTextWorker({
+      api: api().api,
+      runTool: verktøyetStopper,
+      log: (line) => stille.push(line),
+    })
+    expect(stille.join('\n')).not.toContain('xref')
+
+    const høyt: string[] = []
+    await runFullTextWorker({
+      api: api().api,
+      runTool: verktøyetStopper,
+      diagnostics: true,
+      log: (line) => høyt.push(line),
+    })
+    expect(høyt.join('\n')).toContain('xref')
   })
 
   // Kjøringen er en kjøring og ikke en tjeneste: uten et tak ville en kommando
@@ -182,11 +258,35 @@ describe('kjøringen', () => {
   })
 
   it('sier hva kjøringen gjorde, i én setning', () => {
-    expect(describeWorkerReport({ claimed: 0, registered: 0, rejected: 0, failed: 0 })).toBe(
-      'Ingen fulltekst ventet på tekstuttrekk.',
-    )
-    expect(describeWorkerReport({ claimed: 2, registered: 1, rejected: 1, failed: 0 })).toContain(
-      '2 fil(er) behandlet',
-    )
+    expect(
+      describeWorkerReport({
+        resumed: 0,
+        claimed: 0,
+        registered: 0,
+        rejected: 0,
+        retried: 0,
+        blocked: 0,
+      }),
+    ).toBe('Ingen fulltekst ventet på tekstuttrekk.')
+    expect(
+      describeWorkerReport({
+        resumed: 2,
+        claimed: 0,
+        registered: 0,
+        rejected: 0,
+        retried: 0,
+        blocked: 0,
+      }),
+    ).toMatch(/2 fil\(er\) satt i gang igjen/)
+    expect(
+      describeWorkerReport({
+        resumed: 0,
+        claimed: 2,
+        registered: 1,
+        rejected: 1,
+        retried: 0,
+        blocked: 0,
+      }),
+    ).toContain('2 fil(er) behandlet')
   })
 })

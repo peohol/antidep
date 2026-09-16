@@ -267,12 +267,14 @@ select is_empty(
         'api.claim_full_text_extraction(integer)',
         'api.complete_full_text_extraction(uuid,text,text)',
         'api.fail_full_text_extraction(uuid,text)',
+        'api.resume_blocked_full_text_extractions()',
         -- Den tekniske problemoversikten. Tellingen svarer stille «ikke synlig»
-        -- til alle som ikke er admin, og selvmeldingen tar to lukkede
-        -- vokabularer og ingen tekst. Ingen av dem leser diagnosen.
+        -- til alle som ikke er admin, og selvmeldingen tar bare
+        -- maskinidentifikatorer og ingen tekst. Ingen av dem leser diagnosen.
         'api.technical_problem_board()',
         'api.technical_problem_summary()',
-        'api.report_technical_problem(text,text)'
+        'api.report_technical_problem(text,text,text,text)',
+        'api.clear_technical_problem(text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

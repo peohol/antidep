@@ -390,6 +390,14 @@ export type Database = {
         }
         Returns: unknown
       }
+      // Veien tilbake fra et driftsproblem. Arbeideren kaller den når den har
+      // kontrollert at verktøyet oppskriften krever finnes, og alt som sto
+      // blokkert, går i kø igjen — uten at noen blir bedt om å laste opp
+      // filen på nytt.
+      resume_blocked_full_text_extractions: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
       // Den tekniske problemoversikten. Diagnosen er ikke med i noen av dem, og
       // kan ikke leses gjennom noe api-objekt.
       technical_problem_board: {
@@ -400,12 +408,26 @@ export type Database = {
         Args: Record<string, never>
         Returns: unknown
       }
-      // Selvmeldingen fra en brukerflate. To lukkede vokabularer og ingen
-      // tekst: databasen skriver setningen selv.
+      // Selvmeldingen fra en brukerflate, og lukkingen av den.
+      //
+      // Fire maskinidentifikatorer og ingen tekst: område og svikttype er
+      // lukkede vokabularer, operasjonen kontrolleres mot funksjonene som
+      // finnes i api, og koden må være en SQLSTATE eller en PostgREST-kode.
+      // Til sammen finner en teknisk agent igjen nøyaktig hvilket kall som
+      // sviktet og med hvilken kode — uten at en feiltekst havner i databasen.
       report_technical_problem: {
         Args: {
           p_area: string
           p_kind: string
+          p_operation?: string | null
+          p_code?: string | null
+        }
+        Returns: unknown
+      }
+      clear_technical_problem: {
+        Args: {
+          p_area: string
+          p_operation?: string | null
         }
         Returns: unknown
       }

@@ -60,8 +60,11 @@ npm run ops:agents -- assign-model --role evidence_extraction --provider … --m
 npm run ops:agents -- register-runner --key … --name … --role … --platform-ref … --disclosure …
 npm run ops:agents -- pair --key …
 npm run ops:agents -- export-task --job … / import-answer --job … --answer …
-npm run ops:full-text
 ```
+
+Tekstuttrekket av opplastede fulltekster er ikke engang det: det kjøres planlagt
+av `.github/workflows/full-text-extraction.yml` hvert kvarter, og ingen starter
+det. `npm run ops:full-text` er den samme kjøringen, tilgjengelig for feilsøking.
 
 Sikkerhetsgrensene er uendret. Tildelingen er fortsatt en attestert avgjørelse
 tatt *før* oppgaven hentes ut, den inngår fortsatt i oppgavens avtrykk, og et
@@ -116,10 +119,11 @@ i den manuelle handoffen.
   dag av kommandoer med hver sin agentlegitimasjon. Når et agentsvar er
   registrert — av en planlagt kjøring eller av en recovery-import — går kjeden
   derfor ikke videre av seg selv.
-- **Tekstuttrekket.** `npm run ops:full-text` kjører den registrerte oppskriften
-  der `pdftotext` faktisk finnes. Det er et driftssteg og ikke en
-  menneskeoppgave: for den som lastet opp PDF-en, er det usynlig, og oppgaven
-  står som «pågår» til den er registrert.
+Tekstuttrekket står ikke lenger på denne listen. Det kjøres planlagt av
+GitHub Actions hvert kvarter, på en maskin der `pdftotext` er installert, og
+ingen trenger å starte det. Får det ikke kjørt, blir arbeidet stående som
+blokkert med filen i behold og fortsetter av seg selv når driften svarer —
+en teknisk svikt skal aldri bli en menneskeoppgave.
 
 Ingen av delene er noe en kliniker møter.
 

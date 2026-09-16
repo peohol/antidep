@@ -25,9 +25,26 @@
 //
 // «Du har ikke mandat» og «Antidep avviste dette» er ikke tekniske problemer —
 // de er systemet som gjør jobben sin. Bare et svar som ikke kom, og et svar som
-// ikke stemte med kontrakten, er noe en drift skal se. Meldingen bærer to
-// lukkede vokabularer og ingen tekst: databasen skriver setningen selv
-// (migrasjon 012a).
+// ikke stemte med kontrakten, er noe en drift skal se.
+//
+// ----------------------------------------------------------------------------
+// Hvor den rå årsaken faktisk blir liggende
+//
+// En `console.error` i en nettleser er ingen observability: fanen lukkes, og da
+// er årsaken borte. Meldingen til databasen bærer derfor fire
+// maskinidentifikatorer — område, svikttype, hvilken api-funksjon kallet gjaldt,
+// og hvilken kode svaret bar. Databasen kontrollerer alle fire mot noe den
+// selv vet (funksjonen må finnes; koden må være en SQLSTATE eller en
+// PostgREST-kode) og skriver setningen selv.
+//
+// Det er med vilje ikke feilteksten. En videreformidlet feilmelding kan bære et
+// filnavn, en adresse eller en del av et svar, og den tekniske loggen skal ikke
+// bli et sted slikt samler seg. Operasjonen og koden er nok: de peker på
+// nøyaktig ett kall og én feilklasse, og resten står i kildekoden.
+//
+// Flaten lukker også sin egen melding når det samme kallet går gjennom igjen.
+// Uten det ville ett nettverksglipp fått merket i navigasjonen til å lyse for
+// alltid, og en lampe som alltid lyser, er en lampe ingen ser på.
 // ============================================================================
 
 import { getAntidepClient, type AntidepClient } from '../lib/supabase'
@@ -157,6 +174,28 @@ const consoleSink: TechnicalSink = (entry) => {
 
 let sink: TechnicalSink = consoleSink
 
+/**
+ * Formen databasen godtar en kode i: en SQLSTATE på fem tegn, eller en
+ * PostgREST-kode. Gjentatt her fordi flaten skal la være å sende noe som ville
+ * blitt avvist — ikke som en andre sannhet. Databasens kontroll er den som
+ * gjelder.
+ */
+const MACHINE_CODE = /^([0-9A-Z]{5}|PGRST[0-9]{3})$/
+
+/**
+ * Hvilke kall flaten har meldt fra om, og ennå ikke lukket.
+ *
+ * Lever i modulen og ikke i en komponent, fordi den skal overleve at en side
+ * byttes ut: det er det samme kallet som sviktet og det samme som går gjennom
+ * igjen, uansett hvilken side som gjør det.
+ */
+const reported = new Set<string>()
+
+/** Bare for prøver: glem hva som er meldt fra om. */
+export function forgetReportedProblems(): void {
+  reported.clear()
+}
+
 /** Bare for prøver: bytt ut observability-sluket og få det tilbake etterpå. */
 export function setTechnicalSink(next: TechnicalSink | null): void {
   sink = next ?? consoleSink
@@ -228,11 +267,15 @@ export async function callRpc<T>(client: AntidepClient, spec: RpcSpec<T>): Promi
     throw fail(client, spec, cause)
   }
 
+  let parsed: T
   try {
-    return spec.parse(data)
+    parsed = spec.parse(data)
   } catch (cause) {
     throw fail(client, spec, cause, 'unreadable_answer')
   }
+
+  clearTechnicalProblem(client, spec.area, spec.fn)
+  return parsed
 }
 
 function fail<T>(
@@ -243,28 +286,68 @@ function fail<T>(
 ): GatewayFailure {
   const kind = forced ?? classifyGatewayFailure(cause)
   if (recordTechnicalDetail(spec.area, spec.fn, kind, cause)) {
-    reportTechnicalProblem(client, spec.area, kind)
+    reportTechnicalProblem(client, spec.area, kind, spec.fn, errorCode(cause))
   }
   return new GatewayFailure(describeGatewayFailure(kind, spec.wording), kind, spec.area)
 }
 
 /**
- * Melder fra til Antidep at et område ikke svarte.
+ * Melder fra til Antidep at ett kall ikke gikk gjennom.
  *
- * To lukkede vokabularer og ingen tekst: databasen skriver setningen selv. En
+ * Fire maskinidentifikatorer og ingen tekst: databasen skriver setningen selv,
+ * og kontrollerer både at operasjonen finnes og at koden har en kodes form. En
  * uinnlogget kaller blir avvist der, og det er riktig — en melding som ikke kan
  * tilskrives noen, skal ikke kunne få merket i navigasjonen til å lyse.
- *
- * Feiler meldingen, er det ingenting mer å gjøre: da er det nettopp databasen
- * som ikke svarer. Den svelges derfor med vilje, framfor å bli en ny feil på
- * toppen av den som allerede er vist.
  */
 function reportTechnicalProblem(
   client: AntidepClient,
   area: TechnicalArea,
   kind: GatewayFailureKind,
+  operation: string,
+  code: string | null,
 ): void {
-  void Promise.resolve(client.rpc('report_technical_problem', { p_area: area, p_kind: kind })).then(
+  reported.add(`${area}|${operation}`)
+  forget(
+    client.rpc('report_technical_problem', {
+      p_area: area,
+      p_kind: kind,
+      p_operation: operation,
+      // Koden sendes bare når den har den formen databasen godtar. En kode
+      // flaten ikke kjenner igjen, er ikke en opplysning verdt å presse
+      // gjennom en kontroll — den ville bare fått hele meldingen avvist.
+      p_code: MACHINE_CODE.test(code ?? '') ? code : null,
+    }),
+  )
+}
+
+/**
+ * Lukker flatens egen melding når det samme kallet går gjennom igjen.
+ *
+ * Kalles bare når det faktisk finnes noe å lukke. Et kall per vellykket
+ * lesing ville vært en dobling av trafikken for å rydde i noe som nesten
+ * alltid ikke er der.
+ */
+function clearTechnicalProblem(
+  client: AntidepClient,
+  area: TechnicalArea,
+  operation: string,
+): void {
+  const key = `${area}|${operation}`
+  if (!reported.delete(key)) {
+    return
+  }
+  forget(client.rpc('clear_technical_problem', { p_area: area, p_operation: operation }))
+}
+
+/**
+ * Sender kallet uten å vente på det, og uten å la det bli en feil.
+ *
+ * Feiler meldingen, er det ingenting mer å gjøre: da er det nettopp databasen
+ * som ikke svarer. Den svelges derfor med vilje, framfor å bli en ny feil på
+ * toppen av den som allerede er vist.
+ */
+function forget(call: PromiseLike<unknown>): void {
+  void Promise.resolve(call).then(
     () => undefined,
     () => undefined,
   )

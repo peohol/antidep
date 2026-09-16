@@ -49,9 +49,9 @@ export function fileProblem(file: { readonly size: number }): string | null {
   return null
 }
 
-export type InboxState = 'needs_upload' | 'processing'
+export type InboxState = 'needs_upload' | 'processing' | 'blocked'
 
-const INBOX_STATES: readonly InboxState[] = ['needs_upload', 'processing']
+const INBOX_STATES: readonly InboxState[] = ['needs_upload', 'processing', 'blocked']
 
 export interface FullTextInboxItem {
   readonly reference: string
@@ -84,8 +84,9 @@ const REJECTION_SENTENCES: Readonly<Record<string, string>> = {
     'Den samme teksten er allerede registrert for denne artikkelen, fra en annen fil. Bruk den ' +
     'filen artikkelen faktisk ble registrert fra.',
   extraction_failed:
-    'Antidep fikk ikke hentet tekst ut av forrige fil. Det er meldt videre som et teknisk ' +
-    'problem; prøv gjerne en annen utgave av artikkelen.',
+    'Antidep prøvde flere ganger og fikk ikke hentet tekst ut av forrige fil. Det er meldt ' +
+    'videre som et teknisk problem, og det beste du kan gjøre, er å prøve en annen utgave av ' +
+    'artikkelen.',
 }
 
 export function rejectionSentence(code: string): string {
@@ -95,11 +96,24 @@ export function rejectionSentence(code: string): string {
   )
 }
 
-/** Hva innboksen ber om, i én setning per tilstand. */
+/**
+ * Hva innboksen ber om, i én setning per tilstand.
+ *
+ * Bare den første ber om noe. De to andre sier det motsatte, og det er med
+ * vilje: et driftsproblem er ikke en oppgave for den som lastet opp filen, og
+ * en setning som lot det se sånn ut, ville vært nettopp den tekniske
+ * oppgaven issue #99 vil bort fra.
+ */
+const INBOX_SENTENCES: Readonly<Record<InboxState, string>> = {
+  needs_upload: 'Last opp fullteksten for at Antidep skal kunne fortsette.',
+  processing: 'Antidep arbeider med filen du lastet opp. Du trenger ikke gjøre noe mer.',
+  blocked:
+    'Antidep får ikke behandlet filen akkurat nå. Det er meldt som et teknisk problem, og ' +
+    'arbeidet fortsetter av seg selv når det er løst. Du trenger ikke gjøre noe.',
+}
+
 export function inboxStateSentence(state: InboxState): string {
-  return state === 'needs_upload'
-    ? 'Last opp fullteksten for at Antidep skal kunne fortsette.'
-    : 'Antidep arbeider med filen du lastet opp. Du trenger ikke gjøre noe mer.'
+  return INBOX_SENTENCES[state]
 }
 
 /** Artikkelen slik den vises: forfattere og år, når de finnes. */

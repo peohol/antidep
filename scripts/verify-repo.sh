@@ -82,6 +82,23 @@ reject_grep_matches \
   'instanceof Error \? [a-zA-Z]+\.message' \
   src/app
 
+# En arbeidsflyt med hemmeligheter skal aldri kjøre på en pull request.
+#
+# `VERCEL_TOKEN` og redaktørens innlogging ligger i jobbens miljø, og jobben
+# kjører kode fra branchen. En pull request fra en branch i samme repo kan få
+# repository-secrets, og kode på en PR-branch skal derfor ikke få en
+# produksjonsdeploy-token eller legitimasjon som kan lese originaldokumenter ut
+# av databasen. Grensen sto til nå bare som en kommentar i `vercel.yml`; her er
+# den en kontroll, slik at den neste arbeidsflyten med en hemmelighet ikke kan
+# glemme den (AGENTS.md, ANTIDEP_CONSTITUTION.md regel 7).
+while IFS= read -r workflow; do
+  grep -q 'secrets\.' "$workflow" || continue
+  if grep -qE '^[[:space:]]*pull_request(_target)?:' "$workflow"; then
+    echo "Arbeidsflyt med hemmeligheter kjører på pull request: $workflow" >&2
+    exit 1
+  fi
+done < <(find .github/workflows -type f -name '*.yml' | sort)
+
 # Private fulltekster og agentsvar skal aldri bli en del av repoet.
 #
 # En eksportert agentoppgave bærer hele den kontrollerte kildeteksten mellom to

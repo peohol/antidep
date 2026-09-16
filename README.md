@@ -68,6 +68,6 @@ npm run ops:full-text   # Antideps eget tekstuttrekk av opplastede fulltekster
 npm run ops:agents      # modelltildeling, kjøreroppsett og recovery-handoff
 ```
 
-Begge kjøres planlagt, av Claude Code, av ChatGPT eller av en tidsplan. Ingen av dem er en klinikeroppgave, og ingen av dem finnes i produkt-UI.
+Tekstuttrekket kjøres planlagt av GitHub Actions hvert kvarter (`.github/workflows/full-text-extraction.yml`), på en maskin der `pdftotext` er installert. Ingen starter det for hånd — kommandoen over er den samme kjøringen, tilgjengelig for feilsøking. `npm run ops:agents` kjøres av Claude Code eller ChatGPT ved behov. Ingen av dem er en klinikeroppgave, og ingen av dem finnes i produkt-UI.
 
 Se [roadmap](docs/ROADMAP.md), [evidenskjeden](docs/EVIDENCE_PIPELINE.md), [den private MCP-appen](docs/CHATGPT_WORKSPACE_AGENT.md) og [styringsreglene](docs/ANTIDEP_CONSTITUTION.md).

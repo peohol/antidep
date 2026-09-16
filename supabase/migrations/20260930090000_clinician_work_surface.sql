@@ -55,6 +55,21 @@
 -- blande dem (ANTIDEP_CONSTITUTION.md regel 4).
 --
 -- ----------------------------------------------------------------------------
+-- Og hvorfor en teknisk feil heller ikke blir en menneskeoppgave
+--
+-- Den motsatte forvekslingen er like alvorlig. Hvis Antidep ikke får kjørt
+-- tekstuttrekket fordi verktøyet mangler på maskinen som skal kjøre det, er det
+-- driften som står — ikke filen som er feil. En innboks som svarte «last opp
+-- fullteksten» på det, ville bedt et menneske om å rette et driftsproblem det
+-- verken kan se eller gjøre noe med.
+--
+-- Innboksraden har derfor tilstanden `blocked`: filen blir liggende, ingenting
+-- avsluttes, og api.resume_blocked_full_text_extractions() setter alt i gang
+-- igjen i det driften svarer. Først når det registrerte tekstuttrekket faktisk
+-- har kjørt på filen tre ganger uten å få brukbar tekst ut av den, er det en
+-- opplysning om filen — og da, og bare da, ber innboksen om en annen utgave.
+--
+-- ----------------------------------------------------------------------------
 -- Hvorfor det åpne dashboardet ikke bærer en eneste intern verdi
 --
 -- api.public_work_board() er den ene funksjonen `anon` får, og den svarer med
@@ -107,7 +122,28 @@ comment on function workflow.has_app_role(workflow.app_role) is
 
 revoke execute on function workflow.has_app_role(workflow.app_role) from public;
 
-create function workflow.assert_admin_authorized()
+-- Aktøren for seg, i to former. Den stille formen finnes fordi én lesevei
+-- svarer «ikke synlig» framfor å avvise (api.technical_problem_summary()), og
+-- den skal ha nøyaktig den samme grensen som den som avviser — ikke en svakere.
+-- Uten en delt kontroll ville de to grensene før eller siden glidd fra
+-- hverandre, og den svakeste ville vært den som lakk.
+create function workflow.active_actor_id()
+  returns uuid
+  language sql
+  stable
+  set search_path = ''
+as $$
+  select a.id
+  from provenance.actors a
+  where a.auth_user_id = auth.uid() and a.retired_at is null;
+$$;
+
+comment on function workflow.active_actor_id() is
+  'Aktøren den innloggede brukeren er, når den finnes og ikke er trukket tilbake — ellers null. Den stille formen av workflow.assert_active_actor(), til den ene leseveien som svarer «ikke synlig» framfor å avvise. Samme grense, uttrykt én gang.';
+
+revoke execute on function workflow.active_actor_id() from public;
+
+create function workflow.assert_active_actor()
   returns uuid
   language plpgsql
   set search_path = ''
@@ -132,6 +168,23 @@ begin
       message = 'Aktøren er trukket tilbake.';
   end if;
 
+  return v_actor_id;
+end;
+$$;
+
+comment on function workflow.assert_active_actor() is
+  'Kontrollerer at den innloggede brukeren er en registrert, ikke-tilbaketrukket aktør, og returnerer aktørens id. Sier ingenting om hva aktøren KAN — det avgjør den kontrollen som spør. Finnes for at aktørgrensen skal stå ett sted: to kopier ville før eller siden vært to forskjellige grenser.';
+
+revoke execute on function workflow.assert_active_actor() from public;
+
+create function workflow.assert_admin_authorized()
+  returns uuid
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid := workflow.assert_active_actor();
+begin
   if not workflow.has_app_role('admin') then
     raise exception using
       errcode = 'insufficient_privilege',
@@ -157,25 +210,8 @@ create function workflow.assert_full_text_inbox_authorized()
   set search_path = ''
 as $$
 declare
-  v_actor_id uuid;
-  v_retired_at timestamptz;
+  v_actor_id uuid := workflow.assert_active_actor();
 begin
-  select a.id, a.retired_at into v_actor_id, v_retired_at
-  from provenance.actors a
-  where a.auth_user_id = auth.uid();
-
-  if v_actor_id is null then
-    raise exception using
-      errcode = 'insufficient_privilege',
-      message = 'Kontoen din er ikke knyttet til en aktør i Antidep.';
-  end if;
-
-  if v_retired_at is not null then
-    raise exception using
-      errcode = 'insufficient_privilege',
-      message = 'Aktøren er trukket tilbake.';
-  end if;
-
   if not (workflow.has_app_role('editor') or workflow.has_app_role('admin')) then
     raise exception using
       errcode = 'insufficient_privilege',
@@ -301,7 +337,7 @@ create table workflow.technical_incidents (
 comment on table workflow.technical_incidents is
   'Tekniske problemer i Antidep, med den rå diagnosen privat (ANTIDEP_CONSTITUTION.md regel 4, 7). Én rad per (område, signatur), slik at det samme problemet observert ti ganger er én rad med en teller framfor ti rader. Tabellen har RLS med default deny, ingen grants og ingen policy: den eneste veien ut er api.technical_problem_board(), som svarer med område og tidspunkt og aldri med diagnosen. Et teknisk problem er ikke det samme som en faglig blokkering — «venter på fulltekst» er workflow.full_text_requests og hører ikke hjemme her.';
 comment on column workflow.technical_incidents.reference is
-  'Ugjennomsiktig håndtak til flaten, beregnet av radens egen id. Finnes for at en admin skal kunne peke på et problem uten at en intern id står på skjermen, og for at en referanse ikke skal kunne gjettes til å treffe en annen rad.';
+  'Ugjennomsiktig håndtak til flaten, fra databasens egen tilfeldighetskilde (workflow.new_public_reference()). Finnes for at en admin skal kunne peke på et problem uten at en intern id står på skjermen — og verdien er tilfeldig og ikke utledet av raden, slik at den ikke kan regnes tilbake til id-en den peker på.';
 comment on column workflow.technical_incidents.diagnosis is
   'Den rå årsaken, til Claude Code og ChatGPT. Antideps egen setning og aldri en videreformidlet feiltekst fra en kilde, en modell eller en nettleser — samme regel som workflow.agent_runner_events.note bærer. Ingen api-objekt leser kolonnen.';
 comment on column workflow.technical_incidents.self_reported is
@@ -323,12 +359,22 @@ create table workflow.technical_incident_events (
   technical_incident_id uuid not null
     references workflow.technical_incidents (id) on update restrict on delete restrict,
   transition workflow.technical_incident_transition not null,
+  -- Diagnosen slik den var akkurat da. Tilstandsraden bærer bare den siste, og
+  -- den som skal finne ut hva som faktisk skjedde, trenger den forrige også:
+  -- «samme område, men en annen kode hver gang» er et helt annet problem enn
+  -- «samme kode femti ganger».
+  diagnosis text,
   occurred_at timestamptz not null default now(),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+
+  constraint technical_incident_events_diagnosis_shape_check
+    check ((diagnosis is null) = (transition = 'resolved'))
 );
 
 comment on table workflow.technical_incident_events is
-  'Append-only spor over hver overgang på et teknisk problem (DATABASE_ARCHITECTURE.md §33). Selve problemet er tilstand og endres; overgangene er historikk og overskrives ikke. Uten sporet ville «har dette kommet tilbake» vært ubesvarlig så snart raden var oppdatert.';
+  'Append-only spor over hver overgang på et teknisk problem (DATABASE_ARCHITECTURE.md §33). Selve problemet er tilstand og endres; overgangene er historikk og overskrives ikke. Uten sporet ville «har dette kommet tilbake» vært ubesvarlig så snart raden var oppdatert. Hver observasjon bærer sin egen diagnose, slik at rekken av dem er lesbar for en teknisk agent lenge etter at tilstandsraden er skrevet over.';
+comment on column workflow.technical_incident_events.diagnosis is
+  'Antideps egen setning om denne ene observasjonen, med de maskinidentifikatorene som fantes. Aldri en videreformidlet feiltekst. Null for overgangen resolved, som ikke er en observasjon av noe galt.';
 
 alter table workflow.technical_incident_events enable row level security;
 
@@ -404,15 +450,15 @@ begin
     v_transition := case when v_resolved_at is null then 'seen' else 'opened' end;
   end if;
 
-  insert into workflow.technical_incident_events (technical_incident_id, transition)
-  values (v_id, v_transition);
+  insert into workflow.technical_incident_events (technical_incident_id, transition, diagnosis)
+  values (v_id, v_transition, p_diagnosis);
 
   return v_id;
 end;
 $$;
 
 comment on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean) is
-  'Registrerer at noe teknisk er galt, eller at det samme problemet er observert igjen. Idempotent på (område, signatur): det samme problemet blir én rad med en teller, og et problem som var løst, åpnes på nytt med sporet opened framfor seen. Diagnosen er Antideps egen setning og lagres privat. Kalles fra innsiden av en funksjon som allerede har kontrollert kalleren, og er derfor ikke SECURITY DEFINER.';
+  'Registrerer at noe teknisk er galt, eller at det samme problemet er observert igjen. Idempotent på (område, signatur): det samme problemet blir én rad med en teller, og et problem som var løst, åpnes på nytt med sporet opened framfor seen. Diagnosen er Antideps egen setning og lagres privat — på tilstandsraden som den siste, og på sporet som denne ene observasjonen, slik at rekken av dem er lesbar senere. Kalles fra innsiden av en funksjon som allerede har kontrollert kalleren, og er derfor ikke SECURITY DEFINER.';
 
 revoke execute on function workflow.record_technical_incident(workflow.technical_area, text, text, boolean) from public;
 
@@ -787,7 +833,7 @@ end;
 $$;
 
 comment on function api.request_full_text(uuid, uuid[], uuid[], uuid[], text) is
-  'Ber om fullteksten til én registrert kilde, med den redaksjonelle avgrensningen ekstraksjonsoppgaven skal bygges av. Idempotent på kilden: den samme artikkelen etterspurt to ganger er én forespørsel. Adressen dokumentet hentes fra, utledes av kildens egen DOI eller PMID når den har en. Krever editor-mandat: hvilken artikkel Antidep trenger og hva et funn kan gjelde, er en redaksjonell avgjørelse. SECURITY DEFINER fordi knowledge, workflow og catalog har RLS med default deny; tomt search_path, og kalleren valideres på funksjonens eget kall (§50).';
+  'Ber om fullteksten til én registrert kilde, med den redaksjonelle avgrensningen ekstraksjonsoppgaven skal bygges av. Idempotent på kilden: den samme artikkelen etterspurt to ganger er én forespørsel. Adressen dokumentet hentes fra, utledes av kildens egen DOI når den har en — en DOI peker på dokumentet selv, og det finnes ikke noe annet registrert kildenummer som gjør det. Krever editor-mandat: hvilken artikkel Antidep trenger og hva et funn kan gjelde, er en redaksjonell avgjørelse. SECURITY DEFINER fordi knowledge, workflow og catalog har RLS med default deny; tomt search_path, og kalleren valideres på funksjonens eget kall (§50).';
 
 revoke execute on function api.request_full_text(uuid, uuid[], uuid[], uuid[], text) from public;
 grant execute on function api.request_full_text(uuid, uuid[], uuid[], uuid[], text) to authenticated;
@@ -1178,12 +1224,12 @@ $$;
 -- (ANTIDEP_CONSTITUTION.md regel 4).
 -- ============================================================================
 create type workflow.full_text_intake_state as enum
-  ('received', 'processing', 'registered', 'rejected');
+  ('received', 'processing', 'blocked', 'registered', 'rejected');
 
 revoke usage on type workflow.full_text_intake_state from public;
 
 comment on type workflow.full_text_intake_state is
-  'Hvor en opplastet fil står: received (lastet opp, venter på Antideps eget tekstuttrekk), processing (uttrekket pågår, med en leie som løper ut), registered (fullteksten er registrert og arbeidet lagt i kø) eller rejected (filen kunne ikke brukes, med en lukket grunn den som lastet opp kan gjøre noe med).';
+  'Hvor en opplastet fil står: received (lastet opp, venter på Antideps eget tekstuttrekk), processing (uttrekket pågår, med en leie som løper ut), blocked (tekstuttrekket kan ikke kjøres akkurat nå — et driftsproblem, ikke noe med filen; filen blir liggende og arbeidet fortsetter av seg selv når problemet er rettet), registered (fullteksten er registrert og arbeidet lagt i kø) eller rejected (filen kunne ikke brukes, med en lukket grunn den som lastet opp kan gjøre noe med). Skillet mellom blocked og rejected er hele forskjellen mellom en teknisk feil og en menneskeoppgave (ANTIDEP_CONSTITUTION.md regel 4).';
 
 create type workflow.full_text_rejection as enum (
   'not_this_article',
@@ -1213,7 +1259,14 @@ create table workflow.full_text_intake (
   content bytea,
 
   state workflow.full_text_intake_state not null default 'received',
+  -- To tellere, fordi de teller to helt forskjellige ting. `attempts` er hvor
+  -- mange ganger raden er tatt ut av køen — den fanger også en arbeider som
+  -- forsvant uten å si noe. `tool_failures` er hvor mange ganger verktøyet
+  -- faktisk kjørte og ikke fikk brukbar tekst ut av *denne filen*. Bare den
+  -- siste sier noe om filen, og bare den kan derfor lede til at Antidep ber om
+  -- en annen PDF.
   attempts integer not null default 0,
+  tool_failures integer not null default 0,
 
   -- Leien, med samme form som workflow.pipeline_jobs: en arbeider som
   -- forsvinner, skal ikke blokkere innboksen for alltid.
@@ -1245,6 +1298,7 @@ create table workflow.full_text_intake (
            or (sha256 = knowledge.source_document_fingerprint(content)
                and byte_size = octet_length(content))),
   constraint full_text_intake_attempts_check check (attempts between 0 and 20),
+  constraint full_text_intake_tool_failures_check check (tool_failures between 0 and 20),
   constraint full_text_intake_lease_pairing_check
     check ((lease_token is null) = (lease_expires_at is null)),
   constraint full_text_intake_state_shape_check
@@ -1255,6 +1309,11 @@ create table workflow.full_text_intake (
           and completed_at is null and source_version_id is null and rejection is null
         when 'processing' then
           content is not null and lease_token is not null
+          and completed_at is null and source_version_id is null and rejection is null
+        -- Filen er i behold, og ingenting er avsluttet. Det er hele poenget:
+        -- et driftsproblem skal ikke koste den som lastet opp filen sin.
+        when 'blocked' then
+          content is not null and lease_token is null
           and completed_at is null and source_version_id is null and rejection is null
         when 'registered' then
           content is null and lease_token is null
@@ -1270,19 +1329,29 @@ create table workflow.full_text_intake (
 comment on table workflow.full_text_intake is
   'Én opplastet fulltekst på vei gjennom Antideps egne kontroller (ANTIDEP_CONSTITUTION.md regel 1, 2, 4). Filen ligger her fordi det registrerte tekstuttrekket må kjøres av Antidep selv og ikke av en nettleser; for den som lastet opp, er det usynlig. Bytene nulles i det utfallet avgjøres, slik at verken en avvist fil eller en kopi av en registrert blir liggende utenfor knowledge.source_documents. Tabellen har RLS med default deny, ingen grants og ingen policy: originalfilen forlater den bare gjennom api.claim_full_text_extraction(integer), til den som allerede har mandat til å laste den opp.';
 comment on column workflow.full_text_intake.content is
-  'Originalfilen, bare så lenge den trengs. Nulles i det samme kallet som avgjør utfallet, og tilstandsregelen håndhever det: en avsluttet innboksrad kan ikke ha byte igjen.';
+  'Originalfilen, bare så lenge den trengs. Nulles i det samme kallet som avgjør utfallet, og tilstandsregelen håndhever det: en avsluttet innboksrad kan ikke ha byte igjen. En blokkert rad er ikke avsluttet, og beholder filen — arbeidet skal kunne fortsette av seg selv når driftsproblemet er rettet.';
+comment on column workflow.full_text_intake.attempts is
+  'Hvor mange ganger raden er tatt ut av køen. Teller også et uttak der arbeideren forsvant uten å si fra, og sier derfor ingenting om filen. Brukes bare til å stoppe et uttak som går rundt uten å komme noen vei; da blokkeres raden, den avvises ikke.';
+comment on column workflow.full_text_intake.tool_failures is
+  'Hvor mange ganger det registrerte tekstuttrekket faktisk kjørte og ikke fikk brukbar tekst ut av denne filen. Dette er det eneste tallet som sier noe om filen, og det eneste som kan lede til at Antidep ber om en annen PDF.';
 comment on column workflow.full_text_intake.rejection is
   'Hvorfor filen ikke kunne brukes, i et lukket vokabular. En avvisning er en produkttilstand den som lastet opp kan gjøre noe med, og ikke en feiltekst: flaten oversetter koden til norsk, og ingen rå årsak følger med.';
 
 alter table workflow.full_text_intake enable row level security;
 
+-- En blokkert rad holder fortsatt forespørselen: filen er levert, og Antidep
+-- skal ikke be om en ny mens den første ligger og venter på at driften rettes.
 create unique index full_text_intake_open_request_key
   on workflow.full_text_intake (full_text_request_id)
-  where state in ('received', 'processing');
+  where state in ('received', 'processing', 'blocked');
 
 create index full_text_intake_ready_idx
   on workflow.full_text_intake (submitted_at)
   where state in ('received', 'processing');
+
+create index full_text_intake_blocked_idx
+  on workflow.full_text_intake (submitted_at)
+  where state = 'blocked';
 
 create index full_text_intake_request_idx
   on workflow.full_text_intake (full_text_request_id, submitted_at desc);
@@ -1350,11 +1419,14 @@ begin
   -- En åpen innboksrad betyr at Antidep allerede arbeider med en fil for denne
   -- artikkelen. Den samme filen sendt inn igjen er det samme arbeidet, og
   -- svarer med raden som allerede finnes; en annen fil ville vært et nytt
-  -- arbeid midt i et pågående, og avvises framfor å overta det.
+  -- arbeid midt i et pågående, og avvises framfor å overta det. En blokkert rad
+  -- teller med: filen er levert, og den venter på at driften rettes — ikke på
+  -- at noen laster den opp en gang til.
   v_sha := knowledge.source_document_fingerprint(v_bytes);
   select i.* into v_open
   from workflow.full_text_intake i
-  where i.full_text_request_id = v_request.id and i.state in ('received', 'processing');
+  where i.full_text_request_id = v_request.id
+    and i.state in ('received', 'processing', 'blocked');
 
   if v_open.id is not null then
     if v_open.sha256 = v_sha then
@@ -1412,9 +1484,17 @@ begin
       case when s.publication_date is null then null
            else extract(year from s.publication_date)::integer end as published_year,
       r.requested_at,
-      -- «Venter på deg» eller «Antidep arbeider med den». Ingen tredje tilstand
-      -- er synlig her: en registrert forespørsel er ikke lenger åpen.
-      case when i.id is null then 'needs_upload' else 'processing' end as state,
+      -- «Venter på deg», «Antidep arbeider med den» eller «Antidep står fast
+      -- teknisk». Den siste er med fordi alternativet ville vært å la den som
+      -- lastet opp tro at arbeidet går videre når det ikke gjør det — men den
+      -- ber ikke om noe: setningen flaten skriver, sier nettopp at ingenting
+      -- skal gjøres. En registrert forespørsel er ikke lenger åpen og står
+      -- ikke her.
+      case
+        when i.id is null then 'needs_upload'
+        when i.state = 'blocked' then 'blocked'
+        else 'processing'
+      end as state,
       -- Den forrige avvisningen, som en lukket kode. Bare den siste: en liste
       -- over alt som har vært prøvd, ville vært en teknisk logg på en
       -- redaksjonell flate.
@@ -1428,7 +1508,8 @@ begin
     from workflow.full_text_requests r
     join knowledge.sources s on s.id = r.source_id
     left join workflow.full_text_intake i
-      on i.full_text_request_id = r.id and i.state in ('received', 'processing')
+      on i.full_text_request_id = r.id
+     and i.state in ('received', 'processing', 'blocked')
     where r.state = 'open'
   ) q;
 
@@ -1437,7 +1518,7 @@ end;
 $$;
 
 comment on function api.full_text_inbox() is
-  'Artiklene Antidep mangler fullteksten til, slik en redaktør trenger dem: tittel, forfattere, år, om Antidep venter på en fil eller allerede arbeider med en, og hva som eventuelt var galt med den forrige filen — som en lukket kode flaten oversetter til norsk. Inneholder ingen uuid, ingen hash, ingen oppskrift og ingen rå årsak. Krever editor- eller admin-mandat.';
+  'Artiklene Antidep mangler fullteksten til, slik en redaktør trenger dem: tittel, forfattere, år, om Antidep venter på en fil, allerede arbeider med en, eller står fast på et driftsproblem, og hva som eventuelt var galt med den forrige filen — som en lukket kode flaten oversetter til norsk. Bare den første tilstanden ber om noe; de to andre sier at ingenting skal gjøres. Inneholder ingen uuid, ingen hash, ingen oppskrift og ingen rå årsak. Krever editor- eller admin-mandat.';
 
 revoke execute on function api.full_text_inbox() from public;
 grant execute on function api.full_text_inbox() to authenticated;
@@ -1471,9 +1552,19 @@ declare
 begin
   perform knowledge.assert_editor_authorized();
 
-  -- En fil som har vært prøvd for mange ganger, er ikke noe som skal prøves
-  -- igjen i det uendelige. Den avvises med sin egen grunn, og det tekniske
-  -- problemet står registrert for seg.
+  -- En rad som har vært tatt ut for mange ganger, skal ikke tas ut igjen i det
+  -- uendelige. Men hva den blir til, avhenger av *hvorfor* — og det er hele
+  -- forskjellen mellom en teknisk feil og en menneskeoppgave:
+  --
+  --   verktøyet kjørte og fikk ikke brukbar tekst ut av filen, tre ganger
+  --     → filen er problemet, og en annen utgave av artikkelen kan hjelpe.
+  --       Den avvises med sin egen grunn, og innboksen ber om en ny fil.
+  --
+  --   uttakene ble brukt opp uten at verktøyet noen gang rakk å si fra
+  --     → driften er problemet, ikke filen. Raden blokkeres med filen i behold,
+  --       og fortsetter av seg selv når problemet er rettet. Å be om en ny PDF
+  --       her ville vært å skyve en teknisk oppgave over på et menneske
+  --       (issue #99).
   for v_intake in
     select i.*
     from workflow.full_text_intake i
@@ -1482,20 +1573,34 @@ begin
       and (i.lease_expires_at is null or i.lease_expires_at <= statement_timestamp())
     for update skip locked
   loop
-    update workflow.full_text_intake i
-    set state = 'rejected',
-        rejection = 'extraction_failed',
-        content = null,
-        lease_token = null,
-        lease_expires_at = null,
-        completed_at = now()
-    where i.id = v_intake.id;
+    if v_intake.tool_failures >= 3 then
+      update workflow.full_text_intake i
+      set state = 'rejected',
+          rejection = 'extraction_failed',
+          content = null,
+          lease_token = null,
+          lease_expires_at = null,
+          completed_at = now()
+      where i.id = v_intake.id;
 
-    perform workflow.record_technical_incident(
-      'full_text_intake',
-      'intake:' || v_intake.id::text,
-      format('Tekstuttrekket ga opp etter %s forsøk på innboksrad %s (kilde %s, fil %s).',
-             v_intake.attempts, v_intake.id, v_intake.source_id, v_intake.sha256));
+      perform workflow.record_technical_incident(
+        'full_text_intake',
+        'intake:' || v_intake.id::text,
+        format('Det registrerte tekstuttrekket kjørte %s ganger på innboksrad %s (kilde %s, fil %s) og fikk ingen brukbar tekst ut av filen. Filen er avvist, og innboksen ber om en annen utgave av artikkelen.',
+               v_intake.tool_failures, v_intake.id, v_intake.source_id, v_intake.sha256));
+    else
+      update workflow.full_text_intake i
+      set state = 'blocked',
+          lease_token = null,
+          lease_expires_at = null
+      where i.id = v_intake.id;
+
+      perform workflow.record_technical_incident(
+        'full_text_intake',
+        'intake:' || v_intake.id::text,
+        format('Innboksrad %s (kilde %s, fil %s) ble tatt ut %s ganger uten at tekstuttrekkeren rakk å melde noe om filen. Raden er blokkert med filen i behold; api.resume_blocked_full_text_extractions() setter den i gang igjen når driften svarer.',
+               v_intake.id, v_intake.source_id, v_intake.sha256, v_intake.attempts));
+    end if;
   end loop;
 
   select i.* into v_intake
@@ -1530,7 +1635,7 @@ end;
 $$;
 
 comment on function api.claim_full_text_extraction(integer) is
-  'Tar én opplastet fulltekst ut av innboksen med en leie, og svarer med originaldokumentet og den oppskriften uttrekket skal kjøres med. Kalles av Antideps egen tekniske arbeider, aldri av en brukerflate. Avviser først filer som har vært prøvd for mange ganger — en fil som ikke lar seg lese, skal ikke prøves i det uendelige — og registrerer det som et teknisk problem. Leien løper ut, slik at en arbeider som forsvinner ikke blokkerer innboksen. Krever editor-mandat: kallet gir ut originaldokumentet, og det skal bare forlate databasen til den som allerede kan laste det opp.';
+  'Tar én opplastet fulltekst ut av innboksen med en leie, og svarer med originaldokumentet og den oppskriften uttrekket skal kjøres med. Kalles av Antideps egen tekniske arbeider, aldri av en brukerflate. Rydder først i rader som har vært tatt ut for mange ganger, og skiller de to årsakene: en fil verktøyet faktisk har lest uten å få brukbar tekst ut av, avvises slik at innboksen kan be om en annen utgave; en rad der uttakene bare ble brukt opp, blokkeres med filen i behold og fortsetter av seg selv. Leien løper ut, slik at en arbeider som forsvinner ikke blokkerer innboksen. Krever editor-mandat: kallet gir ut originaldokumentet, og det skal bare forlate databasen til den som allerede kan laste det opp.';
 
 revoke execute on function api.claim_full_text_extraction(integer) from public;
 grant execute on function api.claim_full_text_extraction(integer) to authenticated;
@@ -1684,6 +1789,7 @@ as $$
 declare
   v_intake workflow.full_text_intake;
   v_description text;
+  v_next workflow.full_text_intake_state;
 begin
   perform knowledge.assert_editor_authorized();
 
@@ -1691,11 +1797,23 @@ begin
   -- aldri en feiltekst: en videreformidlet feilmelding kan bære et filnavn,
   -- en sti eller en del av dokumentet, og et spor skal ikke bli et sted slikt
   -- samler seg (samme regel som workflow.agent_runner_events.note).
+  --
+  -- De to stopppunktene fører til to forskjellige tilstander, og det er ikke en
+  -- detalj:
+  --
+  --   tool_missing  verktøyet fantes ikke. Da vet vi ingenting om filen, og
+  --                 neste forsøk er like umulig. Raden blokkeres med filen i
+  --                 behold og fortsetter av seg selv når driften er rettet.
+  --
+  --   tool_failed   verktøyet kjørte og fikk ingenting brukbart ut av nettopp
+  --                 denne filen. Det er en opplysning om filen, og den telles:
+  --                 etter tre slike ber innboksen om en annen utgave.
   v_description := case p_stage
     when 'tool_missing' then 'Tekstuttrekkeren fant ikke verktøyet den registrerte oppskriften krever.'
     when 'tool_failed' then 'Tekstuttrekkeren kjørte den registrerte oppskriften, og den ga ingen brukbar tekst av filen.'
     else null
   end;
+  v_next := case p_stage when 'tool_missing' then 'blocked' else 'received' end;
 
   if v_description is null then
     raise exception using
@@ -1717,10 +1835,12 @@ begin
       message = 'Uttrekksoppdraget gjelder ikke lenger.';
   end if;
 
-  -- Leien gis fra seg, og forsøket er allerede telt. Neste uttak prøver på
-  -- nytt; er forsøkene brukt opp, avvises filen der.
+  -- Leien gis fra seg. Filen blir liggende uansett: verken et manglende verktøy
+  -- eller en mislykket kjøring er et utfall, og en rad uten byte igjen kan
+  -- ikke tas opp igjen.
   update workflow.full_text_intake i
-  set state = 'received',
+  set state = v_next,
+      tool_failures = i.tool_failures + case when p_stage = 'tool_failed' then 1 else 0 end,
       lease_token = null,
       lease_expires_at = null
   where i.id = v_intake.id;
@@ -1728,18 +1848,72 @@ begin
   perform workflow.record_technical_incident(
     'full_text_intake',
     'intake:' || v_intake.id::text,
-    format('%s Innboksrad %s, kilde %s, fil %s, forsøk %s.',
-           v_description, v_intake.id, v_intake.source_id, v_intake.sha256, v_intake.attempts));
+    format('%s Innboksrad %s, kilde %s, fil %s, uttak %s, mislykkede kjøringer %s. Raden står nå som %s.',
+           v_description, v_intake.id, v_intake.source_id, v_intake.sha256, v_intake.attempts,
+           v_intake.tool_failures + case when p_stage = 'tool_failed' then 1 else 0 end,
+           v_next));
 
-  return jsonb_build_object('reference', v_intake.reference, 'state', 'received');
+  return jsonb_build_object('reference', v_intake.reference, 'state', v_next::text);
 end;
 $$;
 
 comment on function api.fail_full_text_extraction(uuid, text) is
-  'Melder at det registrerte tekstuttrekket ikke lot seg kjøre for ett innboksoppdrag. Gir leien fra seg slik at filen kan prøves igjen, og registrerer et teknisk problem med Antideps egen setning — valgt av et lukket vokabular, aldri en videreformidlet feiltekst. Dette er den ene veien der en fil i innboksen blir et teknisk problem; en fil som bare er feil artikkel eller ikke lar seg lese, er en produkttilstand og går gjennom api.complete_full_text_extraction(uuid, text, text).';
+  'Melder at det registrerte tekstuttrekket ikke lot seg kjøre for ett innboksoppdrag. Filen blir liggende i begge tilfeller, og de to stopppunktene fører til hver sin tilstand: tool_missing blokkerer raden, fordi et manglende verktøy ikke sier noe om filen og neste forsøk er like umulig; tool_failed setter raden tilbake i kø og teller opp én mislykket kjøring på nettopp denne filen. Registrerer et teknisk problem med Antideps egen setning — valgt av et lukket vokabular, aldri en videreformidlet feiltekst. Dette er den ene veien der en fil i innboksen blir et teknisk problem; en fil som bare er feil artikkel eller ikke lar seg lese, er en produkttilstand og går gjennom api.complete_full_text_extraction(uuid, text, text).';
 
 revoke execute on function api.fail_full_text_extraction(uuid, text) from public;
 grant execute on function api.fail_full_text_extraction(uuid, text) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Veien tilbake fra et driftsproblem
+--
+-- En blokkert rad er arbeid som står, ikke arbeid som er over. Den skal derfor
+-- ha en vei videre som ikke går gjennom et menneske: arbeideren kaller denne
+-- når den har kontrollert at verktøyet oppskriften krever, faktisk finnes — og
+-- alt som sto, går i kø igjen med filen den alltid har hatt.
+--
+-- Uttakstelleren nullstilles, fordi den talte uttak som aldri ble et forsøk.
+-- Tellingen av mislykkede kjøringer står, fordi den sier noe om filen, og den
+-- opplysningen er like sann etter at driften er rettet.
+-- ----------------------------------------------------------------------------
+create function api.resume_blocked_full_text_extractions()
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_intake workflow.full_text_intake;
+  v_resumed integer := 0;
+begin
+  perform knowledge.assert_editor_authorized();
+
+  for v_intake in
+    select i.*
+    from workflow.full_text_intake i
+    where i.state = 'blocked'
+    order by i.submitted_at
+    for update skip locked
+  loop
+    update workflow.full_text_intake i
+    set state = 'received',
+        attempts = 0
+    where i.id = v_intake.id;
+
+    perform workflow.resolve_technical_incident(
+      'full_text_intake', 'intake:' || v_intake.id::text);
+
+    v_resumed := v_resumed + 1;
+  end loop;
+
+  return jsonb_build_object('resumed', v_resumed);
+end;
+$$;
+
+comment on function api.resume_blocked_full_text_extractions() is
+  'Setter i gang igjen alle opplastede fulltekster som står blokkert på et driftsproblem, og lukker det tekniske problemet hver av dem bar. Kalles av Antideps egen tekniske arbeider når den har kontrollert at verktøyet den registrerte oppskriften krever, faktisk finnes — slik at et rettet driftsproblem fortsetter arbeidet av seg selv, uten at noen blir bedt om å laste opp filen på nytt (issue #99). Nullstiller uttakstelleren, som talte uttak som aldri ble et forsøk, og lar tellingen av mislykkede kjøringer stå, som sier noe om filen. Krever editor-mandat, som de andre kallene i uttrekksveien.';
+
+revoke execute on function api.resume_blocked_full_text_extractions() from public;
+grant execute on function api.resume_blocked_full_text_extractions() to authenticated;
 
 -- ============================================================================
 -- 6. Den åpne arbeidsoversikten
@@ -1822,7 +1996,14 @@ begin
     select
       workflow.work_board_reference(r.id) as reference,
       'full_text' as activity,
-      case when i.id is null then 'planned' else 'in_progress' end as status,
+      -- Tre utfall, og de betyr tre forskjellige ting for den som leser:
+      -- Antidep venter på artikkelen, Antidep arbeider med den, eller Antidep
+      -- står fast på noe teknisk. Bare det første er å vente på et menneske.
+      case
+        when i.id is null then 'planned'
+        when i.state = 'blocked' then 'failed'
+        else 'in_progress'
+      end as status,
       i.id is null as waiting_for_full_text,
       (select coalesce(array_agg(d.canonical_name order by d.canonical_name), array[]::text[])
        from catalog.drugs d where d.id = any (r.drug_ids)) as subjects,
@@ -1838,7 +2019,8 @@ begin
       limit 200
     ) r
     left join workflow.full_text_intake i
-      on i.full_text_request_id = r.id and i.state in ('received', 'processing')
+      on i.full_text_request_id = r.id
+     and i.state in ('received', 'processing', 'blocked')
 
     union all
 
@@ -1998,7 +2180,12 @@ create trigger agent_runner_events_track_technical_incident
 -- åpen skrivevei til problemoversikten ville vært en vei til å få lampen til å
 -- lyse. Den rå årsaken finnes i klientens egen observability uansett.
 -- ----------------------------------------------------------------------------
-create function api.report_technical_problem(p_area text, p_kind text)
+create function api.report_technical_problem(
+  p_area text,
+  p_kind text,
+  p_operation text default null,
+  p_code text default null
+)
   returns void
   language plpgsql
   security definer
@@ -2036,19 +2223,108 @@ begin
       hint = 'Tillatt er unavailable eller unreadable_answer. En manglende rettighet er ikke et teknisk problem og skal ikke meldes hit.';
   end if;
 
+  -- Operasjonen må være en funksjon som faktisk finnes i api. Kontrollen er
+  -- ikke en formalitet: den er grunnen til at feltet ikke er fritekst. En
+  -- verdi som må treffe et navn databasen selv har, kan ikke bære et filnavn,
+  -- en adresse eller en del av et svar.
+  if p_operation is not null and not exists (
+    select 1
+    from pg_catalog.pg_proc pr
+    join pg_catalog.pg_namespace ns on ns.oid = pr.pronamespace
+    where ns.nspname = 'api' and pr.proname = p_operation
+  ) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent operasjon.',
+      hint = 'Operasjonen skal være navnet på den api-funksjonen kallet gjaldt. Feltet er ikke fritekst: verdien kontrolleres mot funksjonene som finnes.';
+  end if;
+
+  -- Koden er en maskinidentifikator og ingenting annet: en SQLSTATE på fem
+  -- tegn, eller en PostgREST-kode. Mønsteret er stramt av samme grunn som
+  -- over — en kode som må se slik ut, kan ikke bære innhold.
+  if p_code is not null and p_code !~ '^([0-9A-Z]{5}|PGRST[0-9]{3})$' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent kodeform.',
+      hint = 'Tillatt er en SQLSTATE på fem tegn (0-9, A-Z) eller en PostgREST-kode på formen PGRST000.';
+  end if;
+
   perform workflow.record_technical_incident(
     v_area,
-    'client',
-    v_description || ' Den rå årsaken finnes bare i klientens egen observability; flaten sender den aldri hit.',
+    -- Signaturen bærer operasjonen, slik at to forskjellige kall som svikter,
+    -- blir to problemer og ikke ett. Den er også nøkkelen den samme flaten
+    -- lukker med når kallet går gjennom igjen.
+    'client:' || coalesce(p_operation, 'ukjent'),
+    format('%s Kallet var api.%s, og svaret bar koden %s. Ingen feiltekst følger med: bare maskinidentifikatorer, som ikke kan bære innhold.',
+           v_description,
+           coalesce(p_operation, '(ikke oppgitt)'),
+           coalesce(p_code, '(ingen — svaret kom ikke fram)')),
     true);
 end;
 $$;
 
-comment on function api.report_technical_problem(text, text) is
-  'Lar en innlogget brukerflate melde fra om at et område av Antidep ikke svarte. Begge argumentene er lukkede vokabularer, og Antidep skriver setningen selv: en fritekst herfra ville gjort den tekniske loggen til et sted en videreformidlet feilmelding kunne bære et filnavn, en adresse eller en del av et svar. Raden merkes self_reported, fordi den sier hva en klient SA og ikke hva databasen SÅ. En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
+comment on function api.report_technical_problem(text, text, text, text) is
+  'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom. Alle fire argumentene er maskinidentifikatorer og aldri tekst: området og svikttypen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, og koden må være en SQLSTATE eller en PostgREST-kode. Antidep skriver setningen selv. Til sammen gjør de tre siste at Claude Code og ChatGPT kan finne igjen nøyaktig hvilket kall som sviktet og med hvilken kode, varig og privat — uten at en videreformidlet feilmelding noen gang havner i databasen. Raden merkes self_reported, fordi den sier hva en klient SA og ikke hva databasen SÅ. En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
 
-revoke execute on function api.report_technical_problem(text, text) from public;
-grant execute on function api.report_technical_problem(text, text) to authenticated;
+revoke execute on function api.report_technical_problem(text, text, text, text) from public;
+grant execute on function api.report_technical_problem(text, text, text, text) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Og veien ut igjen
+--
+-- En selvmeldt rad har ingen autoritativ observasjon som kan lukke den. Uten
+-- denne ville ett enkelt nettverksglipp fått merket i navigasjonen til å lyse
+-- for alltid, og en lampe som alltid lyser, er en lampe ingen ser på.
+--
+-- Flaten lukker derfor sin egen melding i det samme kallet går gjennom igjen.
+-- Bare selvmeldte rader: en observasjon databasen selv gjorde, kan ingen klient
+-- melde vekk.
+-- ----------------------------------------------------------------------------
+create function api.clear_technical_problem(p_area text, p_operation text default null)
+  returns void
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_area workflow.technical_area;
+  v_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception using
+      errcode = 'insufficient_privilege',
+      message = 'Meldingen kan ikke tilskrives noen.';
+  end if;
+
+  begin
+    v_area := p_area::workflow.technical_area;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = 'Ukjent område.';
+  end;
+
+  update workflow.technical_incidents ti
+  set resolved_at = now()
+  where ti.area = v_area
+    and ti.signature = 'client:' || coalesce(p_operation, 'ukjent')
+    and ti.self_reported
+    and ti.resolved_at is null
+  returning ti.id into v_id;
+
+  if v_id is not null then
+    insert into workflow.technical_incident_events (technical_incident_id, transition)
+    values (v_id, 'resolved');
+  end if;
+end;
+$$;
+
+comment on function api.clear_technical_problem(text, text) is
+  'Lukker den meldingen en brukerflate selv har sendt om ett kall, når det samme kallet går gjennom igjen. Lukker bare selvmeldte rader: et problem databasen selv observerte, kan ingen klient melde vekk. Finnes fordi en selvmeldt rad ellers ikke har noen autoritativ observasjon som kan lukke den — ett nettverksglipp ville fått merket i navigasjonen til å lyse for alltid. Sletter ingenting: raden blir stående med hele historikken sin.';
+
+revoke execute on function api.clear_technical_problem(text, text) from public;
+grant execute on function api.clear_technical_problem(text, text) to authenticated;
 
 -- ----------------------------------------------------------------------------
 -- De to leseveiene
@@ -2105,7 +2381,13 @@ as $$
 declare
   v_count integer;
 begin
-  if auth.uid() is null or not workflow.has_app_role('admin') then
+  -- Nøyaktig den samme grensen som api.technical_problem_board() — aktøren må
+  -- finnes og ikke være trukket tilbake, og rollen må være gyldig nå. Det
+  -- eneste som skiller de to, er hva som skjer når grensen ikke holder: her
+  -- svares det stille, der avvises kallet. En svakere grense her ville betydd
+  -- at en tilbaketrukket aktør med en rolletildeling som ennå ikke var utløpt,
+  -- kunne lese tallet oversikten nekter dem.
+  if workflow.active_actor_id() is null or not workflow.has_app_role('admin') then
     return jsonb_build_object('visible', false, 'unresolved', 0);
   end if;
 
@@ -2118,7 +2400,7 @@ end;
 $$;
 
 comment on function api.technical_problem_summary() is
-  'Hvor mange uløste tekniske problemer som finnes, til merket i navigasjonen. Svarer stille «ikke synlig» til alle som ikke har admin-mandat framfor å avvise dem: et avslag her ville blitt til en feilmelding på hver eneste side for hver eneste innlogget bruker som ikke er admin. Ingenting lekker av det — tallet er det eneste som finnes her, og det er null for alle andre.';
+  'Hvor mange uløste tekniske problemer som finnes, til merket i navigasjonen. Krever nøyaktig det samme som api.technical_problem_board(): en registrert, ikke-tilbaketrukket aktør med gyldig admin-rolle akkurat nå. Forskjellen er bare hva som skjer når grensen ikke holder — her svares det stille «ikke synlig», framfor et avslag som ville blitt til en feilmelding på hver eneste side for hver eneste innlogget bruker som ikke er admin. Ingenting lekker av det: tallet er det eneste som finnes her, og det er null for alle andre.';
 
 revoke execute on function api.technical_problem_summary() from public;
 grant execute on function api.technical_problem_summary() to authenticated;

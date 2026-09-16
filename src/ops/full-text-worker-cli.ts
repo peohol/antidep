@@ -3,10 +3,12 @@
 //
 //   npm run ops:full-text
 //
-// Teknisk drift, ikke en produktflate. Kommandoen er ment å kjøres planlagt —
-// av Claude Code, av ChatGPT, eller av en tidsplan på en maskin som har
-// `pdftotext` installert. Ingen kliniker skal noen gang kjøre den, og ingenting
-// i den krever en faglig avgjørelse (issue #99).
+// Teknisk drift, ikke en produktflate. Kommandoen kjøres planlagt av
+// `.github/workflows/full-text-extraction.yml` hvert kvarter, på en maskin som
+// har `pdftotext` installert. Ingen kliniker skal noen gang kjøre den, ingen
+// trenger å starte den, og ingenting i den krever en faglig avgjørelse
+// (issue #99). Den kan også kjøres for hånd av Claude Code eller ChatGPT når
+// noe skal feilsøkes.
 //
 // ----------------------------------------------------------------------------
 // Legitimasjonen er redaktørens egen
@@ -41,6 +43,9 @@ const USAGE = `Bruk:
 Valg:
   --max <antall>     Hvor mange filer én kjøring tar (standard 10).
   --lease <sekunder> Hvor lenge oppdraget holdes (standard 600).
+  --diagnostics      Ta med den rå årsaken fra verktøyet i loggen. Av som
+                     standard: den planlagte kjøringen logger offentlig, og en
+                     rå feiltekst kan bære deler av dokumentet.
   --help             Vis denne teksten.
 
 Miljø:
@@ -53,6 +58,7 @@ Kommandoen er teknisk drift. Den hører til deployen og aldri til en brukerflate
 interface CliOptions {
   readonly maxTasks: number
   readonly leaseSeconds: number
+  readonly diagnostics: boolean
 }
 
 function positive(name: string, value: string): number {
@@ -66,11 +72,16 @@ function positive(name: string, value: string): number {
 export function parseWorkerArguments(argv: readonly string[]): CliOptions | 'help' {
   let maxTasks = 10
   let leaseSeconds = 600
+  let diagnostics = false
 
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]
     if (flag === '--help' || flag === '-h') {
       return 'help'
+    }
+    if (flag === '--diagnostics') {
+      diagnostics = true
+      continue
     }
     const value = argv[index + 1]
     if (value === undefined || value.startsWith('--')) {
@@ -89,7 +100,7 @@ export function parseWorkerArguments(argv: readonly string[]): CliOptions | 'hel
     }
   }
 
-  return { maxTasks, leaseSeconds }
+  return { maxTasks, leaseSeconds, diagnostics }
 }
 
 function required(name: string): string {
@@ -177,6 +188,13 @@ function intakeApi(client: Client): FullTextIntakeApi {
       }
       return data
     },
+    resume: async (): Promise<unknown> => {
+      const { data, error } = await client.rpc('resume_blocked_full_text_extractions', {})
+      if (error !== null) {
+        throw new Error(`Blokkert arbeid ble ikke satt i gang igjen: ${error.message}`)
+      }
+      return data
+    },
   }
 }
 
@@ -200,6 +218,7 @@ async function main(): Promise<number> {
       api: intakeApi(await editorClient()),
       maxTasks: options.maxTasks,
       leaseSeconds: options.leaseSeconds,
+      diagnostics: options.diagnostics,
       log: (line) => {
         console.log(line)
       },

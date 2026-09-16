@@ -62,6 +62,17 @@ describe('setningene innboksen viser', () => {
     expect(inboxStateSentence('processing')).toMatch(/trenger ikke gjøre noe mer/)
   })
 
+  // Et driftsproblem er ikke en oppgave for den som lastet opp filen. Setningen
+  // skal si det motsatte av «last opp», og den skal si at arbeidet fortsetter
+  // av seg selv.
+  it('ber ikke om noe når Antidep står fast på noe teknisk', () => {
+    const sentence = inboxStateSentence('blocked')
+    expect(sentence).toMatch(/teknisk problem/)
+    expect(sentence).toMatch(/fortsetter av seg selv/)
+    expect(sentence).toMatch(/trenger ikke gjøre noe/)
+    expect(sentence).not.toMatch(/[Ll]ast opp/)
+  })
+
   it('setter forfattere og år sammen slik en redaktør kjenner artikkelen igjen', () => {
     const [item] = parseFullTextInbox([row()])
     expect(describeArticle(item as never)).toBe('Fava m.fl. (2000)')

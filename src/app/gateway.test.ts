@@ -4,6 +4,7 @@ import {
   callRpc,
   classifyGatewayFailure,
   describeGatewayFailure,
+  forgetReportedProblems,
   GatewayFailure,
   setTechnicalSink,
   type TechnicalDetail,
@@ -34,6 +35,9 @@ function client(answers: Record<string, { data?: unknown; error?: unknown }>): {
 
 afterEach(() => {
   setTechnicalSink(null)
+  // Hva flaten har meldt fra om, lever i modulen fordi det skal overleve at en
+  // side byttes ut. Mellom to prøver skal det ikke overleve noe som helst.
+  forgetReportedProblems()
 })
 
 describe('klassifiseringen av en svikt', () => {
@@ -142,7 +146,11 @@ describe('kallet gjennom gatewayen', () => {
     }
   })
 
-  it('sender ingen tekst med selvmeldingen — bare to lukkede vokabularer', async () => {
+  // Selvmeldingen bærer fire maskinidentifikatorer og ingen tekst. Operasjonen
+  // og koden er det som gjør den rå årsaken varig gjenfinnbar for en teknisk
+  // agent — men ingen av dem kan bære et filnavn, en adresse eller en del av et
+  // svar, og feilteksten selv følger aldri med.
+  it('sender bare maskinidentifikatorer med selvmeldingen, aldri feilteksten', async () => {
     const { client: db, calls } = client({
       noe: { error: { code: 'PGRST301', message: 'hemmelig' } },
     })
@@ -150,7 +158,50 @@ describe('kallet gjennom gatewayen', () => {
       () => undefined,
     )
     const report = calls.find((call) => call.fn === 'report_technical_problem')
-    expect(report?.args).toEqual({ p_area: 'full_text_intake', p_kind: 'unavailable' })
+    expect(report?.args).toEqual({
+      p_area: 'full_text_intake',
+      p_kind: 'unavailable',
+      p_operation: 'noe',
+      p_code: 'PGRST301',
+    })
+    expect(JSON.stringify(report?.args)).not.toContain('hemmelig')
+  })
+
+  // En kode databasen ville avvist, er ikke verdt å presse gjennom: meldingen
+  // ville forsvunnet helt, og da hadde ingenting blitt registrert.
+  it('lar koden være når den ikke har en kodes form', async () => {
+    const { client: db, calls } = client({
+      noe: { error: { code: 'noe helt annet', message: 'x' } },
+    })
+    await callRpc(db, { fn: 'noe', area: 'work_queue', parse: () => undefined }).catch(
+      () => undefined,
+    )
+    const report = calls.find((call) => call.fn === 'report_technical_problem')
+    expect((report?.args as { p_code: unknown }).p_code).toBeNull()
+  })
+
+  // Uten dette ville ett nettverksglipp fått merket i navigasjonen til å lyse
+  // for alltid — en selvmeldt rad har ingen autoritativ observasjon som lukker
+  // den.
+  it('lukker sin egen melding når det samme kallet går gjennom igjen', async () => {
+    const svikter = client({ noe: { error: { code: 'PGRST301' } } })
+    await callRpc(svikter.client, { fn: 'noe', area: 'work_queue', parse: () => undefined }).catch(
+      () => undefined,
+    )
+    expect(svikter.calls.map((call) => call.fn)).toContain('report_technical_problem')
+
+    const virker = client({ noe: { data: [] } })
+    await callRpc(virker.client, { fn: 'noe', area: 'work_queue', parse: () => undefined })
+    const cleared = virker.calls.find((call) => call.fn === 'clear_technical_problem')
+    expect(cleared?.args).toEqual({ p_area: 'work_queue', p_operation: 'noe' })
+  })
+
+  // Og ikke ellers: et kall per vellykket lesing ville vært en dobling av
+  // trafikken for å rydde i noe som nesten alltid ikke er der.
+  it('lukker ingenting når det ikke var meldt fra om noe', async () => {
+    const { client: db, calls } = client({ noe: { data: [] } })
+    await callRpc(db, { fn: 'noe', area: 'work_queue', parse: () => undefined })
+    expect(calls.map((call) => call.fn)).not.toContain('clear_technical_problem')
   })
 
   // Et svar som ikke lar seg lese, er like alvorlig som et svar som ikke kom:

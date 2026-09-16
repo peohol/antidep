@@ -160,6 +160,7 @@ function intakeApi(caller: Client): FullTextIntakeApi {
       }),
     fail: (handle, stage) =>
       rpc(caller, 'fail_full_text_extraction', { p_handle: handle, p_stage: stage }),
+    resume: () => rpc(caller, 'resume_blocked_full_text_extractions', {}),
   }
 }
 
@@ -243,7 +244,11 @@ async function main(): Promise<void> {
   const report = await runFullTextWorker({ api: intakeApi(editor), maxTasks: 5 })
   check('én fil ble behandlet', report.claimed >= 1, JSON.stringify(report))
   check('og den ble registrert', report.registered >= 1, JSON.stringify(report))
-  check('uten at noe stoppet teknisk', report.failed === 0, JSON.stringify(report))
+  check(
+    'uten at noe stoppet teknisk',
+    report.retried === 0 && report.blocked === 0,
+    JSON.stringify(report),
+  )
 
   check(
     'kildeversjonen er registrert som fulltekst',

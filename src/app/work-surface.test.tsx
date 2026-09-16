@@ -344,6 +344,27 @@ describe('fulltekstinnboksen', () => {
     expect(screen.queryByText(/not_this_article/)).not.toBeInTheDocument()
   })
 
+  // Dette er den ene tilstanden som ikke må bli en oppgave. Står Antidep fast
+  // på et driftsproblem, skal innboksen si at ingenting skal gjøres — og
+  // særlig ikke be om filen en gang til.
+  it('ber ikke om en ny fil når det er driften som står, ikke filen', async () => {
+    render(
+      <MemoryRouter initialEntries={['/fulltekst']}>
+        <AppLayout
+          fullText={fullText({
+            listInbox: () =>
+              Promise.resolve(parseFullTextInbox([{ ...INBOX_WAITING, state: 'blocked' }])),
+          })}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText(/fortsetter av seg selv/)).toBeVisible()
+    expect(screen.getByText(/trenger ikke gjøre noe/)).toBeVisible()
+    expect(screen.queryByLabelText('Fulltekst som PDF')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Last opp fullteksten/)).not.toBeInTheDocument()
+  })
+
   it('sier fra på vanlig norsk når mandatet mangler', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     render(

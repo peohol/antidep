@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(79);
+select plan(99);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -59,9 +59,11 @@ select is_empty(
                  ('api.claim_full_text_extraction(integer)'),
                  ('api.complete_full_text_extraction(uuid,text,text)'),
                  ('api.fail_full_text_extraction(uuid,text)'),
+                 ('api.resume_blocked_full_text_extractions()'),
                  ('api.technical_problem_board()'),
                  ('api.technical_problem_summary()'),
-                 ('api.report_technical_problem(text,text)')) as f(name)
+                 ('api.report_technical_problem(text,text,text,text)'),
+                 ('api.clear_technical_problem(text,text)')) as f(name)
     where has_function_privilege('anon', f.name, 'EXECUTE')
        or has_function_privilege('public', f.name, 'EXECUTE')
        or has_function_privilege('service_role', f.name, 'EXECUTE')
@@ -88,7 +90,8 @@ select is_empty(
 insert into auth.users (id, email) values
   ('80000000-0000-4000-8000-00000000000b', 'redaktor-800@test.invalid'),
   ('80000000-0000-4000-8000-00000000000c', 'admin-800@test.invalid'),
-  ('80000000-0000-4000-8000-00000000000d', 'kliniker-800@test.invalid');
+  ('80000000-0000-4000-8000-00000000000d', 'kliniker-800@test.invalid'),
+  ('80000000-0000-4000-8000-00000000000e', 'tilbaketrukket-800@test.invalid');
 
 insert into provenance.actors
   (id, actor_type, actor_key, display_name, description, auth_user_id)
@@ -103,13 +106,28 @@ values
    'Kliniker 800', 'Aktør uten mandat, for 800.',
    '80000000-0000-4000-8000-00000000000d');
 
+-- En aktør som er trukket tilbake, men som fortsatt har en rolletildeling som
+-- ikke er utløpt. Nettopp denne kombinasjonen er grunnen til at merket og
+-- oversikten må ha den samme aktørgrensen: en svakere kontroll ett sted ville
+-- latt denne brukeren lese et tall den andre veien nekter dem.
+insert into provenance.actors
+  (id, actor_type, actor_key, display_name, description, auth_user_id,
+   retired_at, retirement_note)
+values
+  ('ac800000-0000-4000-8000-00000000000e', 'human', 'human:tilbaketrukket-800',
+   'Tilbaketrukket admin 800', 'Aktør med admin-rolle, men trukket tilbake.',
+   '80000000-0000-4000-8000-00000000000e', now() - interval '1 day',
+   'Trukket tilbake av prøven, for å kontrollere at grensene er de samme.');
+
 insert into workflow.user_roles
   (user_id, role_code, scope_id, valid_from, granted_by_actor_id, grant_reason)
 values
   ('80000000-0000-4000-8000-00000000000b', 'editor', null, now() - interval '1 year',
    'ac800000-0000-4000-8000-00000000000b', 'Gyldig editor-tildeling for 800.'),
   ('80000000-0000-4000-8000-00000000000c', 'admin', null, now() - interval '1 year',
-   'ac800000-0000-4000-8000-00000000000b', 'Gyldig admin-tildeling for 800.');
+   'ac800000-0000-4000-8000-00000000000b', 'Gyldig admin-tildeling for 800.'),
+  ('80000000-0000-4000-8000-00000000000e', 'admin', null, now() - interval '1 year',
+   'ac800000-0000-4000-8000-00000000000b', 'Admin-tildeling som ennå ikke er avsluttet.');
 
 insert into knowledge.sources (id, source_type, title, authors_or_issuer, publication_date,
                                publication_date_precision, created_by_actor_id)
@@ -593,7 +611,12 @@ select is(
 reset role;
 
 -- ===========================================================================
--- Del 8 — En teknisk svikt er noe annet, og admin ser den uten diagnosen
+-- Del 8 — En teknisk svikt er noe annet, og den blir aldri en menneskeoppgave
+--
+-- Dette er skillet hele leveransen står og faller på. En fil Antidep ikke får
+-- behandlet fordi verktøyet mangler på maskinen, er driften som står — ikke
+-- filen som er feil. Innboksen skal derfor *ikke* be om en ny PDF, filen skal
+-- bli liggende, og arbeidet skal fortsette av seg selv når problemet er rettet.
 -- ===========================================================================
 select set_config('request.jwt.claims',
                   '{"sub":"80000000-0000-4000-8000-00000000000b"}', true);
@@ -605,7 +628,54 @@ insert into result select 'submitted_c', api.submit_full_text(
 insert into result select 'claim_c', api.claim_full_text_extraction(600);
 insert into result select 'failed_c', api.fail_full_text_extraction(
   (select (payload ->> 'handle')::uuid from result where label = 'claim_c'), 'tool_missing');
+insert into result select 'inbox_c', jsonb_build_object('items', api.full_text_inbox());
+-- En blokkert rad skal ikke tas ut igjen: verktøyet mangler fortsatt, og et
+-- nytt uttak ville bare brukt opp forsøkene på det samme.
+insert into result select 'claim_blocked', api.claim_full_text_extraction(600);
 reset role;
+
+select is(
+  (select payload ->> 'state' from result where label = 'failed_c'),
+  'blocked',
+  'et manglende verktøy blokkerer arbeidet framfor å avvise filen'
+);
+select ok(
+  (select i.content is not null from workflow.full_text_intake i
+   where i.source_id = '80000000-0000-4000-8000-000000000002'
+     and i.state = 'blocked'),
+  'og filen blir liggende, slik at ingen må laste den opp på nytt'
+);
+select is(
+  (select payload -> 'items' -> 0 ->> 'state' from result where label = 'inbox_c'),
+  'blocked',
+  'innboksen sier at Antidep står fast, og ber ikke om noe'
+);
+select is(
+  (select (payload ->> 'available')::boolean from result where label = 'claim_blocked'),
+  false,
+  'og en blokkert fil tas ikke ut på nytt så lenge problemet står'
+);
+
+-- Og slik ser det ut for den uinnloggede: arbeidet har stoppet, og det som står
+-- i veien er ikke at artikkelen mangler.
+set local role anon;
+insert into result select 'board_blocked', jsonb_build_object('items', api.public_work_board());
+reset role;
+
+select is(
+  (select item ->> 'status'
+   from result, lateral jsonb_array_elements(payload -> 'items') as item
+   where label = 'board_blocked' and item ->> 'activity' = 'full_text'),
+  'failed',
+  'den åpne oversikten sier at arbeidet har stoppet'
+);
+select is(
+  (select (item ->> 'waiting_for_full_text')::boolean
+   from result, lateral jsonb_array_elements(payload -> 'items') as item
+   where label = 'board_blocked' and item ->> 'activity' = 'full_text'),
+  false,
+  'og at det ikke er artikkelen det står på'
+);
 
 select set_config('request.jwt.claims',
                   '{"sub":"80000000-0000-4000-8000-00000000000c"}', true);
@@ -648,11 +718,12 @@ select ok(
   'men den er bevart i databasen, der Claude Code og ChatGPT kan lese den'
 );
 
--- Problemet lukkes av at det samme arbeidet går gjennom, og ikke av at noen
--- klikker det bort.
+-- Problemet lukkes av at driften kommer tilbake, og ikke av at noen klikker det
+-- bort — og aller minst av at noen laster opp filen på nytt.
 select set_config('request.jwt.claims',
                   '{"sub":"80000000-0000-4000-8000-00000000000b"}', true);
 set local role authenticated;
+insert into result select 'resumed', api.resume_blocked_full_text_extractions();
 insert into result select 'claim_d', api.claim_full_text_extraction(600);
 insert into result select 'rejected_d', api.complete_full_text_extraction(
   (select (payload ->> 'handle')::uuid from result where label = 'claim_d'),
@@ -660,13 +731,24 @@ insert into result select 'rejected_d', api.complete_full_text_extraction(
   '24.02.0');
 reset role;
 
+select is(
+  (select (payload ->> 'resumed')::int from result where label = 'resumed'),
+  1,
+  'arbeidet settes i gang igjen av seg selv når verktøyet er på plass'
+);
+select is(
+  (select (payload ->> 'available')::boolean from result where label = 'claim_d'),
+  true,
+  'og den samme filen tas ut igjen — ingen ble bedt om å laste den opp på nytt'
+);
+
 select set_config('request.jwt.claims',
                   '{"sub":"80000000-0000-4000-8000-00000000000c"}', true);
 set local role authenticated;
 select is(
   (api.technical_problem_summary() ->> 'unresolved')::int,
   0,
-  'og det lukkes når uttrekket kommer gjennom'
+  'og det tekniske problemet er lukket'
 );
 reset role;
 
@@ -674,6 +756,17 @@ select is(
   (select count(*)::int from workflow.technical_incident_events),
   2,
   'begge overgangene er bevart som append-only spor'
+);
+select ok(
+  (select e.diagnosis from workflow.technical_incident_events e
+   where e.transition = 'opened') like '%fant ikke verktøyet%',
+  'og hver observasjon bærer sin egen diagnose, slik at rekken kan leses senere'
+);
+select is(
+  (select e.diagnosis from workflow.technical_incident_events e
+   where e.transition = 'resolved'),
+  null,
+  'mens en lukking ikke er en observasjon av noe galt, og bærer ingen'
 );
 
 -- ===========================================================================
@@ -695,7 +788,26 @@ select throws_ok(
   '22023', 'Ukjent svikttype.',
   'en manglende rettighet er ikke et teknisk problem og kan ikke meldes som det'
 );
-do $$ begin perform api.report_technical_problem('work_queue', 'unavailable'); end $$;
+
+-- De to nye feltene er maskinidentifikatorer, og de kontrolleres mot noe
+-- databasen selv vet. Det er nettopp kontrollen som gjør at de ikke er
+-- fritekst: en verdi som må treffe et funksjonsnavn eller en kodeform, kan
+-- ikke bære et filnavn, en adresse eller en del av et svar.
+select throws_ok(
+  $$select api.report_technical_problem('work_queue', 'unavailable', 'en feilmelding på avveie')$$,
+  '22023', 'Ukjent operasjon.',
+  'operasjonen må være en api-funksjon som faktisk finnes'
+);
+select throws_ok(
+  $$select api.report_technical_problem('work_queue', 'unavailable', 'public_work_board',
+                                        'JWT expired')$$,
+  '22023', 'Ukjent kodeform.',
+  'og koden må ha en kodes form, ikke en setnings'
+);
+
+do $$ begin
+  perform api.report_technical_problem('work_queue', 'unavailable', 'public_work_board', 'PGRST301');
+end $$;
 reset role;
 
 select is(
@@ -703,10 +815,46 @@ select is(
   true,
   'en selvmelding merkes som nettopp det: hva klienten SA, ikke hva databasen SÅ'
 );
+
+-- Dette er hele poenget med de to feltene: den rå årsaken er varig gjenfinnbar
+-- for Claude Code og ChatGPT — hvilket kall som sviktet, og med hvilken kode —
+-- uten at en videreformidlet feiltekst noen gang havner i databasen.
 select ok(
   (select ti.diagnosis from workflow.technical_incidents ti where ti.area = 'work_queue')
-    like '%observability%',
-  'og Antidep skriver setningen selv, uten en videreformidlet feiltekst'
+    like '%api.public_work_board%',
+  'diagnosen sier hvilket kall som sviktet'
+);
+select ok(
+  (select ti.diagnosis from workflow.technical_incidents ti where ti.area = 'work_queue')
+    like '%PGRST301%',
+  'og hvilken kode svaret bar'
+);
+select ok(
+  (select ti.diagnosis from workflow.technical_incidents ti where ti.area = 'work_queue')
+    not like '%JWT%',
+  'men aldri feilteksten selv'
+);
+select is(
+  (select ti.signature from workflow.technical_incidents ti where ti.area = 'work_queue'),
+  'client:public_work_board',
+  'og to forskjellige kall som svikter, blir to problemer framfor ett'
+);
+
+-- En selvmeldt rad har ingen autoritativ observasjon som kan lukke den. Uten en
+-- vei ut ville ett nettverksglipp fått merket til å lyse for alltid.
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
+set local role authenticated;
+do $$ begin
+  perform api.clear_technical_problem('work_queue', 'public_work_board');
+end $$;
+reset role;
+
+select is(
+  (select count(*)::int from workflow.technical_incidents ti
+   where ti.area = 'work_queue' and ti.resolved_at is null),
+  0,
+  'flaten lukker sin egen melding når det samme kallet går gjennom igjen'
 );
 
 -- ===========================================================================
@@ -895,6 +1043,24 @@ select ok(
   'og den rå diagnosen peker teknikeren dit begrunnelsen faktisk ligger, uten å gjenta den'
 );
 
+-- Og den kan ingen klient melde vekk. En flate lukker bare sin egen melding;
+-- et problem databasen selv observerte, står til det faktisk er over.
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
+set local role authenticated;
+do $$ begin
+  perform api.clear_technical_problem('automatic_task', 'claim_pipeline_job');
+  perform api.clear_technical_problem('automatic_task');
+end $$;
+reset role;
+
+select is(
+  (select count(*)::int from workflow.technical_incidents ti
+   where ti.area = 'automatic_task' and ti.resolved_at is null),
+  1,
+  'en observasjon databasen selv gjorde, kan ingen klient melde vekk'
+);
+
 -- ===========================================================================
 -- Del 12 — Et teknisk kjørerkall, og det som lukker det
 -- ===========================================================================
@@ -929,6 +1095,34 @@ select is(
   0,
   'og neste kall som går gjennom, lukker det'
 );
+
+-- ===========================================================================
+-- Del 13 — Merket har nøyaktig den samme aktørgrensen som oversikten
+--
+-- En aktør som er trukket tilbake, men som fortsatt har en rolletildeling som
+-- ikke er utløpt, er den ene kombinasjonen der en svakere kontroll ville blitt
+-- synlig: oversikten avviser dem, og da skal tellingen heller ikke svare med
+-- noe annet enn null.
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+select throws_ok(
+  $$select api.technical_problem_board()$$,
+  '42501', 'Aktøren er trukket tilbake.',
+  'en tilbaketrukket aktør kommer ikke til den tekniske oversikten'
+);
+select is(
+  (api.technical_problem_summary() ->> 'visible')::boolean,
+  false,
+  'og merket er ikke synlig for dem heller, selv om rolletildelingen står'
+);
+select is(
+  (api.technical_problem_summary() ->> 'unresolved')::int,
+  0,
+  'tallet er null, så ingenting lekker den veien'
+);
+reset role;
 
 select * from finish();
 rollback;

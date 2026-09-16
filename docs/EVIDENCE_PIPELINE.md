@@ -63,7 +63,9 @@ De uavhengige kontrolleddene kjøres fortsatt av kommandoer. Et registrert agent
 
 Å *be om* en artikkel Antidep mangler, gjøres fortsatt av `api.request_full_text(...)` uten en flate foran. Avgrensningen den bærer — hvilke virkestoff, hvilke endepunkt, hvilken populasjon et funn kan gjelde — er en faglig avgjørelse og hører hjemme i UI; den har bare ikke fått en skjerm ennå.
 
-Tekstuttrekket kjøres av `npm run ops:full-text`, fordi den registrerte oppskriften må kjøres der `pdftotext` finnes og en nettleser ikke kan kjøre den. Det er et driftssteg og ingen menneskeoppgave: for den som lastet opp PDF-en, er det usynlig, og oppgaven står som «pågår» til den er registrert.
+Tekstuttrekket kjøres planlagt av `.github/workflows/full-text-extraction.yml` hvert kvarter, fordi den registrerte oppskriften må kjøres der `pdftotext` finnes og en nettleser ikke kan kjøre den. Ingen starter det for hånd; `npm run ops:full-text` er den samme kjøringen, tilgjengelig for feilsøking. For den som lastet opp PDF-en, er hele leddet usynlig, og oppgaven står som «pågår» til den er registrert.
+
+Får Antidep ikke kjørt oppskriften — verktøyet mangler, maskinen svarer ikke — er det driften som står, ikke filen som er feil. Innboksraden blir stående som `blocked` med filen i behold, den åpne oversikten sier at arbeidet har stoppet, og `api.resume_blocked_full_text_extractions()` setter alt i gang igjen i det neste kjøring finner verktøyet. Ingen blir bedt om å laste opp filen på nytt. Først når oppskriften faktisk har kjørt på filen tre ganger uten å gi brukbar tekst, er det en opplysning om filen, og da — og bare da — ber innboksen om en annen utgave av artikkelen.
 
 Autonomien har i tillegg én grense som ikke ligger i Antidep: om ChatGPT-workspacet tillater at appens skrivehandlinger utføres uten en godkjenning per kjøring. Antideps side er prøvd ende-til-ende i CI; den siste innstillingen avgjøres i ChatGPT og verifiseres med én planlagt kjøring etter oppsettet (`docs/CHATGPT_WORKSPACE_AGENT.md`).
 
