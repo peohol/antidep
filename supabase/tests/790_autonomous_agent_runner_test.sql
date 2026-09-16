@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(80);
+select plan(84);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -1120,6 +1120,74 @@ set local role anon;
 select lives_ok(
   $$ select api.register_agent_runner_client('Etter vinduet', array['https://fyll.example/cb']) $$,
   'en flom av registreringer går over av seg selv, framfor å stenge veien for alltid'
+);
+reset role;
+
+-- ===========================================================================
+-- Del 10 — Rotasjonen gjelder ett token-par, ikke tilkoblingen
+--
+-- En tilkobling kan ha flere levende par: en ny tilkoblingskode gir en ny
+-- autorisasjon. En fornyelse som trakk tilbake alle access-tokenene på
+-- tilkoblingen, ville latt to lovlige kjøringer slå hverandre ut annenhver
+-- gang — uten at noe var galt, og uten at noe i sporet forklarte hvorfor.
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+insert into res
+select 'pairing3', api.issue_agent_runner_pairing_code('agent-runner:evidence-extraction');
+reset role;
+
+set local role anon;
+insert into res
+select 'grant3', api.authorize_agent_runner(
+  (select payload ->> 'pairing_code' from res where label = 'pairing3'),
+  (select payload ->> 'client_id' from res where label = 'client'),
+  'https://chatgpt.example/callback',
+  (select payload ->> 'challenge' from res where label = 'pkce'),
+  'S256');
+insert into res
+select 'tokens3', api.exchange_agent_runner_code(
+  (select payload ->> 'authorization_code' from res where label = 'grant3'),
+  (select payload ->> 'verifier' from res where label = 'pkce'),
+  (select payload ->> 'client_id' from res where label = 'client'),
+  'https://chatgpt.example/callback');
+
+select is(
+  (select api.agent_runner_identity(
+     (select payload ->> 'access_token' from res where label = 'tokens3')) ->> 'agent_role'),
+  'evidence_extraction',
+  'den samme tilkoblingen kan ha to levende autorisasjoner'
+);
+
+-- Det eldste paret fornyes. Det er det yngste som ikke skal merke det.
+insert into res
+select 'fornyet', api.refresh_agent_runner_token(
+  (select payload ->> 'refresh_token' from res where label = 'tokens2'),
+  (select payload ->> 'client_id' from res where label = 'client'));
+
+-- `lives_ok` og ikke `is`: slår regelen feil, er utfallet en avvisning, og en
+-- avvisning midt i en `is` ville avbrutt hele filen framfor å melde nøyaktig
+-- hvilken regel som sviktet.
+select lives_ok(
+  format($$ select api.agent_runner_identity(%L) $$,
+         (select payload ->> 'access_token' from res where label = 'tokens3')),
+  'en fornyelse av det ene paret rører ikke det andre'
+);
+select is(
+  (select api.agent_runner_identity(
+     (select payload ->> 'access_token' from res where label = 'fornyet')) ->> 'agent_role'),
+  'evidence_extraction',
+  'og det fornyede paret har fått et nytt, gyldig access-token'
+);
+-- Men rotasjonen skal koste det paret som faktisk ble rotert: et lekket
+-- access-token skal ikke overleve at refresh-tokenet sitt ble brukt opp.
+select throws_ok(
+  format($$ select api.agent_runner_identity(%L) $$,
+         (select payload ->> 'access_token' from res where label = 'tokens2')),
+  '42501',
+  null,
+  'mens det rotertes eget gamle access-token er trukket tilbake'
 );
 reset role;
 

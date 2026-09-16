@@ -2202,10 +2202,19 @@ begin
   set consumed_at = statement_timestamp()
   where id = v_secret.id;
 
+  -- Rotasjonen gjelder ETT token-par, ikke hele tilkoblingen.
+  --
+  -- Access-tokenet og refresh-tokenet ble utstedt i det samme kallet og deler
+  -- derfor opphav; søsknet finnes på `parent_id`. Den samme tilkoblingen kan ha
+  -- flere levende par — en ny tilkoblingskode gir en ny autorisasjon — og en
+  -- fornyelse som trakk tilbake alle, ville latt to lovlige kjøringer slå
+  -- hverandre ut annenhver gang, uten at noe var galt. Én rotasjon skal koste
+  -- nøyaktig det paret som ble rotert.
   update workflow.agent_runner_secrets
   set revoked_at = statement_timestamp()
   where connection_id = v_connection.id
     and kind = 'access_token'
+    and parent_id = v_secret.parent_id
     and revoked_at is null
     and expires_at > statement_timestamp();
 
@@ -2215,7 +2224,7 @@ end;
 $$;
 
 comment on function api.refresh_agent_runner_token(text, text) is
-  'Fornyer et token-par mot et refresh-token, med rotasjon: det brukte refresh-tokenet er brukt opp, og det forrige access-tokenet trekkes tilbake i samme kall (ANTIDEP_CONSTITUTION.md regel 7). Uten rotasjonen ville et lekket refresh-token vært en varig tilgang ingen kunne se at fantes. En tilkobling som er trukket tilbake, kan ikke fornyes — tilbaketrekkingen virker da med det samme framfor når tokenet tilfeldigvis løper ut.';
+  'Fornyer et token-par mot et refresh-token, med rotasjon: det brukte refresh-tokenet er brukt opp, og access-tokenet som ble utstedt sammen med det, trekkes tilbake i samme kall (ANTIDEP_CONSTITUTION.md regel 7). Uten rotasjonen ville et lekket refresh-token vært en varig tilgang ingen kunne se at fantes. Rotasjonen gjelder nøyaktig det ene paret, funnet på felles parent_id: en tilkobling kan ha flere levende par, og en fornyelse som trakk tilbake alle, ville latt to lovlige kjøringer slå hverandre ut annenhver gang. En tilkobling som er trukket tilbake, kan ikke fornyes — tilbaketrekkingen virker da med det samme framfor når tokenet tilfeldigvis løper ut.';
 
 revoke execute on function api.refresh_agent_runner_token(text, text) from public;
 grant execute on function api.refresh_agent_runner_token(text, text) to anon, authenticated;
