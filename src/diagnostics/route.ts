@@ -18,19 +18,34 @@
 // videresender den brukerens egen token, og databasen avgjør alt.
 //
 // ----------------------------------------------------------------------------
+// Kontrollen av avsenderen er kallet til databasen
+//
+// Ruten har ingen egen mening om hvem som ringer, og trenger ingen.
+// `api.record_client_diagnostic(...)` krever `auth.uid()` selv, så et kall som
+// kommer gjennom, er avsenderen bekreftet av den som faktisk avgjør — uten en
+// eneste ekstra rundtur, og uten at ruten må gjenta en regel som allerede står
+// ett sted. En oppdiktet token får 42501: et endelig svar, ikke en tjeneste som
+// ikke rakk å svare.
+//
+// Derfor går kallet til Data API-et først, og ingenting skrives ned før det har
+// svart. En autentiseringstjeneste spørres bare i den ene grenen der Data API-et
+// ikke svarte i det hele tatt — og den grenen kan ingen utenforstående utløse,
+// for den krever at Data API-et faktisk er nede.
+//
+// ----------------------------------------------------------------------------
 // De tre lagringene, i den rekkefølgen de svikter
 //
-//   1. Kjøreloggen. Én linje i utrullingens egen private logg, skrevet først
-//      og alltid. Går ikke gjennom Supabase i det hele tatt. Blir prosessen
-//      revet ned i kallet videre, er linjen allerede der.
-//
-//   2. Raden over Data API-et. Den varige, søkbare kopien, tilskrevet den
+//   1. Raden over Data API-et. Den varige, søkbare kopien, tilskrevet den
 //      innloggede brukeren fordi databasen selv kontrollerte tokenen.
 //
+//   2. Kjøreloggen. Én linje i utrullingens egen private logg, skrevet i det
+//      avsenderen er bekreftet. Går ikke gjennom Supabase i det hele tatt, og
+//      er derfor den ene som står igjen når begge radene svikter.
+//
 //   3. Raden gjennom Antideps egen databaseforbindelse (`store.ts`). Reserven
-//      for at ledd 2 kan være nede — og den er nede nettopp når årsaken er
+//      for at ledd 1 kan være nede — og det er nede nettopp når årsaken er
 //      verdt mest. Den går ikke gjennom PostgREST, og den er varig på samme
-//      måte som ledd 2: en rad i den samme private tabellen.
+//      måte som ledd 1: en rad i den samme private tabellen.
 //
 // Først når alle tre har sviktet, svarer ruten 503 og ber nettleseren beholde
 // observasjonen i utboksen sin.
