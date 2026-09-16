@@ -361,7 +361,15 @@ export interface AgentRunnerPairingCode {
 /** Hva en tilbaketrekking faktisk gjorde. */
 export interface AgentRunnerRevocation {
   readonly connectionKey: string
-  readonly role: string
+  /**
+   * Om nettopp dette kallet var det som trakk kjøreren tilbake.
+   *
+   * `false` betyr at det ikke fantes noen gjeldende tilkobling å trekke — som
+   * regel fordi en annen fane eller redaktør kom først. Det er en tilstand og
+   * ikke en feil: kjøreren er trukket tilbake, som var det man ville.
+   */
+  readonly revoked: boolean
+  readonly role: string | null
   readonly revokedSecrets: number
   /** Uttak kjøreren holdt, og som ble ledige igjen i den samme transaksjonen. */
   readonly releasedTasks: number
@@ -517,8 +525,21 @@ export function parseAgentRunnerPairingCode(value: unknown): AgentRunnerPairingC
  */
 export function parseAgentRunnerRevocation(value: unknown): AgentRunnerRevocation {
   const fields = fieldsOf(value, 'Tilbaketrekkingen', 'svaret')
+  // Fantes det ingen gjeldende tilkobling å trekke, bærer svaret bare nøkkelen.
+  // Å kreve de tre andre feltene her ville gjort «noen andre rakk det først» om
+  // til «tilbaketrekkingen mislyktes» — motsatt av det som er sant.
+  if (!asFlag(fields, 'revoked')) {
+    return {
+      connectionKey: asText(fields, 'connection_key'),
+      revoked: false,
+      role: null,
+      revokedSecrets: 0,
+      releasedTasks: 0,
+    }
+  }
   return {
     connectionKey: asText(fields, 'connection_key'),
+    revoked: true,
     role: asText(fields, 'agent_role'),
     revokedSecrets: asCount(fields, 'revoked_secrets'),
     releasedTasks: asCount(fields, 'released_tasks'),

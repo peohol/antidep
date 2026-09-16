@@ -216,8 +216,13 @@ Dette er det eneste steget som avgjør om autonomien virker i ditt workspace.
 
 1. Legg inn én agentoppgave i Antidep.
 2. La den planlagte kjøringen gå — eller start den manuelt fra agentens skjerm.
-3. Gå til `/agentarbeid`. Kjøreren skal stå som **Tilkoblet nå**, og telleren
-   over leverte svar skal ha økt.
+3. Gå til `/agentarbeid`. Kjøreren skal stå som **Tilkoblet**, og telleren over
+   leverte svar skal ha økt.
+
+«Tilkoblet» betyr at tilkoblingen står ved lag og kan hente seg et nytt token
+ved neste kjøring — ikke at en kjøring pågår akkurat nå. Et access-token lever
+i én time, så en kjører som går én gang i døgnet, ville ellers stått som
+frakoblet mesteparten av tiden.
 
 Måtte du godkjenne noe underveis, er ikke skrivehandlingen auto-godkjent ennå.
 Gå tilbake til steg 6.

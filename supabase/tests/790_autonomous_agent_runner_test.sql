@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(101);
+select plan(106);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -1440,6 +1440,85 @@ select throws_ok(
   null,
   'sporet etter en kjøring skrives ikke om'
 );
+
+-- ===========================================================================
+-- Del 11 — Sporet kan ikke fylles med hendelser som ikke fant sted
+--
+-- `api.record_agent_runner_outcome` finnes fordi en avvisning fra den
+-- autoritative kontrollen ruller transaksjonen tilbake, sporet inkludert. Den
+-- er gitt til anon som resten av kjørerveiene, og en tokeninnehaver kan derfor
+-- kalle den direkte. Da må den ikke kunne brukes til å skrive at noe LYKTES:
+-- et kall som lyktes, rullet ikke tilbake, og skrev sin egen rad.
+-- ===========================================================================
+set local role anon;
+
+select throws_ok(
+  format($$ select api.record_agent_runner_outcome(%L, 'https://antidep.example/mcp',
+                                                   'submit_agent_answer', 'ok') $$,
+         (select payload ->> 'access_token' from res where label = 'fornyet')),
+  '22023',
+  null,
+  'en tokeninnehaver kan ikke melde inn at et verktøykall lyktes'
+);
+
+select throws_ok(
+  format($$ select api.record_agent_runner_outcome(%L, 'https://antidep.example/mcp',
+                                                   'revoke_agent_runner', 'server_error') $$,
+         (select payload ->> 'access_token' from res where label = 'fornyet')),
+  '22023',
+  null,
+  'og ikke skrive en rad under navnet på noe bare Antidep selv skriver'
+);
+
+-- Men utfallet av et kall som gikk galt, skal den fortsatt kunne melde inn:
+-- det er hele grunnen til at veien finnes.
+select lives_ok(
+  format($$ select api.record_agent_runner_outcome(%L, 'https://antidep.example/mcp',
+                                                   'submit_agent_answer', 'rejected') $$,
+         (select payload ->> 'access_token' from res where label = 'fornyet')),
+  'et kall som gikk galt, kan fortsatt melde inn utfallet sitt'
+);
+
+reset role;
+
+-- ===========================================================================
+-- Del 12 — Tilkoblingen står ved lag mellom kjøringene
+--
+-- Et access-token lever i én time. En planlagt kjøring som går én gang i
+-- døgnet, har derfor ikke noe levende access-token mesteparten av tiden, og en
+-- flate som leste nettopp det, ville sagt «ikke tilkoblet» om en tilkobling som
+-- virker helt som den skal.
+-- ===========================================================================
+update workflow.agent_runner_secrets
+set revoked_at = statement_timestamp()
+where kind = 'access_token' and revoked_at is null;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"79000000-0000-4000-8000-00000000000e"}', true);
+set local role authenticated;
+select is(
+  (select (r ->> 'connected')::boolean
+   from jsonb_array_elements(api.agent_runner_connections()) r
+   where r ->> 'connection_key' = 'agent-runner:evidence-extraction'),
+  true,
+  'uten et eneste levende access-token står tilkoblingen fortsatt ved lag'
+);
+reset role;
+
+-- Men fornyelsesretten er grensen: uten den er den faktisk borte.
+update workflow.agent_runner_secrets
+set revoked_at = statement_timestamp()
+where kind = 'refresh_token' and revoked_at is null;
+
+set local role authenticated;
+select is(
+  (select (r ->> 'connected')::boolean
+   from jsonb_array_elements(api.agent_runner_connections()) r
+   where r ->> 'connection_key' = 'agent-runner:evidence-extraction'),
+  false,
+  'og uten fornyelsesrett er den ikke tilkoblet lenger'
+);
+reset role;
 
 select * from finish();
 rollback;

@@ -666,6 +666,11 @@ function AutonomousRunners({
       // Hvor mye arbeid som ble ledig igjen, er det den som eier innholdet
       // faktisk trenger å vite: kjøreren kommer ikke tilbake for å levere det,
       // og oppgavene skal kunne gjøres av den som overtar leddet.
+      // «Noen andre rakk det først» er ikke en feil, og skal ikke se ut som en:
+      // kjøreren er trukket tilbake, som var det man ville.
+      if (!revocation.revoked) {
+        return 'Kjøreren var allerede trukket tilbake.'
+      }
       return revocation.releasedTasks === 0
         ? 'Kjøreren er trukket tilbake, og tokenene sluttet å gjelde med det samme.'
         : `Kjøreren er trukket tilbake, og tokenene sluttet å gjelde med det samme. ${describeReleased(revocation.releasedTasks)} ble ledig igjen.`
@@ -707,7 +712,7 @@ function AutonomousRunners({
                 {HANDOFF_CONTRACTS[runner.role as keyof typeof HANDOFF_CONTRACTS]?.label ??
                   runner.role}
                 . Agent: {runner.platformAgentReference}.{' '}
-                {runner.connected ? 'Tilkoblet nå.' : 'Ikke tilkoblet.'}{' '}
+                {runner.connected ? 'Tilkoblet.' : 'Ikke tilkoblet.'}{' '}
                 {runner.deliveredAnswers === 0
                   ? 'Har ikke levert noe svar ennå.'
                   : runner.deliveredAnswers === 1

@@ -25,6 +25,7 @@ import { describe, expect, it } from 'vitest'
 import { AgentWorkPage } from './AgentWorkPage'
 import type { AgentWorkGateway } from './agent-work-gateway'
 import {
+  parseAgentRunnerRevocation,
   parseAgentTask,
   parseAgentWorkQueue,
   parseImportOutcome,
@@ -683,6 +684,7 @@ describe('autonom kjører', () => {
         recorded.revoked.push(connectionKey)
         return Promise.resolve({
           connectionKey,
+          revoked: true,
           role: 'evidence_extraction',
           revokedSecrets: 2,
           releasedTasks,
@@ -787,6 +789,29 @@ describe('autonom kjører', () => {
     // Holdt kjøreren ikke noe arbeid, skal flaten heller ikke si at noe ble
     // ledig: en setning om null oppgaver er en setning som skaper tvil.
     expect(screen.queryByText(/ble ledig igjen/)).not.toBeInTheDocument()
+  })
+
+  // Kom en annen fane eller redaktør først, er kjøreren allerede trukket
+  // tilbake — og det er utfallet man ville ha. Flaten skal si nettopp det,
+  // framfor å melde at tilbaketrekkingen mislyktes.
+  it('sier at kjøreren allerede var trukket tilbake, framfor at noe gikk galt', async () => {
+    const { gateway } = runnerGateway()
+    render(
+      <AgentWorkPage
+        gateway={{
+          ...gateway,
+          revokeRunner: (connectionKey) =>
+            Promise.resolve(
+              parseAgentRunnerRevocation({ revoked: false, connection_key: connectionKey }),
+            ),
+        }}
+        saveFile={() => {}}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Trekk tilbake' }))
+    expect(await screen.findByText('Kjøreren var allerede trukket tilbake.')).toBeInTheDocument()
+    expect(screen.queryByText(/sluttet å gjelde med det samme/)).not.toBeInTheDocument()
   })
 
   // Arbeidet kjøreren holdt, er det den som eier innholdet faktisk må vite noe

@@ -1272,4 +1272,23 @@ proev 'en samtidig klientregistrering må vente på den som teller først (55P03
   "select api.register_agent_runner_client('Samtidig B', array['https://samtidig.example/cb']);" \
   'Uten låsen er taket per time en grense som ikke holder nettopp i det tilfellet den finnes for: en flom av samtidige registreringer (migrasjon 011a).'
 
+# Prøve 20 — én engangskode om gangen, per tilkobling
+#
+# Utstedelsen leser tilkoblingen, trekker tilbake koden den ser, og setter inn
+# sin egen. Uten en lås på tilkoblingsraden kunne to faner gjort alle tre
+# trinnene samtidig: begge ville trukket tilbake den koden de så, og begge ville
+# satt inn sin egen — og da finnes det to gyldige koder for den samme kjøreren,
+# som er nøyaktig det utstedelsen finnes for å hindre. Den samme låsen stenger
+# også for at en tilbaketrekking blir ferdig mellom lesningen og innsettingen,
+# slik at redaktøren får en kode til en tilkobling som ikke lenger finnes.
+kode_sesjon="select set_config('request.jwt.claims', '{\"sub\":\"$kjorer_redaktor\"}', true);
+set local role authenticated;"
+
+proev 'en samtidig utstedelse av engangskode må vente på den første (55P03)' \
+  "$kode_sesjon
+   select api.issue_agent_runner_pairing_code('agent-runner:laaseprove');" \
+  "$kode_sesjon
+   select api.issue_agent_runner_pairing_code('agent-runner:laaseprove');" \
+  'Uten låsen på tilkoblingsraden kunne to samtidige utstedelser gitt hver sin gyldige engangskode for den samme kjøreren (migrasjon 011a).'
+
 printf '\nAlle samtidighetsprøvene passerte.\n'

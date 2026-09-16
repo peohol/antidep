@@ -1802,11 +1802,23 @@ declare
 begin
   v_actor_id := knowledge.assert_editor_authorized();
 
+  -- Låsen på tilkoblingsraden gjør hele utstedelsen til én avgjørelse.
+  --
+  -- Uten den kunne to faner lest den samme tilstanden, begge trukket tilbake
+  -- den koden de så, og begge satt inn sin egen — og da ville det finnes to
+  -- gyldige koder for den samme kjøreren, som er nøyaktig det avsnittet under
+  -- finnes for å hindre. En tilbaketrekking som rakk å bli ferdig mellom
+  -- lesningen og innsettingen, ville dessuten gitt redaktøren en kode til en
+  -- tilkobling som ikke lenger finnes. `for update` venter på den, og i
+  -- READ COMMITTED prøves vilkårene på nytt mot den oppdaterte raden: er den
+  -- trukket tilbake i mellomtiden, treffer ingenting, og svaret blir det samme
+  -- som om nøkkelen aldri fantes.
   select c.* into v_connection
   from workflow.agent_runner_connections c
   where c.connection_key = btrim(coalesce(p_connection_key, ''))
     and c.valid_from <= statement_timestamp()
-    and (c.valid_to is null or c.valid_to > statement_timestamp());
+    and (c.valid_to is null or c.valid_to > statement_timestamp())
+  for update;
 
   if not found then
     raise exception using
@@ -1845,7 +1857,7 @@ end;
 $$;
 
 comment on function api.issue_agent_runner_pairing_code(text) is
-  'Utsteder én engangs tilkoblingskode for en registrert autonom kjører (ANTIDEP_CONSTITUTION.md regel 7). Koden er beviset på editor-mandat i det øyeblikket ChatGPT kobler seg til, og den er det eneste stedet en hemmelighet forlater databasen i klartekst. Den lever i ti minutter, kan brukes én gang, og en tidligere ubrukt kode for den samme tilkoblingen trekkes tilbake i samme kall — to gyldige koder ville vært to veier inn, og bare den ene ville vært den redaktøren trodde hen hadde utstedt. Krever editor-mandat.';
+  'Utsteder én engangs tilkoblingskode for en registrert autonom kjører (ANTIDEP_CONSTITUTION.md regel 7). Koden er beviset på editor-mandat i det øyeblikket ChatGPT kobler seg til, og den er det eneste stedet en hemmelighet forlater databasen i klartekst. Den lever i ti minutter, kan brukes én gang, og en tidligere ubrukt kode for den samme tilkoblingen trekkes tilbake i samme kall — to gyldige koder ville vært to veier inn, og bare den ene ville vært den redaktøren trodde hen hadde utstedt. Tilkoblingsraden låses først, slik at to samtidige utstedelser ikke kan gi hver sin gyldige kode, og slik at en tilbaketrekking ikke kan bli ferdig mellom lesningen og innsettingen. Krever editor-mandat.';
 
 revoke execute on function api.issue_agent_runner_pairing_code(text) from public;
 grant execute on function api.issue_agent_runner_pairing_code(text) to authenticated;
@@ -1871,13 +1883,21 @@ begin
       c.platform_agent_reference,
       c.platform_model_disclosure::text as platform_model_disclosure,
       c.valid_from,
-      -- Er tilkoblingen faktisk koblet til? Et levende access-token er det
-      -- eneste som svarer på det, og antallet er nok: verdien er hemmelig.
+      -- Står tilkoblingen ved lag? Det er fornyelsesretten som svarer på det,
+      -- ikke et levende access-token.
+      --
+      -- Et access-token lever i én time. En planlagt kjøring som går én gang i
+      -- døgnet, har derfor ikke noe levende access-token mesteparten av tiden —
+      -- og en flate som leste det, ville sagt «ikke tilkoblet» om en tilkobling
+      -- som virker helt som den skal, og fått et menneske til å hente en ny
+      -- engangskode uten grunn. Et ubrukt refresh-token er derimot nettopp
+      -- retten til å skaffe seg et nytt access-token ved neste kjøring.
       exists (
         select 1 from workflow.agent_runner_secrets s
         where s.connection_id = c.id
-          and s.kind = 'access_token'
+          and s.kind = 'refresh_token'
           and s.revoked_at is null
+          and s.consumed_at is null
           and s.expires_at > statement_timestamp()
       ) as connected,
       (
@@ -1898,7 +1918,7 @@ end;
 $$;
 
 comment on function api.agent_runner_connections() is
-  'De gjeldende autonome kjørerne, slik agentarbeidsflaten trenger dem: hvilket ledd de utfører, hvilken Workspace Agent de er, om plattformen pinner modellen, om de faktisk er koblet til nå, når de sist var innom og hvor mange svar de har levert. Bærer ingen hemmelighet — et levende token svares på med ja eller nei, aldri med verdien. Krever editor-mandat.';
+  'De gjeldende autonome kjørerne, slik agentarbeidsflaten trenger dem: hvilket ledd de utfører, hvilken Workspace Agent de er, om plattformen pinner modellen, om tilkoblingen står ved lag, når de sist var innom og hvor mange svar de har levert. connected leser fornyelsesretten og ikke et levende access-token: et access-token lever i én time, så en planlagt kjøring som går én gang i døgnet, ville ellers stått som frakoblet mesteparten av tiden. Bærer ingen hemmelighet — et levende token svares på med ja eller nei, aldri med verdien. Krever editor-mandat.';
 
 revoke execute on function api.agent_runner_connections() from public;
 grant execute on function api.agent_runner_connections() to authenticated;
@@ -2884,8 +2904,24 @@ declare
   v_connection workflow.agent_runner_connections;
   v_outcome workflow.agent_runner_outcome;
   v_job_id uuid;
+  v_tool text := btrim(coalesce(p_tool_name, ''));
 begin
   v_connection := workflow.authenticated_runner_connection(p_access_token, p_resource);
+
+  -- Navnet er ett av verktøyene, og ingenting annet.
+  --
+  -- Fri tekst ville latt en tokeninnehaver skrive en rad under navnet på noe
+  -- bare Antidep selv skriver — en tilbaketrekking, en forhåndslesning — og
+  -- sporet ville da beskrevet hendelser som aldri fant sted.
+  if v_tool not in (
+    'list_pending_agent_tasks', 'claim_agent_task', 'get_agent_task',
+    'submit_agent_answer', 'release_agent_task'
+  ) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('%L er ikke et av kjørerens verktøy.', v_tool),
+      hint = 'Sporet tar bare imot navnet på et verktøy kjøreren faktisk kan kalle.';
+  end if;
 
   begin
     v_outcome := p_outcome::workflow.agent_runner_outcome;
@@ -2896,6 +2932,21 @@ begin
         message = format('%L er ikke en kjent utfallsklasse.', p_outcome);
   end;
 
+  -- Og et vellykket kall kan ikke meldes inn her.
+  --
+  -- Denne veien finnes bare for kallet som IKKE fikk skrevet sitt eget spor:
+  -- en avvisning fra den autoritative kontrollen ruller transaksjonen tilbake,
+  -- sporet inkludert. Et kall som lyktes, rullet ikke tilbake, og skrev derfor
+  -- sin egen rad i den samme transaksjonen som arbeidet. Uten denne grensen
+  -- kunne en tokeninnehaver skrevet «ok» for et verktøykall som aldri ble gjort,
+  -- og sporet ville båret en påstand om utført arbeid som ingenting sto bak.
+  if v_outcome = 'ok' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Et vellykket kall skriver sitt eget spor, i den samme transaksjonen som arbeidet.',
+      hint = 'Denne veien er for utfallet av et kall som ikke kunne skrive sitt eget.';
+  end if;
+
   if p_task_handle is not null then
     select j.id into v_job_id
     from workflow.pipeline_jobs j
@@ -2904,15 +2955,14 @@ begin
   end if;
 
   perform workflow.record_agent_runner_event(
-    v_connection.id, left(btrim(coalesce(p_tool_name, 'ukjent')), 80),
-    v_outcome, v_connection.agent_role, v_job_id);
+    v_connection.id, v_tool, v_outcome, v_connection.agent_role, v_job_id);
 
   return jsonb_build_object('recorded', true);
 end;
 $$;
 
 comment on function api.record_agent_runner_outcome(text, text, text, text, uuid) is
-  'Skriver ett spor etter et MCP-kall som ikke kunne skrive sitt eget (ANTIDEP_CONSTITUTION.md regel 4). En avvisning fra den autoritative kontrollen ruller hele transaksjonen tilbake, sporet inkludert; uten denne veien ville nettopp de kjøringene som gikk galt, vært de eneste som ikke etterlot seg noe. Tar bare en utfallsklasse og et verktøynavn — aldri en feiltekst, fordi en avvisning kan navngi en påstand eller et kildeutdrag.';
+  'Skriver ett spor etter et MCP-kall som ikke kunne skrive sitt eget (ANTIDEP_CONSTITUTION.md regel 4). En avvisning fra den autoritative kontrollen ruller hele transaksjonen tilbake, sporet inkludert; uten denne veien ville nettopp de kjøringene som gikk galt, vært de eneste som ikke etterlot seg noe. Tar bare en utfallsklasse og navnet på et av kjørerens fem verktøy — aldri en feiltekst, fordi en avvisning kan navngi en påstand eller et kildeutdrag. Kan ikke melde inn ok: et kall som lyktes, skrev sin egen rad i den samme transaksjonen som arbeidet, så den ene raden en tokeninnehaver kan legge til om seg selv, er at noe gikk galt.';
 
 revoke execute on function api.record_agent_runner_outcome(text, text, text, text, uuid) from public;
 grant execute on function api.record_agent_runner_outcome(text, text, text, text, uuid) to anon, authenticated;
