@@ -31,4 +31,8 @@ Den eksterne agent-handoffen trenger ingen av dem, og ingen modelleverandørnøk
 
 ## Hosted utrulling
 
-Utrulling er en separat, menneskelig autorisert driftsoperasjon etter teknisk review: bekreft prosjekt og miljø, stopp gamle jobber, ta privat databasebackup, sikkerhetskopier Storage separat, prøv restore isolert, kontroller stopphendelser og mål-antall, og deploy reviewede migrasjoner. Ikke legg eksport, snapshot eller hemmeligheter i repo eller Actions-artefakter. Resetten skal stoppe ved publiseringshistorikk, publiseringspeker, åpen agentkjøring eller uventet avhengighet.
+Reviewede databaseendringer deployes automatisk når en migrasjon er merget til `main`. `.github/workflows/database-production.yml` kjører bare på `push` til `main`, kobler Supabase CLI til produksjonsprosjektet, gjør først `db push --dry-run` og bruker deretter bare migrasjoner som ikke allerede står i den eksterne migrasjonshistorikken. Seed-data sendes aldri til produksjon. Project ref er ikke en hemmelighet; `SUPABASE_ACCESS_TOKEN` ligger som GitHub-secret og eksponeres bare for Supabase-stegene.
+
+En PR-branch skal aldri kunne starte produksjonsjobben eller få tilgang til produksjonstokenet. Derfor skal workflowen ikke få `pull_request`, `pull_request_target`, `workflow_dispatch` eller `workflow_call`; `npm run verify:repo` håndhever denne grensen.
+
+Destruktive driftsoperasjoner er fortsatt en separat handling. Kjør aldri `supabase db reset --linked` mot produksjon. Ved reset, rollback, restore eller annen operasjon som kan slette eller overskrive data skal prosjekt og miljø bekreftes, private database- og Storage-backuper håndteres utenfor repo og Actions-artefakter, og stopphendelser/publiseringshistorikk kontrolleres før inngrepet. Ikke legg eksport, snapshot eller hemmeligheter i repo eller Actions-artefakter.
