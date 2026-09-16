@@ -118,12 +118,13 @@ alter table knowledge.evidence_items enable trigger evidence_items_reject_mutati
 
 insert into workflow.evidence_verifications (
   evidence_item_id, verified_item_creator_actor_id, verifier_actor_id,
-  outcome, source_access, checked_fields, rationale, verified_at,
+  outcome, source_access, checked_fields, findings, rationale, verified_at,
   verified_grounding_digest
 )
 select e.id, e.created_by_actor_id, verifier.id,
        'uncertain', 'verifiable_representation',
        array['source_locator']::workflow.evidence_check_field[],
+       'Regresjonsfikstur: kontrollen er bevisst ikke en bekreftelse.',
        'Regresjonsfikstur: senere kontroll av den gamle abstract-prototypen.', now(),
        workflow.evidence_grounding_digest(e.id)
 from knowledge.evidence_items e
