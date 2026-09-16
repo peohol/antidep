@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(125);
+select plan(126);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -65,7 +65,7 @@ select is_empty(
                  ('api.technical_problem_board()'),
                  ('api.technical_problem_summary()'),
                  ('api.report_technical_problem(text,text,text,text,integer,text)'),
-                 ('api.record_client_diagnostic(text,text,text,text,integer,text,text)')) as f(name)
+                 ('api.record_client_diagnostic(uuid,text,text,text,text,integer,text,text)')) as f(name)
     where has_function_privilege('anon', f.name, 'EXECUTE')
        or has_function_privilege('public', f.name, 'EXECUTE')
        or has_function_privilege('service_role', f.name, 'EXECUTE')
@@ -94,7 +94,7 @@ select is(
    from pg_proc p
    where p.pronamespace = 'api'::regnamespace
      and p.prosrc like '%client_diagnostics%'),
-  array['api.record_client_diagnostic(text,text,text,text,integer,text,text)'],
+  array['api.record_client_diagnostic(uuid,text,text,text,text,integer,text,text)'],
   'bare skriveveien nevner den rå årsaken — ingen api-funksjon leser den ut igjen'
 );
 
@@ -925,6 +925,7 @@ do $$ begin
   -- `/diagnostics` nettopp fordi den ikke skal være avhengig av at kallet over
   -- kom fram; her kalles den samme funksjonen direkte.
   perform api.record_client_diagnostic(
+    gen_random_uuid(),
     'work_queue', 'unavailable', 'public_work_board', 'PGRST301', 503, 'http',
     'TypeError: Failed to fetch' || chr(10) ||
     '    at callRpc (gateway.ts:1:1)' || chr(10) ||
@@ -977,20 +978,25 @@ select is(
 
 -- Og den rå årsaken selv, som er det #99 faktisk krever bevart: den ligger i
 -- databasen og overlever at fanen lukkes, uten å ha en eneste vei til en flate.
+-- Avgrenset til prøvens egen bruker. Tabellen er append-only og deles med
+-- samtidighetsprøven (`npm run db:test:quota`), som legger igjen sine egne
+-- rader; en påstand om «den ene raden» ville vært en påstand om hele databasen.
 select ok(
   (select d.detail from workflow.client_diagnostics d
-   where d.operation = 'public_work_board') like '%at callRpc (gateway.ts:1:1)%',
+   where d.reported_by_user_id = '80000000-0000-4000-8000-00000000000d' and d.operation = 'public_work_board')
+    like '%at callRpc (gateway.ts:1:1)%',
   'stacken er bevart, ikke bare klassifiseringen av den'
 );
 select ok(
   (select d.detail from workflow.client_diagnostics d
-   where d.operation = 'public_work_board') not like '%hemmelig.signatur%',
+   where d.reported_by_user_id = '80000000-0000-4000-8000-00000000000d' and d.operation = 'public_work_board')
+    not like '%hemmelig.signatur%',
   'men en tokenformet streng er vasket bort før lagring'
 );
 select is(
   (select ti.area::text from workflow.technical_incidents ti
    join workflow.client_diagnostics d on d.technical_incident_id = ti.id
-   where d.operation = 'public_work_board'),
+   where d.reported_by_user_id = '80000000-0000-4000-8000-00000000000d' and d.operation = 'public_work_board'),
   'work_queue',
   'og raden peker på problemet den hører til, slik en agent finner veien'
 );
@@ -1055,7 +1061,8 @@ select is(
 -- hvem som helst kunne fylle med hva som helst.
 -- ===========================================================================
 select is(
-  (select count(*)::int from workflow.client_diagnostics),
+  (select count(*)::int from workflow.client_diagnostics
+   where reported_by_user_id = '80000000-0000-4000-8000-00000000000d'),
   1,
   'råmaterialet har nøyaktig de radene som faktisk er meldt inn'
 );
@@ -1065,14 +1072,15 @@ select set_config('request.jwt.claims',
                   '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
 set local role authenticated;
 do $$ begin
-  perform api.record_client_diagnostic('agent_service', 'unavailable', 'agent_work_queue',
-                                       null, null, 'network', repeat('x', 12000));
+  perform api.record_client_diagnostic(gen_random_uuid(), 'agent_service', 'unavailable',
+                                       'agent_work_queue', null, null, 'network',
+                                       repeat('x', 12000));
 end $$;
 reset role;
 
 select is(
   (select length(d.detail) from workflow.client_diagnostics d
-   where d.operation = 'agent_work_queue'),
+   where d.reported_by_user_id = '80000000-0000-4000-8000-00000000000d' and d.operation = 'agent_work_queue'),
   4000,
   'en tekst over grensen klippes framfor å bli avvist — en klippet årsak er bedre enn ingen'
 );
@@ -1087,8 +1095,9 @@ begin
   for i in 1..70 loop
     perform api.report_technical_problem('agent_service', 'unavailable', 'agent_task_payload',
                                          null, null, 'network');
-    perform api.record_client_diagnostic('agent_service', 'unavailable', 'agent_task_payload',
-                                         null, null, 'network', 'rå årsak nummer ' || i);
+    perform api.record_client_diagnostic(gen_random_uuid(), 'agent_service', 'unavailable',
+                                         'agent_task_payload', null, null, 'network',
+                                         'rå årsak nummer ' || i);
   end loop;
 end;
 $$;
@@ -1098,6 +1107,37 @@ select ok(
   (select count(*)::int from workflow.client_diagnostics
    where reported_by_user_id = '80000000-0000-4000-8000-00000000000d') <= 60,
   'en flate som svikter i en løkke, kan ikke fylle tabellen'
+);
+
+-- En levering som ikke ble bekreftet, prøves på nytt. Den skal bli den samme
+-- raden og ikke en til — ellers ville utboksen doblet årsakene hver gang en
+-- fane lukket seg midt i sendingen.
+do $$
+declare
+  v_event uuid := gen_random_uuid();
+  v_before integer;
+begin
+  select count(*) into v_before from workflow.client_diagnostics
+  where reported_by_user_id = '80000000-0000-4000-8000-00000000000c';
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+                     '{"sub":"80000000-0000-4000-8000-00000000000c"}', true);
+  perform api.record_client_diagnostic(v_event, 'clinical_content', 'unavailable',
+                                       'candidate_control_queue', null, null, 'network', 'én gang');
+  perform api.record_client_diagnostic(v_event, 'clinical_content', 'unavailable',
+                                       'candidate_control_queue', null, null, 'network', 'én gang');
+  reset role;
+  insert into result select 'idempotent',
+    jsonb_build_object('lagt_til',
+      (select count(*) from workflow.client_diagnostics
+       where reported_by_user_id = '80000000-0000-4000-8000-00000000000c') - v_before);
+end;
+$$;
+
+select is(
+  (select (payload ->> 'lagt_til')::int from result where label = 'idempotent'),
+  1,
+  'den samme observasjonen levert to ganger blir én rad'
 );
 select ok(
   (select ti.occurrence_count from workflow.technical_incidents ti

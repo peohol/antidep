@@ -27,6 +27,9 @@
 // seg fram fra utsiden. Grunnen står i kjøreloggen, som er privat.
 // ============================================================================
 
+import { createClient } from '@supabase/supabase-js'
+
+import type { Database } from '../types/database.ts'
 import { parseDiagnosticEnvelope, MAX_DETAIL_CHARS } from './envelope.ts'
 
 /** Den delen av miljøet ruten leser. Samme verdier som resten av utrullingen. */
@@ -37,11 +40,24 @@ export interface DiagnosticsEnvironment {
   readonly VITE_SUPABASE_PUBLISHABLE_KEY?: string | undefined
 }
 
-/** Å sende det videre til databasen. Injiserbar, slik at en prøve slipper nettet. */
+/** Hvem kallet gjøres som, og mot hva. */
+export interface ForwardTarget {
+  readonly url: string
+  readonly publishableKey: string
+  /** Brukerens egen token, videresendt. Ruten har ingen av sine egne. */
+  readonly accessToken: string
+}
+
+/**
+ * Å sende det videre til databasen. Injiserbar, slik at en prøve slipper nettet.
+ *
+ * `retry` sier om det er verdt et forsøk til: en svikt uten kode er transporten
+ * selv, mens en kode er databasens svar, og et svar skal ikke gjentas.
+ */
 export type ForwardDiagnostic = (
-  url: string,
-  init: { readonly headers: Record<string, string>; readonly body: string },
-) => Promise<{ readonly ok: boolean; readonly status: number }>
+  target: ForwardTarget,
+  args: Record<string, unknown>,
+) => Promise<{ readonly delivered: boolean; readonly retry: boolean }>
 
 /**
  * Kroppen leses med et tak.
@@ -66,9 +82,28 @@ function pick(
 
 const nothing = (): Response => new Response(null, { status: 204 })
 
-const fetchForward: ForwardDiagnostic = async (url, init) => {
-  const response = await fetch(url, { method: 'POST', headers: init.headers, body: init.body })
-  return { ok: response.ok, status: response.status }
+/**
+ * Den ekte veien videre, gjennom den samme klienten resten av Antidep bruker.
+ *
+ * Ikke et håndskrevet REST-kall: skjemavalget, nøkkelen og hodene er konvensjon
+ * denne klienten allerede eier, og en egen kopi av dem ville vært en kopi å ta
+ * feil i. Klienten er bare konfigurasjon og lages per kall — den holder ingen
+ * tilstand å gjenbruke.
+ */
+const supabaseForward: ForwardDiagnostic = async (target, args) => {
+  const client = createClient<Database, 'api'>(target.url, target.publishableKey, {
+    db: { schema: 'api' },
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${target.accessToken}` } },
+  })
+  const { error } = await client.rpc('record_client_diagnostic', args as never)
+  if (error === null) {
+    return { delivered: true, retry: false }
+  }
+  // En kode betyr at databasen svarte — en avvisning er dens avgjørelse, og
+  // ikke noe å prøve om igjen. Uten kode er det transporten som sviktet.
+  const answered = typeof error.code === 'string' && error.code.length > 0
+  return { delivered: false, retry: !answered }
 }
 
 /**
@@ -81,7 +116,7 @@ const fetchForward: ForwardDiagnostic = async (url, init) => {
 export async function serveDiagnostics(
   request: Request,
   env: DiagnosticsEnvironment,
-  forward: ForwardDiagnostic = fetchForward,
+  forward: ForwardDiagnostic = supabaseForward,
 ): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(null, { status: 405, headers: { allow: 'POST' } })
@@ -99,20 +134,22 @@ export async function serveDiagnostics(
     return new Response(null, { status: 400 })
   }
 
-  let supabaseUrl: string
-  let publishableKey: string
+  let target: ForwardTarget
   try {
-    supabaseUrl = pick(env, ['ANTIDEP_SUPABASE_URL', 'VITE_SUPABASE_URL'])
-    publishableKey = pick(env, [
-      'ANTIDEP_SUPABASE_PUBLISHABLE_KEY',
-      'VITE_SUPABASE_PUBLISHABLE_KEY',
-    ])
+    target = {
+      url: pick(env, ['ANTIDEP_SUPABASE_URL', 'VITE_SUPABASE_URL']),
+      publishableKey: pick(env, [
+        'ANTIDEP_SUPABASE_PUBLISHABLE_KEY',
+        'VITE_SUPABASE_PUBLISHABLE_KEY',
+      ]),
+      accessToken: envelope.accessToken,
+    }
   } catch {
     return new Response(null, { status: 503 })
   }
 
-  const url = `${supabaseUrl.replace(/\/+$/, '')}/rest/v1/rpc/record_client_diagnostic`
-  const body = JSON.stringify({
+  const args = {
+    p_event_id: envelope.eventId,
     p_area: envelope.area,
     p_kind: envelope.kind,
     p_operation: envelope.operation,
@@ -120,20 +157,13 @@ export async function serveDiagnostics(
     p_http_status: envelope.httpStatus,
     p_transport: envelope.transport,
     p_detail: envelope.detail.slice(0, MAX_DETAIL_CHARS),
-  })
-  const headers = {
-    // Brukerens egen token, videresendt. Ruten har ingen av sine egne.
-    authorization: `Bearer ${envelope.accessToken}`,
-    apikey: publishableKey,
-    'content-type': 'application/json',
-    'content-profile': 'api',
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const outcome = await forward(url, { headers, body })
-      if (outcome.ok || outcome.status < 500) {
-        // En avvisning er databasens avgjørelse og ikke noe å prøve om igjen.
+      const outcome = await forward(target, args)
+      if (outcome.delivered || !outcome.retry) {
+        // Levert, eller avvist av databasen. En avvisning er dens avgjørelse.
         return nothing()
       }
     } catch {

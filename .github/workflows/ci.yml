@@ -83,6 +83,13 @@ jobs:
       - name: Samtidighetsprøve for diagnostikk-kvoten
         if: always()
         run: npm run db:test:quota
+      # Enhetsprøvene dekker hver sin halvdel: nettleseren sender, og ruten
+      # videresender. Denne går hele veien med den ekte serverruten, den ekte
+      # Data API-en og den ekte databasen, og leser resultatet med psql — altså
+      # utenom enhver leservei appen har (issue #99, punkt 8).
+      - name: Ende-til-ende for diagnostikkveien (rute til faktisk lagring)
+        if: always()
+        run: npm run db:test:diagnostics
       # pgTAP prøver SQL, og vitest prøver TypeScript med doble for databasen.
       # Grensen mellom dem — at parameternavnene agentporten sender, er nøyaktig
       # de api-funksjonene tar imot — er ikke prøvd av noen av dem. Denne kjører

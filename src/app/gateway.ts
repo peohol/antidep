@@ -55,8 +55,11 @@
 // lukkes, og som ikke har noen preflight å feile på.
 //
 // De to har også forskjellige krav til å komme fram. En tilstandsrad kan
-// gjentas ved neste svikt; den rå årsaken finnes bare denne ene gangen, og
-// svikter transporten, er den borte for alltid.
+// gjentas ved neste svikt; den rå årsaken finnes bare denne ene gangen. Den
+// legges derfor i en utboks *før* den sendes, og blir liggende til leveringen
+// er bekreftet — så en utilgjengelig lagring utsetter den framfor å miste den
+// (`diagnostics-outbox.ts`). Nummeret på observasjonen gjør at et nytt forsøk
+// blir den samme raden og ikke en til.
 //
 // En `console.error` er ingen erstatning: fanen lukkes, og da er årsaken borte.
 // Konsollen skrives til uansett, fordi den er det den som feilsøker lokalt
@@ -81,6 +84,7 @@
 // ============================================================================
 
 import { getAntidepClient, type AntidepClient } from '../lib/supabase'
+import { forget, pending, remember, type PendingDiagnostic } from './diagnostics-outbox'
 
 /** Områdene Antidep melder tekniske problemer under. Lukket, som i databasen. */
 export type TechnicalArea =
@@ -426,32 +430,58 @@ function reportTechnicalProblem(client: AntidepClient, entry: TechnicalDetail): 
 }
 
 /**
- * Sender den rå årsaken til den private lagringen, utenom Data API-et.
+ * Legger den rå årsaken i utboksen, og tømmer den.
  *
- * Tokenen er brukerens egen og allerede i fanen — ingen klienthemmelighet. Er
- * det ingen token, er det ingen å tilskrive observasjonen, og da sendes den
- * ikke: en rad som ikke kan tilskrives noen, er nettopp den åpne skriveveien
- * hele oppsettet finnes for å unngå.
+ * Rekkefølgen er hele poenget: observasjonen er lagret lokalt før noe sendes,
+ * så en levering som ikke går gjennom, utsetter den framfor å miste den.
  */
 function recordRawCause(client: AntidepClient, entry: TechnicalDetail): void {
+  remember({
+    eventId: newEventId(),
+    area: entry.area,
+    kind: entry.kind,
+    operation: entry.operation,
+    code: MACHINE_CODE.test(entry.code ?? '') ? entry.code : null,
+    httpStatus: entry.httpStatus,
+    transport: entry.transport,
+    detail: entry.detail,
+  })
+  flushPendingDiagnostics(client)
+}
+
+/**
+ * Sender alt som venter, og glemmer bare det som faktisk kom fram.
+ *
+ * Tokenen er brukerens egen og allerede i fanen — ingen klienthemmelighet. Er
+ * det ingen token, sendes ingenting: en rad som ikke kan tilskrives noen, ville
+ * vært en åpen skrivevei, og da kunne hvem som helst fylle den private
+ * lagringen. Dette gjelder også den åpne arbeidsoversikten, som kan leses uten
+ * innlogging, og grensen er bevisst.
+ *
+ * Det er ikke det samme som at årsaken går tapt: observasjonen blir liggende i
+ * utboksen, og den første innloggingen i den nettleseren tar restansen med. En
+ * uinnlogget besvergelse som aldri logger inn, er det eneste tilfellet som bare
+ * når konsollen — og da finnes det ingen å tilskrive den uansett.
+ *
+ * Eksportert fordi flaten også kaller den når appen åpnes: da er restansen fra
+ * en tidligere økt det eneste som finnes igjen av den.
+ */
+export function flushPendingDiagnostics(client: AntidepClient): void {
+  const waiting = pending()
+  if (waiting.length === 0) {
+    return
+  }
   void Promise.resolve(client.auth.getSession())
-    .then(({ data }) => {
+    .then(async ({ data }) => {
       const accessToken = data.session?.access_token
       if (accessToken === undefined || accessToken.length === 0) {
         return
       }
-      sendDiagnostic(
-        JSON.stringify({
-          accessToken,
-          area: entry.area,
-          kind: entry.kind,
-          operation: entry.operation,
-          code: MACHINE_CODE.test(entry.code ?? '') ? entry.code : null,
-          httpStatus: entry.httpStatus,
-          transport: entry.transport,
-          detail: entry.detail,
-        }),
-      )
+      for (const entry of waiting) {
+        if (await deliver(accessToken, entry)) {
+          forget(entry.eventId)
+        }
+      }
     })
     .catch(() => undefined)
 }
@@ -459,34 +489,49 @@ function recordRawCause(client: AntidepClient, entry: TechnicalDetail): void {
 /** Ruten på Antideps egen opprinnelse. Ingenting å konfigurere. */
 const DIAGNOSTICS_PATH = '/diagnostics'
 
-/**
- * Leveringen.
- *
- * `sendBeacon` først, fordi det er det ene nettleseren lover å levere selv om
- * fanen lukkes i det samme — og en teknisk svikt er ofte akkurat det som får
- * noen til å lukke fanen. `fetch` med `keepalive` er reserven for der
- * `sendBeacon` ikke finnes eller sier nei.
- */
-function sendDiagnostic(body: string): void {
+function newEventId(): string {
   try {
-    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-      const blob = new Blob([body], { type: 'application/json' })
-      if (navigator.sendBeacon(DIAGNOSTICS_PATH, blob)) {
-        return
-      }
-    }
+    return crypto.randomUUID()
   } catch {
-    // Kø full, eller ingen Blob. Reserven under tar den.
+    // Eldre nettlesere uten `randomUUID`. Nummeret trenger bare å være unikt
+    // nok til at to leveringer av den samme observasjonen møtes.
+    const hex = (n: number): string =>
+      Math.floor(Math.random() * 16 ** n)
+        .toString(16)
+        .padStart(n, '0')
+    return `${hex(8)}-${hex(4)}-4${hex(3)}-a${hex(3)}-${hex(12)}`
   }
-  void fetch(DIAGNOSTICS_PATH, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body,
-    keepalive: true,
-  }).then(
-    () => undefined,
-    () => undefined,
-  )
+}
+
+/**
+ * Én levering, og et svar på om den kom fram.
+ *
+ * `keepalive` slik at en forespørsel rett før en navigasjon fullføres — og det
+ * er ofte nettopp da den sendes. Til forskjell fra `sendBeacon` gir den et
+ * svar, og det svaret er det som avgjør om observasjonen kan glemmes.
+ * `sendBeacon` er reserven der `fetch` ikke finnes; da er leveringen ubekreftet,
+ * og observasjonen blir liggende til en senere kjøring bekrefter den.
+ */
+async function deliver(accessToken: string, entry: PendingDiagnostic): Promise<boolean> {
+  const body = JSON.stringify({ accessToken, ...entry })
+  try {
+    const response = await fetch(DIAGNOSTICS_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+      keepalive: true,
+    })
+    return response.ok
+  } catch {
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        navigator.sendBeacon(DIAGNOSTICS_PATH, new Blob([body], { type: 'application/json' }))
+      }
+    } catch {
+      // Kø full, eller ingen Blob. Observasjonen blir liggende.
+    }
+    return false
+  }
 }
 
 /** Klienten flatene deler. Egen funksjon slik at en prøve kan sende inn sin egen. */

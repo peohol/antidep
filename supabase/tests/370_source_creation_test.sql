@@ -274,7 +274,7 @@ select is_empty(
         'api.technical_problem_board()',
         'api.technical_problem_summary()',
         'api.report_technical_problem(text,text,text,text,integer,text)',
-        'api.record_client_diagnostic(text,text,text,text,integer,text,text)'
+        'api.record_client_diagnostic(uuid,text,text,text,text,integer,text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

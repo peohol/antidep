@@ -5,11 +5,13 @@ import {
   classifyGatewayFailure,
   describeGatewayFailure,
   GatewayFailure,
+  flushPendingDiagnostics,
   setTechnicalSink,
   transportShape,
   type GatewayFailureKind,
   type TechnicalDetail,
 } from './gateway'
+import { clearOutbox, pending } from './diagnostics-outbox'
 import type { AntidepClient } from '../lib/supabase'
 
 /**
@@ -39,40 +41,32 @@ function client(answers: Record<string, { data?: unknown; error?: unknown }>): {
 }
 
 /** Det nettleseren faktisk sendte til `/diagnostics`, uten å røre nettet. */
-function fangBeacon(): { readonly sendt: { url: string; body: string }[]; restore: () => void } {
+function fangLevering(svar: { ok: boolean } | 'ryker'): {
+  readonly sendt: { url: string; body: string }[]
+  restore: () => void
+} {
   const sendt: { url: string; body: string }[] = []
-  const original = globalThis.navigator
-  Object.defineProperty(globalThis, 'navigator', {
+  const original = globalThis.fetch
+  Object.defineProperty(globalThis, 'fetch', {
     configurable: true,
-    value: {
-      sendBeacon: (url: string, blob: Blob) => {
-        // `Blob.text()` er asynkron; prøven leser den rå kroppen i stedet.
-        sendt.push({ url, body: (blob as unknown as { __body: string }).__body })
-        return true
-      },
-    },
-  })
-  const originalBlob = globalThis.Blob
-  Object.defineProperty(globalThis, 'Blob', {
-    configurable: true,
-    value: class {
-      readonly __body: string
-      constructor(parts: string[]) {
-        this.__body = parts.join('')
-      }
+    value: (url: string, init: { body: string }) => {
+      sendt.push({ url, body: init.body })
+      return svar === 'ryker' ? Promise.reject(new Error('nettet ryker')) : Promise.resolve(svar)
     },
   })
   return {
     sendt,
     restore: () => {
-      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: original })
-      Object.defineProperty(globalThis, 'Blob', { configurable: true, value: originalBlob })
+      Object.defineProperty(globalThis, 'fetch', { configurable: true, value: original })
     },
   }
 }
 
 afterEach(() => {
   setTechnicalSink(null)
+  // Utboksen lever i nettleserens eget lager og overlever mellom prøver. Den
+  // skal ikke overleve noe som helst her.
+  clearOutbox()
 })
 
 describe('klassifiseringen av en svikt', () => {
@@ -303,8 +297,8 @@ describe('kallet gjennom gatewayen', () => {
 
   // Dette er hele grunnen til at den rå årsaken har sin egen vei: den skal nå
   // fram selv når Data API-et er borte, altså nettopp når den trengs.
-  it('lagrer den rå årsaken selv når hele Data API-veien er nede', async () => {
-    const beacon = fangBeacon()
+  it('leverer den rå årsaken på sin egen vei når hele Data API-veien er nede', async () => {
+    const levering = fangLevering({ ok: true })
     const nedeHeltUt = {
       rpc: () => Promise.reject(new TypeError('Failed to fetch')),
       auth: {
@@ -319,25 +313,59 @@ describe('kallet gjennom gatewayen', () => {
       area: 'work_queue',
       parse: () => undefined,
     }).catch(() => undefined)
-    // Sendingen henter sesjonen først, så den fullføres i neste mikrotask.
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.waitFor(() => expect(levering.sendt).toHaveLength(1))
     spy.mockRestore()
 
-    expect(beacon.sendt).toHaveLength(1)
-    expect(beacon.sendt[0]?.url).toBe('/diagnostics')
-    const sendt = JSON.parse(beacon.sendt[0]?.body ?? '{}') as Record<string, unknown>
+    expect(levering.sendt[0]?.url).toBe('/diagnostics')
+    const sendt = JSON.parse(levering.sendt[0]?.body ?? '{}') as Record<string, unknown>
     expect(sendt.detail).toContain('Failed to fetch')
     expect(sendt.operation).toBe('public_work_board')
     // Tokenen er brukerens egen og allerede i fanen — ingen klienthemmelighet.
     expect(sendt.accessToken).toBe('brukerens-egen-token')
-    beacon.restore()
+    // Bekreftet levert, altså ute av utboksen.
+    await vi.waitFor(() => expect(pending()).toHaveLength(0))
+    levering.restore()
+  })
+
+  // Og dette er grunnen til at utboksen finnes: er lagringen bak ruten også
+  // nede, skal årsaken utsettes, ikke mistes.
+  it('beholder den rå årsaken når leveringen ikke kom fram, og sender den senere', async () => {
+    const ryker = fangLevering('ryker')
+    const nede = {
+      rpc: () => Promise.reject(new TypeError('Failed to fetch')),
+      auth: {
+        getSession: () =>
+          Promise.resolve({ data: { session: { access_token: 'brukerens-egen-token' } } }),
+      },
+    } as unknown as AntidepClient
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(nede, {
+      fn: 'public_work_board',
+      area: 'work_queue',
+      parse: () => undefined,
+    }).catch(() => undefined)
+    await vi.waitFor(() => expect(ryker.sendt).toHaveLength(1))
+    spy.mockRestore()
+    ryker.restore()
+
+    // Fortsatt i utboksen, med årsaken i behold.
+    expect(pending()).toHaveLength(1)
+    expect(pending()[0]?.detail).toContain('Failed to fetch')
+
+    // Og neste gang flaten åpnes, går restansen med.
+    const senere = fangLevering({ ok: true })
+    flushPendingDiagnostics(nede)
+    await vi.waitFor(() => expect(senere.sendt).toHaveLength(1))
+    await vi.waitFor(() => expect(pending()).toHaveLength(0))
+    expect(JSON.parse(senere.sendt[0]?.body ?? '{}').detail).toContain('Failed to fetch')
+    senere.restore()
   })
 
   // En observasjon som ikke kan tilskrives noen, skal ikke sendes: det ville
-  // vært en åpen skrivevei.
+  // vært en åpen skrivevei. Den blir liggende, så en fornyet innlogging tar den.
   it('sender ingenting når det ikke finnes noen innlogget bruker', async () => {
-    const beacon = fangBeacon()
+    const levering = fangLevering({ ok: true })
     const uinnlogget = {
       rpc: () => Promise.resolve({ data: null, error: { code: 'PGRST301' } }),
       auth: { getSession: () => Promise.resolve({ data: { session: null } }) },
@@ -351,8 +379,9 @@ describe('kallet gjennom gatewayen', () => {
     await Promise.resolve()
     spy.mockRestore()
 
-    expect(beacon.sendt).toHaveLength(0)
-    beacon.restore()
+    expect(levering.sendt).toHaveLength(0)
+    expect(pending()).toHaveLength(1)
+    levering.restore()
   })
 
   // Flaten lukker ingenting. En selvmeldt rad gjelder så lenge den fornyes, og

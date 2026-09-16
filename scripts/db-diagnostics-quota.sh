@@ -66,7 +66,7 @@ for connection in $(seq 1 "$CONNECTIONS"); do
     for call in $(seq 1 "$PER_CONNECTION"); do
       # Forskjellige operasjoner med vilje: to kall med samme signatur ville
       # kunnet låse den samme incident-raden og skjule kappløpet.
-      printf "select api.record_client_diagnostic('work_queue', 'unavailable', %s, null, null, 'network', 'forbindelse %s kall %s');\n" \
+      printf "select api.record_client_diagnostic(gen_random_uuid(), 'work_queue', 'unavailable', %s, null, null, 'network', 'forbindelse %s kall %s');\n" \
         "$([ $((call % 2)) -eq 0 ] && printf "'public_work_board'" || printf "'full_text_inbox'")" \
         "$connection" "$call"
     done
@@ -79,12 +79,11 @@ STORED=$(psql "$DB_URL" -X -tAq -v ON_ERROR_STOP=1 -c \
 
 printf '%s forsøk ga %s lagrede rader.\n' "$((CONNECTIONS * PER_CONNECTION))" "$STORED"
 
-if [ "$STORED" -gt "$QUOTA" ]; then
-  printf 'Kvoten holdt ikke: %s rader er over grensen på %s.\n' "$STORED" "$QUOTA" >&2
-  exit 1
-fi
-if [ "$STORED" -lt 1 ]; then
-  printf 'Ingenting ble lagret. Da prøver ikke denne testen det den skal.\n' >&2
+# Nøyaktig kvoten, ikke «høyst kvoten». 120 forsøk mot en grense på 60 skal gi
+# 60: de første går gjennom, resten avvises. Et løsere krav ville latt en
+# regresjon som droppet det meste av diagnostikken, stå grønn.
+if [ "$STORED" -ne "$QUOTA" ]; then
+  printf 'Kvoten holdt ikke: %s rader, forventet nøyaktig %s.\n' "$STORED" "$QUOTA" >&2
   exit 1
 fi
 

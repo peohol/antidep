@@ -31,6 +31,7 @@ import {
   technicalProblemsPath,
   workBoardPath,
 } from './routes'
+import { antidepClient, flushPendingDiagnostics } from './gateway'
 import { createTechnicalGateway, type TechnicalGateway } from './technical-gateway'
 
 export interface SiteNavProps {
@@ -53,6 +54,16 @@ export function SiteNav({ technical }: SiteNavProps): React.JSX.Element {
     } catch {
       return
     }
+
+    // Restansen fra en tidligere økt går med her. Ble Antidep utilgjengelig
+    // mens noen sto i appen, er dette øyeblikket da årsakene endelig kommer
+    // fram — og navigasjonen er den ene komponenten som vises på hver side.
+    try {
+      flushPendingDiagnostics(antidepClient())
+    } catch {
+      // Ingen klient, altså ingen konfigurasjon. Restansen blir liggende.
+    }
+
     gateway
       .summary()
       .then((summary) => {

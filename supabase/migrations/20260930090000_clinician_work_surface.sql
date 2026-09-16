@@ -647,6 +647,13 @@ create table workflow.client_diagnostics (
     references workflow.technical_incidents (id) on update restrict on delete restrict,
 
   reported_by_user_id uuid not null,
+  -- Flatens eget nummer på observasjonen.
+  --
+  -- Finnes fordi en levering som ikke ble bekreftet, prøves på nytt: en fane
+  -- som lukkes midt i sendingen, vet ikke om raden kom fram, og beholder
+  -- observasjonen til den vet det. Uten et nummer ville den samme årsaken
+  -- blitt liggende i to eksemplarer hver gang det skjedde.
+  client_event_id uuid not null,
   area workflow.technical_area not null,
   kind text not null,
   operation text,
@@ -668,7 +675,7 @@ create table workflow.client_diagnostics (
 );
 
 comment on table workflow.client_diagnostics is
-  'Den rå tekniske årsaken slik en brukerflate så den, lagret privat for Claude Code og ChatGPT (issue #99, punkt 8). Atskilt fra workflow.technical_incidents med vilje: tilstandsraden bærer Antideps egen setning og aldri en videreformidlet feiltekst, mens denne bærer nettopp den videreformidlede teksten — og er derfor bundet av attribusjon, mengdegrense, lengdegrense og vasking i api.record_client_diagnostic(text, text, text, text, integer, text, text). Tabellen har RLS med default deny, ingen grants og ingen policy, og ingen api-funksjon leser den: den finnes for den som allerede har databasetilgang, og har ingen vei til noen brukerflate.';
+  'Den rå tekniske årsaken slik en brukerflate så den, lagret privat for Claude Code og ChatGPT (issue #99, punkt 8). Atskilt fra workflow.technical_incidents med vilje: tilstandsraden bærer Antideps egen setning og aldri en videreformidlet feiltekst, mens denne bærer nettopp den videreformidlede teksten — og er derfor bundet av attribusjon, mengdegrense, lengdegrense og vasking i api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text). Tabellen har RLS med default deny, ingen grants og ingen policy, og ingen api-funksjon leser den: den finnes for den som allerede har databasetilgang, og har ingen vei til noen brukerflate.';
 comment on column workflow.client_diagnostics.detail is
   'Stacken og meldingen slik flaten så dem. Klippet til 4000 tegn og vasket for tokenformede strenger før lagring. Aldri lesbar gjennom noe api-objekt.';
 comment on column workflow.client_diagnostics.reported_by_user_id is
@@ -681,6 +688,11 @@ create index client_diagnostics_incident_idx
 
 create index client_diagnostics_reporter_idx
   on workflow.client_diagnostics (reported_by_user_id, occurred_at desc);
+
+-- Den samme observasjonen levert to ganger er én rad. Nøkkelen er brukerens
+-- egen, så to brukere kan ikke kollidere, og ingen kan skrive over en annens.
+create unique index client_diagnostics_event_key
+  on workflow.client_diagnostics (reported_by_user_id, client_event_id);
 
 -- Append-only, som sporet ved siden av. En observasjon av hva som gikk galt,
 -- skal ikke kunne endres eller fjernes av den samme veien som skrev den — og
@@ -2552,7 +2564,7 @@ end;
 $$;
 
 comment on function api.report_technical_problem(text, text, text, text, integer, text) is
-  'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom. Alle seks argumentene er maskinidentifikatorer og aldri tekst: området, svikttypen og transportformen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, koden må være en SQLSTATE eller en PostgREST-kode, og statusen må være en HTTP-status. Antidep skriver setningen selv. Den rå årsaken hører ikke hjemme her: den går sin egen vei, gjennom api.record_client_diagnostic(text, text, text, text, integer, text, text), fordi den skal kunne nå fram selv når dette kallet ikke gjør det. Raden merkes self_reported og gjelder bare så lenge den fornyes (workflow.self_report_heartbeat()). En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
+  'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom. Alle seks argumentene er maskinidentifikatorer og aldri tekst: området, svikttypen og transportformen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, koden må være en SQLSTATE eller en PostgREST-kode, og statusen må være en HTTP-status. Antidep skriver setningen selv. Den rå årsaken hører ikke hjemme her: den går sin egen vei, gjennom api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text), fordi den skal kunne nå fram selv når dette kallet ikke gjør det. Raden merkes self_reported og gjelder bare så lenge den fornyes (workflow.self_report_heartbeat()). En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
 
 revoke execute on function api.report_technical_problem(text, text, text, text, integer, text) from public;
 grant execute on function api.report_technical_problem(text, text, text, text, integer, text) to authenticated;
@@ -2573,6 +2585,7 @@ grant execute on function api.report_technical_problem(text, text, text, text, i
 -- fullmakt (ANTIDEP_CONSTITUTION.md regel 7).
 -- ----------------------------------------------------------------------------
 create function api.record_client_diagnostic(
+  p_event_id uuid,
   p_area text,
   p_kind text,
   p_operation text default null,
@@ -2606,8 +2619,24 @@ begin
         message = 'Ukjent område.';
   end;
 
+  if p_event_id is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Observasjonen mangler et nummer.',
+      hint = 'Nummeret er flatens eget, og gjør at den samme observasjonen levert to ganger blir én rad.';
+  end if;
+
   v_detail := workflow.scrub_diagnostic_detail(p_detail);
   if length(coalesce(v_detail, '')) = 0 then
+    return;
+  end if;
+
+  -- En levering som allerede kom fram, er ferdig. Kontrollen står før kvoten,
+  -- slik at et nytt forsøk på den samme observasjonen ikke bruker opp plass.
+  if exists (
+    select 1 from workflow.client_diagnostics d
+    where d.reported_by_user_id = auth.uid() and d.client_event_id = p_event_id
+  ) then
     return;
   end if;
 
@@ -2642,19 +2671,23 @@ begin
   where ti.area = v_area and ti.signature = 'client:' || coalesce(p_operation, 'ukjent');
 
   insert into workflow.client_diagnostics
-    (technical_incident_id, reported_by_user_id, area, kind, operation, code,
+    (technical_incident_id, reported_by_user_id, client_event_id, area, kind, operation, code,
      http_status, transport, detail)
   values
-    (v_incident_id, auth.uid(), v_area, p_kind, p_operation, p_code,
-     p_http_status, p_transport, v_detail);
+    (v_incident_id, auth.uid(), p_event_id, v_area, p_kind, p_operation, p_code,
+     p_http_status, p_transport, v_detail)
+  -- Beltet i tillegg til selene: låsen over gjør kappløpet umulig innen én
+  -- bruker, og denne gjør en samtidig levering av det samme nummeret til én rad
+  -- uansett.
+  on conflict (reported_by_user_id, client_event_id) do nothing;
 end;
 $$;
 
-comment on function api.record_client_diagnostic(text, text, text, text, integer, text, text) is
-  'Tar imot den rå årsaken — feilteksten og stacken — fra en brukerflate, og lagrer den privat i workflow.client_diagnostics. Egen skrivevei fordi den har et annet krav til å komme fram enn meldingen om selve problemet: en tilstandsrad kan gjentas ved neste svikt, mens den rå årsaken finnes bare denne ene gangen. Fire grenser gjør en klientskrevet tekst forsvarlig: attribusjon til en innlogget bruker, en kvote per bruker og time som serialiseres med en radlås slik at den ikke kan omgås med parallelle kall, en lengdegrense, og vasking av tokenformede strenger. Over kvoten droppes teksten i stillhet — problemet telles uansett. Ingen api-funksjon leser tabellen ut igjen. Bare authenticated.';
+comment on function api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text) is
+  'Tar imot den rå årsaken — feilteksten og stacken — fra en brukerflate, og lagrer den privat i workflow.client_diagnostics. Egen skrivevei fordi den har et annet krav til å komme fram enn meldingen om selve problemet: en tilstandsrad kan gjentas ved neste svikt, mens den rå årsaken finnes bare denne ene gangen. Fire grenser gjør en klientskrevet tekst forsvarlig: attribusjon til en innlogget bruker, en kvote per bruker og time som serialiseres med en radlås slik at den ikke kan omgås med parallelle kall, en lengdegrense, og vasking av tokenformede strenger. Over kvoten droppes teksten i stillhet — problemet telles uansett. Idempotent på flatens eget nummer, slik at en levering som ikke ble bekreftet kan prøves på nytt uten å bli to rader. Ingen api-funksjon leser tabellen ut igjen. Bare authenticated.';
 
-revoke execute on function api.record_client_diagnostic(text, text, text, text, integer, text, text) from public;
-grant execute on function api.record_client_diagnostic(text, text, text, text, integer, text, text) to authenticated;
+revoke execute on function api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text) from public;
+grant execute on function api.record_client_diagnostic(uuid, text, text, text, text, integer, text, text) to authenticated;
 
 -- ----------------------------------------------------------------------------
 -- Og veien ut igjen

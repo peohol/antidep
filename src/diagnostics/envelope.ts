@@ -45,6 +45,14 @@ export const MAX_DETAIL_CHARS = 4000
 
 /** Én observasjon på vei fra en nettleser til den private lagringen. */
 export interface DiagnosticEnvelope {
+  /**
+   * Flatens eget nummer på observasjonen.
+   *
+   * Gjør leveringen idempotent: en fane som lukkes midt i sendingen, vet ikke om
+   * raden kom fram, og beholder observasjonen til den vet det. Uten nummeret
+   * ville den samme årsaken blitt liggende i to eksemplarer hver gang.
+   */
+  readonly eventId: string
   /** Brukerens egen Supabase-token. Ingen klienthemmelighet: den er allerede i fanen. */
   readonly accessToken: string
   readonly area: string
@@ -97,7 +105,12 @@ export function parseDiagnosticEnvelope(value: unknown): DiagnosticEnvelope {
   ) {
     throw new Error('Diagnostikkonvolutten er ugyldig: httpStatus er ikke en HTTP-status.')
   }
+  const eventId = text(raw.eventId, 'eventId')
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventId)) {
+    throw new Error('Diagnostikkonvolutten er ugyldig: eventId er ikke en uuid.')
+  }
   return {
+    eventId,
     accessToken: text(raw.accessToken, 'accessToken'),
     area: oneOf(raw.area, TECHNICAL_AREAS, 'area'),
     kind: oneOf(raw.kind, FAILURE_KINDS, 'kind'),

@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { parseDiagnosticEnvelope } from './envelope.ts'
-import { serveDiagnostics, type ForwardDiagnostic } from './route.ts'
+import { serveDiagnostics, type ForwardDiagnostic, type ForwardTarget } from './route.ts'
 
 const MILJØ = {
   ANTIDEP_SUPABASE_URL: 'https://prosjekt.supabase.co',
@@ -18,6 +18,7 @@ const MILJØ = {
 }
 
 const KONVOLUTT = {
+  eventId: '4a1d0f2e-9c33-4b71-8f5a-2b6c7d8e9f01',
   accessToken: 'brukerens-egen-token',
   area: 'work_queue',
   kind: 'unavailable',
@@ -46,6 +47,7 @@ describe('lesingen av konvolutten', () => {
     ['en ukjent transportform', { ...KONVOLUTT, transport: 'kanskje' }],
     ['en status som ikke er en status', { ...KONVOLUTT, httpStatus: 9000 }],
     ['ingen token', { ...KONVOLUTT, accessToken: '' }],
+    ['et nummer som ikke er en uuid', { ...KONVOLUTT, eventId: 'nummer 1' }],
   ])('avviser %s', (_hva, verdi) => {
     expect(() => parseDiagnosticEnvelope(verdi)).toThrow(/ugyldig/)
   })
@@ -59,32 +61,34 @@ describe('lesingen av konvolutten', () => {
 
 describe('ruten', () => {
   it('videresender brukerens egen token, og ingen av sine egne', async () => {
-    const sendt: { url: string; headers: Record<string, string>; body: string }[] = []
-    const forward: ForwardDiagnostic = (url, init) => {
-      sendt.push({ url, ...init })
-      return Promise.resolve({ ok: true, status: 200 })
+    const sendt: { target: ForwardTarget; args: Record<string, unknown> }[] = []
+    const forward: ForwardDiagnostic = (target, args) => {
+      sendt.push({ target, args })
+      return Promise.resolve({ delivered: true, retry: false })
     }
 
     const response = await serveDiagnostics(post(KONVOLUTT), MILJØ, forward)
 
     expect(response.status).toBe(204)
     expect(sendt).toHaveLength(1)
-    expect(sendt[0]?.url).toBe('https://prosjekt.supabase.co/rest/v1/rpc/record_client_diagnostic')
-    expect(sendt[0]?.headers.authorization).toBe('Bearer brukerens-egen-token')
-    expect(JSON.parse(sendt[0]?.body ?? '{}')).toMatchObject({
+    expect(sendt[0]?.target.url).toBe('https://prosjekt.supabase.co')
+    expect(sendt[0]?.target.accessToken).toBe('brukerens-egen-token')
+    expect(sendt[0]?.target.publishableKey).toBe('sb_publishable_prøve')
+    expect(sendt[0]?.args).toMatchObject({
+      p_event_id: '4a1d0f2e-9c33-4b71-8f5a-2b6c7d8e9f01',
       p_area: 'work_queue',
       p_operation: 'public_work_board',
       p_transport: 'network',
     })
-    expect(JSON.parse(sendt[0]?.body ?? '{}').p_detail).toContain('Failed to fetch')
+    expect(String(sendt[0]?.args.p_detail)).toContain('Failed to fetch')
   })
 
   // Det ene en server kan gjøre som en nettleser midt i en navigasjon ikke kan.
-  it('prøver igjen når databasen svarer med en forbigående feil', async () => {
+  it('prøver igjen når transporten sviktet uten at databasen svarte', async () => {
     let forsøk = 0
     const forward: ForwardDiagnostic = () => {
       forsøk += 1
-      return Promise.resolve({ ok: false, status: 503 })
+      return Promise.resolve({ delivered: false, retry: true })
     }
     await serveDiagnostics(post(KONVOLUTT), MILJØ, forward)
     expect(forsøk).toBe(2)
@@ -94,7 +98,7 @@ describe('ruten', () => {
     let forsøk = 0
     const forward: ForwardDiagnostic = () => {
       forsøk += 1
-      return Promise.resolve({ ok: false, status: 401 })
+      return Promise.resolve({ delivered: false, retry: false })
     }
     await serveDiagnostics(post(KONVOLUTT), MILJØ, forward)
     expect(forsøk).toBe(1)
@@ -111,10 +115,10 @@ describe('ruten', () => {
   // om tokenen var gyldig, eller om kvoten var brukt opp.
   it('svarer det samme enten databasen tok imot eller avviste', async () => {
     const tok = await serveDiagnostics(post(KONVOLUTT), MILJØ, () =>
-      Promise.resolve({ ok: true, status: 204 }),
+      Promise.resolve({ delivered: true, retry: false }),
     )
     const avviste = await serveDiagnostics(post(KONVOLUTT), MILJØ, () =>
-      Promise.resolve({ ok: false, status: 403 }),
+      Promise.resolve({ delivered: false, retry: false }),
     )
     expect(tok.status).toBe(avviste.status)
   })
