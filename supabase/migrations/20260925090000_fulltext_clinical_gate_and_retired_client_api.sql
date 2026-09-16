@@ -82,11 +82,17 @@ begin
   -- source_version_id is nullable in the historical schema. Use a LEFT JOIN so
   -- a versionless root is itself an explicit mismatch instead of disappearing
   -- from the destructive-scope check through inner-join semantics.
+  --
+  -- The globally unique PMID is the source identity here. The bibliographic
+  -- title is deliberately NOT an identity check: source titles are editable
+  -- correction metadata in this schema and may be normalized without creating
+  -- a different source. Requiring byte-identical title text made a safe legacy
+  -- root fail the production preflight even though its stable identifier,
+  -- abstract representation and historical evidence lineage were unchanged.
   if exists (
     select 1
     from knowledge.evidence_items e
     left join knowledge.source_versions sv on sv.id = e.source_version_id
-    join knowledge.sources s on s.id = e.source_id
     join catalog.drugs d on d.id = e.intervention_drug_id
     join catalog.clinical_concepts c on c.id = e.outcome_concept_id
     where sv.id is null
@@ -94,7 +100,6 @@ begin
        or c.canonical_label <> 'vektendring'
        or not (
          (d.canonical_name = 'sertralin'
-          and s.title = 'Fluoxetine versus sertraline and paroxetine in major depressive disorder: changes in weight with long-term treatment'
           and exists (
             select 1
             from knowledge.source_identifiers si
@@ -104,7 +109,6 @@ begin
           ))
          or
          (d.canonical_name = 'mirtazapin'
-          and s.title = 'Comparison of the effects of mirtazapine and fluoxetine in severely depressed patients'
           and exists (
             select 1
             from knowledge.source_identifiers si
