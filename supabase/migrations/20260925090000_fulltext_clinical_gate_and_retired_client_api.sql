@@ -96,28 +96,11 @@ begin
       message = 'Antidep 2-resetten stoppet: en historisk evidensrot mangler kildeversjon.';
   end if;
 
-  if exists (
-    select 1
-    from knowledge.evidence_items e
-    join knowledge.source_versions sv on sv.id = e.source_version_id
-    where sv.representation is distinct from 'abstract'::knowledge.source_representation
-  ) then
-    raise exception using
-      errcode = '23001',
-      message = 'Antidep 2-resetten stoppet: en autorisert legacy-kilde er ikke lenger dokumentert som abstract-representasjon.';
-  end if;
-
-  if exists (
-    select 1
-    from knowledge.evidence_items e
-    join catalog.clinical_concepts c on c.id = e.outcome_concept_id
-    where c.canonical_label <> 'vektendring'
-  ) then
-    raise exception using
-      errcode = '23001',
-      message = 'Antidep 2-resetten stoppet: et evidensfunn har annet klinisk utfall enn den autoriserte legacy-prototypen.';
-  end if;
-
+  -- Establish immutable snapshot identity before checking the later-added
+  -- representation label. Hosted legacy data can therefore never be admitted
+  -- merely because mutable/backfilled metadata says "abstract"; conversely, a
+  -- representation mismatch cannot hide that the evidence root actually points
+  -- at a different source snapshot.
   if exists (
     select 1
     from knowledge.evidence_items e
@@ -132,6 +115,43 @@ begin
     raise exception using
       errcode = '23001',
       message = 'Antidep 2-resetten stoppet: kildeversjonen er ikke ett av de to autoriserte, uforanderlige legacy-snapshotene.';
+  end if;
+
+  -- representation was added after the two source snapshots and was backfilled
+  -- separately. Keep it as a fail-closed consistency check, but distinguish an
+  -- absent historical label from an explicitly conflicting one so production
+  -- drift can be diagnosed without logging source content.
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join knowledge.source_versions sv on sv.id = e.source_version_id
+    where sv.representation is null
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: en autorisert legacy-kilde mangler registrert representasjonstype.';
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join knowledge.source_versions sv on sv.id = e.source_version_id
+    where sv.representation <> 'abstract'::knowledge.source_representation
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: en autorisert legacy-kilde har en annen registrert representasjon enn abstract.';
+  end if;
+
+  if exists (
+    select 1
+    from knowledge.evidence_items e
+    join catalog.clinical_concepts c on c.id = e.outcome_concept_id
+    where c.canonical_label <> 'vektendring'
+  ) then
+    raise exception using
+      errcode = '23001',
+      message = 'Antidep 2-resetten stoppet: et evidensfunn har annet klinisk utfall enn den autoriserte legacy-prototypen.';
   end if;
 
   -- Snapshot identity is still not historical evidence-row lineage. After
