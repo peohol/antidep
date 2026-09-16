@@ -304,6 +304,27 @@ describe('fulltekstinnboksen', () => {
     expect(await screen.findByText(/Antidep har fått filen/)).toBeVisible()
   })
 
+  it('stopper en for stor fil i flaten, uten å lese eller sende den', async () => {
+    const submit: FullTextGateway['submit'] = vi.fn(() =>
+      Promise.resolve(parseFullTextSubmission({ accepted: true })),
+    )
+    render(
+      <MemoryRouter initialEntries={['/fulltekst']}>
+        <AppLayout fullText={fullText({ submit })} />
+      </MemoryRouter>,
+    )
+
+    const felt = await screen.findByLabelText('Fulltekst som PDF')
+    // En «fil» som er større enn grensen. Innholdet er tomt med vilje: prøven
+    // gjelder at flaten ser på størrelsen *før* den leser noe som helst.
+    const svær = new File([], 'svaer.pdf', { type: 'application/pdf' })
+    Object.defineProperty(svær, 'size', { value: 67_108_865 })
+    fireEvent.change(felt, { target: { files: [svær] } })
+
+    expect(await screen.findByText(/større enn 64 MB/)).toBeVisible()
+    expect(submit).not.toHaveBeenCalled()
+  })
+
   it('gjør en avvist fil til en beskjed om hva som kan gjøres i stedet', async () => {
     render(
       <MemoryRouter initialEntries={['/fulltekst']}>

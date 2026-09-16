@@ -32,6 +32,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import {
   describeArticle,
+  fileProblem,
   inboxStateSentence,
   rejectionSentence,
   type FullTextInboxItem,
@@ -136,6 +137,14 @@ export function FullTextInboxPage({ gateway }: FullTextInboxPageProps): React.JS
 
   const upload = useCallback(
     (item: FullTextInboxItem, file: File) => {
+      // Kontrolleres før filen leses. En fil på flere hundre megabyte ville
+      // ellers blitt lest, kopiert til byte, til en binærstreng og til base64
+      // før databasen fikk avvise den — og fanen ville frosset i mellomtiden.
+      const problem = fileProblem(file)
+      if (problem !== null) {
+        setNotice({ reference: item.reference, tone: 'problem', message: problem })
+        return
+      }
       setBusy(true)
       setNotice(null)
       void (async () => {

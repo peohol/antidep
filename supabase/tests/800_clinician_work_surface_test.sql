@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(72);
+select plan(79);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -150,14 +150,19 @@ grant select, insert on result to anon, authenticated;
 create temporary table scope (
   label text primary key,
   drug_ids uuid[] not null,
-  outcome_ids uuid[] not null
+  outcome_ids uuid[] not null,
+  population_ids uuid[] not null
 ) on commit drop;
 grant select on scope to authenticated;
-insert into scope (label, drug_ids, outcome_ids)
+-- Katalogens id-er er databasegenererte og dermed nye i hver database. De leses
+-- derfor her framfor å skrives inn som konstanter.
+insert into scope (label, drug_ids, outcome_ids, population_ids)
 select 'valgt',
        (select array_agg(id) from catalog.drugs where canonical_name = 'sertralin'),
        (select array_agg(id) from catalog.clinical_concepts
-        where concept_type = 'outcome' and canonical_label = 'vektendring');
+        where concept_type = 'outcome' and canonical_label = 'vektendring'),
+       (select array_agg(id) from catalog.populations
+        where canonical_label = 'voksne med depressiv lidelse');
 
 -- ===========================================================================
 -- Del 3 — Grensene rundt fulltekstinnboksen
@@ -229,6 +234,60 @@ select is(
    where r.source_id = '80000000-0000-4000-8000-000000000001'),
   'https://doi.org/10.1234/antidep.800',
   'adressen utledes av kildens egen DOI framfor å bli spurt om'
+);
+
+-- En PMID utledes bevisst ikke: PubMed viser sammendraget og ikke dokumentet,
+-- så en utledet PubMed-adresse ville pekt et sted fullteksten ikke er å finne.
+-- Da er det riktigere å be om adressen enn å gjette den.
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+values ('80000000-0000-4000-8000-000000000003', 'journal_article',
+        'En artikkel som bare har PMID', 'Testforfatter 800',
+        'ac800000-0000-4000-8000-00000000000b');
+insert into knowledge.source_identifiers (source_id, identifier_system, identifier_value)
+values ('80000000-0000-4000-8000-000000000003', 'pmid', '11111111');
+
+select is(
+  workflow.source_retrieval_address('80000000-0000-4000-8000-000000000003'),
+  null,
+  'en PMID blir ingen utledet adresse — en PubMed-side er ikke dokumentet'
+);
+
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000b"}', true);
+set local role authenticated;
+select throws_ok(
+  $$select api.request_full_text(
+      '80000000-0000-4000-8000-000000000003',
+      (select drug_ids from scope where label = 'valgt'),
+      (select outcome_ids from scope where label = 'valgt'))$$,
+  '22023', 'Kilden har ingen registrert DOI, så Antidep kan ikke utlede hvor fullteksten hentes fra.',
+  'og da spør Antidep om adressen framfor å oppgi en den ikke vet'
+);
+
+-- Den samme artikkelen med en *annen* avgrensning er en annen bestilling. Et
+-- stille ja her ville latt arbeidet forsvinne uten at noen merket det.
+select throws_ok(
+  $$select api.request_full_text(
+      '80000000-0000-4000-8000-000000000001',
+      (select drug_ids from scope where label = 'valgt'),
+      (select outcome_ids from scope where label = 'valgt'),
+      (select population_ids from scope where label = 'valgt'))$$,
+  '23001', 'Antidep venter allerede på denne artikkelen, med en annen avgrensning.',
+  'en annen avgrensning på den samme artikkelen avvises framfor å svelges stille'
+);
+
+-- Og den samme avgrensningen skrevet i en annen rekkefølge er den samme
+-- bestillingen: `{a,b}` og `{b,a,b}` er den samme redaksjonelle avgrensningen.
+insert into result select 'request_reordered', api.request_full_text(
+  '80000000-0000-4000-8000-000000000001',
+  (select drug_ids || drug_ids from scope where label = 'valgt'),
+  (select outcome_ids from scope where label = 'valgt'));
+reset role;
+
+select is(
+  (select (payload ->> 'requested')::boolean from result where label = 'request_reordered'),
+  false,
+  'den samme avgrensningen skrevet på nytt er fortsatt én forespørsel'
 );
 
 -- Og slik ser det ut for en uinnlogget: planlagt arbeid som venter på
@@ -704,6 +763,55 @@ select is(
    where label = 'board_done' and item ->> 'activity' = 'findings'),
   'done',
   'fullført arbeid står som fullført historikk, hentet av databasens egen tilstand'
+);
+
+-- ===========================================================================
+-- Del 10b — Tilbaketrekkingen, som gjør en feil bestilling til noe man kommer
+--           videre fra
+-- ===========================================================================
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+values ('80000000-0000-4000-8000-000000000004', 'journal_article',
+        'En artikkel som viste seg å være feil', 'Testforfatter 800',
+        'ac800000-0000-4000-8000-00000000000b');
+insert into knowledge.source_identifiers (source_id, identifier_system, identifier_value)
+values ('80000000-0000-4000-8000-000000000004', 'doi', '10.1234/antidep.800d');
+
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000b"}', true);
+set local role authenticated;
+insert into result select 'request_d', api.request_full_text(
+  '80000000-0000-4000-8000-000000000004',
+  (select drug_ids from scope where label = 'valgt'),
+  (select outcome_ids from scope where label = 'valgt'));
+
+select throws_ok(
+  format($$select api.withdraw_full_text_request(%L, '')$$,
+         (select payload ->> 'reference' from result where label = 'request_d')),
+  '22023', 'En tilbaketrekking skal ha en begrunnelse.',
+  'en tilbaketrekking uten begrunnelse avvises'
+);
+
+insert into result select 'withdrawn_d', api.withdraw_full_text_request(
+  (select payload ->> 'reference' from result where label = 'request_d'),
+  'Artikkelen viste seg å være feil.');
+
+-- Og etterpå er veien åpen for den avgrensningen som faktisk skulle vært der.
+insert into result select 'request_d2', api.request_full_text(
+  '80000000-0000-4000-8000-000000000004',
+  (select drug_ids from scope where label = 'valgt'),
+  (select outcome_ids from scope where label = 'valgt'),
+  (select population_ids from scope where label = 'valgt'));
+reset role;
+
+select is(
+  (select payload ->> 'state' from result where label = 'withdrawn_d'),
+  'withdrawn',
+  'en åpen forespørsel kan trekkes tilbake med en begrunnelse'
+);
+select is(
+  (select (payload ->> 'requested')::boolean from result where label = 'request_d2'),
+  true,
+  'og en ny bestilling med en annen avgrensning kommer gjennom etterpå'
 );
 
 -- ===========================================================================

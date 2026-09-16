@@ -17,6 +17,38 @@ import { asOptionalText, asText, fieldsOf, raw, type Fields } from '../agents/st
 
 const SUBJECT = 'Fulltekstinnboksen'
 
+/**
+ * Grensen databasen håndhever, gjentatt her med vilje.
+ *
+ * Ikke som en andre sannhet: databasen avviser en for stor fil uansett, og den
+ * avvisningen er den som gjelder. Men en fil på flere hundre megabyte leses,
+ * kopieres til byte, til en binærstreng og til base64 *før* databasen får se
+ * den — og en fane som fryser av et feilklikk, er nettopp den tekniske
+ * opplevelsen issue #99 vil bort fra. Kontrollen her er derfor en høflighet mot
+ * den som valgte feil fil, ikke en sikkerhetsgrense.
+ */
+export const MAX_FULL_TEXT_BYTES = 67_108_864
+
+/**
+ * Hvorfor en valgt fil ikke kan sendes, eller `null`.
+ *
+ * Setningen er flatens egen og sier hva som kan gjøres i stedet — som alle
+ * andre avvisninger i innboksen.
+ */
+export function fileProblem(file: { readonly size: number }): string | null {
+  if (file.size === 0) {
+    return 'Filen er tom. Velg artikkelens PDF.'
+  }
+  if (file.size > MAX_FULL_TEXT_BYTES) {
+    return (
+      'Filen er større enn 64 MB, og Antidep tar ikke imot den. En fulltekstartikkel er ' +
+      'normalt noen få megabyte — er filen mye større, er den sannsynligvis noe annet enn ' +
+      'artikkelen.'
+    )
+  }
+  return null
+}
+
 export type InboxState = 'needs_upload' | 'processing'
 
 const INBOX_STATES: readonly InboxState[] = ['needs_upload', 'processing']

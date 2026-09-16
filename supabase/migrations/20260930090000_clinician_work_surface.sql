@@ -483,9 +483,9 @@ create table workflow.full_text_requests (
   outcome_concept_ids uuid[] not null,
   population_ids uuid[] not null default array[]::uuid[],
 
-  -- Hvor originaldokumentet hentes fra. Utledes av kildens egen DOI eller PMID
-  -- når den har en, slik at den som laster opp, ikke blir bedt om en adresse
-  -- Antidep allerede kjenner.
+  -- Hvor originaldokumentet hentes fra. Oppgis av den som ber om artikkelen,
+  -- eller utledes av kildens registrerte DOI når den har en — slik at den som
+  -- laster opp, ikke blir bedt om en adresse Antidep allerede kjenner.
   retrieved_from text not null,
 
   state workflow.full_text_request_state not null default 'open',
@@ -534,7 +534,7 @@ create table workflow.full_text_requests (
 comment on table workflow.full_text_requests is
   'Hvilke artikler Antidep mangler fullteksten til, med den redaksjonelle avgrensningen ekstraksjonsoppgaven skal bygges av (ANTIDEP_CONSTITUTION.md regel 1). Én åpen forespørsel per kilde. En åpen rad er det den åpne arbeidsoversikten viser som «venter på fulltekst» — en normal arbeidsblokkering, aldri et teknisk problem. Raden lukkes av api.complete_full_text_extraction(...) i det kildeversjonen er registrert, og aldri av en flate.';
 comment on column workflow.full_text_requests.retrieved_from is
-  'Hvor originaldokumentet hentes fra. Utledes av kildens registrerte DOI eller PMID når den har en, slik at den som laster opp PDF-en ikke blir bedt om en adresse Antidep allerede kjenner. Fingeravtrykket identifiserer filen, men ikke hvor den kommer fra, og en kildeversjon uten opphav er ikke sporbar til en utgiver.';
+  'Hvor originaldokumentet hentes fra. Oppgis av den som ber om artikkelen, eller utledes av kildens registrerte DOI når den har en — den samme verdien npm run editor:assignment har bedt om siden migrasjon 003e. En PMID utledes bevisst ikke: en PubMed-side viser sammendraget og ikke dokumentet, så den ville pekt et sted fullteksten ikke er å finne, og da er det riktigere å spørre enn å gjette. Fingeravtrykket identifiserer filen, men ikke hvor den kommer fra, og en kildeversjon uten opphav er ikke sporbar til en utgiver.';
 
 alter table workflow.full_text_requests enable row level security;
 
@@ -559,22 +559,15 @@ create function workflow.source_retrieval_address(p_source_id uuid)
   stable
   set search_path = ''
 as $$
-  select coalesce(
-    (select 'https://doi.org/' || i.identifier_value
-     from knowledge.source_identifiers i
-     where i.source_id = p_source_id and i.identifier_system = 'doi'
-     order by i.identifier_value
-     limit 1),
-    (select 'https://pubmed.ncbi.nlm.nih.gov/' || i.identifier_value || '/'
-     from knowledge.source_identifiers i
-     where i.source_id = p_source_id and i.identifier_system = 'pmid'
-     order by i.identifier_value
-     limit 1)
-  );
+  select 'https://doi.org/' || i.identifier_value
+  from knowledge.source_identifiers i
+  where i.source_id = p_source_id and i.identifier_system = 'doi'
+  order by i.identifier_value
+  limit 1;
 $$;
 
 comment on function workflow.source_retrieval_address(uuid) is
-  'Adressen kildens fulltekst hentes fra, utledet av kildens egen registrerte DOI eller PMID. Finnes for at en fulltekstforespørsel skal kunne opprettes uten at noen skriver en adresse Antidep allerede kjenner. Svarer NULL når kilden ikke har noen av delene; da må adressen oppgis.';
+  'Adressen kildens fulltekst hentes fra, utledet av kildens registrerte DOI. Finnes for at en fulltekstforespørsel skal kunne opprettes uten at noen skriver en adresse Antidep allerede kjenner — det er den samme verdien npm run editor:assignment har bedt om siden migrasjon 003e, og den løser opp til utgiverens egen side for nettopp denne publikasjonen. En PMID utledes bevisst ikke: en PubMed-side viser sammendraget og ikke dokumentet, så den ville pekt et sted fullteksten ikke er å finne. Svarer NULL når kilden ikke har DOI; da må adressen oppgis av den som ber om artikkelen.';
 
 revoke execute on function workflow.source_retrieval_address(uuid) from public;
 
@@ -633,6 +626,75 @@ comment on function workflow.full_text_request_scope_problem(uuid[], uuid[], uui
 
 revoke execute on function workflow.full_text_request_scope_problem(uuid[], uuid[], uuid[]) from public;
 
+-- ----------------------------------------------------------------------------
+-- To like avgrensninger skal være like
+--
+-- `{a,b}` og `{b,a,b}` er den samme redaksjonelle avgrensningen. Uten en
+-- normalisering ville sammenligningen under sagt at de var forskjellige, og en
+-- gjentatt forespørsel ville blitt avvist som noe annet enn seg selv.
+-- ----------------------------------------------------------------------------
+create function workflow.sorted_unique(p_ids uuid[])
+  returns uuid[]
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select coalesce(
+    (select array_agg(distinct id order by id) from unnest(coalesce(p_ids, array[]::uuid[])) as id),
+    array[]::uuid[]);
+$$;
+
+comment on function workflow.sorted_unique(uuid[]) is
+  'Den samme mengden id-er, alltid i den samme formen: sortert og uten duplikater. Finnes for at to like redaksjonelle avgrensninger skal være like også som verdier, slik at en gjentatt fulltekstforespørsel kjennes igjen som seg selv.';
+
+revoke execute on function workflow.sorted_unique(uuid[]) from public;
+
+-- ----------------------------------------------------------------------------
+-- Svaret når artikkelen allerede er etterspurt
+--
+-- Egen funksjon fordi den brukes to steder — når raden ble sett, og når den
+-- dukket opp under et samtidig kall — og fordi to kopier ville kunnet komme i
+-- utakt om hva som er «den samme bestillingen».
+-- ----------------------------------------------------------------------------
+create function workflow.full_text_request_outcome(
+  p_existing workflow.full_text_requests,
+  p_drug_ids uuid[],
+  p_outcome_concept_ids uuid[],
+  p_population_ids uuid[]
+)
+  returns jsonb
+  language plpgsql
+  stable
+  set search_path = ''
+as $$
+begin
+  if p_existing.id is null then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'Forespørselen kunne ikke registreres, og den finnes heller ikke fra før.';
+  end if;
+
+  if p_existing.drug_ids is distinct from p_drug_ids
+     or p_existing.outcome_concept_ids is distinct from p_outcome_concept_ids
+     or p_existing.population_ids is distinct from p_population_ids then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'Antidep venter allerede på denne artikkelen, med en annen avgrensning.',
+      hint = 'Den åpne forespørselen bestemmer hva ekstraksjonsoppgaven bygges av. Vent til fullteksten er registrert og be om den nye avgrensningen da, eller trekk den åpne forespørselen tilbake med api.withdraw_full_text_request(text, text) først. Et stille ja her ville latt arbeidet forsvinne uten at noen merket det.';
+  end if;
+
+  return jsonb_build_object(
+    'reference', p_existing.reference,
+    'requested', false,
+    'state', p_existing.state::text);
+end;
+$$;
+
+comment on function workflow.full_text_request_outcome(workflow.full_text_requests, uuid[], uuid[], uuid[]) is
+  'Svaret når artikkelen allerede er etterspurt: den samme avgrensningen er den samme bestillingen og svarer requested: false, mens en annen avgrensning avvises framfor å svelges stille. Egen funksjon fordi api.request_full_text(...) trenger den både når raden ble sett og når den dukket opp under et samtidig kall.';
+
+revoke execute on function workflow.full_text_request_outcome(workflow.full_text_requests, uuid[], uuid[], uuid[]) from public;
+
 create function api.request_full_text(
   p_source_id uuid,
   p_drug_ids uuid[],
@@ -649,8 +711,10 @@ declare
   v_actor_id uuid;
   v_problem text;
   v_retrieved_from text;
+  v_drug_ids uuid[] := workflow.sorted_unique(p_drug_ids);
+  v_outcome_ids uuid[] := workflow.sorted_unique(p_outcome_concept_ids);
+  v_population_ids uuid[] := workflow.sorted_unique(p_population_ids);
   v_existing workflow.full_text_requests;
-  v_id uuid;
   v_reference text;
 begin
   v_actor_id := knowledge.assert_editor_authorized();
@@ -663,7 +727,7 @@ begin
   end if;
 
   v_problem := workflow.full_text_request_scope_problem(
-    p_drug_ids, p_outcome_concept_ids, p_population_ids);
+    v_drug_ids, v_outcome_ids, v_population_ids);
   if v_problem is not null then
     raise exception using errcode = 'invalid_parameter_value', message = v_problem;
   end if;
@@ -674,30 +738,49 @@ begin
   if v_retrieved_from is null then
     raise exception using
       errcode = 'invalid_parameter_value',
-      message = 'Kilden har verken DOI eller PMID, så Antidep kan ikke utlede hvor fullteksten hentes fra.',
-      hint = 'Registrer kildens DOI eller PMID, eller oppgi adressen eksplisitt. Fingeravtrykket identifiserer filen, men ikke hvor den kommer fra.';
+      message = 'Kilden har ingen registrert DOI, så Antidep kan ikke utlede hvor fullteksten hentes fra.',
+      hint = 'Oppgi adressen dokumentet faktisk hentes fra, eller registrer kildens DOI. En PMID utledes bevisst ikke: en PubMed-side viser sammendraget og ikke dokumentet. Fingeravtrykket identifiserer filen, men ikke hvor den kommer fra, og en kildeversjon uten opphav er ikke sporbar til en utgiver.';
   end if;
 
-  -- Idempotent på kilden: den samme artikkelen etterspurt to ganger er én
-  -- forespørsel. Uten det ville en gjentatt orkestrering doblet ventelisten.
+  -- Idempotent på kilden *og* på avgrensningen: den samme artikkelen med den
+  -- samme avgrensningen etterspurt to ganger er én forespørsel, så en gjentatt
+  -- orkestrering ikke dobler ventelisten.
+  --
+  -- En *annen* avgrensning er derimot en annen bestilling, og den skal ikke
+  -- svelges stille. Svarte vi `requested: false` på den, ville den som ba om
+  -- et nytt virkestoff, fått beskjed om at det var i orden — mens
+  -- ekstraksjonsoppgaven senere ble bygget uten det, og arbeidet forsvant uten
+  -- at noen merket det. Samme regel som api.enqueue_pipeline_job(...) har:
+  -- den samme nøkkelen med et annet innhold avvises framfor å gjenbrukes.
   select r.* into v_existing
   from workflow.full_text_requests r
   where r.source_id = p_source_id and r.state = 'open';
 
   if v_existing.id is not null then
-    return jsonb_build_object(
-      'reference', v_existing.reference,
-      'requested', false,
-      'state', v_existing.state::text);
+    return workflow.full_text_request_outcome(
+      v_existing, v_drug_ids, v_outcome_ids, v_population_ids);
   end if;
 
-  insert into workflow.full_text_requests
-    (source_id, drug_ids, outcome_concept_ids, population_ids,
-     retrieved_from, requested_by_actor_id)
-  values
-    (p_source_id, p_drug_ids, p_outcome_concept_ids,
-     coalesce(p_population_ids, array[]::uuid[]), v_retrieved_from, v_actor_id)
-  returning id, reference into v_id, v_reference;
+  begin
+    insert into workflow.full_text_requests
+      (source_id, drug_ids, outcome_concept_ids, population_ids,
+       retrieved_from, requested_by_actor_id)
+    values
+      (p_source_id, v_drug_ids, v_outcome_ids, v_population_ids,
+       v_retrieved_from, v_actor_id)
+    returning reference into v_reference;
+  exception
+    -- To samtidige forespørsler om den samme artikkelen er fortsatt én
+    -- forespørsel. Den partielle unike indeksen avgjør hvem som vant, og den
+    -- som tapte, svarer på nøyaktig samme måte som om den hadde sett raden
+    -- først — ellers ville idempotensen bare holdt når ingen andre var der.
+    when unique_violation then
+      select r.* into v_existing
+      from workflow.full_text_requests r
+      where r.source_id = p_source_id and r.state = 'open';
+      return workflow.full_text_request_outcome(
+        v_existing, v_drug_ids, v_outcome_ids, v_population_ids);
+  end;
 
   return jsonb_build_object('reference', v_reference, 'requested', true, 'state', 'open');
 end;
@@ -708,6 +791,73 @@ comment on function api.request_full_text(uuid, uuid[], uuid[], uuid[], text) is
 
 revoke execute on function api.request_full_text(uuid, uuid[], uuid[], uuid[], text) from public;
 grant execute on function api.request_full_text(uuid, uuid[], uuid[], uuid[], text) to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Å trekke en forespørsel tilbake
+--
+-- Tilstanden `withdrawn` finnes fordi en bestilling kan bli uaktuell: artikkelen
+-- viste seg å være feil, eller avgrensningen skal være en annen. Uten en vei
+-- inn i den ville en åpen forespørsel med feil avgrensning vært en blindvei —
+-- den ville stått i den åpne oversikten for alltid, og en ny bestilling ville
+-- blitt avvist mot den.
+--
+-- En fil som er under behandling, stopper tilbaketrekkingen. Den filen er
+-- allerede levert av et menneske, og å lukke bestillingen under den ville
+-- etterlatt et uttrekk uten noe å oppfylle.
+-- ----------------------------------------------------------------------------
+create function api.withdraw_full_text_request(p_reference text, p_reason text)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_request workflow.full_text_requests;
+  v_reason text := nullif(btrim(coalesce(p_reason, '')), '');
+begin
+  perform knowledge.assert_editor_authorized();
+
+  if v_reason is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'En tilbaketrekking skal ha en begrunnelse.',
+      hint = 'Uten den er «artikkelen var feil» og «avgrensningen skal være en annen» samme tilstand, og de to er forskjellige tilstander (ANTIDEP_CONSTITUTION.md regel 4).';
+  end if;
+
+  select r.* into v_request
+  from workflow.full_text_requests r
+  where r.reference = p_reference and r.state = 'open'
+  for update;
+
+  if v_request.id is null then
+    raise exception using
+      errcode = 'no_data_found',
+      message = 'Antidep venter ikke på fulltekst for denne artikkelen nå.';
+  end if;
+
+  if exists (
+    select 1 from workflow.full_text_intake i
+    where i.full_text_request_id = v_request.id and i.state in ('received', 'processing')
+  ) then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'Antidep arbeider med en fil for denne artikkelen akkurat nå.',
+      hint = 'Vent til filen er ferdig behandlet. Blir den avvist, kan forespørselen trekkes tilbake.';
+  end if;
+
+  update workflow.full_text_requests r
+  set state = 'withdrawn', closed_at = now(), closed_reason = v_reason
+  where r.id = v_request.id;
+
+  return jsonb_build_object('reference', v_request.reference, 'state', 'withdrawn');
+end;
+$$;
+
+comment on function api.withdraw_full_text_request(text, text) is
+  'Trekker én åpen fulltekstforespørsel tilbake, med en begrunnelse. Finnes fordi en bestilling kan bli uaktuell, og fordi en åpen forespørsel med feil avgrensning ellers ville vært en blindvei: den ville stått i den åpne oversikten for alltid, og en ny bestilling ville blitt avvist mot den. En fil som er under behandling, stopper tilbaketrekkingen — den er allerede levert av et menneske. Krever editor-mandat: hvilke artikler Antidep trenger, er en redaksjonell avgjørelse.';
+
+revoke execute on function api.withdraw_full_text_request(text, text) from public;
+grant execute on function api.withdraw_full_text_request(text, text) to authenticated;
 
 -- ============================================================================
 -- 3. Den ene registreringsveien, løftet ut så to innganger kan dele den

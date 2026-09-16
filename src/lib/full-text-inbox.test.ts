@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   describeArticle,
+  fileProblem,
   inboxStateSentence,
+  MAX_FULL_TEXT_BYTES,
   parseFullTextInbox,
   parseFullTextSubmission,
   rejectionSentence,
@@ -102,5 +104,25 @@ describe('lesingen av opplastingssvaret', () => {
 
   it('avviser et svar som ikke stemmer med kontrakten', () => {
     expect(() => parseFullTextSubmission({ accepted: 'ja' })).toThrow(/ugyldig/)
+  })
+})
+
+describe('filen som velges', () => {
+  it('slipper gjennom en fil av rimelig størrelse', () => {
+    expect(fileProblem({ size: 2_400_000 })).toBeNull()
+    expect(fileProblem({ size: MAX_FULL_TEXT_BYTES })).toBeNull()
+  })
+
+  // Uten kontrollen ville filen blitt lest, kopiert til byte, til en
+  // binærstreng og til base64 før databasen fikk avvise den — og fanen ville
+  // frosset i mellomtiden.
+  it('stopper en for stor fil før den leses, med en setning om hva som er galt', () => {
+    const problem = fileProblem({ size: MAX_FULL_TEXT_BYTES + 1 })
+    expect(problem).toMatch(/64 MB/)
+    expect(problem).toMatch(/noe annet enn artikkelen/)
+  })
+
+  it('stopper en tom fil', () => {
+    expect(fileProblem({ size: 0 })).toMatch(/tom/)
   })
 })
