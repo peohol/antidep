@@ -46,7 +46,7 @@ function client(answers: Record<string, { data?: unknown; error?: unknown }>): {
 }
 
 /** Det nettleseren faktisk sendte til `/diagnostics`, uten å røre nettet. */
-function fangLevering(svar: { ok: boolean } | 'ryker'): {
+function fangLevering(svar: { ok: boolean; status?: number } | 'ryker'): {
   readonly sendt: { url: string; body: string }[]
   restore: () => void
 } {
@@ -369,6 +369,46 @@ describe('kallet gjennom gatewayen', () => {
     await vi.waitFor(() => expect(pending()).toHaveLength(0))
     expect(JSON.parse(senere.sendt[0]?.body ?? '{}').detail).toContain('Failed to fetch')
     senere.restore()
+  })
+
+  // Og det samme når ruten svarer at den ikke fikk lagret.
+  //
+  // Punkt 2 fra trettende gjennomgang: et 204 fra forsøksgrensen ville blitt
+  // lest som «kommet fram», og observasjonen ville blitt slettet uten at noen
+  // hadde tatt imot den. Et 503 er det eneste svaret som holder den i live.
+  it('beholder den rå årsaken når ruten ber om et nytt forsøk', async () => {
+    const nektet = fangLevering({ ok: false, status: 503 })
+    const nede = {
+      rpc: () => Promise.reject(new TypeError('Failed to fetch')),
+      auth: {
+        getSession: () =>
+          Promise.resolve({
+            data: { session: { access_token: 'brukerens-egen-token', user: { id: BRUKER } } },
+          }),
+      },
+    } as unknown as AntidepClient
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(nede, {
+      fn: 'public_work_board',
+      area: 'work_queue',
+      parse: () => undefined,
+    }).catch(() => undefined)
+    await vi.waitFor(() => expect(nektet.sendt).toHaveLength(1))
+    spy.mockRestore()
+    nektet.restore()
+
+    // Ikke lagret, altså fortsatt i utboksen.
+    expect(pending()).toHaveLength(1)
+    expect(pending()[0]?.detail).toContain('Failed to fetch')
+
+    // Og når grensen er over, går den med.
+    const etterpå = fangLevering({ ok: true })
+    flushPendingDiagnostics(nede)
+    await vi.waitFor(() => expect(etterpå.sendt).toHaveLength(1))
+    await vi.waitFor(() => expect(pending()).toHaveLength(0))
+    expect(JSON.parse(etterpå.sendt[0]?.body ?? '{}').detail).toContain('Failed to fetch')
+    etterpå.restore()
   })
 
   // Arbeidsoversikten er offentlig. Svikter den for noen som ikke er innlogget,

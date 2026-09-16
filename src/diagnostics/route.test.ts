@@ -829,8 +829,8 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
     expect(spurt).toBe(30)
   })
 
-  // Og når den felles grensen sier nei, skjer ingenting mer: ingen rundtur,
-  // ingen linje, og et svar som ikke skiller seg ut.
+  // Og når den felles grensen sier nei, skjer ingenting mer: ingen rundtur og
+  // ingen linje. Men svaret er 503 og ikke 204 — se prøven under.
   it('spør ikke autentiseringstjenesten når den felles grensen sier nei', async () => {
     const logg = fangLoggen()
     const lagring = fangLagringen(true, false)
@@ -844,9 +844,34 @@ describe('avsenderen må være kontrollert før teksten brukes', () => {
         throw new Error('autentiseringstjenesten skal ikke spørres over grensen')
       },
     )
-    expect(response.status).toBe(204)
+    expect(response.status).toBe(503)
     expect(logg.linjer).toHaveLength(0)
     expect(lagring.beholdt).toHaveLength(0)
+  })
+
+  // Punkt 2 fra trettende gjennomgang: et 204 her ville fått nettleseren til å
+  // slette observasjonen fordi den trodde den var kommet fram — og den er ikke
+  // lagret noe sted. Forskjellen på denne grensen og en kvote er at den er til
+  // å vente ut: tretti i minuttet, og et forsøk om et øyeblikk lykkes.
+  it('ber om et nytt forsøk framfor å kvittere når grensen er nådd', async () => {
+    const lagring = fangLagringen()
+    const svarene: number[] = []
+    for (let i = 0; i < 31; i += 1) {
+      const response = await serveDiagnostics(
+        post(KONVOLUTT),
+        MILJØ,
+        () => Promise.resolve({ delivered: false, retry: true }),
+        () => undefined,
+        lagring.store,
+        GODKJENT,
+      )
+      svarene.push(response.status)
+    }
+    // De tretti første kom gjennom grensen og ble lagret.
+    expect(svarene.slice(0, 30)).toEqual(Array.from({ length: 30 }, () => 204))
+    // Den trettiførste ble stoppet av den, og skal beholdes i utboksen.
+    expect(svarene[30]).toBe(503)
+    expect(lagring.beholdt).toHaveLength(30)
   })
 
   // Og svarer databasen ikke på spørsmålet heller, er det ikke avsenderen som

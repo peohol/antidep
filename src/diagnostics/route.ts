@@ -92,17 +92,28 @@
 // ----------------------------------------------------------------------------
 // Svaret sier to ting, og ikke én til
 //
-// 204 betyr *ferdig behandlet*: skrevet ned. 503 betyr *ikke lagret, prøv
-// igjen*: ingen av veiene tok imot.
+// 204 betyr *ferdig behandlet*. 503 betyr *ikke lagret, prøv igjen*.
 //
 // Skillet er ikke kosmetikk. Nettleseren beholder observasjonen i utboksen til
 // leveringen er bekreftet, og en rute som svarte 204 på en mislykket lagring,
 // ville fått den til å slette årsaken den nettopp skulle berge — den samme
 // tapsmåten utboksen finnes for å fjerne.
 //
-// Utover de to sier svaret ingenting. Om tokenen var gyldig, om kvoten var
-// brukt opp, om raden allerede fantes: alt er 204. En rute som skilte dem, ville
-// vært et sted å prøve seg fram fra utsiden. Grunnen står i kjøreloggen, som er
+// «Ferdig behandlet» er derfor ikke det samme som «lagret». Det dekker to
+// utfall: raden er skrevet, eller den kommer aldri til å bli det uansett hvor
+// mange ganger den prøves. En token som ikke har formen til en token, en
+// avsender databasen sa nei til, og en kvote som *er* taket for hva én bruker
+// bidrar med i timen — alle tre er endelige, og et nytt forsøk ville bare
+// gjentatt det samme svaret.
+//
+// En grense man kan vente ut, er noe annet. Forsøksgrensen foran kontrollen av
+// avsenderen er tretti i minuttet, og et forsøk om et øyeblikk lykkes. Den
+// svarer derfor 503, så observasjonen blir liggende i utboksen framfor å bli
+// slettet av et svar som sa at den var kommet fram.
+//
+// Utover de to sier svaret ingenting om *hvorfor*. Det en utenforstående kan
+// lese ut av et 503, er at den selv er over en grense — ikke om en token var
+// gyldig, og ingenting om noen andre. Grunnen står i kjøreloggen, som er
 // privat.
 // ============================================================================
 
@@ -364,6 +375,17 @@ export function reporterIpHash(request: Request, today = new Date()): string | n
 const nothing = (): Response => new Response(null, { status: 204 })
 
 /**
+ * «Ikke lagret, prøv igjen». Uten en linje i kjøreloggen.
+ *
+ * Skilt fra de andre 503-ene med vilje: de skriver linjen, fordi de vet hva
+ * observasjonen var og at loggen er det eneste stedet den finnes. Denne står
+ * foran kontrollen av avsenderen, og linjen er nettopp det grensen finnes for
+ * å beskytte — så den skal ikke skrives. Nettleseren trenger uansett bare det
+ * ene: at observasjonen ikke er kommet fram, og at den skal beholdes.
+ */
+const retryLater = (): Response => new Response(null, { status: 503 })
+
+/**
  * Den ekte veien videre, gjennom den samme klienten resten av Antidep bruker.
  *
  * Ikke et håndskrevet REST-kall: skjemavalget, nøkkelen og hodene er konvensjon
@@ -514,8 +536,13 @@ export async function serveDiagnostics(
   // den krever at Data API-et faktisk er nede.
   //
   // Den lokale demperen først, fordi den er gratis.
+  //
+  // Og svaret er 503 og ikke 204: observasjonen er ikke lagret noe sted, og et
+  // 204 ville fått nettleseren til å slette den ut fra at den var kommet fram.
+  // Grensen er tretti i minuttet — den er til å vente ut, og et nytt forsøk om
+  // et øyeblikk lykkes.
   if (!withinAttemptBudget(ipHash)) {
-    return nothing()
+    return retryLater()
   }
 
   // Og så grensen som faktisk holder.
@@ -535,7 +562,7 @@ export async function serveDiagnostics(
 
   const budget = await store.claimAttempt(ipHash)
   if (budget === false) {
-    return nothing()
+    return retryLater()
   }
   if (budget === null) {
     // Databasen svarte ikke på spørsmålet heller. Da er det ikke avsenderen som
