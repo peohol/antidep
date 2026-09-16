@@ -4,9 +4,10 @@ import {
   callRpc,
   classifyGatewayFailure,
   describeGatewayFailure,
-  forgetReportedProblems,
   GatewayFailure,
   setTechnicalSink,
+  transportShape,
+  type GatewayFailureKind,
   type TechnicalDetail,
 } from './gateway'
 import type { AntidepClient } from '../lib/supabase'
@@ -35,9 +36,6 @@ function client(answers: Record<string, { data?: unknown; error?: unknown }>): {
 
 afterEach(() => {
   setTechnicalSink(null)
-  // Hva flaten har meldt fra om, lever i modulen fordi det skal overleve at en
-  // side byttes ut. Mellom to prøver skal det ikke overleve noe som helst.
-  forgetReportedProblems()
 })
 
 describe('klassifiseringen av en svikt', () => {
@@ -163,8 +161,78 @@ describe('kallet gjennom gatewayen', () => {
       p_kind: 'unavailable',
       p_operation: 'noe',
       p_code: 'PGRST301',
+      p_http_status: null,
+      p_transport: 'unknown',
     })
     expect(JSON.stringify(report?.args)).not.toContain('hemmelig')
+  })
+
+  // Koden mangler nettopp når svaret aldri kom. Uten transportformen ville en
+  // teknisk agent sett *at* et kall sviktet, uten noe som helst om hvordan.
+  // Formen leses av hva feilen *er*, aldri av hva den sier — og det er nettopp
+  // derfor den kan sendes videre.
+  it.each([
+    [new TypeError('Failed to fetch'), 'unavailable', 'network'],
+    [{ status: 503 }, 'unavailable', 'http'],
+    [{ name: 'AbortError' }, 'unavailable', 'aborted'],
+    [{ name: 'TimeoutError' }, 'unavailable', 'timeout'],
+    [new Error('hva som helst'), 'unreadable_answer', 'contract'],
+    ['noe rart', 'unavailable', 'unknown'],
+  ])('leser formen på svikten som en maskinverdi (%#)', (cause, kind, expected) => {
+    expect(transportShape(cause, kind as GatewayFailureKind)).toBe(expected)
+  })
+
+  it('sender transportformen med når svaret aldri kom, og koden derfor mangler', async () => {
+    const calls: { fn: string; args: unknown }[] = []
+    const nettetErBorte = {
+      rpc: (fn: string, args: unknown) => {
+        calls.push({ fn, args })
+        return fn === 'noe'
+          ? Promise.reject(new TypeError('Failed to fetch'))
+          : Promise.resolve({ data: null, error: null })
+      },
+    } as unknown as AntidepClient
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(nettetErBorte, { fn: 'noe', area: 'work_queue', parse: () => undefined }).catch(
+      () => undefined,
+    )
+    spy.mockRestore()
+
+    const report = calls.find((call) => call.fn === 'report_technical_problem')
+    expect(report?.args).toEqual({
+      p_area: 'work_queue',
+      p_kind: 'unavailable',
+      p_operation: 'noe',
+      p_code: null,
+      p_http_status: null,
+      p_transport: 'network',
+    })
+  })
+
+  // HTTP-statusen står i konvolutten rundt svaret og ikke i feilen, og en 503
+  // og en 401 er to helt forskjellige driftsproblemer.
+  it('tar med HTTP-statusen tjenesten faktisk svarte med', async () => {
+    const calls: { fn: string; args: unknown }[] = []
+    const svarer503 = {
+      rpc: (fn: string, args: unknown) => {
+        calls.push({ fn, args })
+        return Promise.resolve(
+          fn === 'noe'
+            ? { data: null, error: { code: 'PGRST301' }, status: 503 }
+            : { data: null, error: null, status: 200 },
+        )
+      },
+    } as unknown as AntidepClient
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await callRpc(svarer503, { fn: 'noe', area: 'work_queue', parse: () => undefined }).catch(
+      () => undefined,
+    )
+    spy.mockRestore()
+
+    const report = calls.find((call) => call.fn === 'report_technical_problem')
+    expect((report?.args as { p_http_status: unknown }).p_http_status).toBe(503)
   })
 
   // En kode databasen ville avvist, er ikke verdt å presse gjennom: meldingen
@@ -180,10 +248,10 @@ describe('kallet gjennom gatewayen', () => {
     expect((report?.args as { p_code: unknown }).p_code).toBeNull()
   })
 
-  // Uten dette ville ett nettverksglipp fått merket i navigasjonen til å lyse
-  // for alltid — en selvmeldt rad har ingen autoritativ observasjon som lukker
-  // den.
-  it('lukker sin egen melding når det samme kallet går gjennom igjen', async () => {
+  // Flaten lukker ingenting. En selvmeldt rad gjelder så lenge den fornyes, og
+  // det er databasen som avgjør når den er over. Et minne i fanen ville vært
+  // borte ved første sideoppfriskning — og da hadde meldingen blitt stående.
+  it('lukker ingenting selv, heller ikke når kallet går gjennom igjen', async () => {
     const svikter = client({ noe: { error: { code: 'PGRST301' } } })
     await callRpc(svikter.client, { fn: 'noe', area: 'work_queue', parse: () => undefined }).catch(
       () => undefined,
@@ -192,16 +260,7 @@ describe('kallet gjennom gatewayen', () => {
 
     const virker = client({ noe: { data: [] } })
     await callRpc(virker.client, { fn: 'noe', area: 'work_queue', parse: () => undefined })
-    const cleared = virker.calls.find((call) => call.fn === 'clear_technical_problem')
-    expect(cleared?.args).toEqual({ p_area: 'work_queue', p_operation: 'noe' })
-  })
-
-  // Og ikke ellers: et kall per vellykket lesing ville vært en dobling av
-  // trafikken for å rydde i noe som nesten alltid ikke er der.
-  it('lukker ingenting når det ikke var meldt fra om noe', async () => {
-    const { client: db, calls } = client({ noe: { data: [] } })
-    await callRpc(db, { fn: 'noe', area: 'work_queue', parse: () => undefined })
-    expect(calls.map((call) => call.fn)).not.toContain('clear_technical_problem')
+    expect(virker.calls.map((call) => call.fn)).toEqual(['noe'])
   })
 
   // Et svar som ikke lar seg lese, er like alvorlig som et svar som ikke kom:

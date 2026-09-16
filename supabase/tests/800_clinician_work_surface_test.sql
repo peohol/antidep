@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(99);
+select plan(107);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -62,8 +62,7 @@ select is_empty(
                  ('api.resume_blocked_full_text_extractions()'),
                  ('api.technical_problem_board()'),
                  ('api.technical_problem_summary()'),
-                 ('api.report_technical_problem(text,text,text,text)'),
-                 ('api.clear_technical_problem(text,text)')) as f(name)
+                 ('api.report_technical_problem(text,text,text,text,integer,text)')) as f(name)
     where has_function_privilege('anon', f.name, 'EXECUTE')
        or has_function_privilege('public', f.name, 'EXECUTE')
        or has_function_privilege('service_role', f.name, 'EXECUTE')
@@ -804,9 +803,22 @@ select throws_ok(
   '22023', 'Ukjent kodeform.',
   'og koden må ha en kodes form, ikke en setnings'
 );
+select throws_ok(
+  $$select api.report_technical_problem('work_queue', 'unavailable', 'public_work_board',
+                                        null, 9000)$$,
+  '22023', 'Ukjent statuskode.',
+  'statusen må være en HTTP-status'
+);
+select throws_ok(
+  $$select api.report_technical_problem('work_queue', 'unavailable', 'public_work_board',
+                                        null, null, 'litt av hvert')$$,
+  '22023', 'Ukjent transportform.',
+  'og transportformen må være en form databasen kjenner'
+);
 
 do $$ begin
-  perform api.report_technical_problem('work_queue', 'unavailable', 'public_work_board', 'PGRST301');
+  perform api.report_technical_problem('work_queue', 'unavailable', 'public_work_board',
+                                       'PGRST301', 503, 'http');
 end $$;
 reset role;
 
@@ -829,6 +841,19 @@ select ok(
     like '%PGRST301%',
   'og hvilken kode svaret bar'
 );
+
+-- Koden mangler nettopp når svaret aldri kom. Uten statusen og transportformen
+-- ville en teknisk agent sett *at* et kall sviktet, uten noe om hvordan.
+select ok(
+  (select ti.diagnosis from workflow.technical_incidents ti where ti.area = 'work_queue')
+    like '%503%',
+  'hvilken HTTP-status tjenesten svarte med'
+);
+select ok(
+  (select ti.diagnosis from workflow.technical_incidents ti where ti.area = 'work_queue')
+    like '%feilkode%',
+  'og hvilken form svikten hadde, i Antideps egne ord'
+);
 select ok(
   (select ti.diagnosis from workflow.technical_incidents ti where ti.area = 'work_queue')
     not like '%JWT%',
@@ -840,21 +865,56 @@ select is(
   'og to forskjellige kall som svikter, blir to problemer framfor ett'
 );
 
--- En selvmeldt rad har ingen autoritativ observasjon som kan lukke den. Uten en
--- vei ut ville ett nettverksglipp fått merket til å lyse for alltid.
+-- En selvmeldt rad er et hjerteslag og ikke en tilstand: den gjelder så lenge
+-- den fornyes. Det er hele grunnen til at flaten ikke lukker den selv — et
+-- minne i en fane ville vært borte ved første sideoppfriskning, og meldingen
+-- ville blitt stående som et uløst problem for alltid.
 select set_config('request.jwt.claims',
-                  '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
+                  '{"sub":"80000000-0000-4000-8000-00000000000c"}', true);
 set local role authenticated;
-do $$ begin
-  perform api.clear_technical_problem('work_queue', 'public_work_board');
-end $$;
+select is(
+  (api.technical_problem_summary() ->> 'unresolved')::int,
+  1,
+  'en fersk selvmelding teller som et uløst problem'
+);
+reset role;
+
+-- Ingen rører klienten. Meldingen blir bare stående uten å bli fornyet.
+update workflow.technical_incidents ti
+set first_seen_at = statement_timestamp() - workflow.self_report_heartbeat() - interval '2 minutes',
+    last_seen_at = statement_timestamp() - workflow.self_report_heartbeat() - interval '1 minute'
+where ti.area = 'work_queue';
+
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000c"}', true);
+set local role authenticated;
+select is(
+  (api.technical_problem_summary() ->> 'unresolved')::int,
+  0,
+  'en selvmelding som ikke fornyes, er over — uten at noen klient sa fra'
+);
+insert into result select 'board_selfreport',
+  jsonb_build_object('items', api.technical_problem_board());
 reset role;
 
 select is(
-  (select count(*)::int from workflow.technical_incidents ti
-   where ti.area = 'work_queue' and ti.resolved_at is null),
-  0,
-  'flaten lukker sin egen melding når det samme kallet går gjennom igjen'
+  (select item ->> 'area'
+   from result, lateral jsonb_array_elements(payload -> 'items') as item
+   where label = 'board_selfreport' and (item ->> 'ongoing')::boolean),
+  null,
+  'og oversikten viser den som avsluttet'
+);
+select isnt(
+  (select ti.resolved_at from workflow.technical_incidents ti where ti.area = 'work_queue'),
+  null,
+  'som også skrives ned, slik at historikken stemmer med det som vises'
+);
+select is(
+  (select count(*)::int from workflow.technical_incident_events e
+   join workflow.technical_incidents ti on ti.id = e.technical_incident_id
+   where ti.area = 'work_queue' and e.transition = 'resolved'),
+  1,
+  'og sporet får overgangen resolved, som alle andre lukkinger'
 );
 
 -- ===========================================================================
@@ -1043,23 +1103,22 @@ select ok(
   'og den rå diagnosen peker teknikeren dit begrunnelsen faktisk ligger, uten å gjenta den'
 );
 
--- Og den kan ingen klient melde vekk. En flate lukker bare sin egen melding;
--- et problem databasen selv observerte, står til det faktisk er over.
-select set_config('request.jwt.claims',
-                  '{"sub":"80000000-0000-4000-8000-00000000000d"}', true);
-set local role authenticated;
-do $$ begin
-  perform api.clear_technical_problem('automatic_task', 'claim_pipeline_job');
-  perform api.clear_technical_problem('automatic_task');
-end $$;
-reset role;
+-- Og den står til noe faktisk lukker den. Hjerteslaget gjelder bare selvmeldte
+-- rader: en jobb som ga opp, er fortsatt gitt opp i morgen.
+update workflow.technical_incidents ti
+set first_seen_at = statement_timestamp() - workflow.self_report_heartbeat() - interval '2 days',
+    last_seen_at = statement_timestamp() - workflow.self_report_heartbeat() - interval '1 day'
+where ti.area = 'automatic_task';
 
+select set_config('request.jwt.claims',
+                  '{"sub":"80000000-0000-4000-8000-00000000000c"}', true);
+set local role authenticated;
 select is(
-  (select count(*)::int from workflow.technical_incidents ti
-   where ti.area = 'automatic_task' and ti.resolved_at is null),
+  (api.technical_problem_summary() ->> 'unresolved')::int,
   1,
-  'en observasjon databasen selv gjorde, kan ingen klient melde vekk'
+  'en observasjon databasen selv gjorde, blir ikke borte av at tiden går'
 );
+reset role;
 
 -- ===========================================================================
 -- Del 12 — Et teknisk kjørerkall, og det som lukker det

@@ -408,26 +408,26 @@ export type Database = {
         Args: Record<string, never>
         Returns: unknown
       }
-      // Selvmeldingen fra en brukerflate, og lukkingen av den.
+      // Selvmeldingen fra en brukerflate.
       //
-      // Fire maskinidentifikatorer og ingen tekst: område og svikttype er
-      // lukkede vokabularer, operasjonen kontrolleres mot funksjonene som
-      // finnes i api, og koden må være en SQLSTATE eller en PostgREST-kode.
-      // Til sammen finner en teknisk agent igjen nøyaktig hvilket kall som
-      // sviktet og med hvilken kode — uten at en feiltekst havner i databasen.
+      // Seks maskinidentifikatorer og ingen tekst: område, svikttype og
+      // transportform er lukkede vokabularer, operasjonen kontrolleres mot
+      // funksjonene som finnes i api, koden må være en SQLSTATE eller en
+      // PostgREST-kode, og statusen må være en HTTP-status. Til sammen finner
+      // en teknisk agent igjen hvilket kall som sviktet, hvordan og med hva —
+      // uten at en feiltekst havner i databasen.
+      //
+      // Det finnes ingen lukking herfra. En selvmeldt rad gjelder så lenge den
+      // fornyes, og databasen avgjør når den er over: en opprydding som hvilte
+      // på flatens eget minne, ville vært borte ved første sideoppfriskning.
       report_technical_problem: {
         Args: {
           p_area: string
           p_kind: string
           p_operation?: string | null
           p_code?: string | null
-        }
-        Returns: unknown
-      }
-      clear_technical_problem: {
-        Args: {
-          p_area: string
-          p_operation?: string | null
+          p_http_status?: number | null
+          p_transport?: string | null
         }
         Returns: unknown
       }

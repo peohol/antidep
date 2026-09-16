@@ -37,14 +37,22 @@
 // selv vet (funksjonen må finnes; koden må være en SQLSTATE eller en
 // PostgREST-kode) og skriver setningen selv.
 //
+// En kode alene er ikke nok, for koden mangler nettopp når svaret aldri kom.
+// Meldingen bærer derfor også HTTP-statusen og en *transportform* fra et lukket
+// vokabular — uten nett, nådde ikke fram, avbrutt, tidsavbrudd, feilkode fra
+// tjenesten, brøt kontrakten. Til sammen sier de ikke bare at `api.foo` sviktet,
+// men hvordan.
+//
 // Det er med vilje ikke feilteksten. En videreformidlet feilmelding kan bære et
 // filnavn, en adresse eller en del av et svar, og den tekniske loggen skal ikke
-// bli et sted slikt samler seg. Operasjonen og koden er nok: de peker på
-// nøyaktig ett kall og én feilklasse, og resten står i kildekoden.
+// bli et sted slikt samler seg.
 //
-// Flaten lukker også sin egen melding når det samme kallet går gjennom igjen.
-// Uten det ville ett nettverksglipp fått merket i navigasjonen til å lyse for
-// alltid, og en lampe som alltid lyser, er en lampe ingen ser på.
+// Flaten lukker ingenting. En selvmeldt rad gjelder så lenge den fornyes, og
+// det er databasen som avgjør når den er over
+// (`workflow.self_report_heartbeat()`). Å la flaten lukke sin egen melding
+// ville lagt oppryddingen av varig servertilstand i et minne som forsvinner
+// ved en sideoppfriskning eller en ny fane — og da ville ett nettverksglipp
+// kunnet bli stående som et uløst problem for alltid.
 // ============================================================================
 
 import { getAntidepClient, type AntidepClient } from '../lib/supabase'
@@ -155,12 +163,24 @@ export function pageMessage(cause: unknown): string {
   return DEFAULT_WORDING.unavailable
 }
 
+/**
+ * Formen på en svikt, som et lukket vokabular databasen deler.
+ *
+ * Finnes fordi koden mangler nettopp når svaret aldri kom. Den utledes av
+ * *formen* på det som gikk galt og aldri av teksten i det, slik at den kan
+ * være en maskinidentifikator og ikke en videreformidlet feilmelding.
+ */
+export type TransportShape =
+  'offline' | 'network' | 'aborted' | 'timeout' | 'http' | 'contract' | 'unknown'
+
 /** Én rå observasjon, slik den går til observability og aldri til en side. */
 export interface TechnicalDetail {
   readonly area: TechnicalArea
   readonly operation: string
   readonly kind: GatewayFailureKind
   readonly code: string | null
+  readonly httpStatus: number | null
+  readonly transport: TransportShape
   readonly detail: string
 }
 
@@ -183,17 +203,44 @@ let sink: TechnicalSink = consoleSink
 const MACHINE_CODE = /^([0-9A-Z]{5}|PGRST[0-9]{3})$/
 
 /**
- * Hvilke kall flaten har meldt fra om, og ennå ikke lukket.
+ * Hvilken form svikten hadde.
  *
- * Lever i modulen og ikke i en komponent, fordi den skal overleve at en side
- * byttes ut: det er det samme kallet som sviktet og det samme som går gjennom
- * igjen, uansett hvilken side som gjør det.
+ * Leses av hva slags feil dette *er* — er nettet borte, ble forespørselen
+ * avbrutt, svarte tjenesten med en kode — og aldri av hva feilen sa. Det er
+ * nettopp derfor verdien kan sendes videre: den kan ikke bære innhold.
  */
-const reported = new Set<string>()
+export function transportShape(cause: unknown, kind: GatewayFailureKind): TransportShape {
+  if (kind === 'unreadable_answer') {
+    return 'contract'
+  }
+  if (httpStatusOf(cause) !== null) {
+    return 'http'
+  }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return 'offline'
+  }
+  const name =
+    typeof cause === 'object' && cause !== null ? (cause as { name?: unknown }).name : null
+  if (name === 'AbortError') {
+    return 'aborted'
+  }
+  if (name === 'TimeoutError') {
+    return 'timeout'
+  }
+  // `fetch` melder et brudd i nettet som en TypeError, og det er den eneste
+  // formen den har. Alt annet er noe flaten ikke kjenner igjen, og skal si det.
+  if (cause instanceof TypeError) {
+    return 'network'
+  }
+  return 'unknown'
+}
 
-/** Bare for prøver: glem hva som er meldt fra om. */
-export function forgetReportedProblems(): void {
-  reported.clear()
+function httpStatusOf(cause: unknown): number | null {
+  if (typeof cause !== 'object' || cause === null) {
+    return null
+  }
+  const status = (cause as { status?: unknown }).status
+  return typeof status === 'number' && status >= 100 && status <= 599 ? status : null
 }
 
 /** Bare for prøver: bytt ut observability-sluket og få det tilbake etterpå. */
@@ -227,8 +274,17 @@ export function recordTechnicalDetail(
   operation: string,
   kind: GatewayFailureKind,
   cause: unknown,
+  httpStatus: number | null = null,
 ): boolean {
-  sink({ area, operation, kind, code: errorCode(cause), detail: rawDetail(cause) })
+  sink({
+    area,
+    operation,
+    kind,
+    code: errorCode(cause),
+    httpStatus: httpStatus ?? httpStatusOf(cause),
+    transport: transportShape(cause, kind),
+    detail: rawDetail(cause),
+  })
   return kind === 'unavailable' || kind === 'unreadable_answer'
 }
 
@@ -252,10 +308,18 @@ export interface RpcSpec<T> {
  */
 export async function callRpc<T>(client: AntidepClient, spec: RpcSpec<T>): Promise<T> {
   let data: unknown
+  // Statusen følger med svaret og ikke med feilen: PostgREST-feilen selv bærer
+  // en kode, mens *hvilken* HTTP-status tjenesten svarte med, står i
+  // konvolutten rundt. Begge deler er maskinidentifikatorer, og begge trengs —
+  // en 503 og en 401 er to helt forskjellige driftsproblemer.
+  // Tilordnes alltid før den leses: catch-grenen kaster, så veien videre går
+  // bare gjennom en fullført try.
+  let httpStatus: number | null
   try {
     const outcome = await client.rpc(spec.fn as never, (spec.args ?? {}) as never)
+    httpStatus = typeof outcome.status === 'number' ? outcome.status : null
     if (outcome.error !== null) {
-      throw fail(client, spec, outcome.error)
+      throw fail(client, spec, outcome.error, undefined, httpStatus)
     }
     data = outcome.data
   } catch (cause) {
@@ -263,19 +327,16 @@ export async function callRpc<T>(client: AntidepClient, spec: RpcSpec<T>): Promi
       throw cause
     }
     // En feil fra transporten selv — nettverket, en avbrutt forespørsel — har
-    // ingen kode, og blir dermed `unavailable`, som er riktig.
+    // ingen kode og ingen status. Da er transportformen det eneste som sier
+    // noe om hva som skjedde, og det er nettopp derfor den finnes.
     throw fail(client, spec, cause)
   }
 
-  let parsed: T
   try {
-    parsed = spec.parse(data)
+    return spec.parse(data)
   } catch (cause) {
-    throw fail(client, spec, cause, 'unreadable_answer')
+    throw fail(client, spec, cause, 'unreadable_answer', httpStatus)
   }
-
-  clearTechnicalProblem(client, spec.area, spec.fn)
-  return parsed
 }
 
 function fail<T>(
@@ -283,10 +344,11 @@ function fail<T>(
   spec: RpcSpec<T>,
   cause: unknown,
   forced?: GatewayFailureKind,
+  httpStatus: number | null = null,
 ): GatewayFailure {
   const kind = forced ?? classifyGatewayFailure(cause)
-  if (recordTechnicalDetail(spec.area, spec.fn, kind, cause)) {
-    reportTechnicalProblem(client, spec.area, kind, spec.fn, errorCode(cause))
+  if (recordTechnicalDetail(spec.area, spec.fn, kind, cause, httpStatus)) {
+    reportTechnicalProblem(client, spec.area, kind, spec.fn, errorCode(cause), httpStatus, cause)
   }
   return new GatewayFailure(describeGatewayFailure(kind, spec.wording), kind, spec.area)
 }
@@ -294,10 +356,15 @@ function fail<T>(
 /**
  * Melder fra til Antidep at ett kall ikke gikk gjennom.
  *
- * Fire maskinidentifikatorer og ingen tekst: databasen skriver setningen selv,
- * og kontrollerer både at operasjonen finnes og at koden har en kodes form. En
+ * Seks maskinidentifikatorer og ingen tekst: databasen skriver setningen selv,
+ * og kontrollerer både at operasjonen finnes, at koden har en kodes form, at
+ * statusen er en HTTP-status og at transportformen er en den kjenner. En
  * uinnlogget kaller blir avvist der, og det er riktig — en melding som ikke kan
  * tilskrives noen, skal ikke kunne få merket i navigasjonen til å lyse.
+ *
+ * Feiler meldingen, er det ingenting mer å gjøre: da er det nettopp databasen
+ * som ikke svarer. Den svelges derfor med vilje, framfor å bli en ny feil på
+ * toppen av den som allerede er vist.
  */
 function reportTechnicalProblem(
   client: AntidepClient,
@@ -305,9 +372,10 @@ function reportTechnicalProblem(
   kind: GatewayFailureKind,
   operation: string,
   code: string | null,
+  httpStatus: number | null,
+  cause: unknown,
 ): void {
-  reported.add(`${area}|${operation}`)
-  forget(
+  void Promise.resolve(
     client.rpc('report_technical_problem', {
       p_area: area,
       p_kind: kind,
@@ -316,38 +384,10 @@ function reportTechnicalProblem(
       // flaten ikke kjenner igjen, er ikke en opplysning verdt å presse
       // gjennom en kontroll — den ville bare fått hele meldingen avvist.
       p_code: MACHINE_CODE.test(code ?? '') ? code : null,
+      p_http_status: httpStatus,
+      p_transport: transportShape(cause, kind),
     }),
-  )
-}
-
-/**
- * Lukker flatens egen melding når det samme kallet går gjennom igjen.
- *
- * Kalles bare når det faktisk finnes noe å lukke. Et kall per vellykket
- * lesing ville vært en dobling av trafikken for å rydde i noe som nesten
- * alltid ikke er der.
- */
-function clearTechnicalProblem(
-  client: AntidepClient,
-  area: TechnicalArea,
-  operation: string,
-): void {
-  const key = `${area}|${operation}`
-  if (!reported.delete(key)) {
-    return
-  }
-  forget(client.rpc('clear_technical_problem', { p_area: area, p_operation: operation }))
-}
-
-/**
- * Sender kallet uten å vente på det, og uten å la det bli en feil.
- *
- * Feiler meldingen, er det ingenting mer å gjøre: da er det nettopp databasen
- * som ikke svarer. Den svelges derfor med vilje, framfor å bli en ny feil på
- * toppen av den som allerede er vist.
- */
-function forget(call: PromiseLike<unknown>): void {
-  void Promise.resolve(call).then(
+  ).then(
     () => undefined,
     () => undefined,
   )

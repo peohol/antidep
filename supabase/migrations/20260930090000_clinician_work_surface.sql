@@ -493,6 +493,85 @@ comment on function workflow.resolve_technical_incident(workflow.technical_area,
 
 revoke execute on function workflow.resolve_technical_incident(workflow.technical_area, text) from public;
 
+-- ----------------------------------------------------------------------------
+-- Hvor lenge en selvmelding gjelder
+--
+-- En rad databasen selv skrev, er en tilstand: jobben ga opp, og den er
+-- fortsatt gitt opp til noe lukker den. En rad en brukerflate meldte, er noe
+-- annet — den sier «dette kallet gikk ikke gjennom akkurat nå», og den kan
+-- ikke si noe om hva som skjedde etterpå. Fanen ble kanskje lukket.
+--
+-- Selvmeldingen behandles derfor som et hjerteslag og ikke som en tilstand:
+-- den gjelder så lenge den fornyes. Alternativet — å la flaten lukke sin egen
+-- melding når kallet går gjennom igjen — ville lagt oppryddingen av varig
+-- servertilstand i et minne som forsvinner ved en sideoppfriskning, en ny fane
+-- eller en ny sesjon. Da ville ett nettverksglipp kunnet bli stående som et
+-- uløst problem for alltid.
+--
+-- Vinduet er romslig med vilje. Et problem som faktisk pågår, meldes om igjen
+-- og fornyer seg selv; et som er over, slutter å bli meldt.
+-- ----------------------------------------------------------------------------
+create function workflow.self_report_heartbeat()
+  returns interval
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select interval '30 minutes'
+$$;
+
+comment on function workflow.self_report_heartbeat() is
+  'Hvor lenge en selvmeldt observasjon gjelder uten å bli fornyet. Står ett sted fordi to steder ville vært to vinduer: både tellingen bak merket i navigasjonen og den tekniske oversikten leser den.';
+
+revoke execute on function workflow.self_report_heartbeat() from public;
+
+create function workflow.technical_incident_ongoing(p_incident workflow.technical_incidents)
+  returns boolean
+  language sql
+  stable
+  set search_path = ''
+as $$
+  select p_incident.resolved_at is null
+     and (not p_incident.self_reported
+          or p_incident.last_seen_at > statement_timestamp() - workflow.self_report_heartbeat())
+$$;
+
+comment on function workflow.technical_incident_ongoing(workflow.technical_incidents) is
+  'Om et teknisk problem fortsatt pågår. For en rad databasen selv skrev, er svaret at ingenting har lukket den. For en selvmeldt rad kreves i tillegg at den er fornyet innenfor workflow.self_report_heartbeat(): en klient kan ikke love noe om hva som skjedde etter at fanen ble lukket, og en opprydding som hvilte på klientens minne ville etterlatt ett nettverksglipp som et uløst problem for alltid.';
+
+revoke execute on function workflow.technical_incident_ongoing(workflow.technical_incidents) from public;
+
+create function workflow.close_stale_self_reports()
+  returns integer
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_id uuid;
+  v_closed integer := 0;
+begin
+  for v_id in
+    update workflow.technical_incidents ti
+    set resolved_at = ti.last_seen_at
+    where ti.self_reported
+      and ti.resolved_at is null
+      and ti.last_seen_at <= statement_timestamp() - workflow.self_report_heartbeat()
+    returning ti.id
+  loop
+    insert into workflow.technical_incident_events (technical_incident_id, transition)
+    values (v_id, 'resolved');
+    v_closed := v_closed + 1;
+  end loop;
+
+  return v_closed;
+end;
+$$;
+
+comment on function workflow.close_stale_self_reports() is
+  'Skriver ned det workflow.technical_incident_ongoing(workflow.technical_incidents) allerede regner ut: en selvmeldt observasjon som ikke er fornyet innenfor hjerteslaget, er over, og lukkes med tidspunktet den sist ble sett. Kjøres når en admin leser den tekniske oversikten, slik at historikken stemmer med det som vises. Sletter ingenting; sporet får overgangen resolved som alle andre lukkinger.';
+
+revoke execute on function workflow.close_stale_self_reports() from public;
+
 -- ============================================================================
 -- 2. Hvilke artikler Antidep faktisk mangler
 --
@@ -2184,7 +2263,9 @@ create function api.report_technical_problem(
   p_area text,
   p_kind text,
   p_operation text default null,
-  p_code text default null
+  p_code text default null,
+  p_http_status integer default null,
+  p_transport text default null
 )
   returns void
   language plpgsql
@@ -2194,6 +2275,7 @@ as $$
 declare
   v_area workflow.technical_area;
   v_description text;
+  v_transport text;
 begin
   if auth.uid() is null then
     raise exception using
@@ -2249,82 +2331,71 @@ begin
       hint = 'Tillatt er en SQLSTATE på fem tegn (0-9, A-Z) eller en PostgREST-kode på formen PGRST000.';
   end if;
 
+  if p_http_status is not null and p_http_status not between 100 and 599 then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent statuskode.',
+      hint = 'Tillatt er en HTTP-status mellom 100 og 599.';
+  end if;
+
+  -- Transportformen finnes fordi koden ofte mangler nettopp når svaret aldri
+  -- kom: et brudd i nettet, en avbrutt forespørsel, en tjeneste som ikke
+  -- svarte. Uten den ville en teknisk agent sett *at* et kall sviktet uten noe
+  -- som helst om hvorfor. Vokabularet er lukket, og Antidep skriver setningen
+  -- selv — som for alt annet her.
+  v_transport := case p_transport
+    when 'offline' then 'Nettleseren hadde ingen nettforbindelse.'
+    when 'network' then 'Forespørselen nådde aldri fram.'
+    when 'aborted' then 'Forespørselen ble avbrutt før svaret kom.'
+    when 'timeout' then 'Svaret kom ikke innen tiden.'
+    when 'http' then 'Tjenesten svarte, men med en feilkode.'
+    when 'contract' then 'Svaret kom fram, men stemte ikke med kontrakten flaten leser det med.'
+    when 'unknown' then 'Formen på svikten lot seg ikke bestemme.'
+    else null
+  end;
+
+  if p_transport is not null and v_transport is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ukjent transportform.',
+      hint = 'Tillatt er offline, network, aborted, timeout, http, contract eller unknown. Vokabularet er lukket fordi Antidep skriver setningen selv.';
+  end if;
+
   perform workflow.record_technical_incident(
     v_area,
     -- Signaturen bærer operasjonen, slik at to forskjellige kall som svikter,
-    -- blir to problemer og ikke ett. Den er også nøkkelen den samme flaten
-    -- lukker med når kallet går gjennom igjen.
+    -- blir to problemer og ikke ett.
     'client:' || coalesce(p_operation, 'ukjent'),
-    format('%s Kallet var api.%s, og svaret bar koden %s. Ingen feiltekst følger med: bare maskinidentifikatorer, som ikke kan bære innhold.',
+    format('%s Kallet var api.%s, svaret bar koden %s, og HTTP-statusen var %s. %s Ingen feiltekst følger med: bare maskinidentifikatorer, som ikke kan bære innhold.',
            v_description,
            coalesce(p_operation, '(ikke oppgitt)'),
-           coalesce(p_code, '(ingen — svaret kom ikke fram)')),
+           coalesce(p_code, '(ingen)'),
+           coalesce(p_http_status::text, '(ingen)'),
+           coalesce(v_transport, 'Transportformen ble ikke oppgitt.')),
     true);
 end;
 $$;
 
-comment on function api.report_technical_problem(text, text, text, text) is
-  'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom. Alle fire argumentene er maskinidentifikatorer og aldri tekst: området og svikttypen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, og koden må være en SQLSTATE eller en PostgREST-kode. Antidep skriver setningen selv. Til sammen gjør de tre siste at Claude Code og ChatGPT kan finne igjen nøyaktig hvilket kall som sviktet og med hvilken kode, varig og privat — uten at en videreformidlet feilmelding noen gang havner i databasen. Raden merkes self_reported, fordi den sier hva en klient SA og ikke hva databasen SÅ. En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
+comment on function api.report_technical_problem(text, text, text, text, integer, text) is
+  'Lar en innlogget brukerflate melde fra om at et kall til Antidep ikke gikk gjennom. Alle seks argumentene er maskinidentifikatorer og aldri tekst: området, svikttypen og transportformen er lukkede vokabularer, operasjonen kontrolleres mot funksjonene som faktisk finnes i api, koden må være en SQLSTATE eller en PostgREST-kode, og statusen må være en HTTP-status. Antidep skriver setningen selv. Til sammen sier de hvilket kall som sviktet, hvordan det sviktet og hva svaret bar — varig og privat, uten at en videreformidlet feilmelding noen gang havner i databasen. Transportformen bærer mest når koden mangler, altså nettopp når svaret aldri kom. Raden merkes self_reported, fordi den sier hva en klient SA og ikke hva databasen SÅ, og gjelder bare så lenge den fornyes (workflow.self_report_heartbeat()). En manglende rettighet er ikke et teknisk problem og avvises. Bare authenticated: en uinnlogget besøkende kan ikke tilskrives noe.';
 
-revoke execute on function api.report_technical_problem(text, text, text, text) from public;
-grant execute on function api.report_technical_problem(text, text, text, text) to authenticated;
+revoke execute on function api.report_technical_problem(text, text, text, text, integer, text) from public;
+grant execute on function api.report_technical_problem(text, text, text, text, integer, text) to authenticated;
 
 -- ----------------------------------------------------------------------------
 -- Og veien ut igjen
 --
--- En selvmeldt rad har ingen autoritativ observasjon som kan lukke den. Uten
--- denne ville ett enkelt nettverksglipp fått merket i navigasjonen til å lyse
--- for alltid, og en lampe som alltid lyser, er en lampe ingen ser på.
+-- Ikke gjennom et kall fra flaten. En selvmeldt rad lukkes av at den slutter å
+-- bli fornyet (workflow.self_report_heartbeat()), og det er en avgjørelse
+-- serveren tar på egen hånd.
 --
--- Flaten lukker derfor sin egen melding i det samme kallet går gjennom igjen.
--- Bare selvmeldte rader: en observasjon databasen selv gjorde, kan ingen klient
--- melde vekk.
+-- Alternativet var å la flaten lukke sin egen melding når det samme kallet gikk
+-- gjennom igjen. Det ville virket helt til noen oppdaterte siden: minnet om
+-- hva som var meldt, lever i fanen, og med fanen borte ville meldingen blitt
+-- stående som et uløst problem for alltid. Opprydding av varig servertilstand
+-- skal ikke hvile på flyktig klientminne — og to kall som begge er
+-- fire-and-forget, har uansett ingen garantert rekkefølge.
 -- ----------------------------------------------------------------------------
-create function api.clear_technical_problem(p_area text, p_operation text default null)
-  returns void
-  language plpgsql
-  security definer
-  set search_path = ''
-as $$
-declare
-  v_area workflow.technical_area;
-  v_id uuid;
-begin
-  if auth.uid() is null then
-    raise exception using
-      errcode = 'insufficient_privilege',
-      message = 'Meldingen kan ikke tilskrives noen.';
-  end if;
-
-  begin
-    v_area := p_area::workflow.technical_area;
-  exception
-    when invalid_text_representation then
-      raise exception using
-        errcode = 'invalid_parameter_value',
-        message = 'Ukjent område.';
-  end;
-
-  update workflow.technical_incidents ti
-  set resolved_at = now()
-  where ti.area = v_area
-    and ti.signature = 'client:' || coalesce(p_operation, 'ukjent')
-    and ti.self_reported
-    and ti.resolved_at is null
-  returning ti.id into v_id;
-
-  if v_id is not null then
-    insert into workflow.technical_incident_events (technical_incident_id, transition)
-    values (v_id, 'resolved');
-  end if;
-end;
-$$;
-
-comment on function api.clear_technical_problem(text, text) is
-  'Lukker den meldingen en brukerflate selv har sendt om ett kall, når det samme kallet går gjennom igjen. Lukker bare selvmeldte rader: et problem databasen selv observerte, kan ingen klient melde vekk. Finnes fordi en selvmeldt rad ellers ikke har noen autoritativ observasjon som kan lukke den — ett nettverksglipp ville fått merket i navigasjonen til å lyse for alltid. Sletter ingenting: raden blir stående med hele historikken sin.';
-
-revoke execute on function api.clear_technical_problem(text, text) from public;
-grant execute on function api.clear_technical_problem(text, text) to authenticated;
 
 -- ----------------------------------------------------------------------------
 -- De to leseveiene
@@ -2345,6 +2416,12 @@ declare
 begin
   perform workflow.assert_admin_authorized();
 
+  -- Skriver ned det regelen allerede sier, slik at historikken stemmer med det
+  -- som vises. Kjøres her og ikke i tellingen: tellingen leses av hver side for
+  -- hver innlogget bruker, og en skriving der ville vært en skriving på hver
+  -- sidevisning.
+  perform workflow.close_stale_self_reports();
+
   select coalesce(jsonb_agg(row_to_json(q)::jsonb order by q.ongoing desc, q.last_seen_at desc),
                   '[]'::jsonb)
     into v_rows
@@ -2355,10 +2432,10 @@ begin
       ti.first_seen_at,
       ti.last_seen_at,
       ti.occurrence_count,
-      ti.resolved_at is null as ongoing,
+      workflow.technical_incident_ongoing(ti) as ongoing,
       ti.resolved_at
     from workflow.technical_incidents ti
-    order by (ti.resolved_at is null) desc, ti.last_seen_at desc
+    order by workflow.technical_incident_ongoing(ti) desc, ti.last_seen_at desc
     limit 100
   ) q;
 
@@ -2367,7 +2444,7 @@ end;
 $$;
 
 comment on function api.technical_problem_board() is
-  'De tekniske problemene Antidep kjenner til, slik en ikke-teknisk admin trenger dem: hvilket område det gjelder, når problemet først og sist ble sett, hvor mange ganger, og om det fortsatt pågår. Diagnosen er ikke med og kan ikke leses gjennom noe api-objekt — den blir liggende i workflow.technical_incidents til Claude Code og ChatGPT. Krever admin-mandat.';
+  'De tekniske problemene Antidep kjenner til, slik en ikke-teknisk admin trenger dem: hvilket område det gjelder, når problemet først og sist ble sett, hvor mange ganger, og om det fortsatt pågår. Om noe pågår, avgjøres av workflow.technical_incident_ongoing(workflow.technical_incidents): en rad databasen selv skrev, står til noe lukker den, mens en selvmeldt rad gjelder så lenge den fornyes. Lukker samtidig de selvmeldte radene regelen allerede har erklært over, slik at historikken stemmer med det som vises. Diagnosen er ikke med og kan ikke leses gjennom noe api-objekt — den blir liggende i workflow.technical_incidents til Claude Code og ChatGPT. Krever admin-mandat.';
 
 revoke execute on function api.technical_problem_board() from public;
 grant execute on function api.technical_problem_board() to authenticated;
@@ -2391,16 +2468,18 @@ begin
     return jsonb_build_object('visible', false, 'unresolved', 0);
   end if;
 
+  -- Den samme regelen som oversikten, og ingen skriving: tellingen leses av
+  -- hver side for hver innlogget admin.
   select count(*) into v_count
   from workflow.technical_incidents ti
-  where ti.resolved_at is null;
+  where workflow.technical_incident_ongoing(ti);
 
   return jsonb_build_object('visible', true, 'unresolved', v_count);
 end;
 $$;
 
 comment on function api.technical_problem_summary() is
-  'Hvor mange uløste tekniske problemer som finnes, til merket i navigasjonen. Krever nøyaktig det samme som api.technical_problem_board(): en registrert, ikke-tilbaketrukket aktør med gyldig admin-rolle akkurat nå. Forskjellen er bare hva som skjer når grensen ikke holder — her svares det stille «ikke synlig», framfor et avslag som ville blitt til en feilmelding på hver eneste side for hver eneste innlogget bruker som ikke er admin. Ingenting lekker av det: tallet er det eneste som finnes her, og det er null for alle andre.';
+  'Hvor mange uløste tekniske problemer som finnes, til merket i navigasjonen. Krever nøyaktig det samme som api.technical_problem_board(): en registrert, ikke-tilbaketrukket aktør med gyldig admin-rolle akkurat nå. Teller det samme som oversikten viser som pågående, og skriver ingenting: den leses av hver side for hver innlogget admin. Forskjellen på de to er bare hva som skjer når grensen ikke holder — her svares det stille «ikke synlig», framfor et avslag som ville blitt til en feilmelding på hver eneste side for hver eneste innlogget bruker som ikke er admin. Ingenting lekker av det: tallet er det eneste som finnes her, og det er null for alle andre.';
 
 revoke execute on function api.technical_problem_summary() from public;
 grant execute on function api.technical_problem_summary() to authenticated;

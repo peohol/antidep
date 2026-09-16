@@ -82,19 +82,29 @@ reject_grep_matches \
   'instanceof Error \? [a-zA-Z]+\.message' \
   src/app
 
-# En arbeidsflyt med hemmeligheter skal aldri kjøre på en pull request.
+# En arbeidsflyt med hemmeligheter skal ikke kunne startes mot en valgt branch.
 #
 # `VERCEL_TOKEN` og redaktørens innlogging ligger i jobbens miljø, og jobben
-# kjører kode fra branchen. En pull request fra en branch i samme repo kan få
-# repository-secrets, og kode på en PR-branch skal derfor ikke få en
-# produksjonsdeploy-token eller legitimasjon som kan lese originaldokumenter ut
-# av databasen. Grensen sto til nå bare som en kommentar i `vercel.yml`; her er
-# den en kontroll, slik at den neste arbeidsflyten med en hemmelighet ikke kan
-# glemme den (AGENTS.md, ANTIDEP_CONSTITUTION.md regel 7).
+# kjører kode fra den branchen kjøringen gjelder. Kode på en branch som ikke er
+# reviewet, skal derfor ikke kunne starte den: den ene kan deploye til
+# produksjon, den andre kan lese originaldokumenter ut av databasen.
+#
+# `pull_request` er den åpenbare — en pull request fra en branch i samme repo
+# kan få repository-secrets. De tre andre er mindre åpenbare og like ille:
+# `workflow_dispatch` har en branch-meny i GitHubs «Run workflow», og en
+# manuell kjøring mot en valgt branch setter `GITHUB_REF`/`GITHUB_SHA` til
+# nettopp den, slik at `actions/checkout` henter den branchens kode.
+# `workflow_call` lar kalleren bestemme det samme. `schedule` og `push` mot en
+# navngitt branch gjør det ikke, og er derfor det som er igjen.
+#
+# Grensen sto til nå bare som en kommentar i `vercel.yml`. Her er den en
+# kontroll, slik at den neste arbeidsflyten med en hemmelighet ikke kan glemme
+# den (AGENTS.md, ANTIDEP_CONSTITUTION.md regel 7).
 while IFS= read -r workflow; do
   grep -q 'secrets\.' "$workflow" || continue
-  if grep -qE '^[[:space:]]*pull_request(_target)?:' "$workflow"; then
-    echo "Arbeidsflyt med hemmeligheter kjører på pull request: $workflow" >&2
+  if trigger=$(grep -oE '^[[:space:]]{2}(pull_request_target|pull_request|workflow_dispatch|workflow_call):' \
+                 "$workflow" | head -1); then
+    echo "Arbeidsflyt med hemmeligheter kan startes mot en valgt branch ($trigger): $workflow" >&2
     exit 1
   fi
 done < <(find .github/workflows -type f -name '*.yml' | sort)

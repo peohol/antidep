@@ -273,8 +273,7 @@ select is_empty(
         -- maskinidentifikatorer og ingen tekst. Ingen av dem leser diagnosen.
         'api.technical_problem_board()',
         'api.technical_problem_summary()',
-        'api.report_technical_problem(text,text,text,text)',
-        'api.clear_technical_problem(text,text)'
+        'api.report_technical_problem(text,text,text,text,integer,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

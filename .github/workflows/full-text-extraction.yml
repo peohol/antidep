@@ -14,18 +14,30 @@
 # maskin med verktøyet installert, og ingen i transporten.
 #
 # ----------------------------------------------------------------------------
-# Hvorfor denne ikke kjører på pull requests
+# Hvorfor denne bare har én utløser
 #
-# Jobben har redaktørens innlogging i miljøet og kjører kode fra branchen. En
-# pull request fra en branch i samme repo kan få repository-secrets, og kode på
-# en PR-branch skal derfor ikke få legitimasjon som kan lese originaldokumenter
-# ut av databasen. Samme minste-privilegium-grense som `vercel.yml` bærer, og
-# samme trusselmodell som agentene: kode som behandler eksternt innhold skal
-# ikke samtidig ha skrivekapable hemmeligheter (AGENTS.md,
-# ANTIDEP_CONSTITUTION.md regel 7).
+# Jobben har redaktørens innlogging i miljøet og kjører kode fra den branchen
+# kjøringen gjelder. Kode på en branch som ikke er reviewet, skal derfor ikke
+# kunne starte den: legitimasjonen her kan lese originaldokumenter ut av
+# databasen. Samme minste-privilegium-grense som `vercel.yml` bærer, og samme
+# trusselmodell som agentene (AGENTS.md, ANTIDEP_CONSTITUTION.md regel 7).
 #
-# `schedule` og `workflow_dispatch` kjører alltid filen slik den står på
-# `main`, altså på reviewet kode.
+# `pull_request` er den åpenbare: en pull request fra en branch i samme repo
+# kan få repository-secrets. Men `workflow_dispatch` er like ille, og mindre
+# åpenbart: GitHubs «Run workflow» har en branch-meny, og en manuell kjøring
+# mot en valgt branch setter `GITHUB_REF`/`GITHUB_SHA` til nettopp den — så
+# `actions/checkout` henter den branchens kode, med hemmelighetene i miljøet.
+# Derfor finnes bare `schedule` her, som alltid kjører standardbranchen.
+#
+# Kontrollen ligger i `scripts/verify-repo.sh`, slik at den ikke kan glemmes
+# ved neste arbeidsflyt.
+#
+# Dette er grensen denne filen kan sette selv. Den som allerede har skrive-
+# tilgang til repoet, kan legge til en hvilken som helst arbeidsflyt og nå de
+# samme repository-secrets; det er iboende i hva en repository-secret er. Skal
+# grensen håndheves av GitHub framfor av filen, må hemmelighetene ligge på et
+# *environment* med en deployment-branch-regel på `main` — da nekter GitHub
+# selv å gi dem ut til en kjøring på en annen branch.
 #
 # ----------------------------------------------------------------------------
 # Før legitimasjonen er lagt inn
@@ -39,7 +51,8 @@
 #
 # GitHub slår av planlagte arbeidsflyter i et offentlig repo etter 60 dager
 # uten aktivitet. Antidep er i aktiv utvikling, så det er en teoretisk grense —
-# og «Run workflow» starter den igjen uten at noe må endres.
+# og «Enable workflow» i Actions-fanen starter den igjen. Det krever ingen
+# manuell utløser, og derfor finnes ingen her.
 # ----------------------------------------------------------------------------
 
 name: Tekstuttrekk av opplastede fulltekster
@@ -50,7 +63,6 @@ on:
     # opp, har allerede gjort sitt, og oppgaven står som «pågår» til teksten er
     # registrert.
     - cron: '*/15 * * * *'
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -67,6 +79,12 @@ jobs:
     name: Hent tekst ut av fulltekstene som venter
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    # `schedule` kjører alltid standardbranchen, så denne er sann hver gang i
+    # dag. Den står her fordi den ikke er det om noen senere legger til en
+    # utløser som kan velge branch: da stopper jobben framfor å kjøre ureviewet
+    # kode med redaktørens legitimasjon.
+    if: github.ref == 'refs/heads/main'
 
     steps:
       # Kontrolleres først, slik at en kjøring uten legitimasjon ikke bruker tid
