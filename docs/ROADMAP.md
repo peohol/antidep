@@ -1,10 +1,31 @@
 # Roadmap
 
-Forrige leveranse — **revisjonen av en påstand som allerede finnes** — er
-implementert. Den lukket det siste bevisste hullet i golden slice: ny evidens om
-et virkestoff og et endepunkt som allerede har en påstand, blir nå en synlig,
-varig redaksjonell oppgave framfor et stille stopp, og redaktørens avgjørelse
-setter resten av kjeden i gang. Den er beskrevet under.
+## Gjeldende produktretning — 2026-09-17
+
+Neste produktutvidelse er **monografibestilling og autonom kildeoppdagelse**:
+normalinngangen skal være «bygg monografi for dette virkestoffet», ikke at en
+kliniker først velger artikler én for én.
+
+Fase A og B er utarbeidet som [Monograph Standard v1](MONOGRAPH_STANDARD.md) og
+[Source Policy v1](SOURCE_POLICY.md). [Monografiplanen](MONOGRAPH_PLAN.md) beskriver
+leveranserekkefølgen. Dokumentene er faglige spesifikasjoner, ikke implementerte
+funksjoner eller en ferdig klinisk monografi. **Fase C er ikke startet og krever
+en egen bestilling.** Sluttkontroll og publiseringsmandat er uendret.
+
+Beskrivelsen nedenfor gjelder den eksisterende artikkelbaserte kjeden, ikke en
+påstand om at monografiflyten allerede fungerer. Nødvendig feilretting og drift
+av dagens løsning kan fortsatt håndteres uavhengig av produktutvidelsen.
+
+## Eksisterende leveranse
+
+Siste leveranse — **revisjonen av en påstand som allerede finnes** — er
+implementert. Den lukket det siste bevisste hullet i den artikkelbaserte kjeden:
+ny evidens om et virkestoff og et endepunkt som allerede har en påstand, blir nå
+en synlig, varig redaksjonell oppgave framfor et stille stopp, og redaktørens
+avgjørelse setter resten av kjeden i gang. Den hviler på leveransen foran —
+**resten av terminalen ut av veien fulltekst → kandidat** (issue #101), som
+fullførte det som sto igjen etter den klinikervennlige arbeidsflaten. Begge er
+beskrevet under.
 
 Eieren har besluttet at Antidep ikke skal ta i bruk et betalt modell-API. Det
 står fast: ingen OpenAI-nøkkel, ingen Anthropic-nøkkel, ingen annen
@@ -21,7 +42,7 @@ skyves aldri tilbake på klinikeren.**
 Regelen er varig og står i `AGENTS.md`. Den gjelder hver senere leveranse, og en
 flate som bryter den, er ikke ferdig uansett hva den ellers gjør.
 
-## De tre menneskehandlingene
+## De tre menneskehandlingene i dagens artikkelbaserte flyt
 
 Hele veien fra «Antidep mangler en artikkel» til «en kandidat ligger til
 sluttkontroll» har nå **tre** punkter der et menneske gjør noe, og alle tre er
@@ -202,12 +223,13 @@ registreres det som `not_exposed`, og Antidep hevder ikke at separasjonen er
 bevist av plattformen — den hviler da på den registrerte tildelingen, akkurat som
 i den manuelle handoffen.
 
-## Grensen automatikken ikke går over
+## Dagens grense for revisjon
 
 Kjeden synteserer fortsatt ikke om igjen en påstand som allerede finnes for det
 samme temaet og virkestoffet. Kommer det et nytt evidensfunn på et par som alt
 har en påstand, blir funnet kontrollert og står klart — men *hva* påstanden skal
-si i lys av det, er en redaksjonell avgjørelse og ikke en transport.
+si i lys av det, er i dagens flyt en redaksjonell avgjørelse og ikke en
+transport.
 
 Det som er nytt, er at grensen ikke lenger er et stille stopp.
 `workflow.claim_revision_reviews` gjør tilstanden eksplisitt og varig: én rad per
@@ -233,11 +255,28 @@ enda mer ny forskning, åpner oppgaven seg igjen av seg selv. En synteseoppgave
 som stopper teknisk, gjør den derimot ikke: det er et teknisk problem og stoppet
 arbeid, og aldri en ny menneskeoppgave.
 
+Dette beskriver dagens begrensning, ikke et varig krav om at mennesker må
+bestille hver revisjon. Monografistandarden krever at ny evidens senere kan
+utløse et kontrollert **revisjonsutkast** automatisk. Det må ikke forveksles med
+automatisk godkjenning eller publisering.
+
 ## Neste leveranse
 
-Golden slice er nå hel: fra «Antidep mangler en artikkel» til publisert
-klinikerinnhold finnes det ingen ledd som stopper uten at noen ser det, og de
-tre menneskehandlingene foran sluttkontrollen er alle redaksjonelle flater.
+Neste sammenhengende produktleveranse er fase C i [monografiplanen](MONOGRAPH_PLAN.md):
+**fra én virkestoffbestilling til standardiserte kunnskapsbehov, autonom
+kildeoppdagelse og kontrollert videre behandling mot en samlet monografi**.
+[Monograph Standard v1](MONOGRAPH_STANDARD.md) definerer spørsmål og svarformer;
+[Source Policy v1](SOURCE_POLICY.md) definerer kildevalg, søkedekning, kontroll
+og vedlikehold.
 
-Neste leveranse er derfor et nytt produktområde og ikke en lukking av et hull.
-Den er ikke valgt ennå.
+Leveransen skal samle bestillingen, dekningskartet, kildeoppdagelsen og
+koblingen til eksisterende evidenskjede, med korrekt støtte for forskjellige
+kunnskapstyper og kildeformer. Den må også håndtere revisjon av eksisterende
+svar, gjenbruk uten dobbelttelling, samlet monografikandidat og menneskelig
+redaksjonell kontroll. Den tidligere foreslåtte isolerte revisjonsflaten er
+ikke lenger hele neste produktleveranse; revisjonsbehovet inngår i denne større
+arbeidsformen.
+
+Ingen eksisterende kilde-, tilgangs- eller publiseringskontroll svekkes av at
+spesifikasjonene er skrevet. Fase C er ikke igangsatt. Etter implementeringen
+skal arbeidsformen prøves på en reell sertralinmonografi før skalering.
