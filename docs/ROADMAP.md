@@ -69,11 +69,14 @@ Alt mellom disse er Antideps eget arbeid.
   tekstuttrekket, registrerer kildeversjonen og legger neste ledd i køen. Ingen
   uuid, ingen hash, ingen oppskrift og ingen terminalkommando er synlig.
 - **`/ny-evidens` — ny forskning på en påstand som finnes.** Krever
-  redaktørmandat for fagområdet påstanden hører under. Flaten viser hva
-  påstanden sier i dag, hvilket virkestoff og endepunkt den gjelder, om den er
-  publisert, hvor sikker evidensen ble vurdert til å være — og hver ny artikkel
-  som er kommet til, med bibliografi, studiedesign, populasjon, retning og
-  størrelse. Ingen uuid, ingen jobbnøkkel, ingen agentrolle og ingen modell.
+  redaktørmandat for fagområdet påstanden hører under — også for å se køen, og
+  ikke bare for å avgjøre. Flaten viser hva påstanden sier i dag, altså den
+  publiserte formuleringen, hvilket virkestoff og endepunkt den gjelder, om en
+  nyere formulering allerede er bygget uten å være tatt i bruk, hvor sikker
+  evidensen ble vurdert til å være — og hver ny artikkel som er kommet til, med
+  bibliografi og funnene sine samlet under seg: studiedesign, populasjon,
+  retning og størrelse. Ingen uuid, ingen jobbnøkkel, ingen agentrolle og ingen
+  modell.
   Avgjørelsen er bundet til nøyaktig det evidensgrunnlaget redaktøren tok
   stilling til.
 - **`/kandidater` og `/publisert`.** Sluttkontrollen av det ferdige produktet,
@@ -209,9 +212,12 @@ si i lys av det, er en redaksjonell avgjørelse og ikke en transport.
 Det som er nytt, er at grensen ikke lenger er et stille stopp.
 `workflow.claim_revision_reviews` gjør tilstanden eksplisitt og varig: én rad per
 påstand, uansett hvor mange nye funn som kommer, med et append-only spor over når
-Antidep la merke til den, hvor mye den har vokst, og hva som ble besluttet på
-hvilket grunnlag. Raden står i den åpne arbeidsoversikten som planlagt arbeid —
-aldri som en teknisk feil — og redaktøren avgjør den på `/ny-evidens`.
+Antidep la merke til den, hvordan den har vokst eller krympet, og hva som ble
+besluttet på hvilket grunnlag. Raden står i den åpne arbeidsoversikten som
+planlagt arbeid — aldri som en teknisk feil — og redaktøren avgjør den på
+`/ny-evidens`. Faller den siste nye forskningen bort før noen rakk å ta stilling
+til den, lukker Antidep oppgaven selv: ingen skal bli bedt om en avgjørelse som
+ikke lenger lar seg ta.
 
 Avgjørelsen er bundet til nøyaktig det evidensgrunnlaget redaktøren leste. Er
 grunnlaget blitt et annet mens siden sto åpen, avvises den, og flaten ber om

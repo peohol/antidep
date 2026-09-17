@@ -113,20 +113,20 @@
 -- 1. Vokabularene
 -- ----------------------------------------------------------------------------
 create type workflow.claim_revision_review_state as enum (
-  'open', 'revision_ordered', 'set_aside');
+  'open', 'revision_ordered', 'set_aside', 'lapsed');
 
 revoke usage on type workflow.claim_revision_review_state from public;
 
 comment on type workflow.claim_revision_review_state is
-  'Hvor en redaksjonell revisjonsvurdering står: open (ny evidens venter på en avgjørelse), revision_ordered (en redaktør har besluttet at påstanden skal revideres, og synteseoppgaven ligger i køen) eller set_aside (en redaktør har konkludert med at den nye evidensen ikke endrer påstanden). De tre er uttømmende, og de to siste er avgjørelser med et menneske bak — ikke fravær av arbeid.';
+  'Hvor en redaksjonell revisjonsvurdering står: open (ny evidens venter på en avgjørelse), revision_ordered (en redaktør har besluttet at påstanden skal revideres, og synteseoppgaven ligger i køen), set_aside (en redaktør har konkludert med at den nye evidensen ikke endrer påstanden) eller lapsed (den nye evidensen falt bort før noen rakk å ta stilling til den — et funn ble trukket tilbake, fikk et åpent avvik eller ble kastet). De fire er uttømmende. De to midterste er avgjørelser med et menneske bak; lapsed er det ikke, og derfor er den ikke en avgjørelse men en opplysning om at det ikke lenger er noe å avgjøre. Uten den ville en oppgave ingen kan fullføre, blitt stående i den åpne arbeidsoversikten som planlagt arbeid (ANTIDEP_CONSTITUTION.md regel 4).';
 
 create type workflow.claim_revision_review_transition as enum (
-  'opened', 'widened', 'reopened', 'revision_ordered', 'set_aside');
+  'opened', 'widened', 'narrowed', 'reopened', 'revision_ordered', 'set_aside', 'lapsed');
 
 revoke usage on type workflow.claim_revision_review_transition from public;
 
 comment on type workflow.claim_revision_review_transition is
-  'Overgangen ett spor beskriver: opened (Antidep la merke til ny evidens om en påstand som finnes), widened (enda et funn kom til mens oppgaven sto åpen), reopened (grunnlaget er blitt et annet siden forrige avgjørelse), revision_ordered og set_aside (en redaktør avgjorde). Skillet mellom opened og widened er grunnen til at sporet finnes: uten det kunne ingen svare på om oppgaven har vokst siden den ble sett.';
+  'Overgangen ett spor beskriver: opened (Antidep la merke til ny evidens om en påstand som finnes), widened (enda et funn kom til mens oppgaven sto åpen), narrowed (et funn falt bort, men noe står igjen), lapsed (det siste falt bort, og det er ikke lenger noe å avgjøre), reopened (grunnlaget er blitt et annet siden forrige avgjørelse), revision_ordered og set_aside (en redaktør avgjorde). Skillet mellom opened, widened og narrowed er grunnen til at sporet finnes: uten det kunne ingen svare på om oppgaven har vokst eller krympet siden den ble sett — og «widened» om et grunnlag som krympet, ville vært usant.';
 
 -- ----------------------------------------------------------------------------
 -- 2. Avtrykket av en mengde evidensfunn
@@ -278,6 +278,13 @@ create table workflow.claim_revision_reviews (
   -- seg siden sist?» er spørsmålet som avgjør om oppgaven skal åpne seg igjen.
   pending_evidence_digest text not null,
 
+  -- Hvor mange nye funn som ventet da tilstanden sist ble skrevet. Finnes for
+  -- at «kom det noe til» og «falt noe bort» skal kunne skilles uten å lese
+  -- sporet baklengs — to linjer skrevet i den samme transaksjonen har det samme
+  -- tidsstempelet, så sporet kan ikke svare på det. Tallet gjør i tillegg
+  -- invarianten strukturell: en åpen oppgave har alltid noe å avgjøre.
+  pending_evidence_count integer not null,
+
   -- Avtrykket redaktøren faktisk tok stilling til. NULL mens oppgaven er åpen.
   decided_evidence_digest text,
   decided_at timestamptz,
@@ -298,6 +305,8 @@ create table workflow.claim_revision_reviews (
   constraint claim_revision_reviews_reference_key unique (reference),
   constraint claim_revision_reviews_pending_digest_shape_check
     check (pending_evidence_digest ~ '^sha256-v1:[0-9a-f]{64}$'),
+  constraint claim_revision_reviews_pending_count_check
+    check (pending_evidence_count >= 0),
   constraint claim_revision_reviews_decided_digest_shape_check
     check (decided_evidence_digest is null
            or decided_evidence_digest ~ '^sha256-v1:[0-9a-f]{64}$'),
@@ -317,6 +326,14 @@ create table workflow.claim_revision_reviews (
           decided_evidence_digest is null and decided_at is null
           and decided_by_actor_id is null and decision_note is null
           and pipeline_job_id is null
+          -- En åpen oppgave har alltid noe å avgjøre. Uten dette kunne en
+          -- oppgave om ingenting stå i den åpne arbeidsoversikten og be et
+          -- menneske om en avgjørelse som ikke lar seg ta.
+          and pending_evidence_count > 0
+        when 'lapsed' then
+          decided_evidence_digest is null and decided_at is null
+          and decided_by_actor_id is null and decision_note is null
+          and pipeline_job_id is null and pending_evidence_count = 0
         when 'revision_ordered' then
           decided_evidence_digest is not null and decided_at is not null
           and decided_by_actor_id is not null and pipeline_job_id is not null
@@ -335,6 +352,8 @@ comment on column workflow.claim_revision_reviews.reference is
   'Det ugjennomsiktige håndtaket redaktørflaten peker på oppgaven med. En egen tilfeldig verdi og ikke radens id, slik at ingen intern identifikator står på skjermen eller i en adresse (AGENTS.md).';
 comment on column workflow.claim_revision_reviews.pending_evidence_digest is
   'Avtrykket av hele det brukbare evidensgrunnlaget for påstandens virkestoff og endepunkt, slik det var da raden sist ble skrevet. Dekker hele grunnlaget og ikke bare det nye, fordi det er hele grunnlaget synteseoppgaven bygges av: en beslutning bundet til bare det nye ville ikke fanget at et gammelt funn i mellomtiden ble trukket tilbake.';
+comment on column workflow.claim_revision_reviews.pending_evidence_count is
+  'Hvor mange nye funn som ventet da raden sist ble skrevet. Skiller «det kom noe til» fra «noe falt bort», og gjør invarianten strukturell: en åpen oppgave har alltid minst ett funn å ta stilling til, og en oppgave uten noe å avgjøre er ikke åpen.';
 comment on column workflow.claim_revision_reviews.decided_evidence_digest is
   'Avtrykket redaktøren faktisk tok stilling til. Oppgaven åpner seg igjen bare når grunnlaget er blitt et annet enn dette — så en avgjørelse gjelder det den gjaldt, og ikke noe som kom etterpå.';
 comment on column workflow.claim_revision_reviews.pipeline_job_id is
@@ -527,6 +546,7 @@ declare
   v_claim_id uuid;
   v_review workflow.claim_revision_reviews;
   v_new_ids uuid[];
+  v_count integer;
   v_digest text;
   v_job_state workflow.pipeline_job_state;
 begin
@@ -551,11 +571,11 @@ begin
     return null;
   end if;
 
+  -- Grunnlaget leses *før* raden vurderes, og ikke bare når det finnes noe nytt:
+  -- en oppgave som står åpen mens den siste nye evidensen faller bort, skal
+  -- lukkes, ikke bli stående som planlagt arbeid ingen kan fullføre.
   v_new_ids := workflow.claim_revision_new_evidence(v_claim_id);
-  if v_new_ids is null or cardinality(v_new_ids) = 0 then
-    return null;
-  end if;
-
+  v_count := cardinality(coalesce(v_new_ids, array[]::uuid[]));
   v_digest := workflow.evidence_set_digest(
     workflow.claim_subject_evidence(p_subject_drug_id, p_topic_concept_id));
 
@@ -565,30 +585,83 @@ begin
   for update;
 
   if not found then
-    insert into workflow.claim_revision_reviews (claim_id, pending_evidence_digest)
-    values (v_claim_id, v_digest)
+    if v_count = 0 then
+      return null;
+    end if;
+
+    insert into workflow.claim_revision_reviews
+      (claim_id, pending_evidence_digest, pending_evidence_count)
+    values (v_claim_id, v_digest, v_count)
     returning * into v_review;
 
     perform workflow.record_claim_revision_review_event(
       v_review.id, 'opened'::workflow.claim_revision_review_transition,
-      v_digest, cardinality(v_new_ids), null, null);
+      v_digest, v_count, null, null);
     return v_review.id;
   end if;
 
-  if v_review.state = 'open' then
-    -- Enda et funn på en oppgave som alt står åpen. Fortsatt én avgjørelse å
-    -- ta, og derfor fortsatt én rad: det som endrer seg, er grunnlaget. Svaret
-    -- er NULL, fordi ingen oppgave ble åpnet — den sto åpen fra før.
-    if v_review.pending_evidence_digest is distinct from v_digest then
+  -- ------------------------------------------------------------------------
+  -- Det er ikke lenger noe å ta stilling til
+  --
+  -- Et funn kan bli trukket tilbake, få et åpent avvik eller bli kastet etter at
+  -- oppgaven ble åpnet. Da er den nye kunnskapen borte, og en oppgave om den er
+  -- en menneskeoppgave uten et utfall: beslutningsveien ville uansett avvist
+  -- den. Tilstanden sier det eksplisitt framfor at raden blir stående åpen
+  -- (ANTIDEP_CONSTITUTION.md regel 4).
+  --
+  -- Bare en åpen oppgave lukkes slik. En avgjort oppgave er allerede avgjort, og
+  -- et grunnlag som senere krymper, opphever ikke det et menneske bestemte.
+  -- ------------------------------------------------------------------------
+  if v_count = 0 then
+    if v_review.state = 'open'::workflow.claim_revision_review_state then
       update workflow.claim_revision_reviews r
-      set pending_evidence_digest = v_digest
+      set state = 'lapsed'::workflow.claim_revision_review_state,
+          pending_evidence_digest = v_digest,
+          pending_evidence_count = 0
       where r.id = v_review.id;
 
       perform workflow.record_claim_revision_review_event(
-        v_review.id, 'widened'::workflow.claim_revision_review_transition,
-        v_digest, cardinality(v_new_ids), null, null);
+        v_review.id, 'lapsed'::workflow.claim_revision_review_transition,
+        v_digest, 0, null, null);
     end if;
     return null;
+  end if;
+
+  if v_review.state = 'open'::workflow.claim_revision_review_state then
+    -- Grunnlaget har endret seg på en oppgave som alt står åpen. Fortsatt én
+    -- avgjørelse å ta, og derfor fortsatt én rad. Svaret er NULL, fordi ingen
+    -- oppgave ble åpnet — den sto åpen fra før.
+    if v_review.pending_evidence_digest is distinct from v_digest then
+      update workflow.claim_revision_reviews r
+      set pending_evidence_digest = v_digest,
+          pending_evidence_count = v_count
+      where r.id = v_review.id;
+
+      perform workflow.record_claim_revision_review_event(
+        v_review.id,
+        case when v_count >= v_review.pending_evidence_count
+             then 'widened'::workflow.claim_revision_review_transition
+             else 'narrowed'::workflow.claim_revision_review_transition end,
+        v_digest, v_count, null, null);
+    end if;
+    return null;
+  end if;
+
+  -- En oppgave som falt bort, åpnes igjen så snart det finnes ny evidens igjen.
+  -- Ingen tok stilling til noe forrige gang, så det er ingen avgjørelse å veie
+  -- det nye grunnlaget mot.
+  if v_review.state = 'lapsed'::workflow.claim_revision_review_state then
+    update workflow.claim_revision_reviews r
+    set state = 'open'::workflow.claim_revision_review_state,
+        pending_evidence_digest = v_digest,
+        pending_evidence_count = v_count,
+        opened_at = now()
+    where r.id = v_review.id;
+
+    perform workflow.record_claim_revision_review_event(
+      v_review.id, 'reopened'::workflow.claim_revision_review_transition,
+      v_digest, v_count, null, null);
+    return v_review.id;
   end if;
 
   -- Avgjort. En avgjørelse gjelder det grunnlaget den gjaldt, og oppgaven
@@ -601,7 +674,7 @@ begin
   -- synteseoppgave som stoppet teknisk, er et teknisk problem og stoppet
   -- arbeid i den åpne oversikten — ikke en grunn til å be et menneske om den
   -- samme avgjørelsen en gang til (ANTIDEP_CONSTITUTION.md regel 4).
-  if v_review.state = 'revision_ordered' then
+  if v_review.state = 'revision_ordered'::workflow.claim_revision_review_state then
     select j.state into v_job_state
     from workflow.pipeline_jobs j
     where j.id = v_review.pipeline_job_id;
@@ -614,6 +687,7 @@ begin
   update workflow.claim_revision_reviews r
   set state = 'open'::workflow.claim_revision_review_state,
       pending_evidence_digest = v_digest,
+      pending_evidence_count = v_count,
       decided_evidence_digest = null,
       decided_at = null,
       decided_by_actor_id = null,
@@ -624,13 +698,13 @@ begin
 
   perform workflow.record_claim_revision_review_event(
     v_review.id, 'reopened'::workflow.claim_revision_review_transition,
-    v_digest, cardinality(v_new_ids), null, null);
+    v_digest, v_count, null, null);
   return v_review.id;
 end;
 $$;
 
 comment on function workflow.notice_claim_revision_need(uuid, uuid) is
-  'Gjør det eksplisitt at ny evidens om et virkestoff og et endepunkt venter på en redaksjonell avgjørelse om en påstand som allerede finnes. Idempotent på påstanden: flere nye funn gir én oppgave, og et grunnlag som ikke har endret seg, skriver ingenting. Tar selv subjektlåsen kjedeovergangene tar, slik at to samtidige kontroller ikke kan forsøke å opprette den samme raden. Åpner en avgjort oppgave igjen bare når grunnlaget er blitt et annet enn det redaktøren tok stilling til — og for en besluttet revisjon bare når synteseoppgaven faktisk lyktes, slik at en teknisk svikt aldri blir en ny menneskeoppgave. Svarer med id-en til den oppgaven som faktisk ble *åpnet* — opprettet eller gjenåpnet — og NULL ellers, også når en oppgave som alt sto åpen, bare vokste: en teller over åpnede oppgaver skal telle avgjørelser som venter, ikke rader som finnes.';
+  'Holder tilstanden «ny evidens venter på en redaksjonell avgjørelse» i takt med det evidensgrunnlaget som faktisk finnes. Åpner en oppgave når det er kommet ny, brukbar evidens om en påstand som allerede finnes; fører at den har vokst eller krympet; og lukker den som lapsed når den siste nye evidensen faller bort, slik at en oppgave ingen kan fullføre, aldri blir stående i den åpne arbeidsoversikten (ANTIDEP_CONSTITUTION.md regel 4). Idempotent på påstanden: flere nye funn gir én oppgave, og et grunnlag som ikke har endret seg, skriver ingenting. Tar selv subjektlåsen kjedeovergangene tar, og en radlås på påstanden, slik at to samtidige kontroller ikke kan forsøke å opprette den samme raden og slik at en eksplisitt fjerning av påstanden ikke kan tape et kappløp mot den. Åpner en avgjort oppgave igjen bare når grunnlaget er blitt et annet enn det redaktøren tok stilling til — og for en besluttet revisjon bare når synteseoppgaven faktisk lyktes, slik at en teknisk svikt aldri blir en ny menneskeoppgave. Svarer med id-en til den oppgaven som faktisk ble *åpnet* — opprettet eller gjenåpnet — og NULL ellers, også når en oppgave som alt sto åpen, bare endret seg: en teller over åpnede oppgaver skal telle avgjørelser som venter, ikke rader som finnes.';
 
 revoke execute on function workflow.notice_claim_revision_need(uuid, uuid) from public;
 
@@ -736,6 +810,68 @@ comment on function workflow.chain_task_for_verified_extraction(uuid) is
   'Legger synteseoppgaven i køen når ekstraksjonskontrollen av ett evidensfunn er bestått. Grunnlaget er hele settet av brukbare funn på det samme virkestoffet og endepunktet, bygget av workflow.claim_synthesis_manifest(uuid, uuid, uuid) — den samme funksjonen den redaksjonelle beslutningen bruker — og ikke bare funnet som utløste overgangen. Gjør ingenting når den gjeldende kontrollen ikke bekrefter, eller når leddet allerede har en oppgave om det samme subjektet. Har temaet og virkestoffet allerede en påstand, synteseres den ikke om igjen: da registreres i stedet at ny evidens venter på en redaksjonell avgjørelse (workflow.notice_claim_revision_need(uuid, uuid)). Svarer med jobbens id, eller NULL.';
 
 -- ----------------------------------------------------------------------------
+-- 8b. En kontroll som *ikke* bekrefter, kan også endre den redaksjonelle
+--     oppgaven
+--
+-- Triggeren fra migrasjon 012b gikk stille videre på et avvik, og det er riktig
+-- for kjeden: et avvik er et resultat å stoppe på, ikke gå videre fra. Men et
+-- avvik kan være nettopp det som tar bort den nye kunnskapen en redaktør ble
+-- bedt om å ta stilling til — og da skal oppgaven lukkes, ikke bli stående og
+-- be om en avgjørelse som ikke lenger lar seg ta.
+--
+-- Kroppen er ellers ordrett den fra migrasjon 012b.
+-- ----------------------------------------------------------------------------
+create or replace function workflow.chain_after_evidence_verification()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_state text;
+  v_item knowledge.evidence_items;
+begin
+  if new.outcome <> 'verified' then
+    -- Kjeden går ikke videre, men den redaksjonelle tilstanden kan ha endret
+    -- seg: falt det siste nye funnet bort, er det ikke lenger noe å avgjøre.
+    begin
+      select e.* into v_item
+      from knowledge.evidence_items e
+      where e.id = new.evidence_item_id;
+
+      if found then
+        perform workflow.notice_claim_revision_need(
+          v_item.intervention_drug_id, v_item.outcome_concept_id);
+      end if;
+    exception
+      when restrict_violation or no_data_found or invalid_parameter_value then
+        null;
+      when others then
+        get stacked diagnostics v_state = returned_sqlstate;
+        perform workflow.chain_note_failure('paastandsrevisjon', new.evidence_item_id, v_state);
+    end;
+    return null;
+  end if;
+
+  begin
+    perform workflow.chain_task_for_verified_extraction(new.evidence_item_id);
+  exception
+    -- Grunnlaget er ikke klart. Kjeden står, og det er porten som gjør jobben
+    -- sin — ikke en teknisk svikt. Nøyaktig de tre klassene
+    -- workflow.evidence_usable_problem(uuid[], text) fanger, og av samme grunn.
+    when restrict_violation or no_data_found or invalid_parameter_value then
+      null;
+    when others then
+      get stacked diagnostics v_state = returned_sqlstate;
+      perform workflow.chain_note_failure('syntese', new.evidence_item_id, v_state);
+  end;
+  return null;
+end;
+$$;
+
+comment on function workflow.chain_after_evidence_verification() is
+  'Legger synteseoppgaven i køen når en ekstraksjonskontroll bekrefter funnet. Bare verified utløser det: et avvik er et resultat kjeden skal stoppe på, ikke gå videre fra (ANTIDEP_CONSTITUTION.md regel 4). Et avvik leser likevel den redaksjonelle tilstanden på nytt, fordi det kan være nettopp det som tok bort den nye kunnskapen en redaktør ble bedt om å ta stilling til — og en oppgave ingen kan fullføre, skal ikke bli stående. Ligger på tabellen og gjelder derfor både den deterministiske kontrollen og en menneskelig kildekontroll.';
+
+-- ----------------------------------------------------------------------------
 -- 9. Det redaktøren ser
 --
 -- Bare det den faglige avgjørelsen trenger: hva påstanden sier i dag, hvilket
@@ -773,11 +909,31 @@ begin
     return null;
   end if;
 
+  -- ------------------------------------------------------------------------
+  -- «Det Antidep sier i dag» er det publiserte, når det finnes noe publisert
+  --
+  -- Den siste revisjonen er ikke nødvendigvis den som er i bruk: en revisjon
+  -- kan være bygget og ligge til sluttkontroll uten å være publisert, og en
+  -- flate som viste den under «det Antidep sier i dag» ville sagt at et utkast
+  -- er det klinikeren får se. Det er klinisk feil (ANTIDEP_CONSTITUTION.md
+  -- regel 5, 6). Er ingenting publisert, er den siste bygde revisjonen det
+  -- nærmeste som finnes, og flaten sier da at den ikke er publisert.
+  -- ------------------------------------------------------------------------
   select r.* into v_revision
   from knowledge.claim_revisions r
-  where r.claim_id = v_claim.id
-  order by r.revision_number desc
-  limit 1;
+  where r.id = v_claim.current_published_revision_id;
+
+  if not found then
+    select r.* into v_revision
+    from knowledge.claim_revisions r
+    where r.claim_id = v_claim.id
+    order by r.revision_number desc
+    limit 1;
+
+    if not found then
+      return null;
+    end if;
+  end if;
 
   v_new_ids := workflow.claim_revision_new_evidence(v_claim.id);
 
@@ -791,6 +947,13 @@ begin
     'uncertainty_summary', v_revision.uncertainty_summary,
     'revision_number', v_revision.revision_number,
     'published', v_claim.current_published_revision_id is not null,
+    -- En nyere formulering som er bygget, men ikke publisert. Redaktøren skal
+    -- vite at den finnes: den er neste ledd i den samme historien, og en
+    -- revisjon besluttet uten den kunnskapen ville vært tatt på et ufullstendig
+    -- bilde.
+    'newer_unpublished_revision', exists (
+      select 1 from knowledge.claim_revisions r
+      where r.claim_id = v_claim.id and r.revision_number > v_revision.revision_number),
     'certainty_level', (
       select a.certainty_level::text
       from knowledge.evidence_assessments a
@@ -801,7 +964,14 @@ begin
       select count(distinct l.evidence_item_id)::integer
       from knowledge.claim_evidence_links l
       where l.claim_revision_id = v_revision.id),
-    'new_evidence_count', cardinality(v_new_ids),
+    -- To tall, fordi de betyr to forskjellige ting: én artikkel kan bære flere
+    -- funn, og «to nye artikler» og «to nye funn» er ikke det samme. Ett tall
+    -- som het begge deler, ville fått flaten til å si at den samme studien var
+    -- to studier.
+    'new_article_count', (
+      select count(distinct e.source_id)::integer
+      from knowledge.evidence_items e where e.id = any (v_new_ids)),
+    'new_finding_count', cardinality(v_new_ids),
     'noticed_at', p_review.opened_at,
     -- Avtrykket flaten sender uendret tilbake. Regnes av hele det brukbare
     -- grunnlaget her og nå, og ikke av den lagrede verdien: den som åpner
@@ -813,38 +983,85 @@ begin
     return v_task;
   end if;
 
+  -- Gruppert per artikkel, fordi det er artikler en redaktør leser. Et
+  -- evidensfunn er ett konkret funn, og flere funn kan komme fra den samme
+  -- studien; en liste som viste funn som om de var artikler, ville vist den
+  -- samme studien flere ganger og latt den telle flere ganger i vurderingen.
   return v_task || jsonb_build_object('new_evidence', coalesce((
-    select jsonb_agg(
-      jsonb_build_object(
-        'article_title', s.title,
-        'article_authors', s.authors_or_issuer,
-        'published_year', case when s.publication_date is null then null
-                               else extract(year from s.publication_date)::integer end,
-        'study_design', e.design_code::text,
-        'population', (select p.canonical_label from catalog.populations p
-                       where p.id = e.population_id),
-        'population_detail', e.population_detail,
-        'participants', e.sample_size,
-        'finding', e.outcome_detail,
-        'direction', e.reported_direction::text,
-        'effect_measure', e.effect_measure::text,
-        'estimate', e.estimate,
-        'estimate_unit', e.estimate_unit::text,
-        'ci_lower', e.ci_lower,
-        'ci_upper', e.ci_upper,
-        'ci_level_percent', e.ci_level_percent,
-        'limitations', e.limitations_text)
-      order by s.title, e.id::text)
-    from knowledge.evidence_items e
-    join knowledge.sources s on s.id = e.source_id
-    where e.id = any (v_new_ids)), '[]'::jsonb));
+    select jsonb_agg(g.article order by g.title, g.authors)
+    from (
+      select
+        s.title,
+        s.authors_or_issuer as authors,
+        jsonb_build_object(
+          'article_title', s.title,
+          'article_authors', s.authors_or_issuer,
+          'published_year', case when s.publication_date is null then null
+                                 else extract(year from s.publication_date)::integer end,
+          'findings', jsonb_agg(
+            jsonb_build_object(
+              'study_design', e.design_code::text,
+              'population', (select p.canonical_label from catalog.populations p
+                             where p.id = e.population_id),
+              'population_detail', e.population_detail,
+              'participants', e.sample_size,
+              'finding', e.outcome_detail,
+              'direction', e.reported_direction::text,
+              'effect_measure', e.effect_measure::text,
+              'estimate', e.estimate,
+              'estimate_unit', e.estimate_unit::text,
+              'ci_lower', e.ci_lower,
+              'ci_upper', e.ci_upper,
+              'ci_level_percent', e.ci_level_percent,
+              'limitations', e.limitations_text)
+            order by e.id::text)
+        ) as article
+      from knowledge.evidence_items e
+      join knowledge.sources s on s.id = e.source_id
+      where e.id = any (v_new_ids)
+      group by s.id, s.title, s.authors_or_issuer, s.publication_date
+    ) g), '[]'::jsonb));
 end;
 $$;
 
 comment on function workflow.claim_revision_task(workflow.claim_revision_reviews, boolean) is
-  'Én redaksjonell revisjonsoppgave, slik en redaktør trenger den: hva påstanden sier i dag, virkestoffet og endepunktet den gjelder, om den er publisert, hvor sikker evidensen ble vurdert til å være, og — når hele oppgaven åpnes — hva slags ny forskning som er kommet til. Artiklene navngis med bibliografien sin, som er det en redaktør kjenner dem igjen på. Ingen uuid, ingen jobbnøkkel, ingen agentrolle og ingen modell forlater databasen her. evidence_basis er avtrykket flaten sender uendret tilbake med beslutningen, og det regnes av grunnlaget her og nå framfor av den lagrede verdien: den som åpner siden, skal ta stilling til det som faktisk finnes.';
+  'Én redaksjonell revisjonsoppgave, slik en redaktør trenger den: hva påstanden sier i dag, virkestoffet og endepunktet den gjelder, om den er publisert, om en nyere formulering allerede er bygget uten å være publisert, hvor sikker evidensen ble vurdert til å være, og — når hele oppgaven åpnes — hva slags ny forskning som er kommet til, gruppert per artikkel med funnene under. «Det Antidep sier i dag» er den *publiserte* revisjonen når det finnes en: den siste bygde revisjonen kan ligge til sluttkontroll uten å være i bruk, og en flate som viste den som gjeldende, ville sagt at et utkast er det klinikeren får se. Artiklene navngis med bibliografien sin, som er det en redaktør kjenner dem igjen på, og antall artikler og antall funn er to tall fordi de betyr to forskjellige ting. Ingen uuid, ingen jobbnøkkel, ingen agentrolle og ingen modell forlater databasen her. evidence_basis er avtrykket flaten sender uendret tilbake med beslutningen, og det regnes av grunnlaget her og nå framfor av den lagrede verdien: den som åpner siden, skal ta stilling til det som faktisk finnes.';
 
 revoke execute on function workflow.claim_revision_task(workflow.claim_revision_reviews, boolean) from public;
+
+-- ----------------------------------------------------------------------------
+-- Mandatet som et svar framfor som et kast
+--
+-- `knowledge.assert_editor_authorized(uuid)` er den som gjelder: et avgrenset
+-- editor-mandat dekker bare det kliniske begrepet det ble gitt for. Køen må
+-- stille det samme spørsmålet om hver rad, og da trengs svaret som en verdi.
+--
+-- Wrapperen kaller nøyaktig den samme asserten framfor å skrive om vilkåret, av
+-- samme grunn som `workflow.evidence_usable_problem(uuid[], text)` gjør det: to
+-- formuleringer av det samme mandatet ville før eller siden blitt uenige, og da
+-- ville køen vist noe beslutningsveien uansett måtte avvise.
+-- ----------------------------------------------------------------------------
+create function workflow.editor_mandate_covers(p_topic_concept_id uuid)
+  returns boolean
+  language plpgsql
+  stable
+  set search_path = ''
+as $$
+begin
+  perform knowledge.assert_editor_authorized(p_topic_concept_id);
+  return true;
+exception
+  -- Bare den ene feilklassen mandatkontrollen faktisk reiser. Et `when others`
+  -- ville gjort en teknisk feil til «du har ikke mandat», og skjult den.
+  when insufficient_privilege then
+    return false;
+end;
+$$;
+
+comment on function workflow.editor_mandate_covers(uuid) is
+  'Om kalleren har gyldig editor-mandat for dette kliniske begrepet, som en verdi framfor som et kast. Kaller knowledge.assert_editor_authorized(uuid) — den samme funksjonen skriveveien kaller — slik at køen ikke kan vise en oppgave beslutningsveien uansett måtte avvise. Fanger bare insufficient_privilege: en teknisk feil skal boble opp framfor å bli presentert som en manglende rettighet.';
+
+revoke execute on function workflow.editor_mandate_covers(uuid) from public;
 
 create function api.claim_revision_queue()
   returns jsonb
@@ -857,12 +1074,19 @@ declare
 begin
   perform knowledge.assert_editor_authorized();
 
+  -- Mandatet leses per rad, mot endepunktet påstanden hører under. Et avgrenset
+  -- editor-mandat dekker bare sitt eget område, og en kø som viste påstanden og
+  -- hele evidensgrunnlaget for et område kalleren ikke har mandat i, ville vist
+  -- klinisk innhold ingen hadde gitt vedkommende adgang til — og bedt om en
+  -- avgjørelse beslutningsveien uansett avviser.
   select coalesce(jsonb_agg(task order by task ->> 'noticed_at'), '[]'::jsonb)
     into v_rows
   from (
     select workflow.claim_revision_task(r, false) as task
     from workflow.claim_revision_reviews r
+    join knowledge.claims c on c.id = r.claim_id
     where r.state = 'open'
+      and workflow.editor_mandate_covers(c.topic_concept_id)
     order by r.opened_at
     limit 200
   ) q
@@ -873,7 +1097,7 @@ end;
 $$;
 
 comment on function api.claim_revision_queue() is
-  'Påstandene som har fått ny evidens, og som venter på at en redaktør avgjør om teksten skal revideres. Ett kall, uten et eneste teknisk felt: påstanden i klartekst, virkestoffet og endepunktet den gjelder, og hvor mange nye funn som er kommet til. Krever editor-mandat, fordi det å avgjøre hva en påstand skal si i lys av ny kunnskap er en redaksjonell avgjørelse (ANTIDEP_CONSTITUTION.md regel 1). SECURITY DEFINER fordi knowledge, workflow og catalog har RLS med default deny.';
+  'Påstandene som har fått ny evidens, og som venter på at en redaktør avgjør om teksten skal revideres. Ett kall, uten et eneste teknisk felt: påstanden i klartekst, virkestoffet og endepunktet den gjelder, og hvor mange nye artikler og funn som er kommet til. Krever editor-mandat, fordi det å avgjøre hva en påstand skal si i lys av ny kunnskap er en redaksjonell avgjørelse (ANTIDEP_CONSTITUTION.md regel 1) — og et avgrenset mandat ser bare sitt eget område: køen leser workflow.editor_mandate_covers(uuid) per rad, med den samme asserten beslutningsveien kaller. SECURITY DEFINER fordi knowledge, workflow og catalog har RLS med default deny.';
 
 revoke execute on function api.claim_revision_queue() from public;
 grant execute on function api.claim_revision_queue() to authenticated;
@@ -886,6 +1110,7 @@ create function api.claim_revision_for_decision(p_reference text)
 as $$
 declare
   v_review workflow.claim_revision_reviews;
+  v_claim knowledge.claims;
   v_task jsonb;
 begin
   perform knowledge.assert_editor_authorized();
@@ -898,8 +1123,16 @@ begin
     raise exception using
       errcode = 'no_data_found',
       message = 'Det finnes ingen åpen revisjonsvurdering med denne referansen.',
-      hint = 'Oppgaven kan være avgjort av noen andre, eller den nye evidensen kan ha blitt trukket tilbake. Hent listen på nytt.';
+      hint = 'Oppgaven kan være avgjort av noen andre, eller den nye evidensen kan ha blitt trukket tilbake, eller den kan ha falt bort. Hent listen på nytt.';
   end if;
+
+  -- Mandatet for endepunktet påstanden hører under, og ikke bare editor-mandat
+  -- i sin alminnelighet: hele påstanden og hele det nye evidensgrunnlaget står i
+  -- svaret, og et avgrenset mandat dekker bare sitt eget område. Kontrollen er
+  -- den samme beslutningsveien kjører, så flaten kan ikke vise noe som uansett
+  -- ville blitt avvist.
+  select c.* into v_claim from knowledge.claims c where c.id = v_review.claim_id;
+  perform knowledge.assert_editor_authorized(v_claim.topic_concept_id);
 
   v_task := workflow.claim_revision_task(v_review, true);
   if v_task is null then
@@ -913,7 +1146,7 @@ end;
 $$;
 
 comment on function api.claim_revision_for_decision(text) is
-  'Hele den ene redaksjonelle revisjonsoppgaven: påstanden slik den står i dag, og en forståelig oppsummering av hver ny forskningsartikkel som er kommet til — studiedesign, populasjon, retning, effektmål og forbehold. Nok til å ta den faglige avgjørelsen, og ikke noe mer. Slås opp på det ugjennomsiktige håndtaket, slik at en redaktør kan åpne oppgaven uten å kjenne én eneste teknisk identifikator (AGENTS.md). Krever editor-mandat. SECURITY DEFINER fordi knowledge, workflow og catalog har RLS med default deny.';
+  'Hele den ene redaksjonelle revisjonsoppgaven: påstanden slik den står i dag, og en forståelig oppsummering av hver ny forskningsartikkel som er kommet til, med funnene samlet under artikkelen — studiedesign, populasjon, retning, effektmål og forbehold. Nok til å ta den faglige avgjørelsen, og ikke noe mer. Slås opp på det ugjennomsiktige håndtaket, slik at en redaktør kan åpne oppgaven uten å kjenne én eneste teknisk identifikator (AGENTS.md). Krever editor-mandat for endepunktet påstanden hører under, og ikke bare editor-mandat i sin alminnelighet: hele påstanden og hele det nye evidensgrunnlaget står i svaret. SECURITY DEFINER fordi knowledge, workflow og catalog har RLS med default deny.';
 
 revoke execute on function api.claim_revision_for_decision(text) from public;
 grant execute on function api.claim_revision_for_decision(text) to authenticated;

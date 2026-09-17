@@ -55,10 +55,12 @@ const config = readLocalStackConfig(process.argv.slice(2))
 // og prøven ville bestått uten å ha prøvd noe.
 const RUN = randomUUID().slice(0, 8)
 const EDITOR_USER = randomUUID()
+const NARROW_EDITOR_USER = randomUUID()
 const REVIEWER_USER = randomUUID()
 const PUBLISHER_USER = randomUUID()
 const CLINICIAN_USER = randomUUID()
 const TOPIC = randomUUID()
+const OTHER_TOPIC = randomUUID()
 const SOURCE_OLD = randomUUID()
 const SOURCE_NEW = randomUUID()
 const VERSION_OLD = randomUUID()
@@ -237,18 +239,22 @@ function seed(): void {
     `
     insert into auth.users (id, email) values
       (${q(EDITOR_USER)}, 'revisjon-${RUN}-redaktor@test.invalid'),
+      (${q(NARROW_EDITOR_USER)}, 'revisjon-${RUN}-avgrenset@test.invalid'),
       (${q(REVIEWER_USER)}, 'revisjon-${RUN}-fagperson@test.invalid'),
       (${q(PUBLISHER_USER)}, 'revisjon-${RUN}-publisher@test.invalid'),
       (${q(CLINICIAN_USER)}, 'revisjon-${RUN}-kliniker@test.invalid');
 
     insert into catalog.clinical_concepts (id, canonical_label, concept_type)
-    values (${q(TOPIC)}, 'søvnlengde i revisjonsprøven ${RUN}', 'outcome');
+    values (${q(TOPIC)}, 'søvnlengde i revisjonsprøven ${RUN}', 'outcome'),
+           (${q(OTHER_TOPIC)}, 'appetitt i revisjonsprøven ${RUN}', 'outcome');
 
     insert into provenance.actors
       (actor_type, actor_key, display_name, description, auth_user_id)
     values
       ('human', 'human:revisjon-${RUN}-redaktor', 'Redaktør ${RUN}',
        'Syntetisk redaktør for revisjonsprøven.', ${q(EDITOR_USER)}),
+      ('human', 'human:revisjon-${RUN}-avgrenset', 'Avgrenset redaktør ${RUN}',
+       'Syntetisk redaktør med mandat for et annet endepunkt.', ${q(NARROW_EDITOR_USER)}),
       ('human', 'human:revisjon-${RUN}-fagperson', 'Fagperson ${RUN}',
        'Syntetisk fagperson med sluttkontrollmandat.', ${q(REVIEWER_USER)}),
       ('human', 'human:revisjon-${RUN}-publisher', 'Publisher ${RUN}',
@@ -265,6 +271,7 @@ function seed(): void {
            'Revisjonsprøvens egen tildeling.'
     from (values
       (${q(EDITOR_USER)}, 'editor', null),
+      (${q(NARROW_EDITOR_USER)}, 'editor', ${q(OTHER_TOPIC)}),
       (${q(REVIEWER_USER)}, 'reviewer', ${q(TOPIC)}),
       (${q(PUBLISHER_USER)}, 'publisher', null)
     ) as v(user_id, role_code, scope);
@@ -406,6 +413,7 @@ async function main(): Promise<void> {
 
   const anonymous = client(null)
   const editor = client(EDITOR_USER)
+  const narrowEditor = client(NARROW_EDITOR_USER)
   const reviewer = client(REVIEWER_USER)
   const publisher = client(PUBLISHER_USER)
   const clinician = client(CLINICIAN_USER)
@@ -502,6 +510,12 @@ async function main(): Promise<void> {
     'og en innlogget uten redaktørmandat heller ikke',
     (await rejected(clinician, 'claim_revision_queue', {})).includes('editor'),
   )
+  // Et avgrenset editor-mandat dekker bare sitt eget område, og grensen gjelder
+  // like mye ved lesing: hele påstanden og hele evidensgrunnlaget står i svaret.
+  check(
+    'en redaktør avgrenset til et annet endepunkt ser ingenting i køen',
+    parseClaimRevisionQueue(await rpc(narrowEditor, 'claim_revision_queue', {})).length === 0,
+  )
 
   console.log('Redaktøren åpner oppgaven')
   const queue = parseClaimRevisionQueue(await rpc(editor, 'claim_revision_queue', {}))
@@ -511,7 +525,11 @@ async function main(): Promise<void> {
   }
   check('køen navngir påstanden slik den står i dag', entry.statement.startsWith('Sertralin er'))
   check('virkestoffet den gjelder', entry.subjectDrug === 'sertralin')
-  check('hvor mye ny forskning som er kommet til', entry.newEvidenceCount === 2)
+  // To funn, men fra den *samme* artikkelen: ett evidensfunn er ett konkret
+  // funn, og flere funn kan komme fra samme studie. En kø som kalte dem to
+  // artikler, ville latt den samme studien telle to ganger i vurderingen.
+  check('hvor mange nye artikler som er kommet til', entry.newArticleCount === 1)
+  check('og hvor mange nye funn de bærer', entry.newFindingCount === 2)
   check('og at den er publisert og i bruk', entry.published)
   check(
     'køen bærer ingen uuid',
@@ -521,19 +539,28 @@ async function main(): Promise<void> {
   const task = parseClaimRevisionTask(
     await rpc(editor, 'claim_revision_for_decision', { p_reference: entry.reference }),
   )
-  check('oppgaven viser hver ny artikkel', task.newEvidence.length === 2)
+  check('oppgaven viser artikkelen én gang', task.newEvidence.length === 1)
   check(
     'navngitt med bibliografien sin',
     task.newEvidence.every((item) => item.articleTitle.includes('Den nye artikkelen')),
   )
   check(
+    'med begge funnene samlet under artikkelen de kommer fra',
+    task.newEvidence[0]?.findings.length === 2,
+  )
+  check(
     'med studiedesignen og populasjonen den faglige avgjørelsen trenger',
-    task.newEvidence.every(
-      (item) =>
-        item.studyDesign === 'randomized_controlled_trial' &&
-        item.population === 'voksne med depressiv lidelse',
+    task.newEvidence.every((item) =>
+      item.findings.every(
+        (found) =>
+          found.studyDesign === 'randomized_controlled_trial' &&
+          found.population === 'voksne med depressiv lidelse',
+      ),
     ),
   )
+  // Den publiserte formuleringen, og ikke en nyere som bare er bygget.
+  check('og påstanden slik den faktisk er publisert', task.revisionNumber === 1 && task.published)
+  check('uten en nyere formulering som ikke finnes ennå', !task.newerUnpublishedRevision)
   check(
     'og ingen uuid i det redaktøren får se',
     !UUID_SOMEWHERE.test(JSON.stringify({ ...task, evidenceBasis: '' })),

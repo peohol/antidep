@@ -47,7 +47,8 @@ import {
   newEvidenceSentence,
   type ClaimRevisionDecision,
   type ClaimRevisionTask,
-  type NewEvidenceSummary,
+  type NewArticle,
+  type NewFinding,
 } from '../lib/claim-revision'
 import { CERTAINTY_LABELS, label } from '../lib/vocabulary-view'
 import { formatNumber, renderedText } from '../lib/norwegian-format'
@@ -66,17 +67,17 @@ function number(value: number | null): string | null {
 }
 
 /** Størrelsen på funnet, i én setning — eller `null` når kilden ikke oppgir noen. */
-function magnitudeSentence(evidence: NewEvidenceSummary): string | null {
-  const estimate = number(evidence.estimate)
+function magnitudeSentence(finding: NewFinding): string | null {
+  const estimate = number(finding.estimate)
   if (estimate === null) {
     return null
   }
-  const unit = evidence.estimateUnit === null ? '' : ` ${label(evidence.estimateUnit, UNIT_LABELS)}`
+  const unit = finding.estimateUnit === null ? '' : ` ${label(finding.estimateUnit, UNIT_LABELS)}`
   const measure =
-    evidence.effectMeasure === null ? '' : ` (${label(evidence.effectMeasure, MEASURE_LABELS)})`
-  const lower = number(evidence.ciLower)
-  const upper = number(evidence.ciUpper)
-  const level = number(evidence.ciLevelPercent)
+    finding.effectMeasure === null ? '' : ` (${label(finding.effectMeasure, MEASURE_LABELS)})`
+  const lower = number(finding.ciLower)
+  const upper = number(finding.ciUpper)
+  const level = number(finding.ciLevelPercent)
   const interval =
     lower === null || upper === null
       ? ''
@@ -85,31 +86,48 @@ function magnitudeSentence(evidence: NewEvidenceSummary): string | null {
   return `Størrelse: ${estimate}${unit}${measure}${interval}.`
 }
 
-function NewEvidenceEntry({
-  evidence,
-}: {
-  readonly evidence: NewEvidenceSummary
-}): React.JSX.Element {
-  const magnitude = magnitudeSentence(evidence)
+/** Ett funn, under artikkelen det faktisk kommer fra. */
+function Finding({ finding }: { readonly finding: NewFinding }): React.JSX.Element {
+  const magnitude = magnitudeSentence(finding)
+  return (
+    <li className="finding">
+      <p>{finding.finding}</p>
+      <p>
+        {label(finding.studyDesign, STUDY_DESIGN_LABELS)}
+        {finding.participants === null
+          ? ''
+          : `, ${renderedText(formatNumber(finding.participants), 'antall')} deltakere`}
+        {finding.population === null ? '' : `, ${finding.population}`}.
+      </p>
+      <p>{label(finding.direction, REPORTED_DIRECTION_LABELS)}.</p>
+      {magnitude === null ? null : <p>{magnitude}</p>}
+      {finding.limitations === null ? null : (
+        <p className="notice">Forbehold fra kilden: {finding.limitations}</p>
+      )}
+    </li>
+  )
+}
+
+/**
+ * Én ny artikkel, med funnene sine samlet under seg.
+ *
+ * Artikkelen og ikke funnet er overskriften: én studie kan bære flere funn, og
+ * en liste som viste funn som om de var artikler, ville vist den samme studien
+ * flere ganger og latt den telle flere ganger i vurderingen.
+ */
+function NewArticleEntry({ article }: { readonly article: NewArticle }): React.JSX.Element {
   return (
     <li className="inbox-item">
-      <h3>{evidence.articleTitle}</h3>
+      <h3>{article.articleTitle}</h3>
       <p className="inbox-item__article">
-        {evidence.articleAuthors}
-        {evidence.publishedYear === null ? '' : `, ${String(evidence.publishedYear)}`}.{' '}
-        {label(evidence.studyDesign, STUDY_DESIGN_LABELS)}
-        {evidence.participants === null
-          ? ''
-          : `, ${renderedText(formatNumber(evidence.participants), 'antall')} deltakere`}
-        .
+        {article.articleAuthors}
+        {article.publishedYear === null ? '' : `, ${String(article.publishedYear)}`}.
       </p>
-      {evidence.population === null ? null : <p>Populasjon: {evidence.population}.</p>}
-      <p>{evidence.finding}</p>
-      <p>{label(evidence.direction, REPORTED_DIRECTION_LABELS)}.</p>
-      {magnitude === null ? null : <p>{magnitude}</p>}
-      {evidence.limitations === null ? null : (
-        <p className="notice">Forbehold fra kilden: {evidence.limitations}</p>
-      )}
+      <ul className="finding-list">
+        {article.findings.map((finding, index) => (
+          <Finding finding={finding} key={`${finding.finding}-${index}`} />
+        ))}
+      </ul>
     </li>
   )
 }
@@ -212,13 +230,19 @@ export function ClaimRevisionPage({
                 : ` Evidensen er vurdert som ${label(task.certaintyLevel, CERTAINTY_LABELS)}.`}
               {task.published ? ' Påstanden er publisert og i bruk nå.' : ' Ikke publisert ennå.'}
             </p>
+            {task.newerUnpublishedRevision ? (
+              <p className="notice">
+                En nyere formulering er allerede bygget og ligger til sluttkontroll. Den er ikke
+                tatt i bruk ennå, så det som står over, er fortsatt det Antidep sier.
+              </p>
+            ) : null}
           </section>
           <section aria-labelledby="ny-forskning">
             <h2 id="ny-forskning">Dette er kommet til</h2>
             <p>{newEvidenceSentence(task)}</p>
             <ul className="inbox-list">
-              {task.newEvidence.map((evidence, index) => (
-                <NewEvidenceEntry evidence={evidence} key={`${evidence.articleTitle}-${index}`} />
+              {task.newEvidence.map((article, index) => (
+                <NewArticleEntry article={article} key={`${article.articleTitle}-${index}`} />
               ))}
             </ul>
           </section>

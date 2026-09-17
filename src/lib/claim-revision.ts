@@ -28,11 +28,8 @@ import { asText, fieldsOf, raw, type Fields } from '../agents/strict-fields.ts'
 
 const SUBJECT = 'Revisjonsoppgaven'
 
-/** Én ny forskningsartikkel, slik den faglige avgjørelsen trenger den. */
-export interface NewEvidenceSummary {
-  readonly articleTitle: string
-  readonly articleAuthors: string
-  readonly publishedYear: number | null
+/** Ett konkret funn fra én artikkel. */
+export interface NewFinding {
   readonly studyDesign: string
   readonly population: string | null
   readonly populationDetail: string | null
@@ -48,6 +45,21 @@ export interface NewEvidenceSummary {
   readonly limitations: string | null
 }
 
+/**
+ * Én ny forskningsartikkel, med funnene sine.
+ *
+ * Artikkelen og ikke funnet er enheten her, fordi det er artikler en redaktør
+ * leser: én studie kan bære flere funn, og en liste som viste funn som om de
+ * var artikler, ville vist den samme studien flere ganger og latt den telle
+ * flere ganger i den faglige vurderingen.
+ */
+export interface NewArticle {
+  readonly articleTitle: string
+  readonly articleAuthors: string
+  readonly publishedYear: number | null
+  readonly findings: readonly NewFinding[]
+}
+
 /** Én oppgave i redaktørkøen, eller den samme oppgaven åpnet i sin helhet. */
 export interface ClaimRevisionTask {
   /** Det ugjennomsiktige håndtaket flaten peker med. Aldri en intern id. */
@@ -58,15 +70,25 @@ export interface ClaimRevisionTask {
   readonly scope: string
   readonly uncertaintySummary: string | null
   readonly revisionNumber: number
+  /** Om påstanden er publisert, altså om formuleringen over er den i bruk. */
   readonly published: boolean
+  /**
+   * Om en nyere formulering allerede er bygget uten å være publisert.
+   *
+   * Den ligger da til sluttkontroll, og en revisjon besluttet uten den
+   * kunnskapen ville vært tatt på et ufullstendig bilde.
+   */
+  readonly newerUnpublishedRevision: boolean
   readonly certaintyLevel: string | null
   readonly existingEvidenceCount: number
-  readonly newEvidenceCount: number
+  /** Hvor mange nye artikler, og hvor mange funn de bærer. To ulike tall. */
+  readonly newArticleCount: number
+  readonly newFindingCount: number
   readonly noticedAt: string
   /** Avtrykket som sendes uendret tilbake med beslutningen. Vises aldri. */
   readonly evidenceBasis: string
   /** Den nye forskningen. Tom i køen, fylt når oppgaven åpnes. */
-  readonly newEvidence: readonly NewEvidenceSummary[]
+  readonly newEvidence: readonly NewArticle[]
 }
 
 /** De to utfallene en redaktør kan velge mellom, og ingen flere. */
@@ -117,12 +139,9 @@ function asFlag(fields: Fields, key: string): boolean {
   return value
 }
 
-function parseNewEvidence(value: unknown, where: string): NewEvidenceSummary {
+function parseFinding(value: unknown, where: string): NewFinding {
   const fields = fieldsOf(value, SUBJECT, where)
   return {
-    articleTitle: asText(fields, 'article_title'),
-    articleAuthors: asText(fields, 'article_authors'),
-    publishedYear: asNumberOrNull(fields, 'published_year'),
     studyDesign: asText(fields, 'study_design'),
     population: asTextOrNull(fields, 'population'),
     populationDetail: asTextOrNull(fields, 'population_detail'),
@@ -136,6 +155,20 @@ function parseNewEvidence(value: unknown, where: string): NewEvidenceSummary {
     ciUpper: asNumberOrNull(fields, 'ci_upper'),
     ciLevelPercent: asNumberOrNull(fields, 'ci_level_percent'),
     limitations: asTextOrNull(fields, 'limitations'),
+  }
+}
+
+function parseArticle(value: unknown, where: string): NewArticle {
+  const fields = fieldsOf(value, SUBJECT, where)
+  const findings = raw(fields, 'findings')
+  if (!Array.isArray(findings) || findings.length === 0) {
+    throw new Error(`${SUBJECT} er ugyldig: ${where}.findings er ikke en ikke-tom liste.`)
+  }
+  return {
+    articleTitle: asText(fields, 'article_title'),
+    articleAuthors: asText(fields, 'article_authors'),
+    publishedYear: asNumberOrNull(fields, 'published_year'),
+    findings: findings.map((entry, index) => parseFinding(entry, `${where}.findings[${index}]`)),
   }
 }
 
@@ -154,13 +187,15 @@ function parseTask(value: unknown, where: string): ClaimRevisionTask {
     uncertaintySummary: asTextOrNull(fields, 'uncertainty_summary'),
     revisionNumber: asNumber(fields, 'revision_number'),
     published: asFlag(fields, 'published'),
+    newerUnpublishedRevision: asFlag(fields, 'newer_unpublished_revision'),
     certaintyLevel: asTextOrNull(fields, 'certainty_level'),
     existingEvidenceCount: asNumber(fields, 'existing_evidence_count'),
-    newEvidenceCount: asNumber(fields, 'new_evidence_count'),
+    newArticleCount: asNumber(fields, 'new_article_count'),
+    newFindingCount: asNumber(fields, 'new_finding_count'),
     noticedAt: asText(fields, 'noticed_at'),
     evidenceBasis: asText(fields, 'evidence_basis'),
     newEvidence: Array.isArray(evidence)
-      ? evidence.map((entry, index) => parseNewEvidence(entry, `${where}.new_evidence[${index}]`))
+      ? evidence.map((entry, index) => parseArticle(entry, `${where}.new_evidence[${index}]`))
       : [],
   }
 }
@@ -199,15 +234,25 @@ export function decisionProblem(decision: ClaimRevisionDecision, note: string): 
   return null
 }
 
-/** Hvor mye ny forskning som venter, i én lesbar setning. */
+/**
+ * Hvor mye ny forskning som venter, i én lesbar setning.
+ *
+ * Artikler og funn er to tall, og setningen sier begge når de er forskjellige:
+ * én studie kan bære flere funn, og «to nye studier» og «to nye funn» er ikke
+ * det samme for den som skal vurdere hvor mye ny kunnskap som faktisk finnes.
+ */
 export function newEvidenceSentence(task: ClaimRevisionTask): string {
-  if (task.newEvidenceCount === 1) {
-    return 'Én ny forskningsartikkel er kommet til siden påstanden sist ble formulert.'
-  }
-  return (
-    `${String(task.newEvidenceCount)} nye forskningsartikler er kommet til siden ` +
-    'påstanden sist ble formulert.'
-  )
+  const articles =
+    task.newArticleCount === 1
+      ? 'Én ny forskningsartikkel'
+      : `${String(task.newArticleCount)} nye forskningsartikler`
+  const findings =
+    task.newFindingCount === task.newArticleCount
+      ? ''
+      : task.newFindingCount === 1
+        ? ' med ett funn'
+        : ` med ${String(task.newFindingCount)} funn`
+  return `${articles}${findings} er kommet til siden påstanden sist ble formulert.`
 }
 
 /** Hva som skjedde, i én setning til den som avgjorde. */

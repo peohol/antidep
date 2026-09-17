@@ -22,13 +22,13 @@
 --   * rekonsilieringen tar igjen en observasjon en teknisk svikt etterlot.
 --
 -- SQLSTATE 42501 = insufficient_privilege, 22023 = invalid_parameter_value,
--- 23001 = restrict_violation, 02000 = no_data_found.
+-- 23001 = restrict_violation, P0002 = no_data_found slik plpgsql reiser den.
 begin;
 \ir fixtures/active_clinical_fixture.inc
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(84);
+select plan(102);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -581,10 +581,18 @@ select is(
   'søvnlengde i prøve 830',
   'endepunktet den gjelder'
 );
+-- To funn, men fra den *samme* artikkelen: ett evidensfunn er ett konkret funn,
+-- og flere funn kan komme fra samme studie. En kø som kalte dem to artikler,
+-- ville latt den samme studien telle to ganger i den faglige vurderingen.
 select is(
-  (select (payload -> 0 ->> 'new_evidence_count')::integer from svar where label = 'ko'),
+  (select (payload -> 0 ->> 'new_article_count')::integer from svar where label = 'ko'),
+  1,
+  'og hvor mange nye artikler som er kommet til'
+);
+select is(
+  (select (payload -> 0 ->> 'new_finding_count')::integer from svar where label = 'ko'),
   2,
-  'og hvor mye ny forskning som er kommet til'
+  'og hvor mange nye funn de bærer'
 );
 select ok(
   (select (payload -> 0 ->> 'published')::boolean from svar where label = 'ko'),
@@ -616,8 +624,8 @@ reset role;
 
 select is(
   (select jsonb_array_length(payload -> 'new_evidence') from svar where label = 'oppgave'),
-  2,
-  'hele oppgaven viser hver ny artikkel'
+  1,
+  'hele oppgaven viser én artikkel, og ikke det samme funnet to ganger'
 );
 select is(
   (select payload -> 'new_evidence' -> 0 ->> 'article_title' from svar where label = 'oppgave'),
@@ -625,12 +633,20 @@ select is(
   'navngitt med bibliografien sin, som er det en redaktør kjenner den igjen på'
 );
 select is(
-  (select payload -> 'new_evidence' -> 0 ->> 'study_design' from svar where label = 'oppgave'),
+  (select jsonb_array_length(payload -> 'new_evidence' -> 0 -> 'findings')
+   from svar where label = 'oppgave'),
+  2,
+  'med begge funnene samlet under artikkelen de faktisk kommer fra'
+);
+select is(
+  (select payload -> 'new_evidence' -> 0 -> 'findings' -> 0 ->> 'study_design'
+   from svar where label = 'oppgave'),
   'randomized_controlled_trial',
   'med studiedesignen den faglige avgjørelsen trenger'
 );
 select is(
-  (select payload -> 'new_evidence' -> 0 ->> 'population' from svar where label = 'oppgave'),
+  (select payload -> 'new_evidence' -> 0 -> 'findings' -> 0 ->> 'population'
+   from svar where label = 'oppgave'),
   'voksne med depressiv lidelse',
   'og populasjonen funnet gjelder'
 );
@@ -657,7 +673,26 @@ select throws_ok(
   '42501', null,
   'en redaktør med mandat for et annet endepunkt kan ikke avgjøre denne'
 );
+
+-- Og grensen gjelder like mye ved lesing: hele påstanden og hele det nye
+-- evidensgrunnlaget står i svaret, så en kø som viste dem for et område
+-- kalleren ikke har mandat i, ville vist klinisk innhold ingen hadde gitt
+-- vedkommende adgang til — og bedt om en avgjørelse som uansett blir avvist.
+insert into svar (label, payload) select 'ko_avgrenset', api.claim_revision_queue();
+select throws_ok(
+  format(
+    $$ select api.claim_revision_for_decision(%L) $$,
+    (select value from handtak where label = 'oppgave')),
+  '42501', null,
+  'og kan ikke åpne den heller'
+);
 reset role;
+
+select is(
+  (select jsonb_array_length(payload) from svar where label = 'ko_avgrenset'),
+  0,
+  'og ser den ikke i køen i det hele tatt'
+);
 
 select set_config('request.jwt.claims',
                   '{"sub":"83000000-0000-4000-8000-00000000000e"}', true);
@@ -913,6 +948,34 @@ select is(
    where r.claim_id = '83000000-0000-4000-8000-000000000041'),
   'revision_ordered',
   'og oppgaven blir stående som avgjort'
+);
+
+-- ===========================================================================
+-- Del 9b — «Det Antidep sier i dag» er det publiserte, ikke det nyeste bygde
+-- ===========================================================================
+-- Revisjon 2 er bygget og ligger til sluttkontroll; revisjon 1 er fortsatt den
+-- klinikeren får se. En flate som viste revisjon 2 under «det Antidep sier i
+-- dag» og samtidig sa «publisert og i bruk nå», ville sagt at et utkast er det
+-- Antidep faktisk sier (ANTIDEP_CONSTITUTION.md regel 5, 6).
+select is(
+  (select workflow.claim_revision_task(r, false) ->> 'statement'
+   from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000041'),
+  'Sertralin er forbundet med noe lengre søvn ved åtte uker.',
+  'flaten viser den publiserte formuleringen, og ikke den nyeste bygde'
+);
+select is(
+  (select (workflow.claim_revision_task(r, false) ->> 'revision_number')::integer
+   from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000041'),
+  1,
+  'med dens eget formuleringsnummer'
+);
+select ok(
+  (select (workflow.claim_revision_task(r, false) ->> 'newer_unpublished_revision')::boolean
+   from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000041'),
+  'og sier eksplisitt at en nyere formulering allerede er bygget, men ikke publisert'
 );
 
 -- ===========================================================================
@@ -1179,6 +1242,119 @@ select is(
   (select count(*)::integer from workflow.claim_revision_reviews),
   2,
   'og det finnes fortsatt nøyaktig én oppgave per påstand'
+);
+
+-- ===========================================================================
+-- Del 13b — faller den siste nye evidensen bort, er det ikke lenger noe å avgjøre
+-- ===========================================================================
+-- Et funn kan bli trukket tilbake eller få et åpent avvik etter at oppgaven ble
+-- åpnet. Uten en eksplisitt håndtering ville raden blitt stående `open`, vist
+-- seg i den åpne arbeidsoversikten som planlagt arbeid, og bedt et menneske om
+-- en avgjørelse beslutningsveien uansett avviser — en menneskeoppgave uten et
+-- utfall (ANTIDEP_CONSTITUTION.md regel 4).
+create function pg_temp.avvis_funn(p_id uuid) returns void language sql as $$
+  insert into workflow.evidence_verifications
+    (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+     source_access, checked_fields, findings, rationale, verified_at)
+  select e.id, e.created_by_actor_id,
+         (select id from fixture where name = 'extraction_verifier'),
+         'needs_correction', 'verifiable_representation',
+         array['source_locator']::workflow.evidence_check_field[],
+         'Prøve i 830: kildepekeren stemmer ikke.',
+         'Prøve i 830: kontrollen fant et avvik, og funnet er ikke brukbart.', now()
+  from knowledge.evidence_items e where e.id = p_id;
+$$;
+
+select pg_temp.avvis_funn('83000000-0000-4000-8000-000000000015');
+select is(
+  (select r.state::text from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  'open',
+  'ett av to funn trukket tilbake lar oppgaven stå åpen'
+);
+select is(
+  (select r.pending_evidence_count from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  1,
+  'med ett funn igjen å ta stilling til'
+);
+select is(
+  (select count(*)::integer from workflow.claim_revision_review_events e
+   join workflow.claim_revision_reviews r on r.id = e.claim_revision_review_id
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'
+     and e.transition = 'narrowed'),
+  1,
+  'og sporet sier at den krympet — ikke at den vokste'
+);
+
+select pg_temp.avvis_funn('83000000-0000-4000-8000-000000000016');
+select is(
+  (select r.state::text from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  'lapsed',
+  'faller det siste bort, er det ikke lenger noe å avgjøre'
+);
+select is(
+  (select count(*)::integer from workflow.claim_revision_review_events e
+   join workflow.claim_revision_reviews r on r.id = e.claim_revision_review_id
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'
+     and e.transition = 'lapsed'),
+  1,
+  'og sporet sier hvorfor'
+);
+
+set local role anon;
+insert into board (label, payload) select 'etter_bortfall', api.public_work_board();
+reset role;
+select is_empty(
+  $$
+    select 1 from board, lateral jsonb_array_elements(payload) as item
+    where label = 'etter_bortfall' and item ->> 'activity' = 'claim_revision'
+  $$,
+  'oppgaven står ikke lenger i den åpne oversikten som planlagt arbeid'
+);
+
+select set_config('request.jwt.claims',
+                  '{"sub":"83000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into svar (label, payload) select 'ko_bortfalt', api.claim_revision_queue();
+select throws_ok(
+  format(
+    $$ select api.claim_revision_for_decision(%L) $$,
+    (select value from handtak where label = 'mirtazapin')),
+  'P0002', null,
+  'og den kan ikke åpnes'
+);
+reset role;
+select set_config('request.jwt.claims', '', true);
+
+select is(
+  (select jsonb_array_length(payload) from svar where label = 'ko_bortfalt'),
+  0,
+  'og redaktørkøen er tom'
+);
+select is(
+  (select count(*)::integer from workflow.technical_incidents ti
+   where ti.area = 'automatic_task' and ti.signature = 'kjede:paastandsrevisjon'
+     and ti.resolved_at is null),
+  0,
+  'et bortfall er ikke en teknisk feil'
+);
+
+-- Og kommer den nye kunnskapen tilbake, gjør oppgaven det også.
+select pg_temp.kontroller_funn('83000000-0000-4000-8000-000000000016',
+                               '83000000-0000-4000-8000-00000000006e');
+select is(
+  (select r.state::text from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  'open',
+  'blir funnet brukbart igjen, åpner oppgaven seg av seg selv'
+);
+select is(
+  (select count(*)::integer from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  1,
+  'og det er fortsatt én rad, ikke en ny oppgave ved siden av den gamle'
 );
 
 -- ===========================================================================
