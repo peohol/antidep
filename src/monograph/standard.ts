@@ -266,7 +266,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['REG', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN03',
@@ -406,7 +406,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['estimate'],
     sourceProfiles: ['EFF'],
     openSourceProfiles: false,
-    expansionAxes: ['indication'],
+    expansionAxes: ['indication', 'outcome'],
   },
   {
     code: 'MN13',
@@ -420,7 +420,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['estimate'],
     sourceProfiles: ['EFF'],
     openSourceProfiles: false,
-    expansionAxes: ['indication'],
+    expansionAxes: ['indication', 'outcome'],
   },
   {
     code: 'MN14',
@@ -434,7 +434,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['estimate'],
     sourceProfiles: ['EFF'],
     openSourceProfiles: false,
-    expansionAxes: ['indication'],
+    expansionAxes: ['indication', 'outcome'],
   },
   {
     code: 'MN15',
@@ -448,7 +448,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['estimate', 'summary'],
     sourceProfiles: ['EFF'],
     openSourceProfiles: false,
-    expansionAxes: ['indication'],
+    expansionAxes: ['indication', 'outcome'],
   },
   {
     code: 'MN16',
@@ -462,7 +462,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['EFF'],
     openSourceProfiles: false,
-    expansionAxes: ['indication'],
+    expansionAxes: ['indication', 'outcome'],
   },
   {
     code: 'MN17',
@@ -476,7 +476,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['EFF', 'STOP'],
     openSourceProfiles: false,
-    expansionAxes: ['indication'],
+    expansionAxes: ['indication', 'outcome'],
   },
   {
     code: 'MN18',
@@ -490,7 +490,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['EFF', 'AE'],
     openSourceProfiles: false,
-    expansionAxes: ['indication'],
+    expansionAxes: ['indication', 'outcome'],
   },
   {
     code: 'MN19',
@@ -504,7 +504,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['EFF'],
     openSourceProfiles: false,
-    expansionAxes: ['indication'],
+    expansionAxes: ['indication', 'outcome'],
   },
   {
     code: 'MN20',
@@ -518,7 +518,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['estimate', 'summary'],
     sourceProfiles: ['EFF'],
     openSourceProfiles: false,
-    expansionAxes: ['indication', 'comparator'],
+    expansionAxes: ['indication', 'comparator', 'outcome'],
   },
   {
     code: 'MN21',
@@ -630,7 +630,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['AE'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN29',
@@ -644,7 +644,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['AE'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN30',
@@ -658,7 +658,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['AE'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN31',
@@ -672,7 +672,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['AE', 'SAFE'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN32',
@@ -686,7 +686,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['AE'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN33',
@@ -700,7 +700,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['AE', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN34',
@@ -714,7 +714,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['AE'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN35',
@@ -728,7 +728,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['AE'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN36',
@@ -742,7 +742,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['estimate'],
     sourceProfiles: ['AE', 'EFF'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN37',
@@ -770,7 +770,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['SAFE', 'REG'],
     openSourceProfiles: false,
-    expansionAxes: ['risk_area'],
+    expansionAxes: ['risk_area', 'outcome'],
   },
   {
     code: 'MN39',
@@ -784,7 +784,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['SAFE', 'EFF'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN40',
@@ -798,7 +798,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['SAFE', 'STOP'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN41',
@@ -840,7 +840,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'REG'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN44',
@@ -854,7 +854,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN45',
@@ -868,7 +868,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'SAFE'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN46',
@@ -882,7 +882,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN47',
@@ -896,7 +896,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN48',
@@ -910,7 +910,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'REG', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN49',
@@ -924,7 +924,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'REG', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN50',
@@ -938,7 +938,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'SAFE', 'EFF'],
     openSourceProfiles: false,
-    expansionAxes: ['comorbidity'],
+    expansionAxes: ['comorbidity', 'outcome'],
   },
   {
     code: 'MN51',
@@ -952,7 +952,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'REG', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: ['comorbidity'],
+    expansionAxes: ['comorbidity', 'outcome'],
   },
   {
     code: 'MN52',
@@ -966,7 +966,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['INT', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN53',
@@ -1022,7 +1022,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN57',
@@ -1036,7 +1036,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN58',
@@ -1050,7 +1050,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN59',
@@ -1064,7 +1064,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN60',
@@ -1078,7 +1078,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['estimate', 'profile'],
     sourceProfiles: ['PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN61',
@@ -1092,7 +1092,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['PK'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN62',
@@ -1106,7 +1106,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['PK', 'INT'],
     openSourceProfiles: false,
-    expansionAxes: ['finding'],
+    expansionAxes: ['finding', 'outcome'],
   },
   {
     code: 'MN63',
@@ -1176,7 +1176,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['STOP', 'SAFE'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN68',
@@ -1190,7 +1190,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['STOP'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN69',
@@ -1302,7 +1302,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['TOX'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN77',
@@ -1316,7 +1316,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['TOX'],
     openSourceProfiles: false,
-    expansionAxes: [],
+    expansionAxes: ['outcome'],
   },
   {
     code: 'MN78',
@@ -1358,7 +1358,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: [],
     openSourceProfiles: true,
-    expansionAxes: ['finding'],
+    expansionAxes: ['finding', 'outcome'],
   },
 ]
 
