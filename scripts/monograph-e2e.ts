@@ -160,7 +160,12 @@ function rows(value: unknown): Record<string, unknown>[] {
 }
 
 /** Svaret en «agent» leverer: bindingsverdiene uendret, og resultatet. */
-function answerFor(task: AgentTask, result: unknown, model: string): Record<string, unknown> {
+interface Service {
+  readonly provider: string
+  readonly model: string
+}
+
+function answerFor(task: AgentTask, result: unknown, service: Service): Record<string, unknown> {
   return {
     answer_version: task.answerVersion,
     task_version: task.taskVersion,
@@ -169,8 +174,8 @@ function answerFor(task: AgentTask, result: unknown, model: string): Record<stri
     request_digest: task.requestDigest,
     output_schema_version: task.outputSchemaVersion,
     identity: {
-      provider: 'antidep-test',
-      model,
+      provider: service.provider,
+      model: service.model,
       model_version_disclosure: 'not_exposed',
     },
     answered_at: new Date().toISOString(),
@@ -178,7 +183,27 @@ function answerFor(task: AgentTask, result: unknown, model: string): Record<stri
   }
 }
 
-/** Første ledige handoff-jobb i en rolle, som databasen selv la den inn. */
+/**
+ * Jobbene som alt sto i køen da prøven begynte.
+ *
+ * Prøven skal kunne kjøre både på en fersk base og på en base der kjeden alt
+ * har kjørt (`scripts/db-upgrade-monograph.sh`). «Første ledige jobb i rollen»
+ * er ikke det samme på de to: på den andre ville uttaket tatt en etterlatt jobb
+ * fra en annen kjøring, og prøven ville målt noe annet enn den sa. Derfor
+ * merkes køen av på forhånd, og uttaket ser bare på det denne kjøringen laget.
+ */
+let jobsFromBefore = ''
+
+function markExistingJobs(): void {
+  const ids = psql(
+    config,
+    `select coalesce(string_agg(quote_literal(j.id::text), ','), '')
+     from workflow.pipeline_jobs j`,
+  )
+  jobsFromBefore = ids.length === 0 ? '' : ` and j.id::text not in (${ids})`
+}
+
+/** Første ledige handoff-jobb denne kjøringen fikk, som databasen selv la den inn. */
 function jobFor(role: string, jobKeyLike = '%'): string {
   return psql(
     config,
@@ -187,7 +212,7 @@ function jobFor(role: string, jobKeyLike = '%'): string {
      join workflow.agent_handoff_jobs h on h.pipeline_job_id = j.id
      where j.agent_role = ${q(role)}
        and j.state = 'ready'
-       and j.job_key like ${q(jobKeyLike)}
+       and j.job_key like ${q(jobKeyLike)}${jobsFromBefore}
      order by j.enqueued_at, j.id
      limit 1`,
   )
@@ -213,7 +238,7 @@ function jobForTemplate(role: string, template: string): string {
      join knowledge.monograph_question_templates t on t.id = n.template_id
      where j.agent_role = ${q(role)}
        and j.state = 'ready'
-       and t.code = ${q(template)}
+       and t.code = ${q(template)}${jobsFromBefore}
      order by j.enqueued_at, j.id
      limit 1`,
   )
@@ -272,7 +297,25 @@ async function main(): Promise<void> {
     evidence_assessment: `monografi-vurdering-${RUN}`,
     monograph_answer: `monografi-svar-${RUN}`,
   }
+  // Tildelingen gjøres bare der leddet ikke alt har en. Prøven skal kunne kjøre
+  // både på en fersk base og på en base der kjeden alt har kjørt
+  // (`scripts/db-upgrade-monograph.sh`), og et ledd som alt har en levende
+  // tildeling, oppfyller kravet like godt som et nytt: det er *at* hvert ledd
+  // har sin egen tjeneste som betyr noe, ikke hvem som ba om den.
+  const assigned = psql(
+    config,
+    `select string_agg(distinct a.agent_role::text, ',')
+     from provenance.role_model_assignments a
+     where a.valid_to is null
+       and a.capacity = 'semantic'`,
+  )
+    .split(',')
+    .filter((role) => role.length > 0)
+
   for (const [role, model] of Object.entries(models)) {
+    if (assigned.includes(role)) {
+      continue
+    }
     await call(editor, 'assign_agent_role_model', {
       p_agent_role: role,
       p_provider: 'antidep-test',
@@ -281,11 +324,55 @@ async function main(): Promise<void> {
       p_reason: 'Monografiprøven: tjenesten som utfører leddet.',
     })
   }
-  check('hvert semantisk ledd har sin egen, forskjellige KI-tjeneste', true)
+
+  // Svarene må komme fra den tjenesten leddet *faktisk* er tildelt, og på en
+  // oppgradert base er det den som alt sto der. Kartet leses derfor tilbake fra
+  // databasen framfor å gjenta prøvens egne navn: et svar avgitt i en annen
+  // tjenestes navn skal avvises, og det er nettopp den kontrollen som ville
+  // slått til her om prøven hadde gjettet.
+  const services = new Map<string, Service>()
+  for (const role of Object.keys(models)) {
+    const live = psql(
+      config,
+      `select a.provider || '|' || a.model
+       from provenance.role_model_assignments a
+       where a.valid_to is null
+         and a.capacity = 'semantic'
+         and a.agent_role::text = ${q(role)}`,
+    ).split('|')
+    services.set(role, { provider: live[0] ?? '', model: live[1] ?? '' })
+  }
+
+  const serviceFor = (role: string): Service => {
+    const service = services.get(role)
+    if (service === undefined || service.model.length === 0) {
+      throw new Error(`Agentleddet ${role} har ingen levende modelltildeling.`)
+    }
+    return service
+  }
+
+  // Kravet prøves etterpå, og på databasen framfor på løkka over: hvert av de
+  // seks leddene skal ha nøyaktig én levende tildeling, og ingen to ledd skal
+  // dele en tjeneste.
+  const distinct = psql(
+    config,
+    `select count(*)::text || '/' || count(distinct (a.provider, a.model))::text
+     from provenance.role_model_assignments a
+     where a.valid_to is null
+       and a.capacity = 'semantic'
+       and a.agent_role::text = any (array[${Object.keys(models)
+         .map((role) => q(role))
+         .join(', ')}])`,
+  )
+  check(
+    'hvert semantisk ledd har sin egen, forskjellige KI-tjeneste',
+    distinct === `${String(Object.keys(models).length)}/${String(Object.keys(models).length)}`,
+  )
 
   // --------------------------------------------------------------------
   // 2. Bestillingen
   // --------------------------------------------------------------------
+  markExistingJobs()
   const order = record(
     await call(editor, 'order_monograph', {
       p_drug_name: 'sertralin',
@@ -426,7 +513,7 @@ async function main(): Promise<void> {
 
   await call(editor, 'import_agent_answer', {
     p_pipeline_job_id: discoveryJob,
-    p_answer: answerFor(discoveryTask, discoveryResult, models['source_discovery'] as string),
+    p_answer: answerFor(discoveryTask, discoveryResult, serviceFor('source_discovery')),
   })
 
   const searchCount = psql(
@@ -498,7 +585,7 @@ async function main(): Promise<void> {
           materiality_assessed: true,
         },
       },
-      models['source_quality_assessment'] as string,
+      serviceFor('source_quality_assessment'),
     ),
   })
 
@@ -748,7 +835,7 @@ async function main(): Promise<void> {
           justification: `Utdraget oppgir verdien for ${String(field)}.`,
         })),
       },
-      models['evidence_extraction'] as string,
+      serviceFor('evidence_extraction'),
     ),
   })
 
@@ -801,20 +888,58 @@ async function main(): Promise<void> {
     p_rationale: 'Monografiprøven: alle feltene er kontrollert mot fullteksten.',
   })
 
-  const synthesisJob = jobFor('claim_synthesis')
-  check('en bekreftet ekstraksjonskontroll legger synteseoppgaven i køen', synthesisJob.length > 0)
-  if (synthesisJob.length === 0) return
+  // Oppgaven hentes på kunnskapsbehovet og ikke som «første ledige i rollen».
+  //
+  // Det er selve kravet: at det i det hele tatt *finnes* en synteseoppgave med
+  // behovet i subjektet, er beviset på at en eksisterende påstand om det samme
+  // temaet og virkestoffet ikke lenger stanser videre syntese. Et uttak som tok
+  // den første ledige, ville dessuten tatt en etterlatt jobb fra en annen
+  // kjøring på en base som alt har innhold — og prøvd noe annet enn det den sa.
+  const needId = psql(
+    config,
+    `select id::text from knowledge.monograph_needs where reference = ${q(scopedNeed)}`,
+  )
+  const synthesisJob = jobFor('claim_synthesis', `%${needId}%`)
   check(
-    'og oppgavens subjekt bærer kunnskapsbehovet som avgrensning',
+    'en bekreftet ekstraksjonskontroll legger synteseoppgaven i køen, med kunnskapsbehovet som avgrensning',
+    synthesisJob.length > 0,
+  )
+  if (synthesisJob.length === 0) return
+  // Avgrensningen er databasens egen utledning, og ikke noe kalleren oppgir:
+  // funnet peker på behovet gjennom den godkjente kildebruken. Det er den
+  // utledningen som gjør porten avgrensningsbevisst, og den prøves her for seg
+  // — ikke gjennom uttaket over, som ville svart på sitt eget spørsmål.
+  check(
+    'og databasen utleder avgrensningen av funnet selv, gjennom den godkjente kildebruken',
     psql(
       config,
-      `select job_key from workflow.pipeline_jobs where id = ${q(synthesisJob)}`,
-    ).includes(
+      `select coalesce(knowledge.monograph_need_for_evidence_item(${q(evidenceItemId)}::uuid)::text, '')`,
+    ) === needId,
+  )
+
+  // Den eksisterende, uavgrensede påstanden om det samme temaet stanser ikke
+  // syntesen lenger — og den blir heller ikke overskrevet av den: den får sitt
+  // eget revisjonsvarsel. På en fersk base finnes den ikke, og da er tallet
+  // null; på en oppgradert base er det den gamle påstanden.
+  const unscopedSameTopic = psql(
+    config,
+    `select count(*)::text from knowledge.claims c
+     join knowledge.monograph_needs n on n.id = ${q(needId)}::uuid
+     where c.topic_concept_id = n.outcome_concept_id
+       and c.monograph_need_id is null`,
+  )
+  check(
+    'en eksisterende påstand om samme tema får et revisjonsvarsel framfor å bli skrevet om',
+    unscopedSameTopic === '0' ||
       psql(
         config,
-        `select id::text from knowledge.monograph_needs where reference = ${q(scopedNeed)}`,
-      ),
-    ),
+        `select count(*)::text from workflow.claim_revision_reviews v
+         join knowledge.claims c on c.id = v.claim_id
+         join knowledge.monograph_needs n on n.id = ${q(needId)}::uuid
+         where c.topic_concept_id = n.outcome_concept_id
+           and c.monograph_need_id is null`,
+      ) !== '0',
+    `uavgrensede påstander om samme tema: ${unscopedSameTopic}`,
   )
 
   // --------------------------------------------------------------------
@@ -875,7 +1000,7 @@ async function main(): Promise<void> {
           relevance_note: 'Funnet måler nøyaktig utfallet påstanden gjelder.',
         })),
       },
-      models['claim_synthesis'] as string,
+      serviceFor('claim_synthesis'),
     ),
   })
 
@@ -979,7 +1104,7 @@ async function main(): Promise<void> {
           evidence_gap: 'Ingen sammenlignende data mot et annet virkestoff.',
         },
       },
-      models['evidence_assessment'] as string,
+      serviceFor('evidence_assessment'),
     ),
   })
 

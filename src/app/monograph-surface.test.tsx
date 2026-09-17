@@ -420,7 +420,7 @@ describe('den redaksjonelle kontrollen', () => {
   }
 
   const editAnswer = vi.fn(() => Promise.resolve())
-  const lockAnswer = vi.fn(() => Promise.resolve())
+  const lockAnswer = vi.fn((_needReference: string, _reason: string) => Promise.resolve())
   const gateway = monograph({ editAnswer, lockAnswer })
 
   it('lar en redaktør rette teksten med en begrunnelse, uten kode eller SQL', async () => {
@@ -448,9 +448,10 @@ describe('den redaksjonelle kontrollen', () => {
     lockAnswer.mockClear()
     const inside = await openDetail()
     fireEvent.click(inside.getByRole('button', { name: 'Lås mot automatisk overskriving' }))
+    // Låsingen bærer en begrunnelse: en lås uten grunn ville vært en endring
+    // ingen kan etterprøve.
     await waitFor(() => {
-      expect(lockAnswer).toHaveBeenCalled()
-      expect(lockAnswer.mock.calls[0]?.[0]).toBe('n1')
+      expect(lockAnswer).toHaveBeenCalledWith('n1', expect.stringMatching(/\S/))
     })
   })
 

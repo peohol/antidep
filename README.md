@@ -30,13 +30,17 @@ npm run build
 npm run verify:repo
 ```
 
-Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:race`, `npm run db:test:chain`, `npm run db:test:mcp`, `npm run db:test:intake`, `npm run db:test:revision`, `npm run db:stop`.
+Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:race`, `npm run db:test:chain`, `npm run db:test:mcp`, `npm run db:test:intake`, `npm run db:test:revision`, `npm run db:test:monograph`, `npm run db:test:monograph:upgrade`, `npm run db:stop`.
 
 `npm run db:test` dekker de automatiske kjedeovergangene i `supabase/tests/810_chain_transitions_test.sql` — normalflyt, gjentakelse, kappløp, opprydning etter en teknisk svikt, og at en svikt i en overgang aldri ruller tilbake det kliniske arbeidet — bestillingsflaten i `820_full_text_request_test.sql`, og revisjonen av en påstand som allerede finnes i `830_claim_revision_review_test.sql`. Kappløpene som bare finnes _mellom_ to transaksjoner, kjøres av `npm run db:test:race`.
 
 `npm run db:test:intake` går hele veien fra «venter på fulltekst» til kølagt arbeid, med en ekte PDF og det ekte `pdftotext`, gjennom de ekte api-funksjonene.
 
 `npm run db:test:revision` går hele veien fra en etablert, publisert påstand, gjennom ny kontrollert forskning og redaktørens avgjørelse, til en ny kandidat til sluttkontroll — over de ekte api-funksjonene.
+
+`npm run db:test:monograph` går hele veien fra «Bygg monografi for sertralin» til et publisert utkast: bestilling, dekningskart, kildeoppdagelse med registrerte søk, separat dekningskontroll, innhenting av originalmateriale, den eksisterende evidenskjeden, strukturerte svar, monografiutkast med dekning, navngitt sluttkontroll og publisering på et annet mandat. Den krever en fersk base, fordi den bygger én utgave fra bunnen.
+
+`npm run db:test:monograph:upgrade` svarer på det andre spørsmålet: tåler de tolv monografi-migrasjonene en base som alt har innhold? Den setter basen til siste migrasjon før monografien, lar `db:test:chain` bygge en publisert påstand om sertralin og vektendring gjennom de autoriserte veiene, avtrykker alt, kjører migrasjonene, krever at ingen eksisterende rad har flyttet seg og at intet revisjonsspor er fjernet — og kjører deretter hele monografikjeden oppå det. Bestillingen gjelder nettopp sertralin og svaret nettopp vektendring, så prøven er samtidig kontrollen av at en eksisterende påstand om samme tema og virkestoff ikke lenger stanser videre automatisk syntese. Den er med i `npm run db:test:upgrade`.
 
 `npm run db:test:mcp` går hele veien gjennom den private MCP-appen — tilkobling, uttak, oppgave, svar og registrering — mot den lokale databasen. Ingen modell kalles, og ingen nøkkel finnes: «agenten» er prøven selv.
 
