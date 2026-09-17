@@ -1,264 +1,102 @@
 # Plan for legemiddelmonografier og autonom kildeoppdagelse
 
-Status: **planlagt, ikke påbegynt**.
+Status per **2026-09-17**: **Fase A og B er utarbeidet etter repo-eiers uttrykkelige startsignal. Fase C–E er ikke startet i denne leveransen.**
 
-Dette dokumentet beskriver den avtalte retningen for neste større innholdsleveranse i Antidep. Det skal bevare produktmålet før mer kode bygges. Faglig arbeid med monografistandard og kildepolitikk skal **ikke starte før repo-eier uttrykkelig gir signal**.
+De to faglige spesifikasjonene er nå [Monograph Standard v1](MONOGRAPH_STANDARD.md) og [Source Policy v1](SOURCE_POLICY.md). De er ikke implementert, ikke prøvd på en komplett monografi og ikke en menneskelig godkjenning av klinisk innhold. Det tidligere stoppkravet før fase A og B er oppfylt ved startsignalet; neste tekniske leveranse krever en egen bestilling.
 
-## 1. Utgangspunktet
+Dette dokumentet bevarer produktmålet og leveranserekkefølgen. Detaljer om spørsmål, svarformer, kilder, stoppkriterier og vedlikehold har én gjeldende beskrivelse i standardene, ikke parallelle foreløpige lister her.
+
+## 1. Produktmålet
 
 Antidep skal være en gratis, skalerbar nettapp for norske klinikere om antidepressiver. Appen skal gi rask, kildebelagt informasjon om hvert virkestoff, gjøre sammenligning mulig, gi konkret hjelp til nedtrapping og bytte og på sikt kunne tilby systematisk beslutningsstøtte.
 
-Innholdet skal i stor grad produseres og kvalitetssikres av KI-agenter. Kliniske fagpersoner skal kunne inspisere, korrigere, overstyre og supplere innholdet, men de skal ikke være nødt til å drive litteratursøk eller foreslå artikler én for én for at en monografi skal kunne bygges.
+Innholdet skal i stor grad produseres og kvalitetssikres av KI-agenter. Kliniske fagpersoner skal kunne inspisere, korrigere, overstyre og supplere innholdet, men de skal ikke være nødt til å drive litteratursøk eller foreslå artikler én for én for at en monografi skal bygges.
 
-## 2. Gapet i dagens system
+Klinikerflaten skal bruke ordet «antidepressiver», ha rask visuell oversikt, lite unødvendig tekst og flere detaljnivåer på mobil og desktop. Forbehold som endrer klinisk mening skal ikke skjules i fordypningen.
 
-Antidep har nå en sterk kjede for å behandle en kilde som allerede er valgt:
+## 2. Retningsendringen
 
-klinisk avgrensning → fulltekst → ekstraksjon → kontroll → syntese → kildestøttekontroll → evidensvurdering → kandidat → menneskelig sluttkontroll → eksplisitt publisering.
+Normalinngangen skal flyttes fra:
 
-Det som mangler, ligger foran denne kjeden:
+> Her er en artikkel. Dette er virkestoffet, endepunktet og populasjonen den kan brukes til.
 
-- Antidep har ingen formell definisjon av hva en komplett legemiddelmonografi skal inneholde.
-- Systemet vet derfor ikke hvilke kliniske spørsmål som må besvares for et gitt virkestoff.
-- Dagens kildeinngang forutsetter i stor grad at et menneske allerede vet hvilken artikkel som bør brukes og hva den kan brukes til.
-- Det finnes ikke et autonomt discovery-ledd som selv finner og prioriterer kilder ut fra et definert kunnskapsbehov.
-
-Målet er å flytte normalinngangen fra «her er en artikkel» til «bygg monografi for dette virkestoffet».
-
-## 3. Målbildet
-
-En kliniker eller redaktør skal i prinsippet kunne bestille:
+til:
 
 > Bygg monografi for sertralin.
 
-Antidep skal deretter selv:
+Antidep skal selv vite hvilke kliniske spørsmål som må besvares, søke etter egnet grunnlag, velge og begrunne kilder, innhente tilgjengelig originalmateriale og føre funnene gjennom kontroller til et samlet monografiutkast. Manuell artikkelinnlegging skal bestå som et supplement, ikke være forutsetningen for normal fremdrift.
 
-1. bruke en versjonert monografistandard til å opprette alle relevante kunnskapsbehov;
-2. avgjøre hvilke spørsmål som er obligatoriske og hvilke som bare gjelder når de er relevante;
-3. søke etter egnede kilder for hvert spørsmål;
-4. prioritere kilder etter en eksplisitt kildepolitikk som avhenger av spørsmålstype;
-5. identifisere hvilke kilder som fortjener fulltekst og videre behandling;
-6. føre de valgte kildene inn i den eksisterende evidenskjeden;
-7. bygge strukturerte, kildebelagte påstander med eksplisitt usikkerhet;
-8. sette disse sammen til en komplett monografi;
-9. vise hvilke deler som er ferdige, utilstrekkelig belagt, ikke relevante eller fortsatt mangler arbeid;
-10. la mennesker inspisere, supplere, korrigere eller overstyre uten at dette er nødvendig for normal fremdrift.
+Det eksisterende fundamentet med kilder, kildeversjoner, evidensfunn, påstander, kontroller, revisjoner og proveniens skal bevares. Det mangler et lag som uttrykker hva en monografi skal dekke og driver arbeidet ut fra disse behovene. Nye svarformer må også håndteres korrekt; en preparatstyrke, et forskningsestimat og et faglig råd er ikke samme type kunnskap.
 
-## 4. Viktig arkitekturprinsipp
+## 3. Avtalte prinsipper
 
-En monografi skal **ikke** være ett stort fritekstdokument lagret som sannheten om et virkestoff.
+En monografi er en versjonert visning over strukturerte, kildebelagte kunnskapsobjekter, ikke ett stort fritekstdokument. Standarden definerer spørsmål og avgrensninger, ikke forhåndsbestemte svar.
 
-Den skal være en visning over mange strukturerte kunnskapsobjekter og påstander, for eksempel:
+Hvert behov må ha eksplisitt relevans, arbeidsstatus, faglig utfall, kildegrunnlag og usikkerhet. Ikke undersøkt, teknisk stopp, manglende tilgang og undersøkt, men utilstrekkelig evidens skal holdes fra hverandre. Arbeidsdekning er ikke evidenssikkerhet.
 
-- sertralin + halveringstid
-- sertralin + seksuell dysfunksjon
-- sertralin + effekt + alvorlig depressiv lidelse + akuttbehandling
-- sertralin + graviditet
-- sertralin + CYP2D6-hemming
-- sertralin + seponeringsrisiko
+Kildepolitikken avhenger av spørsmålet. Norsk godkjent dosering, sammenlignende effekt, sjeldne skader og praktiske bytteråd kan ikke hentes og vurderes med ett udifferensiert kildehierarki. Discovery-resultater er forslag, ikke kliniske sannheter.
 
-Hvert slikt objekt skal kunne ha eget evidensgrunnlag, usikkerhet, revisjonshistorikk og proveniens. Dette gjør samme kunnskapsgrunnlag gjenbrukbart i monografier, sammenligninger, bytteregler, nedtrappingsstøtte og senere beslutningsstøtte.
+Bytte gjelder en rettet relasjon mellom virkestoffer. Nedtrapping krever både faglig grunnlag og dokumenterte praktiske produktmuligheter. En fullstendig monografi gir ikke i seg selv en validert individuell planmotor.
 
-## 5. Monografien må definere spørsmål, ikke svar
+Mennesker skal kunne redigere gjennom admin-UI, tilføre/forkaste kilder, begrense utvalgte områder til manuelt forhåndsgodkjente kilder og overstyre faglige vurderinger uten kodearbeid. Endringene skal ha historikk og må ikke overskrives stille av agentene. Ingen overstyring kan gjøre en ikke-utført kontroll til en utført kontroll.
 
-Monografistandarden skal si hva Antidep alltid eller betinget skal undersøke, ikke på forhånd hva svaret skal være.
+Dagens krav om navngitt faglig sluttkontroll og separat menneskelig publisering beholdes til en eventuell ny, uttrykkelig produktbeslutning. Autonomt mellomarbeid og menneskelig publiseringskontroll er forskjellige spørsmål.
 
-Eksempel:
+## 4. Leveranserekkefølge og status
 
-- riktig: «undersøk seksuelle bivirkninger»
-- feil: «sertralin gir mye seksuell dysfunksjon»
+| Fase | Leveranse | Status |
+| --- | --- | --- |
+| A | Monograph Standard v1 | Utarbeidet av ChatGPT; 80 spørsmålsmaler med betingelser, svarformer, sammenligningsregler og akseptansegrunnlag |
+| B | Source Policy v1 | Utarbeidet av ChatGPT; spørsmålsspesifikke kildeprofiler, søk/utvalg, integritet, kvalitetsvurdering, stopp og vedlikehold |
+| C | Implementer monografibestilling, dekningskart og autonom kildeoppdagelse | Ikke startet; neste tekniske leveranse etter egen bestilling |
+| D | Valider hele arbeidsformen på en reell sertralinmonografi | Ikke startet; ingen kliniske sertralinsvar er produsert som del av fase A/B |
+| E | Skaler til øvrige antidepressiver og bygg videre sammenlignings-/behandlingsstøtte | Ikke startet |
 
-Et gyldig utfall for et kunnskapsbehov skal kunne være:
+### Fase A — faglig spesifikasjon
 
-- kildebelagt svar;
-- utilstrekkelig eller motstridende evidens;
-- ikke relevant for dette virkestoffet;
-- fortsatt manglende kildegrunnlag.
+[MONOGRAPH_STANDARD.md](MONOGRAPH_STANDARD.md) beskriver hva Antidep skal undersøke, hva som er obligatorisk eller betinget, forventet svarstruktur, tilstander og krav til klinikerpresentasjon. De 80 malene gir flere konkrete behov når de gjentas per produkt, indikasjon, populasjon, utfall eller relasjon.
 
-Et tomt felt skal aldri være tvetydig mellom «ikke undersøkt» og «ingen kunnskap finnes».
+Spørsmåls-ID-er og klinisk betydning skal versjoneres. Ingen implementert datakontrakt, tabell, agent eller brukerflate er laget i denne fasen.
 
-## 6. Foreløpig innholdsomfang for en monografi
+### Fase B — kildepolitikk
 
-Den endelige standarden skal utarbeides faglig senere, men minst disse områdene skal vurderes:
+[SOURCE_POLICY.md](SOURCE_POLICY.md) beskriver hvilke kilder og søkespor som passer hvert behov, hvordan valget begrunnes, hvordan originalgrunnlaget kontrolleres og når arbeidet kan avsluttes. Den skiller faglig usikkerhet fra manglende tilgang, søkedekning og teknisk svikt.
 
-- kortoversikt og klasse;
-- virkningsmekanisme;
-- norske preparater, formuleringer og styrker;
-- godkjente indikasjoner og annen relevant bruk;
-- effekt per indikasjon og behandlingsfase;
-- dosering, titrering og administrasjon;
-- vanlige og klinisk viktige bivirkninger;
-- klinisk bivirkningsprofil, blant annet seksualfunksjon, vekt, søvn/sedasjon, aktivering/angst og gastrointestinale effekter når relevant;
-- alvorlige risikoer, kontraindikasjoner og forholdsregler;
-- farmakokinetiske og farmakodynamiske interaksjoner;
-- graviditet og amming;
-- eldre, barn/unge, nyresvikt, leversvikt og andre relevante pasientgrupper;
-- farmakodynamikk og farmakokinetikk;
-- farmakogenetikk og TDM når klinisk relevant;
-- seponeringsrisiko og seponeringssymptomer;
-- praktisk nedtrapping med norske preparater og styrker;
-- overgang til og fra andre antidepressiver;
-- overdosering og toksisitet når relevant;
-- eksplisitt usikkerhet, motstridende funn og kunnskapshull.
+Dokumentet oppgir undersøkte metode-/veiledningskilder og begrensninger i lesetilgangen. Disse referansene er ikke registrerte eller klinisk godkjente kilder i Antideps database. Praktiske stopp- og oppdateringsregler er v1-produktvalg som må evalueres i piloten.
 
-Denne listen er **ikke** Monograph Standard v1. Den er bare startpunktet for det senere faglige arbeidet.
+### Fase C — én sammenhengende teknisk leveranse
 
-## 7. Bytte og nedtrapping skal ikke presses inn som vanlig monografitekst
+Normalt utført av Claude Code etter en egen bestilling basert på de ferdige spesifikasjonene og da gjeldende repo. Leveransen skal ende med en fungerende vei fra én virkestoffbestilling til standardiserte kunnskapsbehov, dokumentert kildeoppdagelse og kontrollert videre behandling, ikke bare dokumenter eller en isolert søkeboks.
 
-Bytte er en relasjon mellom minst to virkestoffer. Regler for bytte bør derfor modelleres som egne strukturerte relasjoner mellom fra- og til-legemiddel, og bare vises fra monografien når relevant.
+Omfanget skal dekke:
 
-Nedtrapping bør også struktureres slik at kunnskap om farmakokinetikk, formuleringer og tilgjengelige norske styrker senere kan brukes til praktiske, beregnede forslag. Viktig informasjon skal ikke gjemmes i fritekstavsnitt dersom den kan representeres eksplisitt.
+- versjonert, maskinlesbar monografistandard og monografibestilling;
+- automatisk opprettede/relevansvurderte behov og et ærlig dekningskart;
+- agentstyrt søk, kildeutvalg, motprøving og dokumentert utvalgs-/søkehistorikk;
+- gjenbruk av kilder på tvers av behov og studie-/rapportkobling som hindrer dobbelttelling;
+- kontrollert innhenting og tilknytning til eksisterende evidenskjede, også en korrekt løsning for regulatoriske fakta og preparatdata;
+- forslag til revisjon av eksisterende svar ved ny evidens, uten automatisk publisering;
+- monografipresentasjon/kandidat med konsistente avhengigheter og bevart menneskelig redaksjonell kontroll;
+- relevante tester, feil-/avbruddstilstander og klinikervennlig fremdriftsvisning.
 
-## 8. Kildepolitikken skal være spørsmålsspesifikk
+Dagens kontroller skal ikke svekkes for å få nye kildetyper eller svarformer gjennom. Fulltekst-, rolle- og publiseringsgrenser må håndteres eksplisitt i implementeringen. Ingen bestemt betalt modell-API blir en forutsetning.
 
-Discovery-agenten skal ikke bare få beskjed om å «finne gode kilder». Antidep skal ha en eksplisitt, versjonert kildepolitikk som angir foretrukket kildehierarki for ulike kunnskapsbehov.
+Oppgaver kan utføres i flere commits innen samme sammenhengende leveranse. Del bare i separate PR-er når reell uavhengighet, reviewbarhet, utrullingsbehov eller vesentlig risiko begrunner det, ikke bare fordi flere lag berøres. Reparasjon av nødvendig eksisterende drift kan håndteres uavhengig av denne produktutvidelsen.
 
-Eksempler som skal vurderes i det senere faglige arbeidet:
+### Fase D — reell sertralinmonografi
 
-- norske regulatoriske fakta: norske myndighetskilder/preparatomtale;
-- komparativ effekt: systematiske oversikter/metaanalyser og relevante primærstudier;
-- sjeldne eller langsiktige bivirkninger: store observasjonsstudier og farmakovigilansdata når egnet;
-- farmakokinetikk: regulatoriske kilder supplert med egnede PK-studier;
-- farmakogenetikk: relevante faglige retningslinjer når de finnes;
-- nedtrapping/bytte: retningslinjer, farmakologi og annen best tilgjengelig evidens, med tydelig markering når kunnskapsgrunnlaget er svakere.
+Start med «Bygg monografi for sertralin», ikke en håndplukket artikkelliste. Prøv hva som faktisk skjer autonomt helt fram til en samlet, lesbar monografi og ordinær menneskelig sluttkontroll.
 
-Kildepolitikken må også definere når søket kan anses som tilstrekkelig, når eldre kilder bør erstattes, og hvordan motstridende kilder håndteres.
+Test spørsmål, kildedekning, fullteksttilgang, ekstraksjon, motstrid, sammenlignbarhet, norsk produktgrunnlag og mobil-/desktopvisning. Vurder faglige feil og utelatelser samt faktisk menneskelig arbeidsmengde, ikke bare antall gjennomførte jobber og grønne tekniske tester.
 
-## 9. Discovery skal være en egen agentfunksjon
+Sertralin er valideringsobjekt, ikke et hardkodet spesialtilfelle. Manglende data skal beskrives ærlig; ingen forsøksverdier eller kildekontroller skal simuleres som virkelig klinisk kunnskap.
 
-Det skal bygges et eksplisitt discovery-ledd før dagens kildebehandling.
+### Fase E — skalering og videre funksjoner
 
-Discovery skal minst kunne:
+Når pilotens generelle arbeidsform fungerer, bygg monografier for øvrige antidepressiver og gjenbruk kunnskapen i sammenligningsvisningen. Utvid praktisk støtte for nedtrapping, bytte og senere beslutningsstøtte med egne kontrollerte regler og faglig godkjenning.
 
-- motta ett eller flere strukturerte kunnskapsbehov;
-- formulere egnede søk;
-- finne kandidatkilder;
-- identifisere kildetype og relevans;
-- prioritere kilder etter kildepolitikken;
-- begrunne hvorfor en kilde bør eller ikke bør tas videre;
-- oppdage mulig duplisering eller nyere/bedre erstatningskilder;
-- foreslå fulltekstinnhenting for de kildene som faktisk trengs;
-- etterlate et etterprøvbart spor over hva som ble søkt og valgt bort.
+## 5. Neste handling
 
-Discovery-resultater er forslag, ikke kliniske sannheter. Kliniske påstander oppstår først gjennom den kontrollerte evidenskjeden.
+Fase A og B er levert som dokumenter. **Neste steg er å bestille fase C**, med de to standardene som grunnlag og én presis, sammenhengende implementeringsoppgave. Fase C er ikke igangsatt av startsignalet til A/B.
 
-## 10. Monografidekning må være målbar
-
-For hvert obligatorisk eller betinget kunnskapsbehov må Antidep kunne vise en eksplisitt status.
-
-En monografi kan først regnes som faglig komplett når hvert påkrevd behov har ett av følgende utfall:
-
-1. kildebelagt og kontrollert svar;
-2. eksplisitt utilstrekkelig/motstridende evidens;
-3. dokumentert ikke relevant;
-4. fortsatt åpent arbeid, som betyr at monografien ikke er komplett.
-
-Dette skal gjøre fremdrift målbar og hindre at et glemt område ser ut som et kunnskapshull.
-
-## 11. Progressiv fordypning beholdes
-
-Klinikerflaten skal fortsatt prioritere lite tekst og rask oversikt.
-
-Monografien skal kunne rendres med flere nivåer:
-
-1. kort klinisk konklusjon og sikkerhet;
-2. praktisk forklaring og viktige forbehold;
-3. studier, motstridende funn og evidensgrunnlag;
-4. kildeutdrag/proveniens og kontrollhistorikk for den som vil inspisere.
-
-Detaljrikdommen i kunnskapsmodellen skal ikke tvinge klinikeren til å lese et teknisk dossier.
-
-## 12. Menneskelig kontroll
-
-Mennesker skal alltid kunne:
-
-- legge til en oversett kilde;
-- forkaste en kilde;
-- korrigere eller overstyre en påstand;
-- redigere innhold gjennom admin-/redaktørflate;
-- inspisere kildegrunnlag og begrunnelse.
-
-Normalarbeidsflyten skal likevel ikke kreve at et menneske foreslår artikler én for én eller forteller agentene hvilke fakta de bør lete etter.
-
-Dagens krav om navngitt faglig sluttkontroll før publisering beholdes inntil det eventuelt tas en separat, eksplisitt produktbeslutning om noe annet. Autonom discovery og obligatorisk menneskelig publiseringskontroll er to uavhengige spørsmål.
-
-## 13. Planlagt leveranserekkefølge
-
-### Fase A — Monograph Standard v1
-
-Faglig arbeid, utføres først etter eksplisitt signal fra repo-eier.
-
-Leveransen skal definere:
-
-- hvert standardisert kunnskapsbehov;
-- obligatorisk vs. betinget innhold;
-- forventet datatype/struktur;
-- akseptable fraværs-/usikkerhetstilstander;
-- hvilke behov som kan gjenbrukes direkte i sammenligningsvisning;
-- hvilke behov som er relasjonelle og derfor skal ligge utenfor selve monografien.
-
-### Fase B — Source Policy v1
-
-Faglig arbeid, utføres først etter eksplisitt signal fra repo-eier.
-
-Leveransen skal definere:
-
-- foretrukket kildetype per kunnskapsbehov;
-- minimumskrav til kvalitet og aktualitet;
-- regler for regulatoriske kilder, systematiske oversikter, primærstudier, observasjonsdata og retningslinjer;
-- hvordan motstridende kilder håndteres;
-- når discovery kan stoppe;
-- når Antidep skal konkludere med utilstrekkelig evidens fremfor å lete videre.
-
-### Fase C — Implementer monografikontrakten og discovery
-
-Én størst praktisk sammenhengende teknisk leveranse, normalt utført av Claude Code etter at fase A og B er ferdige.
-
-Målet er å:
-
-- gjøre monografistandarden versjonert og maskinlesbar;
-- kunne opprette en «monografi som skal bygges» for ett virkestoff;
-- generere alle kunnskapsbehov automatisk;
-- spore status/dekning for hvert behov;
-- innføre discovery-agent og etterprøvbar discovery-proveniens;
-- knytte valgte kilder inn i eksisterende fulltekst- og evidenskjede;
-- bevare menneskelig mulighet til å legge til/forkaste/overstyre;
-- vise fremdrift uten tekniske detaljer i klinikerflaten.
-
-### Fase D — Golden monograph: sertralin
-
-Valider hele systemet end-to-end på ett reelt virkestoff.
-
-Starttilstanden skal i prinsippet være én bestilling:
-
-> Bygg monografi for sertralin.
-
-Testen skal vise hvor langt Antidep kommer autonomt og avdekke hull i monografistandard, kildepolitikk, discovery, fullteksttilgang, evidensmodell og klinikerpresentasjon.
-
-Sertralin brukes som valideringsobjekt, ikke som spesialtilfelle. Løsningen må være generell før den regnes som ferdig.
-
-### Fase E — Skaler og bygg sammenligning
-
-Når golden monograph fungerer:
-
-- bygg monografier for øvrige antidepressiver;
-- bruk de strukturerte kunnskapsobjektene direkte i sammenligningsvisningen;
-- bygg videre støtte for nedtrapping, bytte og senere beslutningsstøtte på de samme dataene.
-
-## 14. Definisjon av vellykket retning
-
-Planen har lykkes når Antideps normale arbeidsform ikke lenger er:
-
-> En kliniker finner en artikkel, legger den inn og forteller hva den kan brukes til.
-
-men:
-
-> Antidep får ansvar for et virkestoff, vet hvilke spørsmål som må besvares, finner og prioriterer kilder selv, fører dem gjennom en etterprøvbar evidenskjede og bygger en strukturert monografi som et menneske kan inspisere og overstyre.
-
-Klinikeren skal være faglig kontrollør og mulig redaktør — ikke litteratursøkets manuelle orkestrator.
-
-## 15. Neste handling
-
-**Stopp her.**
-
-Neste arbeid er fase A og B — `Monograph Standard v1` og `Source Policy v1` — men dette arbeidet skal ikke startes før repo-eier uttrykkelig gir signal.
+Planen har lykkes når klinikeren kan være faglig kontrollør og mulig redaktør, uten å måtte være litteratursøkets manuelle arbeidsleder.
