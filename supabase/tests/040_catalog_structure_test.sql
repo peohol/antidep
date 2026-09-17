@@ -116,8 +116,15 @@ select set_eq(
            ('claim_revision_reviews'), ('claim_revision_review_events'),
            -- Migrasjon 013c: sporet over kunnskapsbehovenes tilstander, og
            -- forslagene om nye faglige begreper.
-           ('monograph_need_events'), ('monograph_term_proposals')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d og 013c'
+           ('monograph_need_events'), ('monograph_term_proposals'),
+           -- Migrasjon 013e: søkeplanen, den dokumenterte søkeloggen, sporene
+           -- som må være forsøkt, kandidatkildene med sine mulige bruksområder
+           -- og den separate kontrollen av søkedekningen.
+           ('monograph_search_plans'), ('monograph_search_plan_needs'),
+           ('monograph_searches'), ('monograph_search_track_attempts'),
+           ('monograph_candidate_sources'), ('monograph_candidate_source_needs'),
+           ('monograph_coverage_controls')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c og 013e'
 );
 select set_eq(
   $$

@@ -334,7 +334,20 @@ select is_empty(
         'api.monograph_coverage(text)',
         'api.propose_monograph_term(text,text,text,text)',
         'api.decide_monograph_term(text,boolean,text)',
-        'api.monograph_term_proposals(text)'
+        'api.monograph_term_proposals(text)',
+        -- Migrasjon 013e. Søkeplanen, den dokumenterte søkeloggen og de tre
+        -- redaksjonelle handlingene krever editor-mandat. De to første er
+        -- kildeleddenes egen vei — identitet og legitimasjon, som de andre
+        -- deterministiske kjøringene — og er derfor åpne for både anon og
+        -- authenticated på funksjonsnivå, med hele autorisasjonen i databasen.
+        -- Kontrolleres i 860_monograph_discovery_test.sql.
+        'api.monograph_discovery_work(text,text)',
+        'api.record_monograph_machine_search(text,text,uuid,text,text,text,text,text,text,text,integer,integer,boolean,text,text,text[],jsonb)',
+        'api.monograph_search_plans(text)',
+        'api.close_monograph_search_plan(text,text)',
+        'api.pause_monograph_search_plan(text,text)',
+        'api.resume_monograph_search_plan(text)',
+        'api.decide_monograph_candidate(text,text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'
