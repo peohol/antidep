@@ -303,7 +303,16 @@ select is_empty(
         -- 820_full_text_request_test.sql.
         'api.request_missing_full_text(text,text,text,text[],text[],text[],text,integer)',
         'api.full_text_request_options()',
-        'api.full_text_capabilities()'
+        'api.full_text_capabilities()',
+        -- Migrasjon 012d. Den redaksjonelle avgjørelsen om ny evidens på en
+        -- påstand som allerede finnes. Alle tre authenticated og ingen av dem
+        -- anon: å avgjøre hva en påstand skal si i lys av ny kunnskap er en
+        -- redaksjonell handling som krever editor-mandat, og selve beslutningen
+        -- krever i tillegg mandat for endepunktet påstanden hører under.
+        -- Kontrolleres i 830_claim_revision_review_test.sql.
+        'api.claim_revision_queue()',
+        'api.claim_revision_for_decision(text)',
+        'api.record_claim_revision_decision(text,text,text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

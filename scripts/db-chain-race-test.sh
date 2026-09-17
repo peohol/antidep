@@ -36,6 +36,22 @@
 #      taperens kilderad stående uten identifikator: en artikkel ingenting peker
 #      på, som neste bestilling av den samme artikkelen ikke finner igjen.
 #
+#   3b. Fjerningen av et evidensfunn mot den redaksjonelle beslutningen. De to
+#      tar de samme to låsene, og beslutningen tar subjektlåsen først. Tok
+#      fjerningen tabellåsene først, ville de gått i hver sin retning gjennom
+#      dem, og Postgres måtte brutt vranglåsen ved å avbryte den ene. Prøven
+#      måler ikke bare at fjerningen venter, men at den som holder subjektlåsen,
+#      fortsatt kan lese evidenstabellen mens den venter.
+#
+#   3. Den redaksjonelle revisjonsoppgaven (migrasjon 012d). To kontroller av
+#      forskjellige funn på et par som allerede har en påstand, kan begge lese
+#      «ingen oppgave» og begge forsøke å opprette den — og taperen ville feilet
+#      på unikhetskravet midt i en registrering som ellers lyktes. Og
+#      beslutningen selv er et kappløp av den andre typen: grunnlaget kan endre
+#      seg mens den står på skjermen, og en beslutning gjennomført på et annet
+#      grunnlag enn det som ble lest, ville vært en avgjørelse om noe ingen så
+#      (ANTIDEP_CONSTITUTION.md regel 5).
+#
 # Hver prøve kjører to økter mot hverandre:
 #
 #   Økt A   begynner en transaksjon og gjør sin halvdel. Låsen holdes.
@@ -117,9 +133,20 @@ kjoring_b=$(nyid)
 endepunkt2=$(nyid)
 funn_c=$(nyid)
 kjoring_c=$(nyid)
+endepunkt3=$(nyid)
+paastand=$(nyid)
+revisjon=$(nyid)
+funn_base=$(nyid)
+funn_d=$(nyid)
+funn_e=$(nyid)
+funn_f=$(nyid)
+kjoring_d=$(nyid)
+kjoring_e=$(nyid)
+kjoring_f=$(nyid)
 bruker=$(nyid)
 aktor=$(nyid)
 doi="10.9999/antidep.kapplop.${kjoring:0:8}"
+kjoring_g=$(nyid)
 
 # ----------------------------------------------------------------------------
 # Venter til én forbindelse faktisk står og venter på en rådgivende lås.
@@ -138,6 +165,29 @@ vent_paa_blokkering() {
   printf 'AVVIK    %s\n' "$navn" >&2
   printf '         Økt B ventet ikke på noen lås. Da er «finn eller opprett» ikke udelelig,\n' >&2
   printf '         og to samtidige kall kan begge skrive.\n' >&2
+  exit 1
+}
+
+# ----------------------------------------------------------------------------
+# Venter til én forbindelse faktisk står og venter på en tabellås.
+#
+# Søsteren til vent_paa_blokkering, for de tilfellene der det er tabellåsen og
+# ikke subjektlåsen som er køen.
+# ----------------------------------------------------------------------------
+vent_paa_tabellblokkering() {
+  local navn=$1 tabell=$2 i
+  for i in $(seq 1 150); do
+    if [ "$(les "select count(*) from pg_locks l
+                 join pg_class c on c.oid = l.relation
+                 where l.locktype = 'relation' and not l.granted
+                   and c.relname = any (string_to_array('$tabell', ','))")" != "0" ]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  printf 'AVVIK    %s\n' "$navn" >&2
+  printf '         Ingen forbindelse ventet på %s. Da måler prøven rekkefølgen på to\n' "$tabell" >&2
+  printf '         prosesser framfor låsen.\n' >&2
   exit 1
 }
 
@@ -338,23 +388,107 @@ delete from workflow.pipeline_jobs j
 where j.agent_role = 'claim_synthesis'
   and j.input_manifest ->> 'topic_concept_id' = '$endepunkt2';
 set session_replication_role = origin;
+
+-- ----------------------------------------------------------------------------
+-- Prøve 4 og 5 trenger et par som allerede HAR en påstand, og tre funn som
+-- ingen revisjon av den hviler på.
+--
+-- Påstanden lages med én lenket kilde, slik at den er en ekte etablert påstand
+-- og ikke en tom identitet. De tre andre funnene er den nye forskningen de to
+-- prøvene kappes om.
+-- ----------------------------------------------------------------------------
+insert into catalog.clinical_concepts (id, canonical_label, concept_type)
+values ('$endepunkt3', 'appetitt i kappløpsprøven ${kjoring:0:8}', 'outcome');
+
+insert into knowledge.evidence_items (
+  id, source_id, source_version_id, design_code, population_id,
+  population_availability, population_detail, sample_size_availability,
+  intervention_drug_id, comparator_kind, outcome_concept_id, outcome_detail,
+  timepoint_availability, reported_direction, estimate_availability,
+  confidence_interval_availability, source_locator, extraction_method,
+  created_by_actor_id
+)
+select f.id, '$kilde', '$versjon', 'randomized_controlled_trial',
+       p.id, 'reported_value', f.detalj, 'not_reported',
+       d.id, 'none', '$endepunkt3', f.detalj,
+       'not_reported', 'increase', 'not_reported', 'not_reported',
+       f.peker, 'ai_assisted', a.id
+from (values ('$funn_base'::uuid, 'Kappløpsprøven, grunnlaget påstanden hviler på.', 'Avsnitt 4'),
+             ('$funn_d'::uuid, 'Kappløpsprøven, ny forskning D.', 'Avsnitt 5'),
+             ('$funn_e'::uuid, 'Kappløpsprøven, ny forskning E.', 'Avsnitt 6'),
+             ('$funn_f'::uuid, 'Kappløpsprøven, ny forskning F.', 'Avsnitt 7'))
+       as f(id, detalj, peker)
+cross join catalog.drugs d
+cross join catalog.populations p
+cross join provenance.actors a
+where d.canonical_name = 'sertralin'
+  and p.canonical_label = 'voksne med depressiv lidelse'
+  and a.actor_key = 'agent:evidence-extraction';
+
+insert into knowledge.claims
+  (id, knowledge_type, topic_concept_id, subject_drug_id, created_by_actor_id)
+select '$paastand', 'evidence_synthesis', '$endepunkt3', d.id, a.id
+from catalog.drugs d cross join provenance.actors a
+where d.canonical_name = 'sertralin' and a.actor_key = 'agent:claim-synthesis';
+
+insert into knowledge.claim_revisions
+  (id, claim_id, revision_number, knowledge_type, subject_drug_id, statement, scope,
+   comparator_kind, direction, uncertainty_summary, created_by_actor_id)
+select '$revisjon', '$paastand', 1, 'evidence_synthesis', c.subject_drug_id,
+       'Kappløpsprøven: sertralin og appetitt.', 'Kun syntetiske data.',
+       'none', 'increase', 'Testusikkerhet.', c.created_by_actor_id
+from knowledge.claims c where c.id = '$paastand';
+
+insert into knowledge.claim_evidence_links
+  (claim_revision_id, evidence_item_id, relationship_type, directness,
+   relevance_note, created_by_actor_id)
+select '$revisjon', '$funn_base', 'supports', 'direct',
+       'Den opprinnelige lenken i kappløpsprøven.', c.created_by_actor_id
+from knowledge.claims c where c.id = '$paastand';
+
+insert into provenance.agent_runs
+  (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
+   prompt_template_version, pipeline_version, input_manifest)
+select r.id, ai.id, ai.actor_id, 'extraction_verification', 'antidep',
+       'deterministic-extraction-check', '1.0.0',
+       'extraction-verification/deterministic/1', 'antidep-evidence/1',
+       jsonb_build_object('mode', 'race-probe')
+from (values ('$kjoring_d'::uuid), ('$kjoring_e'::uuid), ('$kjoring_f'::uuid)) as r(id)
+cross join provenance.agent_identities ai
+where ai.identity_key = 'agent-identity:extraction-verification-01';
 SQL
 then
   feil 'fiksturen' 'Fiksturen lot seg ikke bygge.' "$arbeid/fikstur.log"
 fi
 
-# ============================================================================
-# Prøve 1 — to beståtte kontroller på det samme subjektet gir én synteseoppgave
-# ============================================================================
-proeve1() {
-  local navn='synteseoppgaven kan ikke legges inn to ganger'
-  local styr="$arbeid/styr1" sql_b="$arbeid/b1.sql"
-  local a_log="$arbeid/a1.log" b_log="$arbeid/b1.log"
+# ----------------------------------------------------------------------------
+# Én bestått ekstraksjonskontroll av ett funn, i de to radene dekningen krever.
+#
+# Den kildeomfattende halvdelen av et globalt fravær kan bare føres opp av en
+# maskinell kontroll med sin egen kjøring (migrasjon 005ae), så kontrollen er to
+# rader og ikke én. Ett sted framfor tre: prøve 1, 4 og 5 registrerer nøyaktig
+# den samme halvdelen, og tre kopier ville kunnet drive fra hverandre.
+# ----------------------------------------------------------------------------
+# Kontrollen som *ikke* bekrefter. Samme vei inn som kontroll_sql, og den tar
+# derfor de samme låsene i den samme rekkefølgen: subjektlåsen først, gjennom
+# workflow.notice_claim_revision_need(uuid, uuid), og evidenstabellene etterpå.
+avvis_sql() {
+  cat <<SQL
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, findings, rationale, verified_at)
+select e.id, e.created_by_actor_id, a.id, 'needs_correction', 'verifiable_representation',
+       array['source_locator']::workflow.evidence_check_field[],
+       'Kappløpsprøven: kildepekeren stemmer ikke.',
+       'Kappløpsprøven: kontrollen fant et avvik, og funnet er ikke brukbart.', now()
+from knowledge.evidence_items e
+cross join provenance.actors a
+where e.id = '$1' and a.actor_key = 'agent:extraction-verification';
+SQL
+}
 
-  # Den samme halvdelen, én gang per funn. Kontrollen føres i to rader, fordi
-  # den kildeomfattende halvdelen har sitt eget krav (migrasjon 005ae).
-  kontroll_sql() {
-    cat <<SQL
+kontroll_sql() {
+  cat <<SQL
 insert into workflow.evidence_verifications
   (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
    source_access, checked_fields, rationale, verified_at, agent_run_id)
@@ -378,7 +512,15 @@ from knowledge.evidence_items e
 cross join provenance.actors a
 where e.id = '$1' and a.actor_key = 'agent:extraction-verification';
 SQL
-  }
+}
+
+# ============================================================================
+# Prøve 1 — to beståtte kontroller på det samme subjektet gir én synteseoppgave
+# ============================================================================
+proeve1() {
+  local navn='synteseoppgaven kan ikke legges inn to ganger'
+  local styr="$arbeid/styr1" sql_b="$arbeid/b1.sql"
+  local a_log="$arbeid/a1.log" b_log="$arbeid/b1.log"
 
   rm -f "$styr"
   mkfifo "$styr"
@@ -666,8 +808,442 @@ SQL
   printf 'ok       %s\n' "$navn"
 }
 
+# ============================================================================
+# Prøve 4 — to nye funn om den samme påstanden gir én menneskeoppgave
+# ============================================================================
+# Overgangen leser «finnes det en rad for denne påstanden?» og skriver den hvis
+# ikke. Uten en felles lås kunne to kontroller av forskjellige funn på det samme
+# paret begge lest «nei» — og taperen ville feilet på unikhetskravet midt i en
+# registrering som ellers lyktes, altså fått en teknisk svikt ut av et helt
+# normalt forløp.
+proeve4() {
+  local navn='to nye funn om den samme påstanden gir én menneskeoppgave'
+  local styr="$arbeid/styr4" sql_b="$arbeid/b4.sql"
+  local a_log="$arbeid/a4.log" b_log="$arbeid/b4.log"
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  {
+    printf 'begin;\n'
+    kontroll_sql "$funn_e" "$kjoring_e"
+    printf 'commit;\n'
+  } > "$sql_b"
+
+  (
+    printf 'begin;\n'
+    kontroll_sql "$funn_d" "$kjoring_d"
+    printf '\\echo KLAR\n'
+    printf '\\o /dev/null\n'
+    cat "$styr"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$a_log" 2>&1 &
+  okt_a_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 150); do
+    grep -q 'KLAR' "$a_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$a_log" 2>/dev/null || feil "$navn" 'Økt A kom ikke i gang.' "$a_log"
+
+  psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$sql_b" > "$b_log" 2>&1 &
+  okt_b_pid=$!
+
+  vent_paa_blokkering "$navn"
+
+  printf 'commit;\n' >&9
+  exec 9>&-
+  wait "$okt_a_pid" 2>/dev/null; local a_status=$?
+  okt_a_pid=""
+  wait "$okt_b_pid" 2>/dev/null; local b_status=$?
+  okt_b_pid=""
+  rm -f "$styr"
+
+  [ "$a_status" -eq 0 ] || feil "$navn" 'Økt A kom ikke gjennom.' "$a_log"
+  [ "$b_status" -eq 0 ] || feil "$navn" 'Økt B kom ikke gjennom.' "$b_log"
+
+  local oppgaver
+  oppgaver=$(les "select count(*) from workflow.claim_revision_reviews
+                  where claim_id = '$paastand'")
+  [ "$oppgaver" = "1" ] || feil "$navn" \
+    "Påstanden har $oppgaver redaksjonelle oppgaver. Den skal ha nøyaktig én."
+
+  # Og den ble åpnet én gang. Den andre økten så raden vinneren commitet, og
+  # utvidet den framfor å åpne en til.
+  local aapnet
+  aapnet=$(les "select count(*) from workflow.claim_revision_review_events e
+                join workflow.claim_revision_reviews r on r.id = e.claim_revision_review_id
+                where r.claim_id = '$paastand' and e.transition = 'opened'")
+  [ "$aapnet" = "1" ] || feil "$navn" \
+    "Oppgaven ble åpnet $aapnet ganger. Den skal åpnes én gang."
+
+  # Kjeden skal fortsatt ikke ha synteseret noe om igjen på egen hånd.
+  local jobber
+  jobber=$(les "select count(*) from workflow.pipeline_jobs
+                where agent_role = 'claim_synthesis'
+                  and input_manifest ->> 'topic_concept_id' = '$endepunkt3'")
+  [ "$jobber" = "0" ] || feil "$navn" \
+    "Kjeden la inn $jobber synteseoppgaver om en påstand som allerede finnes."
+
+  # Og begge kontrollene står: det som ble hindret, er den doble oppgaven.
+  local kontroller
+  kontroller=$(les "select count(distinct evidence_item_id) from workflow.evidence_verifications
+                    where evidence_item_id in ('$funn_d', '$funn_e') and outcome = 'verified'")
+  [ "$kontroller" = "2" ] || feil "$navn" \
+    "Bare $kontroller av de to kontrollene ble registrert. Låsen skal utsette, aldri forkaste."
+
+  printf 'ok       %s\n' "$navn"
+}
+
+# ============================================================================
+# Prøve 5 — en beslutning tatt på et foreldet evidensgrunnlag avvises
+# ============================================================================
+# Redaktøren leser grunnlaget, og i vinduet før beslutningen kommer det enda et
+# kontrollert funn. Beslutningen er bundet til nøyaktig det grunnlaget som ble
+# lest (ANTIDEP_CONSTITUTION.md regel 5), så den skal avvises — og flaten skal
+# be om fersk tilstand framfor at revisjonen bygges av noe redaktøren aldri så.
+#
+# Kappløpet er ekte: økt B holder subjektlåsen mens økt A står og venter på den,
+# og økt A leser grunnlaget på nytt først etter at B har commitet.
+proeve5() {
+  local navn='en beslutning tatt på et foreldet evidensgrunnlag avvises'
+  local styr="$arbeid/styr5" sql_b="$arbeid/b5.sql"
+  local a_log="$arbeid/a5.log" b_log="$arbeid/b5.log"
+
+  local referanse grunnlag
+  referanse=$(les "select reference from workflow.claim_revision_reviews
+                   where claim_id = '$paastand'")
+  [ -n "$referanse" ] || feil "$navn" 'Prøve 4 etterlot ingen redaksjonell oppgave.'
+
+  # Grunnlaget slik redaktøren leste det, før det tredje funnet kom til.
+  grunnlag=$(les "select workflow.evidence_set_digest(
+                    workflow.claim_subject_evidence(c.subject_drug_id, c.topic_concept_id))
+                  from knowledge.claims c where c.id = '$paastand'")
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  # Økt A er redaktørens beslutning, med det grunnlaget hen faktisk så.
+  cat > "$sql_b" <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+set local role authenticated;
+select api.record_claim_revision_decision('$referanse', 'revise', '$grunnlag');
+commit;
+SQL
+
+  # Økt B er det tredje funnet, som blir kontrollert i mellomtiden. Den tar
+  # subjektlåsen gjennom overgangen, og holder den til den commiter.
+  (
+    printf 'begin;\n'
+    kontroll_sql "$funn_f" "$kjoring_f"
+    printf '\\echo KLAR\n'
+    printf '\\o /dev/null\n'
+    cat "$styr"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$b_log" 2>&1 &
+  okt_b_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 150); do
+    grep -q 'KLAR' "$b_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$b_log" 2>/dev/null || feil "$navn" 'Økt B kom ikke i gang.' "$b_log"
+
+  psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$sql_b" > "$a_log" 2>&1 &
+  okt_a_pid=$!
+
+  vent_paa_blokkering "$navn"
+
+  printf 'commit;\n' >&9
+  exec 9>&-
+  wait "$okt_b_pid" 2>/dev/null; local b_status=$?
+  okt_b_pid=""
+  wait "$okt_a_pid" 2>/dev/null; local a_status=$?
+  okt_a_pid=""
+  rm -f "$styr"
+
+  [ "$b_status" -eq 0 ] || feil "$navn" 'Økt B kom ikke gjennom.' "$b_log"
+  [ "$a_status" -ne 0 ] || feil "$navn" \
+    'Beslutningen gikk gjennom på et grunnlag som var endret under beina på redaktøren.' "$a_log"
+  grep -q 'Evidensgrunnlaget er endret' "$a_log" || feil "$navn" \
+    'Beslutningen ble avvist, men ikke fordi grunnlaget var endret.' "$a_log"
+
+  local jobber tilstand
+  jobber=$(les "select count(*) from workflow.pipeline_jobs
+                where agent_role = 'claim_synthesis'
+                  and input_manifest ->> 'topic_concept_id' = '$endepunkt3'")
+  [ "$jobber" = "0" ] || feil "$navn" \
+    "Den avviste beslutningen etterlot $jobber synteseoppgaver."
+
+  tilstand=$(les "select state from workflow.claim_revision_reviews
+                  where claim_id = '$paastand'")
+  [ "$tilstand" = "open" ] || feil "$navn" \
+    "Oppgaven står som «$tilstand» etter en avvist beslutning. Den skal fortsatt være åpen."
+
+  # Og med fersk tilstand går den gjennom: avvisningen var samtidighet, ikke en
+  # sperre mot å bestemme seg.
+  local ferskt
+  ferskt=$(les "select workflow.evidence_set_digest(
+                  workflow.claim_subject_evidence(c.subject_drug_id, c.topic_concept_id))
+                from knowledge.claims c where c.id = '$paastand'")
+  if ! psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/a5b.log" 2>&1 <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+set local role authenticated;
+select api.record_claim_revision_decision('$referanse', 'revise', '$ferskt');
+commit;
+SQL
+  then
+    feil "$navn" 'Beslutningen gikk ikke gjennom med fersk tilstand heller.' "$arbeid/a5b.log"
+  fi
+
+  jobber=$(les "select count(*) from workflow.pipeline_jobs
+                where agent_role = 'claim_synthesis'
+                  and input_manifest ->> 'topic_concept_id' = '$endepunkt3'")
+  [ "$jobber" = "1" ] || feil "$navn" \
+    "Den besluttede revisjonen ga $jobber synteseoppgaver. Den skal gi nøyaktig én."
+
+  local grunnlagsstoerrelse
+  grunnlagsstoerrelse=$(les "select jsonb_array_length(input_manifest -> 'evidence_item_ids')
+                             from workflow.pipeline_jobs
+                             where agent_role = 'claim_synthesis'
+                               and input_manifest ->> 'topic_concept_id' = '$endepunkt3'")
+  [ "$grunnlagsstoerrelse" = "3" ] || feil "$navn" \
+    "Synteseoppgaven bærer $grunnlagsstoerrelse funn. Den skal bære hele det gjeldende grunnlaget."
+
+  printf 'ok       %s\n' "$navn"
+}
+
+# ----------------------------------------------------------------------------
+# Prøve 6: fjerningen av et evidensfunn mot den ekte kontrollveien
+#
+# De to tar de samme tabellene og den samme subjektlåsen, men i hver sin
+# rekkefølge, og det er ikke til å unngå: kontrollen har radlåsen på
+# workflow.evidence_verifications når triggeren kjører og subjektlåsen tas,
+# mens fjerningen må ha ACCESS EXCLUSIVE på den samme tabellen for å kunne
+# slette. Det som er fjernet, er *ventingen*: fjerningen tar subjektlåsen uten
+# å vente (prøve 7), og en vranglås krever at begge venter.
+#
+# Her prøves den retningen der fjerningen kommer først og holder alt: den ekte
+# skriveveien api.register_extraction_verification(...) skal da stille seg i kø
+# bak tabellåsen, komme gjennom når fjerningen commiter, og tilstanden etterpå
+# skal være den sanne — uten noe igjen å avgjøre er oppgaven lukket.
+# ----------------------------------------------------------------------------
+proeve6() {
+  local navn='fjerning og kontroll kommer begge gjennom, uten vranglås'
+  local styr="$arbeid/styr6" sql_a="$arbeid/a6.sql" sql_b="$arbeid/b6.sql"
+  local a_log="$arbeid/a6.log" b_log="$arbeid/b6.log"
+
+  # Først porten foran hele saken: så lenge revisjonen er besluttet og oppgaven
+  # ligger i køen, bærer manifestet funnet uten at noe peker på det. Fjernes det
+  # da, ville jobben pekt på evidens som ikke finnes.
+  if psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/a6a.log" 2>&1 <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+select knowledge.discard_unpublished_extraction_artifacts(
+  array['$funn_f']::uuid[], 'Kappløpsprøve: forsøk under en besluttet revisjon.');
+commit;
+SQL
+  then
+    feil "$navn" 'Et funn under en besluttet, ubygget revisjon lot seg fjerne.' "$arbeid/a6a.log"
+  fi
+  grep -q 'inngår i en besluttet revisjon' "$arbeid/a6a.log" || feil "$navn" \
+    'Fjerningen ble avvist, men ikke fordi funnet inngår i en besluttet revisjon.' "$arbeid/a6a.log"
+
+  # Jobben svikter teknisk, slik en jobb kan gjøre, og oppgaven settes tilbake
+  # slik den sto rett før beslutningen i prøve 5. Prøvene under trenger en åpen
+  # oppgave med ny evidens som faktisk kan falle bort; hvordan den åpne
+  # tilstanden oppsto, har ingenting med låsene å gjøre.
+  psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > /dev/null 2>&1 <<SQL
+update workflow.pipeline_jobs
+set state = 'failed', completed_at = now(),
+    failure_reason = 'Kappløpsprøve: jobben svikter med vilje.'
+where agent_role = 'claim_synthesis'
+  and input_manifest ->> 'topic_concept_id' = '$endepunkt3';
+
+update workflow.claim_revision_reviews r
+set state = 'open', pending_evidence_count = 3, decided_evidence_digest = null,
+    decided_at = null, decided_by_actor_id = null, decision_note = null,
+    pipeline_job_id = null
+where r.claim_id = '$paastand';
+
+insert into provenance.agent_runs
+  (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
+   prompt_template_version, pipeline_version, input_manifest)
+select '$kjoring_g', ai.id, ai.actor_id, 'extraction_verification', 'antidep',
+       'deterministic-extraction-check', '1.0.0',
+       'extraction-verification/deterministic/1', 'antidep-evidence/1',
+       jsonb_build_object('mode', 'race-probe')
+from provenance.agent_identities ai
+where ai.identity_key = 'agent-identity:extraction-verification-01';
+SQL
+
+  local hemmelighet
+  hemmelighet=$(les "select provenance.issue_agent_identity_credential(
+                       'agent-identity:extraction-verification-01', 'human:peder-holman')")
+  [ -n "$hemmelighet" ] || feil "$navn" 'Fikk ingen legitimasjon til kontrollveien.'
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  # Økt A fjerner to av de tre nye funnene, og holder alle låsene sine til den
+  # commiter.
+  (
+    cat <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+select knowledge.discard_unpublished_extraction_artifacts(
+  array['$funn_d', '$funn_e']::uuid[],
+  'Kappløpsprøve: fjerning mens en kontroll kommer inn samtidig.');
+\echo KLAR
+\o /dev/null
+SQL
+    cat "$styr"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$a_log" 2>&1 &
+  okt_a_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 150); do
+    grep -q 'KLAR' "$a_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$a_log" 2>/dev/null || feil "$navn" 'Økt A kom ikke i gang.' "$a_log"
+
+  # Økt B er produktets egen kontrollvei, på det tredje funnet om det samme
+  # subjektet. Den skal stille seg i kø bak tabellåsen — ikke gå i vranglås.
+  cat > "$sql_b" <<SQL
+select api.register_extraction_verification(
+  'agent-identity:extraction-verification-01', '$hemmelighet', '$kjoring_g',
+  '$funn_f', 'needs_correction', 'verifiable_representation',
+  array['source_locator'],
+  'Kappløpsprøven: kontrollen fant et avvik, og funnet er ikke brukbart.',
+  'Kappløpsprøven: kildepekeren stemmer ikke.');
+SQL
+  psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$sql_b" > "$b_log" 2>&1 &
+  okt_b_pid=$!
+
+  vent_paa_tabellblokkering "$navn" 'evidence_verifications,evidence_items,evidence_field_groundings'
+
+  printf 'commit;\n' >&9
+  exec 9>&-
+  wait "$okt_a_pid" 2>/dev/null; local a_status=$?
+  okt_a_pid=""
+  wait "$okt_b_pid" 2>/dev/null; local b_status=$?
+  okt_b_pid=""
+  rm -f "$styr"
+
+  [ "$a_status" -eq 0 ] || feil "$navn" 'Fjerningen kom ikke gjennom.' "$a_log"
+  [ "$b_status" -eq 0 ] || feil "$navn" \
+    'Kontrollen kom ikke gjennom. De to ventet på hverandre.' "$b_log"
+
+  local igjen tilstand
+  igjen=$(les "select count(*) from knowledge.evidence_items
+               where id in ('$funn_d', '$funn_e')")
+  [ "$igjen" = "0" ] || feil "$navn" 'Fjerningen sa den gikk gjennom, men funnene står.'
+
+  # Og tilstanden etterpå er den sanne: all den nye evidensen er enten fjernet
+  # eller ubrukbar, og da er det ikke lenger noe å avgjøre.
+  tilstand=$(les "select state from workflow.claim_revision_reviews
+                  where claim_id = '$paastand'")
+  [ "$tilstand" = "lapsed" ] || feil "$navn" \
+    "Oppgaven står som «$tilstand». Uten noe å avgjøre skal den være lukket."
+
+  printf 'ok       %s\n' "$navn"
+}
+
+# ----------------------------------------------------------------------------
+# Prøve 7: fjerningen venter aldri på subjektlåsen
+#
+# Dette er selve grepet som gjør vranglåsen umulig. Fjerningen holder
+# tabellåsene alle de andre veiene trenger, og spør om subjektlåsen etterpå.
+# Ventet den der, ville den stått i kø bak en transaksjon som selv venter på
+# tabellene fjerningen holder — og databasen måtte brutt sirkelen ved å avbryte
+# en av dem. Den venter derfor ikke: holder noen andre subjektet, gir den opp
+# med en gang, og ingenting er fjernet.
+# ----------------------------------------------------------------------------
+proeve7() {
+  local navn='fjerningen venter aldri på subjektlåsen'
+  local styr="$arbeid/styr7" sql_a="$arbeid/a7.sql"
+  local a_log="$arbeid/a7.log" b_log="$arbeid/b7.log"
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  # Økt B holder subjektet, og ingenting annet.
+  (
+    cat <<SQL
+begin;
+select workflow.lock_chain_subject('claim_synthesis'::provenance.agent_role,
+  (select format('%s+%s', c.subject_drug_id, c.topic_concept_id)
+   from knowledge.claims c where c.id = '$paastand'));
+\echo KLAR
+\o /dev/null
+SQL
+    cat "$styr"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$b_log" 2>&1 &
+  okt_b_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 150); do
+    grep -q 'KLAR' "$b_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$b_log" 2>/dev/null || feil "$navn" 'Økt B kom ikke i gang.' "$b_log"
+
+  # Tidsgrensen er prøvens eget nett: venter fjerningen likevel, skal prøven si
+  # fra med en gang framfor å bli stående.
+  cat > "$sql_a" <<SQL
+begin;
+set local statement_timeout = '15s';
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+select knowledge.discard_unpublished_extraction_artifacts(
+  array['$funn_f']::uuid[], 'Kappløpsprøve: fjerning mens subjektet er opptatt.');
+commit;
+SQL
+
+  # Fjerningen skal være ferdig — og avvist — mens økt B fortsatt holder låsen.
+  # Ventet den, ville den fortsatt stått her.
+  psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$sql_a" > "$a_log" 2>&1
+  local a_status=$?
+
+  [ "$a_status" -ne 0 ] || feil "$navn" \
+    'Fjerningen gikk gjennom selv om subjektet var opptatt.' "$a_log"
+  grep -q 'opptatt av en annen operasjon' "$a_log" || feil "$navn" \
+    'Fjerningen stoppet, men ikke fordi subjektet var opptatt.' "$a_log"
+
+  local staar
+  staar=$(les "select count(*) from knowledge.evidence_items where id = '$funn_f'")
+  [ "$staar" = "1" ] || feil "$navn" 'Den avviste fjerningen etterlot noe halvveis.'
+
+  printf 'commit;\n' >&9
+  exec 9>&-
+  wait "$okt_b_pid" 2>/dev/null
+  okt_b_pid=""
+  rm -f "$styr"
+
+  # Og med subjektet ledig går den samme fjerningen gjennom: avvisningen var
+  # samtidighet, ikke en sperre.
+  if ! psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -f "$sql_a" > "$arbeid/a7b.log" 2>&1; then
+    feil "$navn" 'Fjerningen gikk ikke gjennom med subjektet ledig heller.' "$arbeid/a7b.log"
+  fi
+
+  staar=$(les "select count(*) from knowledge.evidence_items where id = '$funn_f'")
+  [ "$staar" = "0" ] || feil "$navn" 'Fjerningen sa den gikk gjennom, men funnet står.'
+
+  printf 'ok       %s\n' "$navn"
+}
+
 printf 'Samtidighetsprøver for de automatiske kjedeovergangene\n'
 proeve1
 proeve2
 proeve3
+proeve4
+proeve5
+proeve6
+proeve7
 printf 'Alle prøvene bestod.\n'

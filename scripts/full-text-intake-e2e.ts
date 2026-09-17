@@ -259,7 +259,7 @@ async function main(): Promise<void> {
 
   const waiting = parseWorkBoard(await rpc(anonymous, 'public_work_board', {}))
   const waitingItem = waiting.find(
-    (item) => item.activity === 'full_text' && item.waitingForFullText,
+    (item) => item.activity === 'full_text' && item.waitingFor === 'full_text',
   )
   check('den uinnloggede ser den ventende artikkelen', waitingItem !== undefined)
   check('og den står som planlagt arbeid', waitingItem?.status === 'planned')
@@ -375,7 +375,7 @@ async function main(): Promise<void> {
   )
   check(
     'og ingenting venter lenger på fulltekst for denne artikkelen',
-    !queued.some((item) => item.activity === 'full_text' && item.waitingForFullText),
+    !queued.some((item) => item.activity === 'full_text' && item.waitingFor === 'full_text'),
   )
   check(
     'innboksen er tom for denne artikkelen',

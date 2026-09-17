@@ -223,7 +223,7 @@ select ok(
   (select exists (
      select 1 from board, lateral jsonb_array_elements(payload) as item
      where item ->> 'activity' = 'full_text'
-       and (item ->> 'waiting_for_full_text')::boolean
+       and item ->> 'waiting_for' = 'full_text'
        and item -> 'subjects' ? 'sertralin')),
   'og den uinnloggede ser «venter på fulltekst» som planlagt arbeid'
 );

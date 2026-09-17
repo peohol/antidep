@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   CANDIDATE_PATH,
   CANDIDATE_QUEUE_PATH,
+  CLAIM_REVISION_PATH,
+  CLAIM_REVISION_QUEUE_PATH,
   FULL_TEXT_INBOX_PATH,
   HOME_PATH,
   PUBLISHED_CLAIM_PATH,
@@ -10,6 +12,8 @@ import {
   WORK_BOARD_PATH,
   candidatePath,
   candidateQueuePath,
+  claimRevisionPath,
+  claimRevisionQueuePath,
   fullTextInboxPath,
   homePath,
   publishedClaimPath,
@@ -26,6 +30,8 @@ const ALL_PATHS = [
   PUBLISHED_CLAIM_PATH,
   WORK_BOARD_PATH,
   FULL_TEXT_INBOX_PATH,
+  CLAIM_REVISION_QUEUE_PATH,
+  CLAIM_REVISION_PATH,
   TECHNICAL_PROBLEMS_PATH,
 ] as const
 
@@ -45,6 +51,9 @@ describe('routes', () => {
     expect(fullTextInboxPath()).toBe('/fulltekst')
     expect(TECHNICAL_PROBLEMS_PATH).toBe('/tekniske-problemer')
     expect(technicalProblemsPath()).toBe('/tekniske-problemer')
+    expect(CLAIM_REVISION_QUEUE_PATH).toBe('/ny-evidens')
+    expect(claimRevisionQueuePath()).toBe('/ny-evidens')
+    expect(CLAIM_REVISION_PATH).toBe('/ny-evidens/:reference')
   })
 
   // Den tekniske agentarbeidsflaten er avviklet. Adressen skal ikke komme
@@ -64,6 +73,7 @@ describe('routes', () => {
     const distinct = [
       WORK_BOARD_PATH,
       FULL_TEXT_INBOX_PATH,
+      CLAIM_REVISION_QUEUE_PATH,
       TECHNICAL_PROBLEMS_PATH,
       CANDIDATE_QUEUE_PATH,
       PUBLISHED_PATH,
@@ -104,5 +114,14 @@ describe('routes', () => {
       '/publisert/55555555-5555-4555-8555-555555555555',
     )
     expect(publishedClaimPath('../annet')).toBe('/publisert/..%2Fannet')
+  })
+
+  // Håndtaket til en revisjonsoppgave er databasens eget, og det er data på
+  // nøyaktig samme måte som en kandidat-id.
+  it('URL-koder håndtaket til en revisjonsoppgave', () => {
+    expect(claimRevisionPath('9f2c1a4b8e6d0c3a5b7f9e1d')).toBe(
+      '/ny-evidens/9f2c1a4b8e6d0c3a5b7f9e1d',
+    )
+    expect(claimRevisionPath('../annet')).toBe('/ny-evidens/..%2Fannet')
   })
 })
