@@ -96,7 +96,7 @@ const registered: ControlOutcome = {
   outcome: 'verified',
 }
 
-const nothing = () => Promise.resolve({ queued: 0, candidatesBuilt: 0 })
+const nothing = () => Promise.resolve({ queued: 0, candidatesBuilt: 0, revisionReviews: 0 })
 
 describe('kontrollkjøreren', () => {
   it('melder et uttak fullført når kontrollen faktisk registrerte noe', async () => {
@@ -237,13 +237,29 @@ describe('kontrollkjøreren', () => {
       ],
       resume: () => {
         order.push('opprydning')
-        return Promise.resolve({ queued: 2, candidatesBuilt: 1 })
+        return Promise.resolve({ queued: 2, candidatesBuilt: 1, revisionReviews: 3 })
       },
     })
 
     expect(order).toEqual(['opprydning', 'kontroll'])
     expect(report.resumed).toBe(2)
     expect(report.candidatesBuilt).toBe(1)
+    expect(report.revisionReviews).toBe(3)
+  })
+
+  // Arbeid kjøringen ikke kan gjøre noe med, men som et menneske skal ta
+  // stilling til. En opprydning som fant ny kunnskap ingen visste om, skal ikke
+  // være usynlig i driftsloggen — og linjen navngir ingenting.
+  it('sier fra i driftsloggen når en påstand venter på en redaktør', async () => {
+    const lines: string[] = []
+    await runControlWorker({
+      steps: [step(fakeJobs([]), () => Promise.resolve(registered))],
+      resume: () => Promise.resolve({ queued: 0, candidatesBuilt: 0, revisionReviews: 2 }),
+      log: (line) => lines.push(line),
+    })
+    expect(lines).toEqual([
+      '2 påstand(er) venter nå på at en redaktør avgjør om ny forskning skal inn i dem.',
+    ])
   })
 
   it('sier stille fra når ingenting ventet', async () => {

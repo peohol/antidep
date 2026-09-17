@@ -1,8 +1,10 @@
 # Roadmap
 
-Forrige leveranse — **resten av terminalen ut av veien fulltekst → kandidat** —
-er implementert (issue #101). Den fullførte det som sto igjen etter den
-klinikervennlige arbeidsflaten, og den er beskrevet under.
+Forrige leveranse — **revisjonen av en påstand som allerede finnes** — er
+implementert. Den lukket det siste bevisste hullet i golden slice: ny evidens om
+et virkestoff og et endepunkt som allerede har en påstand, blir nå en synlig,
+varig redaksjonell oppgave framfor et stille stopp, og redaktørens avgjørelse
+setter resten av kjeden i gang. Den er beskrevet under.
 
 Eieren har besluttet at Antidep ikke skal ta i bruk et betalt modell-API. Det
 står fast: ingen OpenAI-nøkkel, ingen Anthropic-nøkkel, ingen annen
@@ -19,10 +21,10 @@ skyves aldri tilbake på klinikeren.**
 Regelen er varig og står i `AGENTS.md`. Den gjelder hver senere leveranse, og en
 flate som bryter den, er ikke ferdig uansett hva den ellers gjør.
 
-## De to menneskehandlingene
+## De tre menneskehandlingene
 
 Hele veien fra «Antidep mangler en artikkel» til «en kandidat ligger til
-sluttkontroll» har nå **to** punkter der et menneske gjør noe, og begge er
+sluttkontroll» har nå **tre** punkter der et menneske gjør noe, og alle tre er
 redaksjonelle:
 
 1. **Å be om artikkelen** (`/be-om-artikkel`). En redaktør sier hvilken artikkel
@@ -31,10 +33,15 @@ redaksjonelle:
    populasjon. Katalogvalgene er navn, aldri id-er.
 2. **Å velge riktig PDF** (`/fulltekst`). En editor eller admin kjenner igjen
    artikkelen og velger filen. Ingenting mer.
+3. **Å avgjøre om ny forskning skal inn i en påstand som finnes**
+   (`/ny-evidens`). En redaktør ser påstanden slik den står i dag og hva slags
+   forskning som er kommet til, og avgjør enten at påstanden skal skrives om med
+   det oppdaterte grunnlaget, eller at den nye forskningen ikke endrer den — det
+   siste med en begrunnelse. Antidep bygger resten selv.
 
 Og ett punkt til slutt, som skal være et menneskes:
 
-3. **Sluttkontrollen** (`/kandidater`). En navngitt fagperson vurderer det
+4. **Sluttkontrollen** (`/kandidater`). En navngitt fagperson vurderer det
    ferdige produktet i den samme visningen klinikeren får, og publiseringen er
    en egen, eksplisitt handling etter den.
 
@@ -61,6 +68,14 @@ Alt mellom disse er Antideps eget arbeid.
   artikkelen, prøver lesbarheten med tabellene i behold, kjører det registrerte
   tekstuttrekket, registrerer kildeversjonen og legger neste ledd i køen. Ingen
   uuid, ingen hash, ingen oppskrift og ingen terminalkommando er synlig.
+- **`/ny-evidens` — ny forskning på en påstand som finnes.** Krever
+  redaktørmandat for fagområdet påstanden hører under. Flaten viser hva
+  påstanden sier i dag, hvilket virkestoff og endepunkt den gjelder, om den er
+  publisert, hvor sikker evidensen ble vurdert til å være — og hver ny artikkel
+  som er kommet til, med bibliografi, studiedesign, populasjon, retning og
+  størrelse. Ingen uuid, ingen jobbnøkkel, ingen agentrolle og ingen modell.
+  Avgjørelsen er bundet til nøyaktig det evidensgrunnlaget redaktøren tok
+  stilling til.
 - **`/kandidater` og `/publisert`.** Sluttkontrollen av det ferdige produktet,
   og det Antidep faktisk sier.
 - **`/tekniske-problemer` — driftens side.** Admin-mandat, et merke i
@@ -79,7 +94,8 @@ skrev raden (migrasjon 012b):
 | --- | --- |
 | Fulltekst registrert | Ekstraksjonsoppgaven legges i køen, med avgrensningen bestillingen bar |
 | Evidensfunn registrert | Ekstraksjonskontrollen legges i køen |
-| Ekstraksjonskontroll bekreftet | Synteseoppgaven legges i køen |
+| Ekstraksjonskontroll bekreftet | Synteseoppgaven legges i køen — eller, når paret alt har en påstand, en redaksjonell revisjonsoppgave åpnes |
+| Revisjon besluttet av en redaktør | Synteseoppgaven legges i køen, med hele grunnlaget og med påstanden den gjelder |
 | Påstandsrevisjon registrert | Kildestøttekontrollen legges i køen |
 | Kildestøttekontroll bekreftet | Evidensvurderingen legges i køen |
 | Evidensvurdering registrert | Kandidaten forsegles, og ligger til sluttkontroll |
@@ -109,9 +125,11 @@ skrives. Redaktørens rett til å legge inn en annen avgrensning med vilje er
 urørt — det er en redaksjonell avgjørelse, ikke et kappløp.
 
 Et ledd som har stoppet, meldes ikke friskt av at noe annet gikk bra.
-Opprydningen avgjør hvert av de fem leddene for seg, går gjennom leddet fra sin
-egen markør slik at en kostnadsgrense ikke blir til sult for raden bak den, og
-slukker lampen bare når en hel runde kom gjennom uten en eneste svikt.
+Opprydningen avgjør hvert av de seks leddene for seg — de fem som legger arbeid
+i køen, og det sjette som gjør synlig at ny evidens venter på en redaksjonell
+avgjørelse — går gjennom leddet fra sin egen markør slik at en kostnadsgrense
+ikke blir til sult for raden bak den, og slukker lampen bare når en hel runde kom
+gjennom uten en eneste svikt.
 
 ## Det som fortsatt er teknisk drift
 
@@ -183,19 +201,37 @@ i den manuelle handoffen.
 
 ## Grensen automatikken ikke går over
 
-Kjeden synteserer ikke om igjen en påstand som allerede finnes for det samme
-temaet og virkestoffet. Kommer det et nytt evidensfunn på et par som alt har en
-påstand, blir funnet kontrollert og står klart — men *hva* påstanden skal si i
-lys av det, er en redaksjonell avgjørelse og ikke en transport.
+Kjeden synteserer fortsatt ikke om igjen en påstand som allerede finnes for det
+samme temaet og virkestoffet. Kommer det et nytt evidensfunn på et par som alt
+har en påstand, blir funnet kontrollert og står klart — men *hva* påstanden skal
+si i lys av det, er en redaksjonell avgjørelse og ikke en transport.
 
-Det er den ene stedet kjeden med vilje stopper før den er tom for arbeid, og det
-er ført her framfor å se ut som om automatikken dekker mer enn den gjør.
+Det som er nytt, er at grensen ikke lenger er et stille stopp.
+`workflow.claim_revision_reviews` gjør tilstanden eksplisitt og varig: én rad per
+påstand, uansett hvor mange nye funn som kommer, med et append-only spor over når
+Antidep la merke til den, hvor mye den har vokst, og hva som ble besluttet på
+hvilket grunnlag. Raden står i den åpne arbeidsoversikten som planlagt arbeid —
+aldri som en teknisk feil — og redaktøren avgjør den på `/ny-evidens`.
+
+Avgjørelsen er bundet til nøyaktig det evidensgrunnlaget redaktøren leste. Er
+grunnlaget blitt et annet mens siden sto åpen, avvises den, og flaten ber om
+fersk tilstand (ANTIDEP_CONSTITUTION.md regel 5). Besluttes revisjon, bygger
+Antidep den samme `claim_synthesis`-oppgaven kjeden selv ville lagt inn, med hele
+det gjeldende brukbare grunnlaget og med påstanden revisjonen skal gjelde; derfra
+går kildestøttekontroll, evidensvurdering og kandidatbygging som før. Historiske
+revisjoner, kandidater og publiseringer står uendret.
+
+«Den nye forskningen endrer ikke påstanden» er den andre avgjørelsen, og den er
+en faglig konklusjon med en begrunnelse — ikke en utsettelse. Kommer det senere
+enda mer ny forskning, åpner oppgaven seg igjen av seg selv. En synteseoppgave
+som stopper teknisk, gjør den derimot ikke: det er et teknisk problem og stoppet
+arbeid, og aldri en ny menneskeoppgave.
 
 ## Neste leveranse
 
-Neste sammenhengende leveranse er **revisjonen av en påstand som allerede
-finnes**: en redaksjonell flate der en redaktør avgjør at ny evidens skal inn i
-en eksisterende påstand, og lar kjeden bygge den nye revisjonen med de samme
-kontrollene. Det er det siste leddet i golden slice som fortsatt er en
-menneskeoppgave uten en flate — og det er en faglig avgjørelse, ikke en
-transport, så flaten skal bygges under den samme regelen som resten.
+Golden slice er nå hel: fra «Antidep mangler en artikkel» til publisert
+klinikerinnhold finnes det ingen ledd som stopper uten at noen ser det, og de
+tre menneskehandlingene foran sluttkontrollen er alle redaksjonelle flater.
+
+Neste leveranse er derfor et nytt produktområde og ikke en lukking av et hull.
+Den er ikke valgt ennå.

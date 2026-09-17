@@ -96,6 +96,14 @@ export interface ControlWorkerReport {
   readonly resumed: number
   /** Kandidater som ble forseglet av den samme opprydningen. */
   readonly candidatesBuilt: number
+  /**
+   * Påstander opprydningen gjorde synlig at venter på en redaksjonell avgjørelse.
+   *
+   * Ikke arbeid kjøringen kan gjøre noe med — det er nettopp poenget. Uten
+   * tallet ville en opprydning som fant ny kunnskap ingen visste om, vært
+   * usynlig i driftsloggen.
+   */
+  readonly revisionReviews: number
   readonly claimed: number
   readonly completed: number
   /** Uttak der kontrollen ikke fikk konkludert. Prøves igjen. */
@@ -111,7 +119,11 @@ export interface ControlWorkerOptions {
    * ville lagt inn — den leser hva databasens egen tilstand tilsier — og den er
    * derfor trygg å gjenta.
    */
-  resume(): Promise<{ readonly queued: number; readonly candidatesBuilt: number }>
+  resume(): Promise<{
+    readonly queued: number
+    readonly candidatesBuilt: number
+    readonly revisionReviews: number
+  }>
   /** Hvor mange uttak hvert ledd tar i én kjøring. */
   readonly maxTasksPerStep?: number
   readonly leaseSeconds?: number
@@ -140,6 +152,15 @@ export async function runControlWorker(
     log(
       `${String(resumed.queued)} stykke(r) arbeid lagt i køen på nytt, og ` +
         `${String(resumed.candidatesBuilt)} kandidat(er) forseglet.`,
+    )
+  }
+  // Egen linje, fordi det er noe annet: dette er arbeid kjøringen ikke kan gjøre
+  // noe med, men som et menneske skal ta stilling til. En opprydning som fant
+  // ny kunnskap ingen visste om, skal ikke være usynlig i driftsloggen.
+  if (resumed.revisionReviews > 0) {
+    log(
+      `${String(resumed.revisionReviews)} påstand(er) venter nå på at en redaktør ` +
+        'avgjør om ny forskning skal inn i dem.',
     )
   }
 
@@ -193,6 +214,7 @@ export async function runControlWorker(
   return {
     resumed: resumed.queued,
     candidatesBuilt: resumed.candidatesBuilt,
+    revisionReviews: resumed.revisionReviews,
     claimed,
     completed,
     stalled,

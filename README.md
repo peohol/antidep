@@ -30,19 +30,22 @@ npm run build
 npm run verify:repo
 ```
 
-Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:race`, `npm run db:test:chain`, `npm run db:test:mcp`, `npm run db:test:intake`, `npm run db:stop`.
+Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:race`, `npm run db:test:chain`, `npm run db:test:mcp`, `npm run db:test:intake`, `npm run db:test:revision`, `npm run db:stop`.
 
-`npm run db:test` dekker de automatiske kjedeovergangene i `supabase/tests/810_chain_transitions_test.sql` — normalflyt, gjentakelse, kappløp, opprydning etter en teknisk svikt, og at en svikt i en overgang aldri ruller tilbake det kliniske arbeidet — og bestillingsflaten i `820_full_text_request_test.sql`. Kappløpene som bare finnes _mellom_ to transaksjoner, kjøres av `npm run db:test:race`.
+`npm run db:test` dekker de automatiske kjedeovergangene i `supabase/tests/810_chain_transitions_test.sql` — normalflyt, gjentakelse, kappløp, opprydning etter en teknisk svikt, og at en svikt i en overgang aldri ruller tilbake det kliniske arbeidet — bestillingsflaten i `820_full_text_request_test.sql`, og revisjonen av en påstand som allerede finnes i `830_claim_revision_review_test.sql`. Kappløpene som bare finnes _mellom_ to transaksjoner, kjøres av `npm run db:test:race`.
 
 `npm run db:test:intake` går hele veien fra «venter på fulltekst» til kølagt arbeid, med en ekte PDF og det ekte `pdftotext`, gjennom de ekte api-funksjonene.
+
+`npm run db:test:revision` går hele veien fra en etablert, publisert påstand, gjennom ny kontrollert forskning og redaktørens avgjørelse, til en ny kandidat til sluttkontroll — over de ekte api-funksjonene.
 
 `npm run db:test:mcp` går hele veien gjennom den private MCP-appen — tilkobling, uttak, oppgave, svar og registrering — mot den lokale databasen. Ingen modell kalles, og ingen nøkkel finnes: «agenten» er prøven selv.
 
 ## Flatene
 
-- **`/arbeid` — arbeidsoversikten.** Åpen for alle, read-only, og på klinikerens språk: hva Antidep arbeider med nå, hva som er planlagt, hva som har stoppet, og hva som er gjort ferdig. Hver tilstand har et tegn, en tekst og en farge, og ingen av dem uttrykkes med farge alene. Mangler Antidep en artikkel, står det som planlagt arbeid med «Venter på fulltekst».
+- **`/arbeid` — arbeidsoversikten.** Åpen for alle, read-only, og på klinikerens språk: hva Antidep arbeider med nå, hva som er planlagt, hva som har stoppet, og hva som er gjort ferdig. Hver tilstand har et tegn, en tekst og en farge, og ingen av dem uttrykkes med farge alene. Mangler Antidep en artikkel, står det som planlagt arbeid med «Venter på fulltekst»; venter en påstand på at en redaktør avgjør om ny forskning skal inn i den, står også det som planlagt arbeid.
 - **`/be-om-artikkel` — bestillingen.** Krever redaktørmandat. En redaktør sier hvilken artikkel Antidep bør ha — tittel, forfattere, tidsskrift, år og DOI — og hva et funn fra den kan gjelde: hvilke virkestoff, hvilke endepunkt og hvilken populasjon. Katalogvalgene er navn, aldri id-er. Antidep oppretter eller gjenfinner kilden, utleder hvor fullteksten hentes fra, og setter artikkelen på ventelisten.
 - **`/fulltekst` — fulltekstinnboksen.** Krever editor- eller admin-mandat. Den viser hvilken artikkel som mangler, med tittel, forfattere og år, og ber om én ting: riktig PDF. Antidep binder filen til publikasjonen, kontrollerer at den faktisk _er_ den artikkelen, prøver lesbarheten med tabellene i behold, kjører det registrerte tekstuttrekket, registrerer kildeversjonen og legger neste ledd i køen — uten at noen oppgir en uuid, en hash, en oppskrift eller en terminalkommando.
+- **`/ny-evidens` — ny forskning på en påstand som finnes.** Krever redaktørmandat for fagområdet. Når Antidep har kontrollert ny forskning om noe det allerede sier noe om, skriver kjeden ikke påstanden om på egen hånd: den sier fra. Redaktøren ser påstanden slik den står i dag og hva slags forskning som er kommet til, og avgjør enten at påstanden skal skrives om med det oppdaterte grunnlaget, eller at den nye forskningen ikke endrer den — det siste med en begrunnelse. Besluttes revisjon, bygger Antidep resten selv, helt fram til en ny kandidat til sluttkontroll.
 - **`/kandidater` og `/publisert`.** Sluttkontrollen av det ferdige produktet, og det Antidep faktisk sier.
 - **`/tekniske-problemer` — driftens side.** Krever admin-mandat, og et merke i navigasjonen dukker opp når noe er uløst. Den sier hvilket område som har problemer, når det oppsto og sist ble sett, og om det fortsatt pågår. Den rå årsaken lagres sikkert for Claude Code og ChatGPT, og vises aldri.
 

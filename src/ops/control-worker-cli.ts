@@ -226,7 +226,11 @@ function claimStep(client: AgentClient, credential: AgentCredential): ControlSte
  * egen tilstand tilsier og legger inn nøyaktig det triggerne ville lagt inn.
  */
 function resumeWith(client: AgentClient, credential: AgentCredential) {
-  return async (): Promise<{ queued: number; candidatesBuilt: number }> => {
+  return async (): Promise<{
+    queued: number
+    candidatesBuilt: number
+    revisionReviews: number
+  }> => {
     const { data, error } = await client.rpc('resume_chain_transitions', {
       p_identity_key: credential.identityKey,
       p_secret: credential.secret.reveal(),
@@ -239,9 +243,11 @@ function resumeWith(client: AgentClient, credential: AgentCredential) {
     }
     const queued = (data as { queued?: unknown }).queued
     const built = (data as { candidates_built?: unknown }).candidates_built
+    const reviews = (data as { revision_reviews?: unknown }).revision_reviews
     return {
       queued: typeof queued === 'number' ? queued : 0,
       candidatesBuilt: typeof built === 'number' ? built : 0,
+      revisionReviews: typeof reviews === 'number' ? reviews : 0,
     }
   }
 }

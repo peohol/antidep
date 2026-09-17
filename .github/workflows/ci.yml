@@ -116,10 +116,21 @@ jobs:
       - name: Ende-til-ende for fulltekstveien (bestilling til kølagt arbeid)
         if: always()
         run: npm run db:test:intake
-      # De to automatiske kjedeovergangene «finn eller opprett» — synteseoppgaven
-      # og kilden bak en fulltekstbestilling — er kappløp som ingen unikhetskrav
-      # fanger, fordi radene de to øktene skriver, ikke er like nok til å
-      # kollidere. Denne kjører de to øktene mot hverandre (migrasjon 012b, 012c).
+      # Den tredje redaksjonelle handlingen: å avgjøre om ny forskning skal inn i
+      # en påstand Antidep allerede har. Selve tilstanden og kjeden prøves i
+      # supabase/tests/830_claim_revision_review_test.sql; her går forløpet over
+      # den ekte Data API-en, med de ekte leserne i src/lib/claim-revision.ts —
+      # så et feltnavn som skiftet i SQL-en, ikke kan gå gjennom hver eneste
+      # enhetsprøve og først bli synlig i produksjon (migrasjon 012d).
+      - name: Ende-til-ende for revisjonsveien (ny forskning til ny kandidat)
+        if: always()
+        run: npm run db:test:revision
+      # Kjedens «finn eller opprett»-steder — synteseoppgaven, kilden bak en
+      # fulltekstbestilling og den redaksjonelle revisjonsoppgaven — er kappløp
+      # som ingen unikhetskrav fanger, fordi radene de to øktene skriver, ikke er
+      # like nok til å kollidere. Det samme gjelder en redaksjonell beslutning
+      # tatt mens grunnlaget endrer seg under den. Denne kjører øktene mot
+      # hverandre (migrasjon 012b, 012c, 012d).
       #
       # Den står sist med vilje. Prøven bestiller og laster ikke opp, og selv om
       # den rydder opp etter seg, er den den eneste kjøringen her som med vilje
