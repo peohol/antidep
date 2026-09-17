@@ -70,7 +70,12 @@ assert_preflight_left_no_partial_rollout() {
 # maintenance-only test setup, exactly as in the sibling stop tests.
 apply_hosted_fixture() {
   local audit_shift=$1 digest_suffix=$2 version_shift=$3 orphan_audit=$4
-  psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 <<SQL
+  psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 \
+    -v audit_shift="$audit_shift" \
+    -v digest_suffix="$digest_suffix" \
+    -v version_shift="$version_shift" \
+    -v orphan_audit="$orphan_audit" \
+    -v authorized_at="$AUTHORIZED_AT" <<'SQL'
 begin;
 
 alter table knowledge.source_versions disable trigger source_versions_set_row_timestamps;
@@ -143,7 +148,7 @@ select
   h.version_created_at,
   'https://doi.org/10.0000/antidep2-' || h.drug,
   'sha256:' || encode(extensions.digest(h.drug || '-fulltekst', 'sha256'), 'hex'),
-  'full_text',
+  'full_text'::knowledge.source_representation,
   sv.retrieved_by_actor_id,
   'sha256:' || encode(extensions.digest(h.drug || '-dokument', 'sha256'), 'hex'),
   55291,
@@ -152,8 +157,8 @@ select
   'pdftotext 24.02.0',
   '-bbox-layout -enc UTF-8 -eol unix',
   h.extraction_transform,
-  h.version_created_at + ($version_shift),
-  h.version_created_at + ($version_shift)
+  h.version_created_at + :'version_shift'::interval,
+  h.version_created_at + :'version_shift'::interval
 from hosted h
 join catalog.drugs d on d.canonical_name = h.drug
 join knowledge.evidence_items e on e.intervention_drug_id = d.id
@@ -167,19 +172,20 @@ insert into provenance.agent_runs (
   updated_at
 )
 select
-  h.run_id, ai.id, ai.actor_id, 'evidence_extraction', 'antidep',
-  'proposal-grounded-extraction', '1.1.0', 'evidence-extraction/proposal/1',
-  'antidep-evidence/1', 'succeeded',
+  h.run_id, ai.id, ai.actor_id, 'evidence_extraction'::provenance.agent_role,
+  'antidep', 'proposal-grounded-extraction', '1.1.0',
+  'evidence-extraction/proposal/1', 'antidep-evidence/1',
+  'succeeded'::provenance.agent_run_status,
   jsonb_build_object(
     'source_version_id', h.source_version_id,
     'extraction_method', 'ai_assisted',
     'generated_by', jsonb_build_object(
       'producer', 'model',
       'provider', 'anthropic',
-      'request_digest', h.request_digest || '$digest_suffix'
+      'request_digest', h.request_digest || :'digest_suffix'
     )
   ),
-  jsonb_build_object('evidence_item_id', h.run_id, 'request_digest_checked', true),
+  jsonb_build_object('registered', true, 'request_digest_checked', true),
   h.source_version_id,
   h.extracted_at, h.extracted_at,
   h.extracted_at + interval '1 second', h.extracted_at + interval '1 second'
@@ -188,13 +194,13 @@ join provenance.agent_identities ai
   on ai.identity_key = 'agent-identity:evidence-extraction-01';
 
 -- 3. Re-point each prototype root at its full-text re-extraction, with the exact
---    immutable identity the hosted row carries.
+--    immutable identity the hosted row carries. agent_run_role is a generated
+--    column on every table that has one, so the run's own role is what fixes it.
 update knowledge.evidence_items e
 set source_version_id = h.source_version_id,
     content_hash = h.content_hash,
     grounding_digest = h.grounding_digest,
     agent_run_id = h.run_id,
-    agent_run_role = 'evidence_extraction',
     created_at = h.extracted_at
 from catalog.drugs d
 join hosted h on h.drug = d.canonical_name
@@ -223,9 +229,10 @@ insert into provenance.agent_runs (
   output_manifest, started_at, created_at, completed_at, updated_at
 )
 select
-  v.run_id, ai.id, ai.actor_id, 'claim_synthesis', 'antidep',
-  'proposal-grounded-synthesis', '1.0.0', 'claim-synthesis/proposal/1',
-  'antidep-claims/1', 'succeeded',
+  v.run_id, ai.id, ai.actor_id, 'claim_synthesis'::provenance.agent_role,
+  'antidep', 'proposal-grounded-synthesis', '1.0.0',
+  'claim-synthesis/proposal/1', 'antidep-claims/1',
+  'succeeded'::provenance.agent_run_status,
   jsonb_build_object('revision_number', v.revision_number),
   jsonb_build_object('registered', true),
   v.synthesised_at, v.synthesised_at,
@@ -237,14 +244,14 @@ join provenance.agent_identities ai
 update knowledge.claim_revisions r
 set content_hash = 'sha256-v1:f551ac1d26a15a1cd84dba7a44c40c4ede5621796e2bc307f51bd4e0ef4ed052',
     agent_run_id = v.run_id,
-    agent_run_role = 'claim_synthesis',
     created_at = v.synthesised_at
 from hosted_revision v
 where v.revision_number = 1 and r.revision_number = 1;
 
 -- Revision 2 reproduced the same statement, so it carries the same content
 -- identity. Copying the row keeps every other column exactly as the seeded
--- revision had it.
+-- revision had it. The column list is derived rather than written out, because
+-- a generated column cannot be inserted into and the table has one.
 create temporary table hosted_revision_two on commit drop as
 select * from knowledge.claim_revisions where revision_number = 1;
 
@@ -257,7 +264,23 @@ set id = '5e100000-0000-4000-8000-000000000031',
     agent_run_id = (select run_id from hosted_revision where revision_number = 2),
     created_at = (select synthesised_at from hosted_revision where revision_number = 2);
 
-insert into knowledge.claim_revisions select * from hosted_revision_two;
+do $fixture$
+declare
+  v_columns text;
+begin
+  select string_agg(quote_ident(c.column_name), ', ' order by c.ordinal_position)
+  into v_columns
+  from information_schema.columns c
+  where c.table_schema = 'knowledge'
+    and c.table_name = 'claim_revisions'
+    and c.is_generated = 'NEVER';
+
+  execute format(
+    'insert into knowledge.claim_revisions (%s) select %s from hosted_revision_two',
+    v_columns, v_columns
+  );
+end
+$fixture$;
 
 insert into knowledge.claim_evidence_links (
   claim_revision_id, evidence_item_id, relationship_type, directness,
@@ -273,44 +296,42 @@ join knowledge.evidence_items e on e.intervention_drug_id = cl.subject_drug_id
 join provenance.actors a on a.actor_key = 'agent:claim-synthesis';
 
 -- 6. The append-only creation audit the trigger would have written at the time.
---    This is the clock every lineage check rests on.
+--    This is the clock every lineage check rests on. object_schema and
+--    object_table are generated from the operation, so they are not supplied,
+--    and audit.events requires occurred_at <= created_at.
 insert into audit.events (
-  operation, object_id, actor_id, object_schema, object_table,
-  new_revision_or_snapshot, occurred_at, created_at
+  operation, object_id, actor_id, new_revision_or_snapshot, occurred_at, created_at
 )
 select
-  'evidence_item_created', e.id, e.created_by_actor_id, 'knowledge',
-  'evidence_items', to_jsonb(e), h.extracted_at + ($audit_shift),
-  h.extracted_at + ($audit_shift)
+  'evidence_item_created', e.id, e.created_by_actor_id, to_jsonb(e),
+  h.extracted_at + :'audit_shift'::interval,
+  h.extracted_at + :'audit_shift'::interval
 from knowledge.evidence_items e
 join catalog.drugs d on d.id = e.intervention_drug_id
 join hosted h on h.drug = d.canonical_name;
 
 insert into audit.events (
-  operation, object_id, actor_id, object_schema, object_table,
-  new_revision_or_snapshot, occurred_at, created_at
+  operation, object_id, actor_id, new_revision_or_snapshot, occurred_at, created_at
 )
 select
-  'claim_revision_created', r.id, r.created_by_actor_id, 'knowledge',
-  'claim_revisions', to_jsonb(r), r.created_at + ($audit_shift),
-  r.created_at + ($audit_shift)
+  'claim_revision_created', r.id, r.created_by_actor_id, to_jsonb(r),
+  r.created_at + :'audit_shift'::interval,
+  r.created_at + :'audit_shift'::interval
 from knowledge.claim_revisions r;
 
 -- An optional creation audit for a row that no longer exists. The hosted
 -- database is full of these, because every discarded prototype artifact keeps
 -- its creation audit forever. They must never be able to block their own reset.
 insert into audit.events (
-  operation, object_id, actor_id, object_schema, object_table,
-  new_revision_or_snapshot, occurred_at, created_at
+  operation, object_id, actor_id, new_revision_or_snapshot, occurred_at, created_at
 )
 select
   'evidence_item_created', '5e100000-0000-4000-8000-0000000000ff'::uuid, a.id,
-  'knowledge', 'evidence_items',
   jsonb_build_object('id', '5e100000-0000-4000-8000-0000000000ff'),
-  timestamptz '$AUTHORIZED_AT' + interval '3 days',
-  timestamptz '$AUTHORIZED_AT' + interval '3 days'
+  timestamptz :'authorized_at' + interval '3 days',
+  timestamptz :'authorized_at' + interval '3 days'
 from provenance.actors a
-where a.actor_key = 'agent:evidence-extraction' and $orphan_audit;
+where a.actor_key = 'agent:evidence-extraction' and :orphan_audit;
 
 alter table audit.events enable trigger events_set_created_at;
 alter table knowledge.claim_revisions enable trigger claim_revisions_enforce_supersedes_order;
@@ -384,7 +405,7 @@ printf 'Antidep 2: oppgraderingsprøve for hostet fulltekst-lineage.\n'
 # 1. Positive: exactly the hosted shape. The reset is authorized for it, and the
 #    private recovery snapshot must cover every row it removes.
 reset_legacy
-apply_hosted_fixture "interval '0'" '' "interval '0'" 'false'
+apply_hosted_fixture '0 days' '' '0 days' 'false'
 assert_hosted_shape
 before_evidence=$(scalar 'select count(*) from knowledge.evidence_items')
 before_claims=$(scalar 'select count(*) from knowledge.claims')
@@ -423,7 +444,7 @@ printf 'OK: den faktiske hostede fulltekst-lineagen autoriseres.\n'
 #    is the decisive boundary — a later agent extraction and a later synthesis
 #    are content nobody authorized deleting, however legacy-like they look.
 reset_legacy
-apply_hosted_fixture "interval '30 days'" '' "interval '0'" 'false'
+apply_hosted_fixture '30 days' '' '0 days' 'false'
 assert_hosted_shape
 assert_eq "$(scalar "select count(*) from audit.events ae join knowledge.evidence_items e on e.id = ae.object_id where ae.operation = 'evidence_item_created' and ae.occurred_at >= timestamptz '$AUTHORIZED_AT'")" '2' \
   'fiksturen klarte ikke å plassere creation-audit etter autoriseringen'
@@ -435,7 +456,7 @@ printf 'OK: innhold opprettet etter autoriseringen stopper resetten.\n'
 #    content hash by design, so only the model-request digest separates the
 #    authorized historical extraction from a new one.
 reset_legacy
-apply_hosted_fixture "interval '0'" 'ny-kjoring' "interval '0'" 'false'
+apply_hosted_fixture '0 days' 'ny-kjoring' '0 days' 'false'
 assert_hosted_shape
 assert_eq "$(scalar "select count(*) from provenance.agent_runs where agent_role = 'evidence_extraction' and input_manifest -> 'generated_by' ->> 'request_digest' like '%ny-kjoring'")" '2' \
   'fiksturen klarte ikke å endre modellforespørselens avtrykk'
@@ -446,7 +467,7 @@ printf 'OK: en reekstraksjon med nytt forespørselsavtrykk stopper resetten.\n'
 # 4. Negative: the full text was registered after the authorization, so no
 #    authorized root can rest on it.
 reset_legacy
-apply_hosted_fixture "interval '0'" '' "interval '30 days'" 'false'
+apply_hosted_fixture '0 days' '' '30 days' 'false'
 assert_hosted_shape
 assert_eq "$(scalar "select count(*) from knowledge.source_versions where representation = 'full_text' and created_at >= timestamptz '$AUTHORIZED_AT'")" '2' \
   'fiksturen klarte ikke å registrere fulltekstversjonen etter autoriseringen'
@@ -458,7 +479,7 @@ printf 'OK: fulltekst registrert etter autoriseringen stopper resetten.\n'
 #    content. The hosted database keeps one for every discarded prototype
 #    artifact, and they must not be able to block their own reset.
 reset_legacy
-apply_hosted_fixture "interval '0'" '' "interval '0'" 'true'
+apply_hosted_fixture '0 days' '' '0 days' 'true'
 assert_hosted_shape
 assert_eq "$(scalar "select count(*) from audit.events ae where ae.operation = 'evidence_item_created' and ae.occurred_at >= timestamptz '$AUTHORIZED_AT' and not exists (select 1 from knowledge.evidence_items e where e.id = ae.object_id)")" '1' \
   'fiksturen klarte ikke å etterlate en creation-audit uten rad'
