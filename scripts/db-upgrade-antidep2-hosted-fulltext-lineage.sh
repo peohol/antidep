@@ -76,10 +76,6 @@ begin;
 alter table knowledge.source_versions disable trigger source_versions_set_row_timestamps;
 alter table knowledge.source_versions disable trigger source_versions_record_registration_audit_event;
 alter table provenance.agent_runs disable trigger agent_runs_set_row_timestamps;
-alter table knowledge.evidence_items disable trigger evidence_items_set_created_at;
-alter table knowledge.evidence_items disable trigger evidence_items_set_content_hash;
-alter table knowledge.evidence_items disable trigger evidence_items_grounding_digest_matches;
-alter table knowledge.evidence_items disable trigger evidence_items_record_creation_audit_event;
 alter table knowledge.evidence_items disable trigger evidence_items_reject_mutation;
 alter table knowledge.evidence_assessments disable trigger evidence_assessments_reject_mutation;
 alter table knowledge.claim_evidence_links disable trigger claim_evidence_links_reject_mutation;
@@ -91,8 +87,7 @@ alter table knowledge.claim_revisions disable trigger claim_revisions_set_create
 alter table knowledge.claim_revisions disable trigger claim_revisions_set_content_hash;
 alter table knowledge.claim_revisions disable trigger claim_revisions_record_creation_audit_event;
 alter table knowledge.claim_revisions disable trigger claim_revisions_enforce_supersedes_order;
-alter table knowledge.claims disable trigger claims_set_row_timestamps;
-alter table knowledge.claims disable trigger claims_freeze_identity;
+alter table audit.events disable trigger events_set_created_at;
 
 -- The immutable identities the hosted prototype roots actually carry. These are
 -- read straight out of production: the content hash and grounding digest of each
@@ -275,38 +270,43 @@ join provenance.actors a on a.actor_key = 'agent:claim-synthesis';
 --    This is the clock every lineage check rests on.
 insert into audit.events (
   operation, object_id, actor_id, object_schema, object_table,
-  new_revision_or_snapshot, occurred_at
+  new_revision_or_snapshot, occurred_at, created_at
 )
 select
   'evidence_item_created', e.id, e.created_by_actor_id, 'knowledge',
-  'evidence_items', to_jsonb(e), h.extracted_at + ($audit_shift)
+  'evidence_items', to_jsonb(e), h.extracted_at + ($audit_shift),
+  h.extracted_at + ($audit_shift)
 from knowledge.evidence_items e
 join catalog.drugs d on d.id = e.intervention_drug_id
 join hosted h on h.drug = d.canonical_name;
 
 insert into audit.events (
   operation, object_id, actor_id, object_schema, object_table,
-  new_revision_or_snapshot, occurred_at
+  new_revision_or_snapshot, occurred_at, created_at
 )
 select
   'claim_revision_created', r.id, r.created_by_actor_id, 'knowledge',
-  'claim_revisions', to_jsonb(r), r.created_at + ($audit_shift)
+  'claim_revisions', to_jsonb(r), r.created_at + ($audit_shift),
+  r.created_at + ($audit_shift)
 from knowledge.claim_revisions r;
 
 -- An optional creation audit for a row that no longer exists. The hosted
 -- database is full of these, because every discarded prototype artifact keeps
 -- its creation audit forever. They must never be able to block their own reset.
 insert into audit.events (
-  operation, object_id, actor_id, object_schema, object_table, occurred_at
+  operation, object_id, actor_id, object_schema, object_table,
+  new_revision_or_snapshot, occurred_at, created_at
 )
 select
   'evidence_item_created', '5e100000-0000-4000-8000-0000000000ff'::uuid, a.id,
-  'knowledge', 'evidence_items', timestamptz '$AUTHORIZED_AT' + interval '3 days'
+  'knowledge', 'evidence_items',
+  jsonb_build_object('id', '5e100000-0000-4000-8000-0000000000ff'),
+  timestamptz '$AUTHORIZED_AT' + interval '3 days',
+  timestamptz '$AUTHORIZED_AT' + interval '3 days'
 from provenance.actors a
 where a.actor_key = 'agent:evidence-extraction' and $orphan_audit;
 
-alter table knowledge.claims enable trigger claims_freeze_identity;
-alter table knowledge.claims enable trigger claims_set_row_timestamps;
+alter table audit.events enable trigger events_set_created_at;
 alter table knowledge.claim_revisions enable trigger claim_revisions_enforce_supersedes_order;
 alter table knowledge.claim_revisions enable trigger claim_revisions_record_creation_audit_event;
 alter table knowledge.claim_revisions enable trigger claim_revisions_set_content_hash;
@@ -318,10 +318,6 @@ alter table knowledge.claim_evidence_links enable trigger claim_evidence_links_s
 alter table knowledge.claim_evidence_links enable trigger claim_evidence_links_reject_mutation;
 alter table knowledge.evidence_assessments enable trigger evidence_assessments_reject_mutation;
 alter table knowledge.evidence_items enable trigger evidence_items_reject_mutation;
-alter table knowledge.evidence_items enable trigger evidence_items_record_creation_audit_event;
-alter table knowledge.evidence_items enable trigger evidence_items_grounding_digest_matches;
-alter table knowledge.evidence_items enable trigger evidence_items_set_content_hash;
-alter table knowledge.evidence_items enable trigger evidence_items_set_created_at;
 alter table provenance.agent_runs enable trigger agent_runs_set_row_timestamps;
 alter table knowledge.source_versions enable trigger source_versions_record_registration_audit_event;
 alter table knowledge.source_versions enable trigger source_versions_set_row_timestamps;
