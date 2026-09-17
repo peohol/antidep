@@ -173,7 +173,7 @@ select 'import', api.import_agent_answer(
     'role', 'source_discovery',
     'job_key', (select payload ->> 'job_key' from svar where label = 'oppgave'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'oppgave'),
-    'output_schema_version', 'antidep/source-discovery-draft@1',
+    'output_schema_version', 'antidep/source-discovery-draft@2',
     'identity', jsonb_build_object(
       'provider', 'prøve-870-a', 'model', 'Generatormodell 870',
       'model_version_disclosure', 'not_exposed'),

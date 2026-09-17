@@ -75,8 +75,12 @@ select set_eq(
            ('monograph_source_uses'), ('studies'), ('study_reports'),
            -- Migrasjon 013h: originalfilen til et myndighetsdokument, med sin
            -- egen integritetskontrakt ved siden av PDF-veien.
-           ('authority_documents')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g og 013h'
+           ('authority_documents'),
+           -- Migrasjon 013i: det strukturerte svaret, revisjonene av det og
+           -- tilleggskildene én revisjon hviler på.
+           ('monograph_answers'), ('monograph_answer_revisions'),
+           ('monograph_answer_revision_sources')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h og 013i'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
@@ -132,8 +136,11 @@ select set_eq(
            ('monograph_coverage_controls'),
            -- Migrasjon 013h: forespørselen om et myndighets-, preparat- eller
            -- retningslinjedokument, atskilt fra den forskningsfaglige.
-           ('monograph_document_requests')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e og 013h'
+           ('monograph_document_requests'),
+           -- Migrasjon 013i: hvilke felter den deterministiske svarkontrollen
+           -- faktisk kontrollerte for hver svarrevisjon.
+           ('monograph_answer_verifications')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h og 013i'
 );
 select set_eq(
   $$

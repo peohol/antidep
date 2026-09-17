@@ -30,9 +30,13 @@ async function currentContractFunction(): Promise<string> {
   let current: string | null = null
   for (const name of files) {
     const sql = await readFile(`${MIGRATIONS}/${name}`, 'utf8')
-    const match = /create (?:or replace )?function workflow\.agent_task_contract[\s\S]*?\$\$;/.exec(
-      sql,
-    )
+    // Både den håndskrevne formen (`$$`) og den som er spleiset fra databasens
+    // egen `pg_get_functiondef` (`$function$`). Uten begge ville prøven lest en
+    // eldre utgave av kontrakten og vært stille grønn.
+    const match =
+      /create or replace function workflow\.agent_task_contract[\s\S]*?\$(?:function)?\$;/i.exec(
+        sql,
+      )
     if (match !== null) {
       current = match[0]
     }
@@ -53,6 +57,10 @@ describe('oppgavekontrakten', () => {
       // kontrakten.
       'source_discovery',
       'source_quality_assessment',
+      // Migrasjon 013i: svaret på et behov som hviler på et myndighets-,
+      // preparat- eller retningslinjedokument. Å lese dokumentet og formulere
+      // opplysningen er en faglig vurdering.
+      'monograph_answer',
     ])
     // De uavhengige *deterministiske* kontrolleddene er Antideps egen kode. En
     // ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en

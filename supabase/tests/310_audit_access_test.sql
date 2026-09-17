@@ -247,13 +247,18 @@ select results_eq(
             'human:peder-holman', 'agent-identity:evidence-extraction-01'),
            ('agent_identity_registered', 'provenance', 'agent_identities',
             'human:peder-holman', 'agent-identity:extraction-verification-01'),
+           -- Migrasjon 013i: monografisvaret og den deterministiske kontrollen.
+           ('agent_identity_registered', 'provenance', 'agent_identities',
+            'human:peder-holman', 'agent-identity:monograph-answer-01'),
+           ('agent_identity_registered', 'provenance', 'agent_identities',
+            'human:peder-holman', 'agent-identity:monograph-answer-verification-01'),
            -- Migrasjon 013e: kildeoppdagelsen og den separate kontrollen av
            -- søkedekningen fikk hver sin identitet, og hver sin auditrad.
            ('agent_identity_registered', 'provenance', 'agent_identities',
             'human:peder-holman', 'agent-identity:source-discovery-01'),
            ('agent_identity_registered', 'provenance', 'agent_identities',
             'human:peder-holman', 'agent-identity:source-quality-assessment-01')$$,
-  'auditloggen inneholder nøyaktig registreringen av de sju agentidentitetene, alle attribuert til et menneske'
+  'auditloggen inneholder nøyaktig registreringen av de ni agentidentitetene, alle attribuert til et menneske'
 );
 
 select * from finish();

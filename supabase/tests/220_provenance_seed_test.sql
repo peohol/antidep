@@ -61,13 +61,17 @@ select results_eq(
            ('agent:evidence-assessment', 'agent', 'evidence_assessment', 'Antidep evidensvurderingsagent'),
            ('agent:evidence-extraction', 'agent', 'evidence_extraction', 'Antidep ekstraksjonsagent'),
            ('agent:extraction-verification', 'agent', 'extraction_verification', 'Antidep ekstraksjonsverifikator'),
+           -- Migrasjon 013i: det strukturerte monografisvaret, og den
+           -- deterministiske kontrollen av det.
+           ('agent:monograph-answer', 'agent', 'monograph_answer', 'Antidep monografisvaragent'),
+           ('agent:monograph-answer-verification', 'agent', 'monograph_answer_verification', 'Antidep svarkontroll'),
            -- Migrasjon 013e: kildeoppdagelsen og den separate kontrollen av
            -- søkedekningen. Rollene har stått i vokabularet siden migrasjon
            -- 005; her får de en aktør, fordi de nå har en skrivevei.
            ('agent:source-discovery', 'agent', 'source_discovery', 'Antidep kildeoppdagelsesagent'),
            ('agent:source-quality-assessment', 'agent', 'source_quality_assessment', 'Antidep kildedekningskontroll'),
            ('human:peder-holman', 'human', null, 'Peder Holman')$$,
-  'aktørregisteret inneholder de fem KI-rollene fra migrasjon 003, 004, 005f, 005i og 005an, de to kildeleddene fra 013e, og den navngitte redaktøren fra 005a'
+  'aktørregisteret inneholder de fem KI-rollene fra migrasjon 003, 004, 005f, 005i og 005an, de to kildeleddene fra 013e, de to svarleddene fra 013i, og den navngitte redaktøren fra 005a'
 );
 
 -- ---------------------------------------------------------------------------
@@ -103,13 +107,18 @@ select results_eq(
             'evidence_extraction', 'human:peder-holman', 'human', true, 0, true),
            ('agent-identity:extraction-verification-01', 'agent:extraction-verification',
             'extraction_verification', 'human:peder-holman', 'human', true, 0, true),
+           -- Migrasjon 013i. Også disse er inerte etter migrasjonen.
+           ('agent-identity:monograph-answer-01', 'agent:monograph-answer',
+            'monograph_answer', 'human:peder-holman', 'human', true, 0, true),
+           ('agent-identity:monograph-answer-verification-01', 'agent:monograph-answer-verification',
+            'monograph_answer_verification', 'human:peder-holman', 'human', true, 0, true),
            -- Migrasjon 013e. Også disse er inerte etter migrasjonen:
            -- legitimasjonen utstedes i det miljøet kjøreren leser den fra.
            ('agent-identity:source-discovery-01', 'agent:source-discovery',
             'source_discovery', 'human:peder-holman', 'human', true, 0, true),
            ('agent-identity:source-quality-assessment-01', 'agent:source-quality-assessment',
             'source_quality_assessment', 'human:peder-holman', 'human', true, 0, true)$$,
-  'identitetsregisteret inneholder nøyaktig de to verifikatorene, ekstraksjonsagenten, synteseagenten, evidensvurderingsagenten og de to kildeleddene, alle registrert av den navngitte redaktøren og alle uten utstedt legitimasjon'
+  'identitetsregisteret inneholder nøyaktig de to verifikatorene, ekstraksjonsagenten, synteseagenten, evidensvurderingsagenten, de to kildeleddene og de to svarleddene, alle registrert av den navngitte redaktøren og alle uten utstedt legitimasjon'
 );
 
 -- Identiteten er inert etter migrasjonen, og det skal den være til legitimasjonen

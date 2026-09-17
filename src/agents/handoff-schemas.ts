@@ -346,7 +346,7 @@ function candidateSchema(): Schema {
 export function buildSourceDiscoveryDraftSchema(): Schema {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: 'https://antidep.no/schema/source-discovery-draft-1.json',
+    $id: 'https://antidep.no/schema/source-discovery-draft-2.json',
     title: 'Antidep SourceDiscoveryDraft',
     description:
       'De utførte søkene, kandidatkildene og utvalgsbeslutningene for én søkeplan. Hvilken plan, hvilken avgrensning og hvilke behov det gjelder, står i oppgaven og hører ikke hjemme i svaret. Svaret skal ikke inneholde et klinisk svar på noe av spørsmålene: dette leddet finner grunnlaget, det leser det ikke.',
@@ -368,6 +368,9 @@ export function buildSourceDiscoveryDraftSchema(): Schema {
             axis: text('Avgrensningsaksen verdien hører til, for eksempel «indication».'),
             label: text('Verdien, slik den bør hete.'),
             rationale: text('Hvorfor verdien er relevant for denne monografien.'),
+            from_need: optionalText(
+              'need_reference til behovet verdien ble dokumentert under, når den hører til nettopp det. Et delutfall du så rapportert for ett spørsmål, hører til det spørsmålet — uten dette feltet utvides monografien på malenes egen hovedakse i stedet.',
+            ),
           },
         },
       },
@@ -425,6 +428,84 @@ export function buildSourceCoverageControlDraftSchema(): Schema {
         },
       },
       note: optionalText('Kort merknad om kontrollarbeidet, om noe trenger å sies.'),
+    },
+  }
+}
+
+/** Formen et monografisvar fra et myndighetsdokument skal ha. */
+export function buildMonographAnswerDraftSchema(): Schema {
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $id: 'https://antidep.no/schema/monograph-answer-draft-1.json',
+    title: 'Antidep MonographAnswerDraft',
+    description:
+      'Svaret på ett kunnskapsbehov, lest ut av det registrerte myndighets-, preparat- eller retningslinjedokumentet. Hvilket behov og hvilken kildeversjon det gjelder, står i oppgaven og hører ikke hjemme i svaret. Et forskningsfunn skrives ikke her: det bindes deterministisk til en påstandsrevisjon som alt er kontrollert og vurdert.',
+    type: 'object',
+    additionalProperties: false,
+    required: ['answer'],
+    properties: {
+      answer: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'knowledge_type',
+          'statement',
+          'as_of',
+          'source_quote',
+          'source_locator',
+        ],
+        properties: {
+          knowledge_type: vocabulary(
+            ['regulatory_fact', 'product_data', 'attributed_advice'],
+            'Hva slags opplysning dette er: en regulatorisk opplysning, en preparatdata, eller et råd som er attribuert til den som anbefaler det. Et forskningsfunn, et avledet svar og et resonnement skrives ikke av denne rollen.',
+          ),
+          statement: text(
+            'Svaret slik en kliniker leser det. Ta med forbeholdene som hører til; en viktig kvalifikasjon som bare står i et annet felt, er borte for den som leser svaret.',
+          ),
+          structured_value: {
+            type: ['object', 'null'],
+            description:
+              'Den strukturerte verdien, når opplysningen har en: styrker, formuleringer, aldersgrenser, vilkår. Bruk enheter og tall slik kilden oppgir dem.',
+          },
+          uncertainty_summary: optionalText(
+            'Faglig usikkerhet ved opplysningen: hva kilden ikke sier, og hva som er uklart.',
+          ),
+          limitation_note: optionalText(
+            'Søke- eller tilgangsbegrensninger. Hold dem atskilt fra den faglige usikkerheten: at et dokument manglet, er ikke en konklusjon om innholdet.',
+          ),
+          as_of: text(
+            'Datoen opplysningen gjaldt, slik dokumentet selv oppgir den (ÅÅÅÅ-MM-DD). Ikke dagens dato med mindre dokumentet sier det.',
+          ),
+          source_quote: text(
+            'Det ordrette utdraget opplysningen hviler på. Det må stå tegn for tegn i dokumentteksten du fikk; Antidep kontrollerer det maskinelt og avviser svaret ellers.',
+          ),
+          source_locator: text(
+            'Hvor i dokumentet utdraget står: avsnittsnummer, overskrift eller tabellnavn.',
+          ),
+          recommending_body: optionalText(
+            'Hvem som anbefaler rådet. Påkrevd når knowledge_type er «attributed_advice»: et råd uten en avsender er ikke attribuert.',
+          ),
+          recommendation_date: optionalText(
+            'Datoen anbefalingen ble gitt eller sist oppdatert (ÅÅÅÅ-MM-DD). Påkrevd når knowledge_type er «attributed_advice».',
+          ),
+          additional_sources: {
+            type: 'array',
+            description:
+              'Flere kildeversjoner svaret hviler på, når ett behov krever mer enn én. Hver av dem kontrolleres på nøyaktig samme måte som den primære.',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['source_version_id', 'source_quote', 'source_locator', 'as_of'],
+              properties: {
+                source_version_id: text('Kildeversjonen, slik den står i oppgaven.'),
+                source_quote: text('Det ordrette utdraget fra denne kilden.'),
+                source_locator: text('Hvor i dokumentet utdraget står.'),
+                as_of: text('Datoen opplysningen gjaldt (ÅÅÅÅ-MM-DD).'),
+              },
+            },
+          },
+        },
+      },
     },
   }
 }

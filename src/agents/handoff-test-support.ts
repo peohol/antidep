@@ -51,6 +51,7 @@ const DIGEST_SEEDS: Readonly<Record<HandoffRole, string>> = {
   evidence_assessment: '3',
   source_discovery: '4',
   source_quality_assessment: '5',
+  monograph_answer: '6',
 }
 
 function digestFor(role: HandoffRole): string {
@@ -103,6 +104,13 @@ export function taskPayload(
       need_ids: [TEST_OUTCOME_ID],
       searches_seen: 1,
       candidates_seen: 1,
+    },
+    monograph_answer: {
+      monograph_need_id: TEST_OUTCOME_ID,
+      scope_digest: `sha256:${'c'.repeat(64)}`,
+      source_version_id: TEST_SOURCE_VERSION_ID,
+      content_hash: `sha256:${'d'.repeat(64)}`,
+      representation: 'regulatory_summary',
     },
   }[role]
 
@@ -188,6 +196,35 @@ export function taskPayload(
       },
       seen_evidence_set_digest: `sha256:${'b'.repeat(64)}`,
     },
+    monograph_answer: {
+      need: {
+        need_reference: TEST_NEED_REFERENCE,
+        template_code: 'MN03',
+        question:
+          'Hvilke norske produkter finnes? Handelsnavn, formulering, administrasjonsvei, styrke og relevant pakningsidentitet.',
+        answer_form: 'table',
+        requirement: 'mandatory',
+        scope: null,
+        scope_not_applicable: [],
+        standard_version: '1.0.0',
+      },
+      approved_use: 'Oppgir handelsnavn, formulering, styrke og pakningsidentitet.',
+      drug: 'testmiddel',
+      source: {
+        title: 'Syntetisk preparatomtale',
+        authors_or_issuer: 'Syntetisk myndighet',
+        publisher_or_journal: null,
+        source_type: 'summary_of_product_characteristics',
+        publication_date: null,
+      },
+      source_version: {
+        retrieved_from: 'https://example.test/preparatomtale',
+        retrieved_at: '2026-09-15T09:00:00Z',
+        representation: 'regulatory_summary',
+        content_hash: `sha256:${'d'.repeat(64)}`,
+      },
+      representation_text: 'Testmiddel tabletter 50 mg. Pakning med 28 tabletter.',
+    },
     source_discovery: discoveryMaterial,
     source_quality_assessment: {
       ...discoveryMaterial,
@@ -213,6 +250,7 @@ export function taskPayload(
       kind: 'kontroll av søkedekning',
       label: 'testmiddel — Effekt, dose–respons, behandlingsfaser og sammenligning',
     },
+    monograph_answer: { kind: 'monografisvar', label: 'testmiddel — MN03' },
   }[role]
 
   return {
@@ -385,6 +423,24 @@ export function resultFor(role: HandoffRole): Record<string, unknown> {
       ],
       term_proposals: [],
       note: null,
+    }
+  }
+  if (role === 'monograph_answer') {
+    return {
+      answer: {
+        knowledge_type: 'product_data',
+        statement:
+          'Testmiddel finnes som tabletter 50 mg i pakning med 28 tabletter, ifølge preparatomtalen.',
+        structured_value: { strength_mg: 50, pack_size: 28 },
+        uncertainty_summary: null,
+        limitation_note: null,
+        as_of: '2026-09-01',
+        source_quote: 'Testmiddel tabletter 50 mg. Pakning med 28 tabletter.',
+        source_locator: 'Avsnitt 3',
+        recommending_body: null,
+        recommendation_date: null,
+        additional_sources: [],
+      },
     }
   }
   if (role === 'source_quality_assessment') {
