@@ -1815,11 +1815,11 @@ begin
       from workflow.evidence_verifications ev
       order by ev.evidence_item_id, ev.registration_ordinal desc
     ),
-    utestaaende as (
+    par as (
+      -- Par som har ny, kontrollert evidens ingen revisjon hviler på.
       select c.id as claim_id,
              c.subject_drug_id as drug_id,
-             c.topic_concept_id as topic_id,
-             format('%s+%s', c.subject_drug_id, c.topic_concept_id) as sort_key
+             c.topic_concept_id as topic_id
       from knowledge.claims c
       join knowledge.evidence_items e
         on e.intervention_drug_id = c.subject_drug_id
@@ -1832,6 +1832,23 @@ begin
           join knowledge.claim_revisions r on r.id = l.claim_revision_id
           where r.claim_id = c.id and l.evidence_item_id = e.id)
       group by c.id, c.subject_drug_id, c.topic_concept_id
+      union
+      -- Og oppgavene som alt står åpne. Utvalget over finner dem gjennom en
+      -- evidensrad, og en hard sletting tar den raden bort: da ville en oppgave
+      -- ingen kan fullføre, ikke vært mulig å nå herfra i det hele tatt. Selve
+      -- skrivingen holder tilstanden i takt (avsnitt 14); dette er nettet under.
+      select c.id, c.subject_drug_id, c.topic_concept_id
+      from workflow.claim_revision_reviews r
+      join knowledge.claims c on c.id = r.claim_id
+      where r.state = 'open'
+    ),
+    utestaaende as (
+      -- Ett par er én oppgave, også når begge kildene over peker på det.
+      select distinct on (format('%s+%s', p.drug_id, p.topic_id))
+             p.claim_id, p.drug_id, p.topic_id,
+             format('%s+%s', p.drug_id, p.topic_id) as sort_key
+      from par p
+      order by format('%s+%s', p.drug_id, p.topic_id), p.claim_id
     )
     select u.claim_id as id, u.drug_id, u.topic_id, u.sort_key
     from utestaaende u
@@ -2258,3 +2275,428 @@ $$;
 
 comment on function knowledge.discard_unpublished_claim_artifacts(uuid[], text) is
   'Den ene, sterkt guardede veien til å fjerne et upublisert påstandsartefakt med revisjonene, lenkene, vurderingene, kontrollene, de forseglede kandidatene og den redaksjonelle revisjonsoppgaven sin. Uendret fra migrasjon 009g bortsett fra det siste laget: workflow.claim_revision_reviews peker på påstanden med RESTRICT, så uten det ville en påstand med en åpen revisjonsoppgave ikke latt seg fjerne i det hele tatt — og hadde den latt seg fjerne, ville oppgaven stått igjen i den åpne arbeidsoversikten og bedt om en avgjørelse om noe som ikke finnes (ANTIDEP_CONSTITUTION.md regel 4). Sporet rives ned med oppgaven, av samme grunn som kandidatenes og kontrollenes: fjerningen er en eksplisitt redaksjonell avgjørelse om at dette aldri skulle vært her, og den er selv ført i audit.events med hvem som bestemte den og hvorfor. Ikke en redaksjonell funksjon i produkt-UI: EXECUTE er revokert fra PUBLIC og gitt til ingen klientrolle.';
+
+-- ----------------------------------------------------------------------------
+-- 14. Alle veier som kan ta bort ny evidens, holder oppgaven i takt
+--
+-- `workflow.notice_claim_revision_need(uuid, uuid)` er den ene skriveveien inn
+-- i den redaksjonelle tilstanden, og den leser grunnlaget på nytt hver gang den
+-- kalles. Da er spørsmålet bare hvem som kaller den — og svaret må være *hver*
+-- støttet tilstandsendring som kan gjøre et nytt evidensfunn ubrukbart, i den
+-- samme transaksjonen som endringen.
+--
+-- `workflow.evidence_usable_problem(uuid[], text)` er fasiten for hva «ubrukbar»
+-- betyr, og den leser fire ting som kan endre seg etter at oppgaven ble åpnet:
+--
+--   1. En ny ekstraksjonskontroll som ikke bekrefter (G5).  Dekket av
+--      `workflow.chain_after_evidence_verification()` i avsnitt 8b.
+--   2. En tilbaketrukket ekstraksjon (G6).  Dekket av triggeren under.
+--   3. En kilde som får status `retracted` eller `withdrawn` (G7).  Dekket av
+--      triggeren under.
+--   4. At funnet slettes hardt.  Dekket av fjerningsveien under.
+--
+-- De to triggerne har ingen skrivevei å fyre på i dag: `extraction_withdrawal`
+-- skrives ikke av noen `api`-funksjon, og `knowledge.sources.source_status`
+-- endres ikke av noen. De legges likevel på tabellene og ikke i en framtidig
+-- skrivevei, av samme grunn som kjedeovergangene ligger der: en trigger kan
+-- ikke glemmes slik et kall kan, og den dagen veien skrives, er tilstanden
+-- allerede i takt.
+--
+-- Rekkefølgen er den samme som ellers i kjeden — subjektlåsen tas inne i
+-- notice-veien — og de to triggerne fanger, som kjedeovergangene, bare de tre
+-- klassene som betyr «grunnlaget er ikke klart», og fører en teknisk svikt som
+-- et teknisk problem framfor å velte skrivingen som utløste den. Fjerningen
+-- gjør det motsatte og med vilje: der er det ingen rad igjen å komme tilbake
+-- til, så den feiler heller lukket.
+-- ----------------------------------------------------------------------------
+create function workflow.sync_claim_revision_for_evidence(p_evidence_item_id uuid)
+  returns void
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_item knowledge.evidence_items;
+begin
+  select e.* into v_item
+  from knowledge.evidence_items e
+  where e.id = p_evidence_item_id;
+
+  if found then
+    perform workflow.notice_claim_revision_need(
+      v_item.intervention_drug_id, v_item.outcome_concept_id);
+  end if;
+end;
+$$;
+
+comment on function workflow.sync_claim_revision_for_evidence(uuid) is
+  'Leser den redaksjonelle revisjonstilstanden på nytt for det virkestoffet og endepunktet ett evidensfunn gjelder. Finnes for at de stedene som kan gjøre et funn ubrukbart, skal kunne holde oppgaven i takt uten å kjenne til påstanden: hele avgjørelsen ligger i workflow.notice_claim_revision_need(uuid, uuid), som leser grunnlaget på nytt. Et funn som ikke finnes, er ikke en feil her — da er det ingenting å lese.';
+
+revoke execute on function workflow.sync_claim_revision_for_evidence(uuid) from public;
+
+create function workflow.claim_revision_after_extraction_withdrawal()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_state text;
+begin
+  if new.review_type <> 'extraction_withdrawal' or new.evidence_item_id is null then
+    return null;
+  end if;
+
+  begin
+    perform workflow.sync_claim_revision_for_evidence(new.evidence_item_id);
+  exception
+    when restrict_violation or no_data_found or invalid_parameter_value then
+      null;
+    when others then
+      get stacked diagnostics v_state = returned_sqlstate;
+      perform workflow.chain_note_failure('paastandsrevisjon', new.evidence_item_id, v_state);
+  end;
+  return null;
+end;
+$$;
+
+comment on function workflow.claim_revision_after_extraction_withdrawal() is
+  'Holder den redaksjonelle revisjonsoppgaven i takt når en tilbaketrekkingsbeslutning registreres om et evidensfunn. En tilbaketrukket ekstraksjon faller ut av evidensgrunnlaget (publiseringsgatens G6), og var den det siste nye funnet om et par som allerede har en påstand, er det ikke lenger noe å avgjøre. Beslutningen selv står uansett: svikter oppdateringen teknisk, blir det et teknisk problem under automatic_task, og rekonsilieringen tar det igjen.';
+
+revoke execute on function workflow.claim_revision_after_extraction_withdrawal() from public;
+
+create trigger review_decisions_sync_claim_revision
+  after insert on workflow.review_decisions
+  for each row
+  execute function workflow.claim_revision_after_extraction_withdrawal();
+
+comment on trigger review_decisions_sync_claim_revision on workflow.review_decisions is
+  'Ligger på tabellen og ikke i en skrivevei, av samme grunn som kjedeovergangene gjør det: en trigger kan ikke glemmes slik et kall kan. Ingen api-funksjon skriver extraction_withdrawal i dag; den dagen en gjør det, er den redaksjonelle tilstanden allerede i takt.';
+
+create function workflow.claim_revision_after_source_status()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_state text;
+  v_subject record;
+begin
+  if new.source_status is not distinct from old.source_status then
+    return null;
+  end if;
+
+  -- Ett par per gang, og ikke ett funn per gang: oppgaven er én per påstand,
+  -- og en kilde kan bære flere funn om det samme paret.
+  for v_subject in
+    select distinct e.intervention_drug_id as drug_id, e.outcome_concept_id as topic_id
+    from knowledge.evidence_items e
+    where e.source_id = new.id
+      and e.intervention_drug_id is not null
+      and e.outcome_concept_id is not null
+  loop
+    begin
+      perform workflow.notice_claim_revision_need(v_subject.drug_id, v_subject.topic_id);
+    exception
+      when restrict_violation or no_data_found or invalid_parameter_value then
+        null;
+      when others then
+        get stacked diagnostics v_state = returned_sqlstate;
+        perform workflow.chain_note_failure('paastandsrevisjon', new.id, v_state);
+    end;
+  end loop;
+  return null;
+end;
+$$;
+
+comment on function workflow.claim_revision_after_source_status() is
+  'Holder de redaksjonelle revisjonsoppgavene i takt når en kilde skifter status. En kilde med statusen retracted eller withdrawn kan ikke bære en påstand (publiseringsgatens G7), så funnene fra den faller ut av grunnlaget — og en status som settes tilbake, fører dem inn igjen. Leser ett par per gang og ikke ett funn per gang, fordi oppgaven er én per påstand.';
+
+revoke execute on function workflow.claim_revision_after_source_status() from public;
+
+create trigger sources_sync_claim_revision
+  after update of source_status on knowledge.sources
+  for each row
+  execute function workflow.claim_revision_after_source_status();
+
+comment on trigger sources_sync_claim_revision on knowledge.sources is
+  'Samme grunn som review_decisions_sync_claim_revision: ingen skrivevei endrer kildestatus i dag, og tilstanden skal være i takt den dagen en gjør det, uten at noen må huske å kalle noe.';
+
+-- ----------------------------------------------------------------------------
+-- 14b. Den harde fjerningen av et ekstraksjonsartefakt
+--
+-- `knowledge.discard_unpublished_extraction_artifacts(uuid[], text)` sletter
+-- evidensfunnet selv. Den feiler lukket på et funn som bærer en påstandslenke —
+-- men et *nytt* funn som venter på en redaksjonell avgjørelse, har ingen
+-- påstandslenke ennå. Det er nettopp det denne veien får fjerne, og nettopp det
+-- oppgaven er laget av.
+--
+-- Etter slettingen finnes ingen evidensrad som fører tilbake til virkestoffet og
+-- endepunktet. Subjektet leses derfor før slettingen, og tilstanden leses på
+-- nytt etterpå, i den samme transaksjonen. Kroppen er ellers ordrett den fra
+-- migrasjon 005af/005ai.
+-- ----------------------------------------------------------------------------
+create or replace function knowledge.discard_unpublished_extraction_artifacts(
+  p_evidence_item_ids uuid[],
+  p_reason text
+)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+  v_id uuid;
+  v_snapshots jsonb := '{}'::jsonb;
+  v_removed jsonb := '[]'::jsonb;
+  v_verifications bigint := 0;
+  v_groundings bigint := 0;
+  v_items bigint := 0;
+  -- Virkestoffet og endepunktet hvert funn gjaldt. Leses *før* slettingen,
+  -- fordi etterpå finnes det ingen rad å lese det av: en hard sletting tar
+  -- også bort veien tilbake til subjektet (migrasjon 012d).
+  v_subjects jsonb := '[]'::jsonb;
+  v_subject jsonb;
+begin
+  -- Fjerningen er en redaksjonell handling med en ansvarlig, ikke en
+  -- driftsoperasjon: auditraden skal navngi den som bestemte den.
+  v_actor_id := knowledge.assert_editor_authorized();
+
+  if nullif(btrim(coalesce(p_reason, '')), '') is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Fjerningen mangler en begrunnelse, og da kan den ikke registreres.',
+      hint = 'Oppgi hvorfor funnene fjernes. Begrunnelsen er det som gjør en hard sletting rapporterbar i ettertid (ANTIDEP_CONSTITUTION.md §14).';
+  end if;
+
+  if p_evidence_item_ids is null or cardinality(p_evidence_item_ids) = 0 then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Ingen evidensfunn er oppgitt.',
+      hint = 'Veien tar en eksplisitt liste med id-er. Den kan ikke kalles med et predikat, og den kan ikke feie: hvilke rader som fjernes, skal være skrevet ned før kallet, ikke utledet av det.';
+  end if;
+
+  if cardinality(p_evidence_item_ids) > 50 then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('%s evidensfunn er oppgitt, og grensen er 50.', cardinality(p_evidence_item_ids)),
+      hint = 'En reset er en navngitt liste noen har gått gjennom. Er listen lengre enn dette, er den ikke gjennomgått.';
+  end if;
+
+  if (select count(distinct x) from unnest(p_evidence_item_ids) as x)
+     <> cardinality(p_evidence_item_ids) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Listen inneholder samme evidensfunn mer enn én gang.',
+      hint = 'En dublett betyr at listen ikke er den gjennomgåtte listen. Rett den framfor å la kallet gjøre noe annet enn det som ble bestemt.';
+  end if;
+
+  -- ------------------------------------------------------------------------
+  -- Låsen. Den tas før kontrollene, ikke som en følge av slettingen, og det er
+  -- rekkefølgen som gjør at kontrollen under faktisk feiler lukket: en
+  -- menneskelig kildekontroll commitet etter at kontrollen har lest tabellen,
+  -- men før slettingen hadde låst den, ville blitt lest som fraværende og så
+  -- slettet av kallet — og øyeblikksbildet ville ikke hatt den. Tilstanden
+  -- kontrollene leser, skal være den samme tilstanden slettingen møter.
+  --
+  -- ACCESS EXCLUSIVE er den samme låsen ALTER TABLE trenger nedenfor, tatt i
+  -- den samme rekkefølgen, slik at slettingen ikke må oppgradere en lås
+  -- underveis. En egen LOCK-setning framfor å flytte ALTER-setningene hit:
+  -- ALTER TABLE krever i tillegg at køen av utsatte triggerhendelser er tom,
+  -- og det er et annet krav enn å låse.
+  --
+  -- De tre øvrige kontrollene — påstandslenke, reviewbeslutning og claim-sitat
+  -- — trenger ingen egen lås: de tabellene peker på knowledge.evidence_items
+  -- med `on delete restrict`, så en rad commitet underveis stopper slettingen
+  -- framfor å forsvinne med den.
+  -- ------------------------------------------------------------------------
+  lock table workflow.evidence_verifications in access exclusive mode;
+  lock table knowledge.evidence_field_groundings in access exclusive mode;
+  lock table knowledge.evidence_items in access exclusive mode;
+
+  -- ------------------------------------------------------------------------
+  -- Kontrollene. Alle kjøres før noe slettes, og én rad som feiler stopper
+  -- hele kallet: en delvis reset ville etterlatt en tilstand ingen bestemte.
+  -- ------------------------------------------------------------------------
+  foreach v_id in array p_evidence_item_ids loop
+    if not exists (select 1 from knowledge.evidence_items e where e.id = v_id) then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format('Evidensfunnet %s finnes ikke.', v_id),
+        hint = 'Listen er ikke den databasen har. Hent køen på nytt framfor å fjerne noe annet enn det som ble gjennomgått.';
+    end if;
+
+    if exists (
+      select 1
+      from workflow.evidence_verifications ev
+      join provenance.actors a on a.id = ev.verifier_actor_id
+      where ev.evidence_item_id = v_id
+        and a.actor_type = 'human'
+    ) then
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format('Evidensfunnet %s er menneskelig kildekontrollert, og fjernes ikke.', v_id),
+        hint = 'En utført menneskelig kontroll er en faglig handling med en ansvarlig bak. Den skal ikke kunne forsvinne (ANTIDEP_CONSTITUTION.md §12, §14).';
+    end if;
+
+    if exists (select 1 from knowledge.claim_evidence_links l where l.evidence_item_id = v_id) then
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format('Evidensfunnet %s bærer en påstandsrevisjon, og fjernes ikke.', v_id),
+        hint = 'Funnet er lenket til en claim-revisjon. Å fjerne det ville gjort revisjonen til en påstand uten det grunnlaget den ble laget av — publisert eller ikke (ANTIDEP_CONSTITUTION.md §4, §8).';
+    end if;
+
+    if exists (select 1 from workflow.review_decisions rd where rd.evidence_item_id = v_id) then
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format('Evidensfunnet %s har en registrert reviewbeslutning, og fjernes ikke.', v_id),
+        hint = 'En beslutning er en utført faglig handling, og tabellen er append-only av samme grunn som kontrollene.';
+    end if;
+
+    if exists (
+      select 1 from workflow.claim_verification_citations c where c.evidence_item_id = v_id
+    ) then
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format('Evidensfunnet %s er sitert i en claim-verifikasjon, og fjernes ikke.', v_id),
+        hint = 'Kontrollen registrerte hva den faktisk leste. Å fjerne funnet ville skrevet om den nedtegnelsen.';
+    end if;
+
+    -- Øyeblikksbildet tas før slettingen, og er hele kontrollgrunnlaget: det som
+    -- fjernes, skal fortsatt kunne leses av den som spør hva som sto der.
+    v_snapshots := v_snapshots || jsonb_build_object(
+      v_id::text,
+      jsonb_build_object(
+        -- `id` er påkrevd av events_snapshot_identifies_object_check: et
+        -- øyeblikksbilde skal navngi objektet raden handler om, slik at det
+        -- ikke kan havne på feil objekt.
+        'id', v_id,
+        'dossier', workflow.evidence_extraction_dossier(v_id),
+        'extraction_verifications', (
+          select coalesce(jsonb_agg(to_jsonb(ev) order by ev.created_at), '[]'::jsonb)
+          from workflow.evidence_verifications ev
+          where ev.evidence_item_id = v_id
+        )
+      )
+    );
+  end loop;
+
+  -- ------------------------------------------------------------------------
+  -- Subjektene, lest mens radene fortsatt finnes
+  --
+  -- Et funn som fjernes her, kan være nettopp det funnet som åpnet en
+  -- redaksjonell revisjonsoppgave: et maskinkontrollert funn uten påstandslenke
+  -- er både det denne veien får fjerne, og det oppgaven er laget av. Etter
+  -- slettingen finnes ingen evidensrad som fører tilbake til virkestoffet og
+  -- endepunktet, så subjektet må leses nå (migrasjon 012d).
+  -- ------------------------------------------------------------------------
+  select coalesce(jsonb_agg(distinct jsonb_build_object(
+           'drug', e.intervention_drug_id, 'topic', e.outcome_concept_id)), '[]'::jsonb)
+    into v_subjects
+  from knowledge.evidence_items e
+  where e.id = any(p_evidence_item_ids)
+    and e.intervention_drug_id is not null
+    and e.outcome_concept_id is not null;
+
+  -- ------------------------------------------------------------------------
+  -- Slettingen. Append-only-vernet er fasiten for enhver annen skrivevei, og
+  -- skrus av bare her, bare i denne transaksjonen, og slås på igjen også når
+  -- noe går galt.
+  -- ------------------------------------------------------------------------
+  begin
+    -- `ALTER TABLE` kan ikke kjøre på en tabell med utsatte triggerhendelser i
+    -- kø, og forankringskontrollen på knowledge.evidence_items er utsatt til
+    -- commit (migrasjon 003d). I en reset som kjører alene er køen tom og
+    -- setningen en nulloperasjon; ligger det en registrering foran i den samme
+    -- transaksjonen, kjøres kontrollen av den nå — og en registrering som ikke
+    -- holder, stopper fjerningen framfor å bli commitet etter den.
+    --
+    -- Modusen settes tilbake etterpå, også når noe går galt. Uten det ville en
+    -- registrering *senere* i den samme transaksjonen blitt kontrollert før
+    -- forankringen sin var skrevet, og en lovlig registrering ville blitt
+    -- avvist av et valg denne funksjonen gjorde.
+    set constraints all immediate;
+
+    alter table workflow.evidence_verifications disable trigger evidence_verifications_reject_mutation;
+    alter table knowledge.evidence_field_groundings disable trigger evidence_field_groundings_reject_mutation;
+    alter table knowledge.evidence_items disable trigger evidence_items_reject_mutation;
+
+    delete from workflow.evidence_verifications ev
+    where ev.evidence_item_id = any(p_evidence_item_ids);
+    get diagnostics v_verifications = row_count;
+
+    delete from knowledge.evidence_field_groundings g
+    where g.evidence_item_id = any(p_evidence_item_ids);
+    get diagnostics v_groundings = row_count;
+
+    delete from knowledge.evidence_items e
+    where e.id = any(p_evidence_item_ids);
+    get diagnostics v_items = row_count;
+
+    alter table knowledge.evidence_items enable trigger evidence_items_reject_mutation;
+    alter table knowledge.evidence_field_groundings enable trigger evidence_field_groundings_reject_mutation;
+    alter table workflow.evidence_verifications enable trigger evidence_verifications_reject_mutation;
+    set constraints all deferred;
+  exception
+    when others then
+      alter table knowledge.evidence_items enable trigger evidence_items_reject_mutation;
+      alter table knowledge.evidence_field_groundings enable trigger evidence_field_groundings_reject_mutation;
+      alter table workflow.evidence_verifications enable trigger evidence_verifications_reject_mutation;
+      set constraints all deferred;
+      raise;
+  end;
+
+  if v_items <> cardinality(p_evidence_item_ids) then
+    -- Kan i praksis ikke skje: eksistensen er kontrollert over, og
+    -- transaksjonen holder låsen. En påstand som ikke kontrolleres, er likevel
+    -- ikke en påstand noen kan stole på.
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format('%s av %s evidensfunn ble fjernet. Ingenting er lagret.',
+                       v_items, cardinality(p_evidence_item_ids));
+  end if;
+
+  -- ------------------------------------------------------------------------
+  -- Sporet. Én rad per fjernet funn, med det som sto der.
+  -- ------------------------------------------------------------------------
+  foreach v_id in array p_evidence_item_ids loop
+    insert into audit.events
+      (operation, object_id, actor_id, old_revision_or_snapshot, reason, occurred_at)
+    values
+      ('extraction_artifact_discarded', v_id, v_actor_id,
+       v_snapshots -> v_id::text, btrim(p_reason), now());
+    v_removed := v_removed || to_jsonb(v_id::text);
+  end loop;
+
+  -- ------------------------------------------------------------------------
+  -- Den redaksjonelle tilstanden, i den samme transaksjonen
+  --
+  -- Var dette den siste nye evidensen om et par som allerede har en påstand,
+  -- er det ikke lenger noe å avgjøre, og oppgaven lukkes. Uten dette ville den
+  -- blitt stående åpen for alltid: beslutningsveien ville avvist den, og
+  -- rekonsilieringen ville ikke funnet den gjennom en evidensrad som ikke
+  -- finnes mer. En oppgave et menneske ikke kan fullføre, skal ikke stå i den
+  -- åpne arbeidsoversikten (ANTIDEP_CONSTITUTION.md regel 4).
+  --
+  -- Ingen feil fanges her. Lar ikke tilstanden seg holde i takt, skal
+  -- fjerningen feile lukket framfor å etterlate en oppgave om ingenting.
+  -- ------------------------------------------------------------------------
+  for v_subject in select value from jsonb_array_elements(v_subjects) loop
+    perform workflow.notice_claim_revision_need(
+      (v_subject ->> 'drug')::uuid, (v_subject ->> 'topic')::uuid);
+  end loop;
+
+  return jsonb_build_object(
+    'discarded_evidence_item_ids', v_removed,
+    'resynced_claim_revision_subjects', jsonb_array_length(v_subjects),
+    'deleted_extraction_verifications', v_verifications,
+    'deleted_field_groundings', v_groundings,
+    'discarded_by_actor_id', v_actor_id,
+    'reason', btrim(p_reason)
+  );
+end;
+$$;
+
+comment on function knowledge.discard_unpublished_extraction_artifacts(uuid[], text) is
+  'Fjerner et eksplisitt oppgitt sett upubliserte evidensfunn med sine forankringer og maskinelle kontroller, i én transaksjon, og skriver en auditrad per funn med hele kontrollgrunnlaget som old_revision_or_snapshot (migrasjon 005af, issue #84). Uendret fra migrasjon 005ai bortsett fra ett lag: virkestoffet og endepunktet hvert funn gjaldt, leses før slettingen, og den redaksjonelle revisjonstilstanden leses på nytt etterpå i den samme transaksjonen (workflow.notice_claim_revision_need(uuid, uuid)). Uten det kunne et funn som hadde åpnet en revisjonsoppgave, bli slettet mens oppgaven ble stående åpen: beslutningsveien ville avvist den, og rekonsilieringen ville ikke funnet den gjennom en evidensrad som ikke finnes mer — altså en menneskeoppgave uten et utfall (ANTIDEP_CONSTITUTION.md regel 4). Ingen feil fanges der: lar tilstanden seg ikke holde i takt, feiler fjerningen lukket framfor å etterlate en oppgave om ingenting. Feiler ellers lukket på de samme vilkårene som før, og rører verken kilder, kildeversjoner, originaldokumenter, agentkjøringer eller auditrader.';
+
+revoke execute on function knowledge.discard_unpublished_extraction_artifacts(uuid[], text) from public;

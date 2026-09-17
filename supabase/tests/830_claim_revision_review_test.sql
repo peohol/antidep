@@ -28,7 +28,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(102);
+select plan(115);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1357,6 +1357,157 @@ select is(
   'og det er fortsatt én rad, ikke en ny oppgave ved siden av den gamle'
 );
 
+-- ===========================================================================
+-- Del 13c — hver vei som kan ta bort ny evidens, holder oppgaven i takt
+-- ===========================================================================
+-- `workflow.evidence_usable_problem(uuid[], text)` er fasiten for hva «brukbar»
+-- betyr, og den leser fire ting som kan endre seg etter at oppgaven ble åpnet:
+-- en ny kontroll som ikke bekrefter (prøvd i Del 13b), en kilde som trekkes
+-- tilbake, en tilbaketrukket ekstraksjon, og at funnet slettes hardt. Alle fire
+-- må lukke oppgaven — ellers står den igjen og ber om en avgjørelse
+-- beslutningsveien uansett avviser (ANTIDEP_CONSTITUTION.md regel 4).
+--
+-- Utgangspunktet er tilstanden Del 13b endte i: oppgaven om mirtazapin står
+-- åpen, og funnet ...0016 er det ene brukbare nye funnet.
+
+create function pg_temp.revisjonstilstand() returns text language sql as $$
+  select r.state::text from workflow.claim_revision_reviews r
+  where r.claim_id = '83000000-0000-4000-8000-000000000042';
+$$;
+
+-- --- Kilden trekkes tilbake -------------------------------------------------
+update knowledge.sources
+set source_status = 'retracted',
+    status_note = 'Prøve i 830: kilden er trukket tilbake.'
+where id = '83000000-0000-4000-8000-000000000002';
+
+select is(pg_temp.revisjonstilstand(), 'lapsed',
+  'en tilbaketrukket kilde tar bort den nye kunnskapen, og oppgaven lukkes');
+
+update knowledge.sources set source_status = 'active', status_note = null
+where id = '83000000-0000-4000-8000-000000000002';
+
+select is(pg_temp.revisjonstilstand(), 'open',
+  'og en status som settes tilbake, fører den inn igjen');
+
+-- --- Funnet slettes hardt ---------------------------------------------------
+-- `knowledge.discard_unpublished_extraction_artifacts(uuid[], text)` sletter
+-- evidensraden. Den feiler lukket på et funn som bærer en påstandslenke — men
+-- et *nytt* funn som venter på en avgjørelse, har ingen. Etterpå finnes ingen
+-- rad som fører tilbake til virkestoffet og endepunktet, så tilstanden må leses
+-- på nytt i den samme transaksjonen.
+select set_config('request.jwt.claims',
+                  '{"sub":"83000000-0000-4000-8000-00000000000a"}', true);
+insert into svar (label, payload)
+select 'kastet_funn', knowledge.discard_unpublished_extraction_artifacts(
+  array['83000000-0000-4000-8000-000000000016']::uuid[],
+  'Prøve i 830: det nye funnet kastes med vilje.');
+select set_config('request.jwt.claims', '', true);
+
+select is(
+  (select (payload ->> 'resynced_claim_revision_subjects')::integer
+   from svar where label = 'kastet_funn'),
+  1,
+  'fjerningen leser den redaksjonelle tilstanden på nytt for subjektet den rørte'
+);
+select is(pg_temp.revisjonstilstand(), 'lapsed',
+  'og en hard sletting av det siste nye funnet lukker oppgaven');
+select is(
+  (select count(*)::integer from knowledge.evidence_items e
+   where e.id = '83000000-0000-4000-8000-000000000016'),
+  0,
+  'funnet er faktisk borte, og ikke bare merket'
+);
+
+set local role anon;
+insert into board (label, payload) select 'etter_sletting', api.public_work_board();
+reset role;
+select is_empty(
+  $$
+    select 1 from board, lateral jsonb_array_elements(payload) as item
+    where label = 'etter_sletting' and item ->> 'activity' = 'claim_revision'
+  $$,
+  'oppgaven står ikke i den åpne oversikten etter slettingen'
+);
+
+select set_config('request.jwt.claims',
+                  '{"sub":"83000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into svar (label, payload) select 'ko_slettet', api.claim_revision_queue();
+reset role;
+select set_config('request.jwt.claims', '', true);
+select is(
+  (select jsonb_array_length(payload) from svar where label = 'ko_slettet'),
+  0,
+  'og redaktørkøen er tom'
+);
+
+-- --- Nettet under: rekonsilieringen ser også på oppgavene som står åpne -----
+-- Skrivingen holder tilstanden i takt, og det er den normale mekanismen. Men
+-- utvalget som leter etter *manglende* oppgaver, finner et par gjennom en
+-- evidensrad, og etter en hard sletting finnes ingen. En oppgave som likevel
+-- skulle bli stående åpen uten noe å avgjøre, må kunne nås også da. Her settes
+-- den tilbake til åpen med vilje, for å prøve nettopp det nettet.
+update workflow.claim_revision_reviews
+set state = 'open', pending_evidence_count = 1
+where claim_id = '83000000-0000-4000-8000-000000000042';
+
+insert into svar (label, payload)
+select 'rekonsiliert_bortfall', api.resume_chain_transitions(
+  'agent-identity:extraction-verification-01',
+  (select secret from cred where name = 'control'));
+
+select is(pg_temp.revisjonstilstand(), 'lapsed',
+  'rekonsilieringen lukker en oppgave som står åpen uten noe å avgjøre');
+select is(
+  (select (payload ->> 'revision_reviews')::integer
+   from svar where label = 'rekonsiliert_bortfall'),
+  0,
+  'og teller den ikke som en oppgave som ble åpnet'
+);
+
+-- --- Ekstraksjonen trekkes tilbake ------------------------------------------
+-- Enda et nytt funn, slik at det er noe å trekke tilbake.
+select pg_temp.legg_inn_funn(
+  '83000000-0000-4000-8000-000000000019', '83000000-0000-4000-8000-000000000002',
+  '83000000-0000-4000-8000-000000000022', (select id from fixture where name = 'mirtazapin'),
+  (select id from fixture where name = 'topic'),
+  'Et siste funn om mirtazapin og søvn.', 'Tabell 7');
+select pg_temp.kontroller_funn('83000000-0000-4000-8000-000000000019',
+                               '83000000-0000-4000-8000-00000000006f');
+
+select is(pg_temp.revisjonstilstand(), 'open',
+  'ny, kontrollert forskning åpner oppgaven igjen');
+
+create function pg_temp.tilbaketrekk(p_id uuid, p_decision text) returns void
+language sql as $$
+  insert into workflow.review_decisions
+    (evidence_item_id, evidence_item_creator_actor_id, review_type, decision,
+     rationale, reviewer_actor_id, reviewer_actor_type, decided_at)
+  select e.id, e.created_by_actor_id, 'extraction_withdrawal',
+         p_decision::workflow.review_outcome,
+         'Prøve i 830: beslutning om ekstraksjonen.',
+         'ac830000-0000-4000-8000-00000000000c', 'human', now()
+  from knowledge.evidence_items e where e.id = p_id;
+$$;
+
+select pg_temp.tilbaketrekk('83000000-0000-4000-8000-000000000019', 'extraction_withdrawn');
+
+select is(pg_temp.revisjonstilstand(), 'lapsed',
+  'en tilbaketrukket ekstraksjon lukker oppgaven på samme måte');
+
+select pg_temp.tilbaketrekk('83000000-0000-4000-8000-000000000019', 'extraction_upheld');
+
+select is(pg_temp.revisjonstilstand(), 'open',
+  'og en beslutning om at ekstraksjonen står ved lag, åpner den igjen');
+
+select is(
+  (select count(*)::integer from workflow.technical_incidents ti
+   where ti.area = 'automatic_task' and ti.signature = 'kjede:paastandsrevisjon'
+     and ti.resolved_at is null),
+  0,
+  'ingen av de fire veiene ble til et teknisk problem'
+);
 -- ===========================================================================
 -- Del 14 — en fjernet påstand etterlater ingen oppgave om ingenting
 -- ===========================================================================
