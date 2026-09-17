@@ -363,7 +363,17 @@ select is_empty(
         'api.monograph_candidate(text)',
         'api.record_monograph_final_control(text,text,text,text)',
         'api.publish_monograph(text,text)',
-        'api.withdraw_monograph_publication(text,text)'
+        'api.withdraw_monograph_publication(text,text)',
+        -- Migrasjon 013k. Den redaksjonelle kontrollen: rettelse, låsing,
+        -- kildebegrensning, avvikslisten og forkasting av en kilde. Alle krever
+        -- editor-mandat. Kontrolleres i 920_monograph_editorial_test.sql.
+        'api.edit_monograph_answer(text,text,text,text,jsonb,text)',
+        'api.lock_monograph_answer(text,text)',
+        'api.unlock_monograph_answer(text,text)',
+        'api.restrict_monograph_sources(text,text,text[],text)',
+        'api.monograph_revision_proposals(text)',
+        'api.decide_monograph_revision_proposal(text,boolean,text)',
+        'api.discard_monograph_source(text,text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

@@ -300,8 +300,13 @@ begin
       outcome = p_outcome
   where n.id = p_need_id;
 
+  -- Ett opphav per hendelse. Er arbeidet gjort av en agentkjøring, er det
+  -- kjøringen som er opphavet — aktøren bak den står allerede på kjøringen, og
+  -- to opphav på den samme raden ville sagt at to forskjellige gjorde det.
   perform workflow.record_monograph_need_event(
-    p_need_id, v_before, p_note, p_actor_id, p_agent_run_id);
+    p_need_id, v_before, p_note,
+    case when p_agent_run_id is null then p_actor_id end,
+    p_agent_run_id);
 
   return true;
 end;

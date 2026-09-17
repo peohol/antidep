@@ -82,8 +82,11 @@ select set_eq(
            ('monograph_answer_revision_sources'),
            -- Migrasjon 013j: den frosne monografikandidaten og
            -- publiseringshistorikken for utgaven.
-           ('monograph_edition_candidates'), ('monograph_publication_events')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i og 013j'
+           ('monograph_edition_candidates'), ('monograph_publication_events'),
+           -- Migrasjon 013k: forkastingen av en godkjent kildebruk, bevart som
+           -- en ny opplysning framfor som en sletting.
+           ('monograph_source_use_revocations')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j og 013k'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
@@ -145,8 +148,12 @@ select set_eq(
            ('monograph_answer_verifications'),
            -- Migrasjon 013j: den navngitte menneskelige sluttkontrollen av én
            -- frosset monografiutgave.
-           ('monograph_final_controls')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i og 013j'
+           ('monograph_final_controls'),
+           -- Migrasjon 013k: kildebegrensningen for et område, de
+           -- forhåndsgodkjente kildene og de synlige avvikene.
+           ('monograph_source_restrictions'), ('monograph_restriction_sources'),
+           ('monograph_revision_proposals')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i, 013j og 013k'
 );
 select set_eq(
   $$
