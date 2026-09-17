@@ -43,6 +43,7 @@
     "ops:controls": "node --env-file-if-exists=.env.agent.local src/ops/control-worker-cli.ts",
     "ops:agents": "node --env-file-if-exists=.env.editor.local src/ops/agent-platform-cli.ts",
     "ops:discovery": "node --env-file-if-exists=.env.agent.local src/ops/monograph-discovery-cli.ts",
+    "ops:acquire": "node --env-file-if-exists=.env.editor.local src/ops/monograph-acquisition-cli.ts",
     "verify:repo": "./scripts/verify-repo.sh"
   },
   "dependencies": {
