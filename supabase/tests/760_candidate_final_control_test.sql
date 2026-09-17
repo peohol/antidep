@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(22);
+select plan(23);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -248,6 +248,18 @@ grant select, insert on built to authenticated;
 -- ===========================================================================
 -- Del 3 — Byggingen
 -- ===========================================================================
+-- Fra migrasjon 012b forsegles kandidaten allerede av den registrerte
+-- evidensvurderingen: kjeden går helt fram til den ene handlingen som skal være
+-- et menneskes, og stopper der. Redaktørens egen bygging er derfor idempotent
+-- begge ganger — den finner kandidaten kjeden alt har forseglet, og bygger den
+-- ikke om igjen.
+select is(
+  (select count(*)::integer from knowledge.candidates c
+   where c.claim_revision_id = '76000000-0000-4000-8000-000000000031'),
+  1,
+  'den registrerte evidensvurderingen forseglet kandidaten uten at noen ba om det'
+);
+
 select set_config('request.jwt.claims',
                   '{"sub":"76000000-0000-4000-8000-00000000000e"}', true);
 set local role authenticated;
@@ -257,8 +269,8 @@ reset role;
 
 select is(
   (select (payload ->> 'built')::boolean from built where label = 'first'),
-  true,
-  'første bygging forsegler kandidaten'
+  false,
+  'redaktørens bygging finner kandidaten kjeden alt har forseglet'
 );
 select is(
   (select (payload ->> 'built')::boolean from built where label = 'again'),

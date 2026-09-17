@@ -53,6 +53,11 @@ function fakeApi(items: readonly VerificationItem[], overrides: Partial<FakeApi>
       openedWith.push(inputManifest)
       return Promise.resolve(RUN_ID)
     },
+    // Doblen modellerer ikke den lagrede representasjonen: prøvene her kjører
+    // med dokumentkatalogen, som er den veien kontrollen normalt tar når filen
+    // finnes. `null` er derfor det sanne svaret — ingen representasjon lagret.
+    readRegisteredText: () => Promise.resolve(null),
+
     readInput: () =>
       Promise.resolve({
         agent_run_id: RUN_ID,

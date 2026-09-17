@@ -106,15 +106,29 @@ jobs:
       - name: Ende-til-ende for den autonome kjøreren (MCP mot ekte database)
         if: always()
         run: npm run db:test:mcp
-      # Fulltekstinnboksen er den ene flaten der et menneske gjør noe for at
-      # kjeden skal gå videre, og handlingen er å velge riktig PDF. Resten —
-      # bindingen, lesbarhetskontrollen, det registrerte tekstuttrekket,
-      # registreringen og kølegging av neste ledd — er Antideps eget arbeid.
-      # Denne kjøringen går hele veien med en ekte PDF og det ekte pdftotext,
-      # gjennom de ekte api-funksjonene (issue #99).
-      - name: Ende-til-ende for fulltekstinnboksen (opplasting til kølagt arbeid)
+      # De to flatene der et menneske gjør noe for at kjeden skal gå videre:
+      # å be om artikkelen, og å velge riktig PDF. Resten — bindingen,
+      # lesbarhetskontrollen, det registrerte tekstuttrekket, registreringen og
+      # kølegging av neste ledd — er Antideps eget arbeid. Denne kjøringen går
+      # hele veien med en ekte PDF og det ekte pdftotext, gjennom de ekte
+      # api-funksjonene (issue #99, issue #101). Selve kjedeovergangene er
+      # databasens egne og prøves i supabase/tests/810_chain_transitions_test.sql.
+      - name: Ende-til-ende for fulltekstveien (bestilling til kølagt arbeid)
         if: always()
         run: npm run db:test:intake
+      # De to automatiske kjedeovergangene «finn eller opprett» — synteseoppgaven
+      # og kilden bak en fulltekstbestilling — er kappløp som ingen unikhetskrav
+      # fanger, fordi radene de to øktene skriver, ikke er like nok til å
+      # kollidere. Denne kjører de to øktene mot hverandre (migrasjon 012b, 012c).
+      #
+      # Den står sist med vilje. Prøven bestiller og laster ikke opp, og selv om
+      # den rydder opp etter seg, er den den eneste kjøringen her som med vilje
+      # legger igjen halvferdig arbeid i køen mens den står på. Prøvene som leser
+      # *hele* den åpne arbeidsoversikten, skal se stacken slik de selv etterlot
+      # den.
+      - name: Samtidighetsprøve for kjedeovergangene
+        if: always()
+        run: npm run db:test:race
       - name: Stopp stacken
         if: always()
         run: npx supabase stop

@@ -49,6 +49,17 @@ export const WORK_BOARD_PATH = '/arbeid' as const
 export const FULL_TEXT_INBOX_PATH = '/fulltekst' as const
 
 /**
+ * Bestillingen: å be Antidep om en artikkel som mangler.
+ *
+ * Egen adresse og ikke en del av innboksen, fordi det er to forskjellige
+ * handlinger med to forskjellige mandater. Å avgjøre *hvilken* artikkel Antidep
+ * trenger og hva et funn fra den kan gjelde, er en redaksjonell avgjørelse og
+ * krever redaktørmandat; å velge riktig PDF for en artikkel som allerede er
+ * bestilt, gjør en editor eller en admin (issue #101, punkt 3).
+ */
+export const FULL_TEXT_REQUEST_PATH = '/be-om-artikkel' as const
+
+/**
  * Den tekniske problemoversikten: driftens egen side.
  *
  * Krever admin-mandat, og sier bare hvilket område som har problemer, når det
@@ -67,6 +78,10 @@ export function workBoardPath(): string {
 
 export function fullTextInboxPath(): string {
   return FULL_TEXT_INBOX_PATH
+}
+
+export function fullTextRequestPath(): string {
+  return FULL_TEXT_REQUEST_PATH
 }
 
 export function technicalProblemsPath(): string {

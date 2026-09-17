@@ -96,8 +96,12 @@ select set_eq(
            ('technical_incidents'), ('technical_incident_events'),
            -- Og telleren som gjør forsøksgrensen på reserveveien felles for
            -- alle instansene av serverruten.
-           ('diagnostics_attempts')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a og 012a'
+           ('diagnostics_attempts'),
+           -- Migrasjon 012b: hvor rekonsilieringen av hvert kjedeledd
+           -- fortsetter fra, slik at en kostnadsgrense per passering ikke blir
+           -- til sult for raden bak den.
+           ('chain_reconciliation_cursors')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a og 012b'
 );
 select set_eq(
   $$

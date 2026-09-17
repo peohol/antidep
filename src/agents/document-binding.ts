@@ -75,6 +75,17 @@ export interface RepresentationBinding {
   readonly contentHash: string
   /** `null` når representasjonen er teksten på adressen, ikke et dokument. */
   readonly document: DocumentBinding | null
+  /**
+   * Kildeversjonen bindingen gjelder, når kalleren kjenner den.
+   *
+   * Finnes for den ene veien som slår teksten opp i databasen framfor å
+   * gjenskape den av originaldokumentet: den registrerte representasjonen
+   * identifiseres av kildeversjonen, og ikke av adressen eller fingeravtrykket
+   * (`source-binding.ts`). Valgfri, fordi et oppdrag og et forslag bærer
+   * bindingen uten å bære versjonens id — og fordi et ledd uten den bare mister
+   * *den* veien, ikke kontrollen.
+   */
+  readonly sourceVersionId?: string | null
 }
 
 // ----------------------------------------------------------------------------

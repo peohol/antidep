@@ -4,7 +4,9 @@ Antidep utvikles som et agentstyrt, etterprøvbart kunnskapssystem om antidepres
 
 ## Status
 
-Repoet inneholder Supabase-skjemaet, en testbar agentmotor og klinikerflaten. Kjeden går nå hele veien fra en privat PDF til publisert klinikerinnhold: originalfilen lagres varig og privat med serverberegnet filidentitet, publikasjonstilhørigheten og lesbarheten — tabellene inkludert — kontrolleres før fullteksten registreres, agentarbeidet har varig og idempotent jobbtilstand, hvert agentledd kjører som sin egen registrerte modellidentitet, og kandidatinnholdet forsegles med kildedekningen synlig.
+Repoet inneholder Supabase-skjemaet, en testbar agentmotor og klinikerflaten. Kjeden går nå hele veien fra en privat PDF til publisert klinikerinnhold, og den går av seg selv mellom leddene: originalfilen lagres varig og privat med serverberegnet filidentitet, publikasjonstilhørigheten og lesbarheten — tabellene inkludert — kontrolleres før fullteksten registreres, agentarbeidet har varig og idempotent jobbtilstand, hvert agentledd kjører som sin egen registrerte modellidentitet, og kandidatinnholdet forsegles med kildedekningen synlig.
+
+Fra «Antidep mangler en artikkel» til «en kandidat ligger til sluttkontroll» er det to punkter der et menneske gjør noe — å be om artikkelen, og å velge riktig PDF — og ett til slutt: en navngitt fagperson som vurderer det ferdige produktet. Alt imellom er Antideps eget arbeid.
 
 Alt et menneske gjør i brukergrensesnittet, er klinisk eller redaksjonelt arbeid. Teknisk konfigurering, transport, runner- og modelloppsett, feilsøking og vedlikehold er Antideps eget ansvar, eller de tekniske agentenes — aldri klinikerens.
 
@@ -28,7 +30,9 @@ npm run build
 npm run verify:repo
 ```
 
-Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:chain`, `npm run db:test:mcp`, `npm run db:test:intake`, `npm run db:stop`.
+Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset`, `npm run db:test`, `npm run db:test:lock`, `npm run db:test:race`, `npm run db:test:chain`, `npm run db:test:mcp`, `npm run db:test:intake`, `npm run db:stop`.
+
+`npm run db:test` dekker de automatiske kjedeovergangene i `supabase/tests/810_chain_transitions_test.sql` — normalflyt, gjentakelse, kappløp, opprydning etter en teknisk svikt, og at en svikt i en overgang aldri ruller tilbake det kliniske arbeidet — og bestillingsflaten i `820_full_text_request_test.sql`. Kappløpene som bare finnes _mellom_ to transaksjoner, kjøres av `npm run db:test:race`.
 
 `npm run db:test:intake` går hele veien fra «venter på fulltekst» til kølagt arbeid, med en ekte PDF og det ekte `pdftotext`, gjennom de ekte api-funksjonene.
 
@@ -37,6 +41,7 @@ Lokal database: `npm run db:start`, `npm run db:test:upgrade`, `npm run db:reset
 ## Flatene
 
 - **`/arbeid` — arbeidsoversikten.** Åpen for alle, read-only, og på klinikerens språk: hva Antidep arbeider med nå, hva som er planlagt, hva som har stoppet, og hva som er gjort ferdig. Hver tilstand har et tegn, en tekst og en farge, og ingen av dem uttrykkes med farge alene. Mangler Antidep en artikkel, står det som planlagt arbeid med «Venter på fulltekst».
+- **`/be-om-artikkel` — bestillingen.** Krever redaktørmandat. En redaktør sier hvilken artikkel Antidep bør ha — tittel, forfattere, tidsskrift, år og DOI — og hva et funn fra den kan gjelde: hvilke virkestoff, hvilke endepunkt og hvilken populasjon. Katalogvalgene er navn, aldri id-er. Antidep oppretter eller gjenfinner kilden, utleder hvor fullteksten hentes fra, og setter artikkelen på ventelisten.
 - **`/fulltekst` — fulltekstinnboksen.** Krever editor- eller admin-mandat. Den viser hvilken artikkel som mangler, med tittel, forfattere og år, og ber om én ting: riktig PDF. Antidep binder filen til publikasjonen, kontrollerer at den faktisk _er_ den artikkelen, prøver lesbarheten med tabellene i behold, kjører det registrerte tekstuttrekket, registrerer kildeversjonen og legger neste ledd i køen — uten at noen oppgir en uuid, en hash, en oppskrift eller en terminalkommando.
 - **`/kandidater` og `/publisert`.** Sluttkontrollen av det ferdige produktet, og det Antidep faktisk sier.
 - **`/tekniske-problemer` — driftens side.** Krever admin-mandat, og et merke i navigasjonen dukker opp når noe er uløst. Den sier hvilket område som har problemer, når det oppsto og sist ble sett, og om det fortsatt pågår. Den rå årsaken lagres sikkert for Claude Code og ChatGPT, og vises aldri.
@@ -65,9 +70,12 @@ Generator, kildestøttekontroll og evidensvurdering er reelt separate. Hvilken K
 
 ```sh
 npm run ops:full-text   # Antideps eget tekstuttrekk av opplastede fulltekster
+npm run ops:controls    # ekstraksjonskontrollen og kildestøttekontrollen
 npm run ops:agents      # modelltildeling, kjøreroppsett og recovery-handoff
 ```
 
-Tekstuttrekket kjøres planlagt av GitHub Actions hvert kvarter (`.github/workflows/full-text-extraction.yml`), på en maskin der `pdftotext` er installert. Ingen starter det for hånd — kommandoen over er den samme kjøringen, tilgjengelig for feilsøking. `npm run ops:agents` kjøres av Claude Code eller ChatGPT ved behov. Ingen av dem er en klinikeroppgave, og ingen av dem finnes i produkt-UI.
+De to første kjøres planlagt av GitHub Actions hvert kvarter — `.github/workflows/full-text-extraction.yml` på en maskin der `pdftotext` er installert, og `.github/workflows/deterministic-controls.yml` med hvert kontrolledds egen legitimasjon. Ingen starter dem for hånd; kommandoene over er de samme kjøringene, tilgjengelige for feilsøking. `npm run ops:agents` kjøres av Claude Code eller ChatGPT ved behov. Ingen av dem er en klinikeroppgave, og ingen av dem finnes i produkt-UI.
+
+Selve _overgangene_ mellom leddene er databasens egne og ikke kjøreplanens: et registrert evidensfunn legger ekstraksjonskontrollen i køen, en bekreftet kontroll legger neste semantiske ledd i køen, og en registrert evidensvurdering forsegler kandidaten — alt i den samme transaksjonen som skrev raden foran. Står en kjøring, blir arbeidet stående i kø; det blir aldri borte, og det blir aldri en menneskeoppgave.
 
 Se [roadmap](docs/ROADMAP.md), [evidenskjeden](docs/EVIDENCE_PIPELINE.md), [den private MCP-appen](docs/CHATGPT_WORKSPACE_AGENT.md) og [styringsreglene](docs/ANTIDEP_CONSTITUTION.md).

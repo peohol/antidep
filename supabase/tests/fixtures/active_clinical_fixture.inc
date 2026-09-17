@@ -4,6 +4,14 @@
 create temporary table fixture_audit_baseline on commit drop as
 select id from audit.events;
 
+-- Samme grunn, for køen. Fra migrasjon 012b legger et registrert evidensfunn og
+-- en registrert påstandsrevisjon selv neste ledd i køen. Det er riktig
+-- oppførsel, og den prøves i 810_chain_transitions_test.sql — men dette
+-- fiksturet er et stillas og ikke et forløp, og en delt kø ville tvunget hver
+-- test til å filtrere bort jobber den aldri ba om.
+create temporary table fixture_pipeline_baseline on commit drop as
+select id from workflow.pipeline_jobs;
+
 create function pg_temp.extraction_actor_id() returns uuid language sql stable as $$
   select id from provenance.actors where actor_key = 'agent:evidence-extraction'
 $$;
@@ -171,6 +179,15 @@ from knowledge.claim_revisions r;
 set local session_replication_role = replica;
 delete from audit.events e
 where not exists (select 1 from fixture_audit_baseline b where b.id = e.id);
+
+-- Og de kjedeoverganger stillaset selv utløste, av samme grunn og på samme
+-- måte. Jobber en test legger inn etter dette punktet, står urørt.
+delete from workflow.pipeline_job_events e
+where not exists (select 1 from fixture_pipeline_baseline b where b.id = e.pipeline_job_id);
+delete from workflow.agent_handoff_jobs h
+where not exists (select 1 from fixture_pipeline_baseline b where b.id = h.pipeline_job_id);
+delete from workflow.pipeline_jobs j
+where not exists (select 1 from fixture_pipeline_baseline b where b.id = j.id);
 set local session_replication_role = origin;
 
 -- Older invariant tests create their own source versions using the pre-Antidep-2

@@ -18,6 +18,19 @@
 //                             kjør den registrerte oppskriften, krev at
 //                             teksten hasher til `content_hash`
 //
+// Fra migrasjon 012b finnes en tredje vei, og den gjelder bare der den andre
+// ikke kan brukes: har kjøringen ingen kopi av originaldokumentet, slås den
+// *registrerte representasjonen* opp i databasen — teksten kildeversjonens
+// fingeravtrykk ble beregnet av. En planlagt kontrollkjøring har ingen
+// dokumentkatalog og skal ikke ha en, og uten denne veien ville den ikke
+// kontrollert i det hele tatt. Teksten er den samme: kontrollen under er
+// nøyaktig den samme regningen, gjort på denne siden.
+//
+// Rekkefølgen er ikke en rangering av tillit, men av hva de to beviser.
+// Dokumentveien viser i tillegg at teksten lar seg *gjenskape* av den
+// registrerte oppskriften, og den opplysningen skal ikke forsvinne der den
+// faktisk finnes.
+//
 // ----------------------------------------------------------------------------
 // Hvorfor de to veiene ikke kan bytte plass
 //
@@ -36,6 +49,7 @@
 // aldri instruksjoner (CLAUDE.md). De brukes bare som høystakk for ordrette søk.
 // ============================================================================
 
+import { sourceVersionContentHash } from './content-hash.ts'
 import {
   looksLikePdf,
   type DocumentBinding,
@@ -50,11 +64,36 @@ import {
   type RetrieveOptions,
 } from './source-retrieval.ts'
 
+/**
+ * Oppslaget av den *registrerte* representasjonen, på kildeversjonens id.
+ *
+ * Teksten kildeversjonens fingeravtrykk ble beregnet av, slik den ligger lagret
+ * ved siden av originalfilen. Veien finnes for de kjøringene som ikke har
+ * originaldokumentet — en planlagt kontrollkjøring har ingen dokumentkatalog og
+ * skal ikke ha en — og den gir nøyaktig den samme teksten, fordi begge veier
+ * ender i den samme kontrollen: sha256 av teksten må være den registrerte.
+ */
+export type RegisteredTextLookup = (
+  sourceVersionId: string,
+) => Promise<
+  | { readonly status: 'ok'; readonly text: string }
+  | { readonly status: 'error'; readonly message: string }
+>
+
 export interface ResolvePorts {
   readonly retrieve?: RetrieveLike
   readonly retrieveOptions?: RetrieveOptions
   /** Oppslaget av originaldokumentet, på fingeravtrykk. */
   readonly documents?: DocumentLookup
+  /**
+   * Oppslaget av den lagrede representasjonen, når kjøringen har en.
+   *
+   * Brukes bare når originaldokumentet ikke er tilgjengelig for kjøringen. Det
+   * er ikke en rangering av tillit, men av hva de to beviser: dokumentet viser i
+   * tillegg at teksten lar seg *gjenskape* av den registrerte oppskriften, og
+   * den opplysningen skal ikke forsvinne der den faktisk finnes.
+   */
+  readonly registeredText?: RegisteredTextLookup
   readonly runTool?: RunTool
 }
 
@@ -63,7 +102,7 @@ export type ResolvedRepresentation =
       readonly status: 'ok'
       readonly text: string
       /** Hvor teksten kom fra, i klartekst, til logging og til kontrollgrunnlag. */
-      readonly origin: 'retrieved_text' | 'extracted_from_document'
+      readonly origin: 'retrieved_text' | 'extracted_from_document' | 'registered_representation'
       /** Dokumentet, når teksten kom fra ett. */
       readonly document?: LoadedDocument
       /**
@@ -132,12 +171,53 @@ async function resolveFromAddress(
   return { status: 'ok', text: representation.content, origin: 'retrieved_text' }
 }
 
+/**
+ * Den lagrede representasjonen, kontrollert mot fingeravtrykket her.
+ *
+ * Kontrollen gjentas på denne siden med vilje. Databasen har allerede en regel
+ * som krever at den lagrede teksten hasher til kildeversjonens `content_hash`,
+ * men et kontrolledd som stolte på det uten å regne selv, ville hvilt på at
+ * databasen bekrefter sin egen verdi. Regningen her er den samme som på
+ * dokumentveien, og den er hele grunnen til at de to veiene gir det samme
+ * kildegrunnlaget.
+ */
+async function resolveFromRegisteredText(
+  binding: RepresentationBinding,
+  lookup: RegisteredTextLookup,
+  sourceVersionId: string,
+): Promise<ResolvedRepresentation> {
+  const found = await lookup(sourceVersionId)
+  if (found.status === 'error') {
+    return found
+  }
+  const hash = await sourceVersionContentHash(found.text)
+  if (hash !== binding.contentHash) {
+    return {
+      status: 'error',
+      message:
+        'Den lagrede representasjonen hasher til ' +
+        `${hash}, mens kildeversjonen er registrert med ${binding.contentHash}. En tekst som ` +
+        'ikke er den registrerte, blir aldri kontrollgrunnlag — uansett hvor den kom fra.',
+    }
+  }
+  return { status: 'ok', text: found.text, origin: 'registered_representation' }
+}
+
 async function resolveFromDocument(
   binding: RepresentationBinding,
   document: DocumentBinding,
   ports: ResolvePorts,
 ): Promise<ResolvedRepresentation> {
+  const sourceVersionId = binding.sourceVersionId ?? null
+  const registered =
+    ports.registeredText !== undefined && sourceVersionId !== null
+      ? { lookup: ports.registeredText, sourceVersionId }
+      : null
+
   if (ports.documents === undefined) {
+    if (registered !== null) {
+      return resolveFromRegisteredText(binding, registered.lookup, registered.sourceVersionId)
+    }
     return {
       status: 'error',
       message:
@@ -150,6 +230,11 @@ async function resolveFromDocument(
 
   const found = await ports.documents(document.sha256)
   if (found.status === 'error') {
+    // Filen ligger ikke der denne kjøringen ser. Den lagrede representasjonen er
+    // da den ene veien som finnes, og den gir det samme fingeravtrykket.
+    if (registered !== null) {
+      return resolveFromRegisteredText(binding, registered.lookup, registered.sourceVersionId)
+    }
     return found
   }
   const original = found.document

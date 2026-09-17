@@ -1,0 +1,140 @@
+# Antideps egne deterministiske kontroller, kjørt planlagt.
+#
+# ----------------------------------------------------------------------------
+# Hvorfor denne arbeidsflyten finnes
+#
+# Ekstraksjonskontrollen og kildestøttekontrollen er Antideps egen kode, og de
+# har alltid vært det. Det som manglet, var at noen kjørte dem: et registrert
+# agentsvar la ikke kontrollen i gang av seg selv, og kjeden sto stille til et
+# menneske åpnet et terminalvindu (issue #101).
+#
+# Fra migrasjon 012b legger databasen selv kontrollen i køen, i det samme
+# kallet som registrerte arbeidet foran. Selve *overgangen* er altså databasens
+# egen og ikke denne tidsplanens — denne jobben er bare maskinen som gjør
+# arbeidet som allerede står i kø. Står den, blir arbeidet stående; det blir
+# aldri borte, og det blir aldri en menneskeoppgave.
+#
+# Samme form som `full-text-extraction.yml`, og av samme grunn: en tidsplan, en
+# maskin og ingen i transporten.
+#
+# ----------------------------------------------------------------------------
+# Hvorfor denne bare har én utløser
+#
+# Jobben har begge kontrolleddenes legitimasjon i miljøet og kjører kode fra den
+# branchen kjøringen gjelder. Kode på en branch som ikke er reviewet, skal derfor
+# ikke kunne starte den: legitimasjonen her kan registrere kontrollrader som
+# åpner publiseringsgaten.
+#
+# `pull_request` er den åpenbare: en pull request fra en branch i samme repo kan
+# få repository-secrets. Men `workflow_dispatch` er like ille, og mindre
+# åpenbart: GitHubs «Run workflow» har en branch-meny, og en manuell kjøring mot
+# en valgt branch setter `GITHUB_REF`/`GITHUB_SHA` til nettopp den — så
+# `actions/checkout` henter den branchens kode, med hemmelighetene i miljøet.
+# Derfor finnes bare `schedule` her, som alltid kjører standardbranchen.
+#
+# Kontrollen ligger i `scripts/verify-repo.sh`, slik at den ikke kan glemmes ved
+# neste arbeidsflyt.
+#
+# ----------------------------------------------------------------------------
+# Ingen modellnøkkel, og ingen dokumentkatalog
+#
+# Kontrollene er deterministisk kode og kaller ingen modell. Kildeteksten slås
+# opp i databasen som den *registrerte representasjonen* — teksten
+# kildeversjonens fingeravtrykk ble beregnet av — og kjøringen regner
+# fingeravtrykket ut på nytt selv før den bruker den. Originalfilen forlater
+# aldri databasen her, og `pdftotext` trengs ikke.
+#
+# ----------------------------------------------------------------------------
+# Før legitimasjonen er lagt inn
+#
+# Mangler en av hemmelighetene, avslutter jobben grønt med en advarsel framfor å
+# stå rød hver time. En rød arbeidsflyt som alltid er rød, er en lampe ingen ser
+# på.
+# ----------------------------------------------------------------------------
+
+name: Deterministiske kontroller
+
+on:
+  schedule:
+    # Hvert kvarter, som tekstuttrekket. Ventetiden er Antideps og ikke noens
+    # arbeidsoppgave: den som leverte agentsvaret, har allerede gjort sitt, og
+    # arbeidet står som planlagt i den åpne oversikten til kontrollen er kjørt.
+    - cron: '7,22,37,52 * * * *'
+
+permissions:
+  contents: read
+
+# To kjøringer samtidig ville tatt hvert sitt uttak uten å kollidere — leien i
+# databasen sørger for det. Men de ville også begge stått i kø for de samme
+# radene, og det er ingenting å vinne på.
+concurrency:
+  group: deterministic-controls
+  cancel-in-progress: false
+
+jobs:
+  control:
+    name: Kjør kontrollene som venter
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # `schedule` kjører alltid standardbranchen, så denne er sann hver gang i
+    # dag. Den står her fordi den ikke er det om noen senere legger til en
+    # utløser som kan velge branch.
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      # Kontrolleres først, slik at en kjøring uten legitimasjon ikke bruker tid
+      # på å sjekke ut koden og installere noe som helst.
+      - name: Kontroller at legitimasjonen finnes
+        id: credentials
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_AGENT_IDENTITY_KEY }}
+          ANTIDEP_AGENT_SECRET: ${{ secrets.ANTIDEP_AGENT_SECRET }}
+          ANTIDEP_CLAIM_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_CLAIM_AGENT_IDENTITY_KEY }}
+          ANTIDEP_CLAIM_AGENT_SECRET: ${{ secrets.ANTIDEP_CLAIM_AGENT_SECRET }}
+        run: |
+          missing=()
+          for name in ANTIDEP_SUPABASE_URL ANTIDEP_SUPABASE_PUBLISHABLE_KEY \
+                      ANTIDEP_AGENT_IDENTITY_KEY ANTIDEP_AGENT_SECRET \
+                      ANTIDEP_CLAIM_AGENT_IDENTITY_KEY ANTIDEP_CLAIM_AGENT_SECRET; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::warning::Kontrollene er ikke koblet til ennå. Legg inn ${missing[*]} som repository secrets, så kjører de av seg selv."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # Kommandoen bruker bare kjøretidsavhengighetene. Byggverktøyene hører til
+      # CI, ikke til en drift som skal være rask og kjøre ofte.
+      - name: Installer avhengigheter
+        if: steps.credentials.outputs.ready == 'true'
+        run: npm ci --omit=dev
+
+      - name: Kjør kontrollene
+        if: steps.credentials.outputs.ready == 'true'
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_AGENT_IDENTITY_KEY }}
+          ANTIDEP_AGENT_SECRET: ${{ secrets.ANTIDEP_AGENT_SECRET }}
+          ANTIDEP_CLAIM_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_CLAIM_AGENT_IDENTITY_KEY }}
+          ANTIDEP_CLAIM_AGENT_SECRET: ${{ secrets.ANTIDEP_CLAIM_AGENT_SECRET }}
+        run: |
+          npm run ops:controls -- --max 25 | tee -a "$GITHUB_STEP_SUMMARY"

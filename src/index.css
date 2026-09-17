@@ -170,3 +170,62 @@ pre {
 .inbox-item h3 {
   margin: 0 0 0.25rem;
 }
+
+/* Bestillingen av en artikkel Antidep mangler.
+   Feltene står under etikettene sine framfor ved siden av dem: en etikett som
+   deler linje med feltet, blir borte for den som forstørrer siden. */
+form label {
+  display: block;
+  margin: 0 0 0.25rem;
+  font-weight: 650;
+}
+form input[type='text'] {
+  width: 100%;
+  max-width: 34rem;
+  padding: 0.45rem 0.6rem;
+  border: 0.06rem solid #c6cfc8;
+  border-radius: 0.3rem;
+  font: inherit;
+}
+form button {
+  padding: 0.55rem 1.1rem;
+  border: 0.06rem solid #235c39;
+  border-radius: 0.3rem;
+  background: #235c39;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+form button[disabled] {
+  border-color: #8d9a92;
+  background: #8d9a92;
+  cursor: default;
+}
+.choices {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem 1rem;
+  border: 0.06rem solid #dfe5e0;
+  border-radius: 0.35rem;
+  background: #fcfdfc;
+}
+.choices legend {
+  padding: 0 0.35rem;
+  font-weight: 650;
+}
+.choices__help {
+  margin: 0.15rem 0 0.5rem;
+  color: #4c564f;
+  font-size: 0.92rem;
+}
+.choices__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.choices__list li {
+  margin: 0.2rem 0;
+}
+.choices__list label {
+  display: inline;
+  font-weight: 400;
+}

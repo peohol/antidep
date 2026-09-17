@@ -24,6 +24,11 @@ import type { FullTextGateway } from './full-text-gateway'
 import type { TechnicalGateway } from './technical-gateway'
 import type { WorkBoardGateway } from './work-board-gateway'
 import { parseFullTextInbox, parseFullTextSubmission } from '../lib/full-text-inbox'
+import {
+  parseCapabilities,
+  parseRequestOptions,
+  parseRequestResult,
+} from '../lib/full-text-request'
 import { parseTechnicalProblemSummary, parseTechnicalProblems } from '../lib/technical-problems'
 import { parseWorkBoard } from '../lib/work-board'
 
@@ -94,6 +99,17 @@ function fullText(overrides: Partial<FullTextGateway> = {}): FullTextGateway {
   return {
     listInbox: () => Promise.resolve(parseFullTextInbox(INBOX_ROWS)),
     submit: () => Promise.resolve(parseFullTextSubmission({ accepted: true })),
+    capabilities: () => Promise.resolve(parseCapabilities({ may_request: true, may_upload: true })),
+    requestOptions: () =>
+      Promise.resolve(
+        parseRequestOptions({
+          drugs: ['sertralin', 'mirtazapin'],
+          outcomes: ['vektendring'],
+          populations: ['voksne med depressiv lidelse'],
+        }),
+      ),
+    request: () =>
+      Promise.resolve(parseRequestResult({ requested: true, state: 'open', title: 'Ny artikkel' })),
     ...overrides,
   }
 }
@@ -255,6 +271,134 @@ describe('den åpne arbeidsoversikten', () => {
     ).toBeVisible()
     expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument()
     spy.mockRestore()
+  })
+})
+
+describe('bestillingen av en artikkel Antidep mangler', () => {
+  it('ber bare om det en redaktør kan svare på uten å slå opp noe teknisk', async () => {
+    render(
+      <MemoryRouter initialEntries={['/be-om-artikkel']}>
+        <AppLayout fullText={fullText()} />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByLabelText('Tittel')).toBeVisible()
+    expect(screen.getByLabelText('Forfattere')).toBeVisible()
+    expect(screen.getByLabelText('DOI')).toBeVisible()
+    expect(screen.getByRole('group', { name: 'Virkestoff' })).toBeVisible()
+    expect(screen.getByRole('group', { name: 'Endepunkt' })).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: 'sertralin' })).toBeVisible()
+
+    // Ingen uuid, ingen hash, ingen oppskrift, ingen jobbnøkkel, ingen
+    // agentrolle, ingen modell, ingen kjører og ingen terminalkommando.
+    const flate = document.body.textContent ?? ''
+    for (const teknisk of [
+      'uuid',
+      'sha256',
+      'npm run',
+      'pipeline',
+      'evidence_extraction',
+      'request_missing_full_text',
+      'source_version',
+    ]) {
+      expect(flate).not.toContain(teknisk)
+    }
+  })
+
+  it('sender bestillingen med navn, og aldri med en id', async () => {
+    const request: FullTextGateway['request'] = vi.fn(() =>
+      Promise.resolve(
+        parseRequestResult({ requested: true, state: 'open', title: 'Sertralin og vekt' }),
+      ),
+    )
+    render(
+      <MemoryRouter initialEntries={['/be-om-artikkel']}>
+        <AppLayout fullText={fullText({ request })} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.change(await screen.findByLabelText('Tittel'), {
+      target: { value: 'Sertralin og vekt' },
+    })
+    fireEvent.change(screen.getByLabelText('Forfattere'), {
+      target: { value: 'Testforfatter m.fl.' },
+    })
+    fireEvent.change(screen.getByLabelText('DOI'), {
+      target: { value: 'https://doi.org/10.1234/ABC' },
+    })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'sertralin' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'vektendring' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Be om artikkelen' }))
+
+    await waitFor(() => {
+      expect(request).toHaveBeenCalledTimes(1)
+    })
+    const [draft] = vi.mocked(request).mock.calls[0] ?? []
+    expect(draft?.drugs).toEqual(['sertralin'])
+    expect(draft?.outcomes).toEqual(['vektendring'])
+    expect(await screen.findByText(/venter nå på «Sertralin og vekt»/)).toBeVisible()
+  })
+
+  it('sier hva som mangler før den sender noe som uansett ville blitt avvist', async () => {
+    const request: FullTextGateway['request'] = vi.fn(() =>
+      Promise.resolve(parseRequestResult({ requested: true, state: 'open', title: 'x' })),
+    )
+    render(
+      <MemoryRouter initialEntries={['/be-om-artikkel']}>
+        <AppLayout fullText={fullText({ request })} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Be om artikkelen' }))
+    expect(await screen.findByText(/Skriv artikkelens tittel/)).toBeVisible()
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('viser ikke skjemaet til den som ikke kan bestille', async () => {
+    // Et skjema vist til en admin ville bedt dem gjøre noe kallet uansett måtte
+    // avvise — og en avvisning på noe man ikke gjorde galt, er teknisk støy.
+    render(
+      <MemoryRouter initialEntries={['/be-om-artikkel']}>
+        <AppLayout
+          fullText={fullText({
+            capabilities: () =>
+              Promise.resolve(parseCapabilities({ may_request: false, may_upload: true })),
+          })}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText(/krever redaktørmandat/)).toBeVisible()
+    expect(screen.queryByLabelText('Tittel')).toBeNull()
+  })
+
+  it('viser flatens egen setning når bestillingen ikke gikk gjennom', async () => {
+    setTechnicalSink(() => {})
+    render(
+      <MemoryRouter initialEntries={['/be-om-artikkel']}>
+        <AppLayout
+          fullText={fullText({
+            request: () =>
+              Promise.reject(
+                new GatewayFailure(
+                  'Antidep venter allerede på denne artikkelen med en annen avgrensning.',
+                  'rejected',
+                  'full_text_intake',
+                ),
+              ),
+          })}
+        />
+      </MemoryRouter>,
+    )
+
+    fireEvent.change(await screen.findByLabelText('Tittel'), { target: { value: 'En artikkel' } })
+    fireEvent.change(screen.getByLabelText('Forfattere'), { target: { value: 'En forfatter' } })
+    fireEvent.change(screen.getByLabelText('DOI'), { target: { value: '10.1234/abc' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'sertralin' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'vektendring' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Be om artikkelen' }))
+
+    expect(await screen.findByText(/venter allerede på denne artikkelen/)).toBeVisible()
   })
 })
 

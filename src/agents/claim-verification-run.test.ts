@@ -50,6 +50,10 @@ function fakeApi(
   return {
     registered,
     completions,
+    // Doblen modellerer ikke den lagrede representasjonen: prøvene her kjører
+    // mot en kilde som hentes på adressen, som er den andre veien kontrollen
+    // kan ta. `null` er derfor det sanne svaret — ingen representasjon lagret.
+    readRegisteredText: () => Promise.resolve(null),
     beginRun: () => Promise.resolve(RUN_ID),
     readInput: () =>
       Promise.resolve({

@@ -8,9 +8,12 @@ npm run db:test:upgrade
 npm run db:reset
 npm run db:test
 npm run db:test:lock
+npm run db:test:race
 npm run db:test:chain
 npm run db:stop
 ```
+
+`db:test:race` kjører to reelle forbindelser mot hverandre på de to stedene kjeden «finner eller oppretter»: synteseoppgaven for et virkestoff og et endepunkt, og kilden bak en fulltekstbestilling. Ingen av dem fanges av et unikhetskrav, fordi radene de to øktene skriver, ikke er like nok til å kollidere — og pgTAP-filene kjører i én transaksjon og kan derfor ikke se dem.
 
 `db:test:upgrade` går tilbake til siste legacy-migrasjon og prøver Antidep 2-resetten som en faktisk oppgradering med syntetisk eksisterende innhold. `seed.sql` inneholder ikke klinisk prototypeinnhold. Migrasjoner til og med `20260924095000` er historiske og kontrolleres av `npm run verify:repo`. Nye migrasjoner er fremoverrettede.
 
@@ -24,6 +27,8 @@ Agent-CLI-ene bruker prosjektets Data API med publishable key, aldri `service_ro
 - `ANTIDEP_SYNTHESIS_AGENT_*` brukes av synteseagenten.
 - `ANTIDEP_CLAIM_AGENT_*` brukes av den separate kildestøttekontrolløren.
 - `ANTIDEP_ASSESSMENT_AGENT_*` brukes av evidensvurdereren.
+
+`ANTIDEP_AGENT_*` og `ANTIDEP_CLAIM_AGENT_*` er i tillegg de to legitimasjonene den planlagte kontrollkjøringen leser (`npm run ops:controls`, `.github/workflows/deterministic-controls.yml`). De legges inn som repository secrets sammen med `ANTIDEP_SUPABASE_URL` og `ANTIDEP_SUPABASE_PUBLISHABLE_KEY`; mangler en av dem, avslutter kjøringen grønt med en advarsel framfor å stå rød. Kjøringen trenger ingen dokumentkatalog: kildeteksten slås opp som den registrerte representasjonen, og originalfilen forlater aldri databasen.
 
 Hemmeligheter skal bare ligge i gitignorerte lokale miljøfiler eller et autorisert runtime-miljø. De skal aldri få `VITE_`-prefiks, commites eller legges i klientbunten.
 

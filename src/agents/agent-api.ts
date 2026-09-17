@@ -284,6 +284,31 @@ export type AgentDatabase = {
         // `parseEvidenceAssessmentResult`, som avviser et svar som ikke har den.
         Returns: unknown
       }
+      // Den lagrede, etterprøvbare representasjonen av én kildeversjon, til et
+      // av de to deterministiske kontrolleddene (migrasjon 012b). Ikke
+      // originalfilen: den forlater aldri databasen. Kjøringen må være åpen og
+      // tilhøre identiteten, slik at ingen lesning av kildetekst skjer uten en
+      // proveniensrad.
+      control_source_representation: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_run_id: Uuid
+          p_source_version_id: Uuid
+        }
+        // jsonb: { source_version_id, content_hash, representation, text }.
+        Returns: unknown
+      }
+      // Tar igjen de automatiske kjedeovergangene en teknisk svikt etterlot.
+      // Tar ikke imot ett eneste felt fra kalleren (migrasjon 012b).
+      resume_chain_transitions: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+        }
+        // jsonb: { queued, candidates_built }.
+        Returns: unknown
+      }
     }
   }
 }
@@ -397,8 +422,27 @@ export interface AgentRunApi {
   ): Promise<void>
 }
 
+/**
+ * Det begge de deterministiske kontrolleddene kan gjøre, og ingenting mer.
+ *
+ * Den lagrede representasjonen er kildegrunnlaget for begge kontrollene, og
+ * veien til den er den samme. Den ligger her framfor i hver av de to
+ * grenseflatene, fordi to erklæringer av det samme kallet ville vært to steder
+ * å endre det.
+ */
+export interface ControlSourceApi {
+  /**
+   * Teksten kildeversjonens fingeravtrykk ble beregnet av, eller `null` når
+   * ingen representasjon er lagret.
+   *
+   * Kjøringen oppgis fordi databasen krever en åpen kjøring som tilhører
+   * identiteten: en lesning av kildetekst skal etterlate seg en proveniensrad.
+   */
+  readRegisteredText(agentRunId: Uuid, sourceVersionId: Uuid): Promise<string | null>
+}
+
 /** Kallene ekstraksjonsverifikatoren gjør, som én grenseflate. */
-export interface ExtractionVerificationApi extends AgentRunApi {
+export interface ExtractionVerificationApi extends AgentRunApi, ControlSourceApi {
   readInput(agentRunId: Uuid, evidenceItemId: Uuid | null): Promise<unknown>
   registerVerification(args: RegisterVerificationArgs): Promise<Uuid>
 }
@@ -473,7 +517,7 @@ export interface EvidenceAssessmentApi extends AgentRunApi {
 }
 
 /** Kallene claim-verifikatoren gjør, som én grenseflate. */
-export interface ClaimVerificationApi extends AgentRunApi {
+export interface ClaimVerificationApi extends AgentRunApi, ControlSourceApi {
   readInput(agentRunId: Uuid, claimRevisionId: Uuid | null): Promise<unknown>
   registerVerification(args: RegisterClaimVerificationArgs): Promise<Uuid>
 }
@@ -689,6 +733,93 @@ function createAgentRunApi(client: AgentClient, identity: Identity, role: string
  * `AgentSecret` sørger for at den ikke kan havne i en logg på veien
  * (se `agent-credential.ts`).
  */
+
+/**
+ * Lesningen av den lagrede representasjonen, delt av de to kontrolleddene.
+ *
+ * `null` og ikke en tom streng når ingen representasjon er lagret: fraværet er
+ * en opplysning kontrollen skal handle på — den konkluderer da ikke — og ikke
+ * en tekst uten innhold, som den ville lett forgjeves i.
+ */
+function createControlSourceApi(
+  client: AgentClient,
+  identity: { p_identity_key: string; p_secret: string },
+): ControlSourceApi {
+  return {
+    async readRegisteredText(agentRunId, sourceVersionId) {
+      const { data, error } = await client.rpc('control_source_representation', {
+        ...identity,
+        p_agent_run_id: agentRunId,
+        p_source_version_id: sourceVersionId,
+      })
+      if (error !== null) {
+        fail('api.control_source_representation', error)
+      }
+      if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+        throw new AgentApiError(
+          'api.control_source_representation',
+          'Svaret er ikke et objekt, og kan ikke bære den registrerte representasjonen.',
+          null,
+          null,
+        )
+      }
+      const text = (data as { text?: unknown }).text
+      if (text === null || text === undefined) {
+        return null
+      }
+      if (typeof text !== 'string') {
+        throw new AgentApiError(
+          'api.control_source_representation',
+          'Den registrerte representasjonen er ikke tekst.',
+          null,
+          null,
+        )
+      }
+      return text
+    },
+  }
+}
+
+/**
+ * Oppslaget `source-binding.ts` tar imot, bundet til én åpen kjøring.
+ *
+ * En feil blir en avvisning og ikke et kast: et ledd som ikke fikk tak i
+ * kildeteksten, skal la være å konkludere — ikke stoppe hele køen
+ * (ANTIDEP_CONSTITUTION.md regel 4).
+ */
+export function registeredTextLookup(
+  api: ControlSourceApi,
+  agentRunId: Uuid,
+): (
+  sourceVersionId: string,
+) => Promise<
+  | { readonly status: 'ok'; readonly text: string }
+  | { readonly status: 'error'; readonly message: string }
+> {
+  return async (sourceVersionId: string) => {
+    try {
+      const text = await api.readRegisteredText(agentRunId, sourceVersionId as Uuid)
+      if (text === null) {
+        return {
+          status: 'error',
+          message:
+            'Kildeteksten er ikke lagret for denne kildeversjonen, så kontrollen har ingen ' +
+            'representasjon å slå kildeutdragene opp i.',
+        }
+      }
+      return { status: 'ok', text }
+    } catch (cause) {
+      return {
+        status: 'error',
+        message:
+          cause instanceof Error
+            ? cause.message
+            : 'Den registrerte representasjonen kunne ikke hentes.',
+      }
+    }
+  }
+}
+
 export function createExtractionVerificationApi(
   client: AgentClient,
   credential: AgentCredential,
@@ -697,6 +828,7 @@ export function createExtractionVerificationApi(
 
   return {
     ...createAgentRunApi(client, identity, EXTRACTION_VERIFICATION_ROLE),
+    ...createControlSourceApi(client, identity),
 
     async readInput(agentRunId, evidenceItemId) {
       const { data, error } = await client.rpc('extraction_verification_input', {
@@ -742,6 +874,7 @@ export function createClaimVerificationApi(
 
   return {
     ...createAgentRunApi(client, identity, CITATION_SUPPORT_VERIFICATION_ROLE),
+    ...createControlSourceApi(client, identity),
 
     async readInput(agentRunId, claimRevisionId) {
       const { data, error } = await client.rpc('claim_verification_input', {
