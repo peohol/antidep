@@ -1002,6 +1002,16 @@ begin
   where r.id = v_review.id
   for update;
 
+  -- Raden kan ha forsvunnet mens vi ventet på låsen: påstanden kan være
+  -- eksplisitt fjernet i mellomtiden, og da rives oppgaven ned med den. Det er
+  -- ikke en feil, men det er heller ikke noe å avgjøre.
+  if not found then
+    raise exception using
+      errcode = 'no_data_found',
+      message = 'Revisjonsvurderingen finnes ikke lenger slik du så den.',
+      hint = 'Påstanden kan ha blitt fjernet i mellomtiden. Hent listen på nytt.';
+  end if;
+
   if v_review.state <> 'open' then
     -- Den samme avgjørelsen på det samme grunnlaget er den samme avgjørelsen.
     -- To redaktører som trykket samtidig, har begge gjort riktig.
