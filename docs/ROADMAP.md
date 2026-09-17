@@ -1,5 +1,23 @@
 # Roadmap
 
+## Gjeldende produktretning — 2026-09-17
+
+Neste produktutvidelse er **monografibestilling og autonom kildeoppdagelse**:
+normalinngangen skal være «bygg monografi for dette virkestoffet», ikke at en
+kliniker først velger artikler én for én.
+
+Fase A og B er utarbeidet som [Monograph Standard v1](MONOGRAPH_STANDARD.md) og
+[Source Policy v1](SOURCE_POLICY.md). [Monografiplanen](MONOGRAPH_PLAN.md) beskriver
+leveranserekkefølgen. Dokumentene er faglige spesifikasjoner, ikke implementerte
+funksjoner eller en ferdig klinisk monografi. **Fase C er ikke startet og krever
+en egen bestilling.** Sluttkontroll og publiseringsmandat er uendret.
+
+Beskrivelsen nedenfor gjelder den eksisterende artikkelbaserte kjeden, ikke en
+påstand om at monografiflyten allerede fungerer. Nødvendig feilretting og drift
+av dagens løsning kan fortsatt håndteres uavhengig av produktutvidelsen.
+
+## Eksisterende leveranse
+
 Forrige leveranse — **resten av terminalen ut av veien fulltekst → kandidat** —
 er implementert (issue #101). Den fullførte det som sto igjen etter den
 klinikervennlige arbeidsflaten, og den er beskrevet under.
@@ -19,7 +37,7 @@ skyves aldri tilbake på klinikeren.**
 Regelen er varig og står i `AGENTS.md`. Den gjelder hver senere leveranse, og en
 flate som bryter den, er ikke ferdig uansett hva den ellers gjør.
 
-## De to menneskehandlingene
+## De to menneskehandlingene i dagens artikkelbaserte flyt
 
 Hele veien fra «Antidep mangler en artikkel» til «en kandidat ligger til
 sluttkontroll» har nå **to** punkter der et menneske gjør noe, og begge er
@@ -181,21 +199,35 @@ registreres det som `not_exposed`, og Antidep hevder ikke at separasjonen er
 bevist av plattformen — den hviler da på den registrerte tildelingen, akkurat som
 i den manuelle handoffen.
 
-## Grensen automatikken ikke går over
+## Dagens grense for revisjon
 
 Kjeden synteserer ikke om igjen en påstand som allerede finnes for det samme
 temaet og virkestoffet. Kommer det et nytt evidensfunn på et par som alt har en
 påstand, blir funnet kontrollert og står klart — men *hva* påstanden skal si i
-lys av det, er en redaksjonell avgjørelse og ikke en transport.
+lys av det, er i dagens flyt en redaksjonell avgjørelse.
 
-Det er den ene stedet kjeden med vilje stopper før den er tom for arbeid, og det
-er ført her framfor å se ut som om automatikken dekker mer enn den gjør.
+Dette beskriver dagens begrensning, ikke et varig krav om at mennesker må
+bestille hver revisjon. Monografistandarden krever at ny evidens senere kan
+utløse et kontrollert **revisjonsutkast** automatisk. Det må ikke forveksles med
+automatisk godkjenning eller publisering.
 
 ## Neste leveranse
 
-Neste sammenhengende leveranse er **revisjonen av en påstand som allerede
-finnes**: en redaksjonell flate der en redaktør avgjør at ny evidens skal inn i
-en eksisterende påstand, og lar kjeden bygge den nye revisjonen med de samme
-kontrollene. Det er det siste leddet i golden slice som fortsatt er en
-menneskeoppgave uten en flate — og det er en faglig avgjørelse, ikke en
-transport, så flaten skal bygges under den samme regelen som resten.
+Neste sammenhengende produktleveranse er fase C i [monografiplanen](MONOGRAPH_PLAN.md):
+**fra én virkestoffbestilling til standardiserte kunnskapsbehov, autonom
+kildeoppdagelse og kontrollert videre behandling mot en samlet monografi**.
+[Monograph Standard v1](MONOGRAPH_STANDARD.md) definerer spørsmål og svarformer;
+[Source Policy v1](SOURCE_POLICY.md) definerer kildevalg, søkedekning, kontroll
+og vedlikehold.
+
+Leveransen skal samle bestillingen, dekningskartet, kildeoppdagelsen og
+koblingen til eksisterende evidenskjede, med korrekt støtte for forskjellige
+kunnskapstyper og kildeformer. Den må også håndtere revisjon av eksisterende
+svar, gjenbruk uten dobbelttelling, samlet monografikandidat og menneskelig
+redaksjonell kontroll. Den tidligere foreslåtte isolerte revisjonsflaten er
+ikke lenger hele neste produktleveranse; revisjonsbehovet inngår i denne større
+arbeidsformen.
+
+Ingen eksisterende kilde-, tilgangs- eller publiseringskontroll svekkes av at
+spesifikasjonene er skrevet. Fase C er ikke igangsatt. Etter implementeringen
+skal arbeidsformen prøves på en reell sertralinmonografi før skalering.
