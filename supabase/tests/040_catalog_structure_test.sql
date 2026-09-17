@@ -79,8 +79,11 @@ select set_eq(
            -- Migrasjon 013i: det strukturerte svaret, revisjonene av det og
            -- tilleggskildene én revisjon hviler på.
            ('monograph_answers'), ('monograph_answer_revisions'),
-           ('monograph_answer_revision_sources')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h og 013i'
+           ('monograph_answer_revision_sources'),
+           -- Migrasjon 013j: den frosne monografikandidaten og
+           -- publiseringshistorikken for utgaven.
+           ('monograph_edition_candidates'), ('monograph_publication_events')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i og 013j'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
@@ -139,8 +142,11 @@ select set_eq(
            ('monograph_document_requests'),
            -- Migrasjon 013i: hvilke felter den deterministiske svarkontrollen
            -- faktisk kontrollerte for hver svarrevisjon.
-           ('monograph_answer_verifications')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h og 013i'
+           ('monograph_answer_verifications'),
+           -- Migrasjon 013j: den navngitte menneskelige sluttkontrollen av én
+           -- frosset monografiutgave.
+           ('monograph_final_controls')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i og 013j'
 );
 select set_eq(
   $$

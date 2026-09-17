@@ -354,7 +354,16 @@ select is_empty(
         -- Kontrolleres i 890_monograph_acquisition_test.sql.
         'api.monograph_source_requests(text)',
         'api.submit_monograph_document(text,text,text,text,text,text,text)',
-        'api.withdraw_monograph_document_request(text,text)'
+        'api.withdraw_monograph_document_request(text,text)',
+        -- Migrasjon 013j. Monografiutkastet, kandidaten, den navngitte
+        -- sluttkontrollen og den separate publiseringen. Kontrolleres i
+        -- 910_monograph_candidate_test.sql.
+        'api.monograph_draft(text)',
+        'api.build_monograph_candidate(text)',
+        'api.monograph_candidate(text)',
+        'api.record_monograph_final_control(text,text,text,text)',
+        'api.publish_monograph(text,text)',
+        'api.withdraw_monograph_publication(text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'
