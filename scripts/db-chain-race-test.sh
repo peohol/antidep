@@ -36,6 +36,13 @@
 #      taperens kilderad stående uten identifikator: en artikkel ingenting peker
 #      på, som neste bestilling av den samme artikkelen ikke finner igjen.
 #
+#   3b. Fjerningen av et evidensfunn mot den redaksjonelle beslutningen. De to
+#      tar de samme to låsene, og beslutningen tar subjektlåsen først. Tok
+#      fjerningen tabellåsene først, ville de gått i hver sin retning gjennom
+#      dem, og Postgres måtte brutt vranglåsen ved å avbryte den ene. Prøven
+#      måler ikke bare at fjerningen venter, men at den som holder subjektlåsen,
+#      fortsatt kan lese evidenstabellen mens den venter.
+#
 #   3. Den redaksjonelle revisjonsoppgaven (migrasjon 012d). To kontroller av
 #      forskjellige funn på et par som allerede har en påstand, kan begge lese
 #      «ingen oppgave» og begge forsøke å opprette den — og taperen ville feilet
@@ -968,10 +975,115 @@ SQL
   printf 'ok       %s\n' "$navn"
 }
 
+# ----------------------------------------------------------------------------
+# Prøve 6: fjerningen av et evidensfunn og den redaksjonelle beslutningen
+#
+# De to tar de samme to låsene — subjektlåsen og evidenstabellene. Beslutningen
+# tar subjektlåsen først og leser evidens etterpå. Tok fjerningen tabellåsene
+# først og subjektlåsen etterpå, ville de gått i hver sin retning gjennom de
+# samme låsene, og Postgres måtte brutt vranglåsen ved å avbryte den ene.
+#
+# Prøven holder subjektlåsen i økt B, slik beslutningsveien gjør før den leser
+# evidens, og lar økt A fjerne et funn samtidig. Det avgjørende er ikke bare at
+# A venter, men at B fortsatt kan lese evidenstabellen mens A venter: det er
+# nettopp den lesningen som ville stått fast om fjerningen holdt tabellåsene.
+# ----------------------------------------------------------------------------
+proeve6() {
+  local navn='fjerning og beslutning tar låsene i samme rekkefølge'
+  local styr="$arbeid/styr6" sql_a="$arbeid/a6.sql"
+  local a_log="$arbeid/a6.log" b_log="$arbeid/b6.log"
+
+  # Først porten foran hele saken: så lenge revisjonen er besluttet og oppgaven
+  # ligger i køen, bærer manifestet funnet uten at noe peker på det. Fjernes det
+  # da, ville jobben pekt på evidens som ikke finnes.
+  if psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/a6a.log" 2>&1 <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+select knowledge.discard_unpublished_extraction_artifacts(
+  array['$funn_f']::uuid[], 'Kappløpsprøve: forsøk under en besluttet revisjon.');
+commit;
+SQL
+  then
+    feil "$navn" 'Et funn under en besluttet, ubygget revisjon lot seg fjerne.' "$arbeid/a6a.log"
+  fi
+  grep -q 'inngår i en besluttet revisjon' "$arbeid/a6a.log" || feil "$navn" \
+    'Fjerningen ble avvist, men ikke fordi funnet inngår i en besluttet revisjon.' "$arbeid/a6a.log"
+
+  # Jobben svikter teknisk, slik en jobb kan gjøre. Da er funnet fjernbart, og
+  # selve låserekkefølgen kan prøves.
+  psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > /dev/null 2>&1 <<SQL
+update workflow.pipeline_jobs
+set state = 'failed', completed_at = now(),
+    failure_reason = 'Kappløpsprøve: jobben svikter med vilje.'
+where agent_role = 'claim_synthesis'
+  and input_manifest ->> 'topic_concept_id' = '$endepunkt3';
+SQL
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  # Økt B holder subjektlåsen, slik beslutningsveien gjør før den leser evidens.
+  (
+    cat <<SQL
+begin;
+select workflow.lock_chain_subject('claim_synthesis'::provenance.agent_role,
+  (select format('%s+%s', c.subject_drug_id, c.topic_concept_id)
+   from knowledge.claims c where c.id = '$paastand'));
+\echo KLAR
+\o /dev/null
+SQL
+    cat "$styr"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$b_log" 2>&1 &
+  okt_b_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 150); do
+    grep -q 'KLAR' "$b_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$b_log" 2>/dev/null || feil "$navn" 'Økt B kom ikke i gang.' "$b_log"
+
+  cat > "$sql_a" <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+select knowledge.discard_unpublished_extraction_artifacts(
+  array['$funn_f']::uuid[], 'Kappløpsprøve: fjerning mens beslutningen holder låsen.');
+commit;
+SQL
+  psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$sql_a" > "$a_log" 2>&1 &
+  okt_a_pid=$!
+
+  vent_paa_blokkering "$navn"
+
+  # Hele poenget: økt B leser evidenstabellen mens økt A venter på låsen B
+  # holder. Holdt A tabellåsene, ville denne lesningen stått fast bak dem, og de
+  # to ville ventet på hverandre.
+  printf 'select count(*) from knowledge.evidence_items;\ncommit;\n' >&9
+  exec 9>&-
+  wait "$okt_b_pid" 2>/dev/null; local b_status=$?
+  okt_b_pid=""
+  wait "$okt_a_pid" 2>/dev/null; local a_status=$?
+  okt_a_pid=""
+  rm -f "$styr"
+
+  [ "$b_status" -eq 0 ] || feil "$navn" \
+    'Økt B kom ikke gjennom. Låsene tas i hver sin rekkefølge, og de to venter på hverandre.' "$b_log"
+  [ "$a_status" -eq 0 ] || feil "$navn" \
+    'Fjerningen kom ikke gjennom etter at subjektlåsen ble sluppet.' "$a_log"
+
+  local igjen
+  igjen=$(les "select count(*) from knowledge.evidence_items where id = '$funn_f'")
+  [ "$igjen" = "0" ] || feil "$navn" 'Fjerningen sa den gikk gjennom, men funnet står.'
+
+  printf 'ok       %s\n' "$navn"
+}
+
 printf 'Samtidighetsprøver for de automatiske kjedeovergangene\n'
 proeve1
 proeve2
 proeve3
 proeve4
 proeve5
+proeve6
 printf 'Alle prøvene bestod.\n'

@@ -28,7 +28,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(115);
+select plan(125);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1124,6 +1124,89 @@ select is(
 );
 
 -- ===========================================================================
+-- Del 10b — et grunnlag som går tilbake, gjør ikke konklusjonen om igjen
+-- ===========================================================================
+-- Redaktøren konkluderte med at grunnlag A ikke endrer påstanden. Så kom funn B,
+-- og oppgaven åpnet seg med A+B — riktig, fordi grunnlaget var blitt et annet.
+-- Faller B bort igjen, er grunnlaget nøyaktig A: det redaktøren allerede tok
+-- stilling til. Å be om den samme avgjørelsen en gang til ville vært
+-- menneskearbeid Antidep selv fant på (ANTIDEP_CONSTITUTION.md regel 4), og det
+-- ville motsagt at en avgjørelse gjelder det grunnlaget den gjaldt.
+--
+-- Raden selv ble nullstilt da oppgaven åpnet seg, så konklusjonen hentes fra
+-- sporet, som er append-only og derfor fortsatt vet hva som ble bestemt.
+create function pg_temp.avvis_funn(p_id uuid) returns void language sql as $$
+  insert into workflow.evidence_verifications
+    (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+     source_access, checked_fields, findings, rationale, verified_at)
+  select e.id, e.created_by_actor_id,
+         (select id from fixture where name = 'extraction_verifier'),
+         'needs_correction', 'verifiable_representation',
+         array['source_locator']::workflow.evidence_check_field[],
+         'Prøve i 830: kildepekeren stemmer ikke.',
+         'Prøve i 830: kontrollen fant et avvik, og funnet er ikke brukbart.', now()
+  from knowledge.evidence_items e where e.id = p_id;
+$$;
+
+select pg_temp.avvis_funn('83000000-0000-4000-8000-000000000016');
+
+select is(
+  (select r.state::text from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  'set_aside',
+  'faller det nye funnet bort, står den forrige konklusjonen igjen av seg selv'
+);
+select is(
+  (select r.decision_note from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  'Tilleggsfunnet peker samme vei, og endrer ikke formuleringen.',
+  'med begrunnelsen redaktøren faktisk skrev'
+);
+select isnt(
+  (select r.decided_by_actor_id from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  null,
+  'og mennesket som tok den'
+);
+select is(
+  (select count(*)::integer from workflow.claim_revision_review_events e
+   join workflow.claim_revision_reviews r on r.id = e.claim_revision_review_id
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'
+     and e.transition = 'restored'),
+  1,
+  'sporet sier at grunnlaget gikk tilbake, og ikke at noen bestemte seg på nytt'
+);
+select is(
+  (select count(*)::integer from workflow.claim_revision_review_events e
+   join workflow.claim_revision_reviews r on r.id = e.claim_revision_review_id
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'
+     and e.transition = 'set_aside'),
+  1,
+  'og avgjørelsen står én gang i sporet, ikke to'
+);
+
+set local role anon;
+insert into board (label, payload) select 'etter_tilbakegang', api.public_work_board();
+reset role;
+select is_empty(
+  $$
+    select 1 from board, lateral jsonb_array_elements(payload) as item
+    where label = 'etter_tilbakegang' and item ->> 'activity' = 'claim_revision'
+  $$,
+  'og ingen blir bedt om å ta den samme avgjørelsen en gang til'
+);
+
+-- Og kommer funnet tilbake, er grunnlaget igjen et annet enn det avgjorte.
+select pg_temp.kontroller_funn('83000000-0000-4000-8000-000000000016',
+                               '83000000-0000-4000-8000-000000000071');
+select is(
+  (select r.state::text from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  'open',
+  'blir grunnlaget et annet igjen, er det igjen en avgjørelse å ta'
+);
+
+-- ===========================================================================
 -- Del 11 — En teknisk svikt blir aldri en menneskeoppgave
 -- ===========================================================================
 update workflow.pipeline_jobs j
@@ -1252,19 +1335,6 @@ select is(
 -- seg i den åpne arbeidsoversikten som planlagt arbeid, og bedt et menneske om
 -- en avgjørelse beslutningsveien uansett avviser — en menneskeoppgave uten et
 -- utfall (ANTIDEP_CONSTITUTION.md regel 4).
-create function pg_temp.avvis_funn(p_id uuid) returns void language sql as $$
-  insert into workflow.evidence_verifications
-    (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
-     source_access, checked_fields, findings, rationale, verified_at)
-  select e.id, e.created_by_actor_id,
-         (select id from fixture where name = 'extraction_verifier'),
-         'needs_correction', 'verifiable_representation',
-         array['source_locator']::workflow.evidence_check_field[],
-         'Prøve i 830: kildepekeren stemmer ikke.',
-         'Prøve i 830: kontrollen fant et avvik, og funnet er ikke brukbart.', now()
-  from knowledge.evidence_items e where e.id = p_id;
-$$;
-
 select pg_temp.avvis_funn('83000000-0000-4000-8000-000000000015');
 select is(
   (select r.state::text from workflow.claim_revision_reviews r
@@ -1508,6 +1578,61 @@ select is(
   0,
   'ingen av de fire veiene ble til et teknisk problem'
 );
+-- ===========================================================================
+-- Del 13d — et funn som inngår i en besluttet revisjon, fjernes ikke
+-- ===========================================================================
+-- Lenken fra revisjonen til funnet finnes først når syntesen er registrert. I
+-- vinduet mellom beslutningen og den registreringen bærer jobben funnet i
+-- manifestet sitt uten at noe peker på det, og de øvrige kontrollene i
+-- fjerningsveien ville sluppet det gjennom. Da ville oppgaven stått som
+-- besluttet mens jobben pekte på evidens som ikke finnes, og jobben ville
+-- svikte teknisk framfor å bli avvist her.
+-- Oppgaven ble slettet og gjenskapt av rekonsilieringen i Del 13, og bærer
+-- derfor et annet håndtak enn det Del 10 fikk.
+insert into handtak (label, value)
+select 'mirtazapin_paa_nytt', r.reference from workflow.claim_revision_reviews r
+where r.claim_id = '83000000-0000-4000-8000-000000000042';
+
+insert into handtak (label, value)
+select 'mirtazapin_ferskt', workflow.evidence_set_digest(
+  workflow.claim_subject_evidence(c.subject_drug_id, c.topic_concept_id))
+from knowledge.claims c where c.id = '83000000-0000-4000-8000-000000000042';
+
+select set_config('request.jwt.claims',
+                  '{"sub":"83000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into svar (label, payload)
+select 'mirtazapin_revisjon', api.record_claim_revision_decision(
+  (select value from handtak where label = 'mirtazapin_paa_nytt'),
+  'revise',
+  (select value from handtak where label = 'mirtazapin_ferskt'));
+reset role;
+
+select is(
+  (select r.state::text from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  'revision_ordered',
+  'revisjonen er besluttet, og synteseoppgaven ligger i køen'
+);
+
+select throws_ok(
+  $$
+    select knowledge.discard_unpublished_extraction_artifacts(
+      array['83000000-0000-4000-8000-000000000019']::uuid[],
+      'Prøve i 830: forsøk på å fjerne evidens under en besluttet revisjon.')
+  $$,
+  '23001', null,
+  'og funnet under den kan ikke fjernes så lenge oppgaven ikke er bygget'
+);
+select set_config('request.jwt.claims', '', true);
+
+select is(
+  (select count(*)::integer from knowledge.evidence_items e
+   where e.id = '83000000-0000-4000-8000-000000000019'),
+  1,
+  'funnet står, og den avviste fjerningen etterlot ingenting halvveis'
+);
+
 -- ===========================================================================
 -- Del 14 — en fjernet påstand etterlater ingen oppgave om ingenting
 -- ===========================================================================

@@ -121,12 +121,13 @@ comment on type workflow.claim_revision_review_state is
   'Hvor en redaksjonell revisjonsvurdering står: open (ny evidens venter på en avgjørelse), revision_ordered (en redaktør har besluttet at påstanden skal revideres, og synteseoppgaven ligger i køen), set_aside (en redaktør har konkludert med at den nye evidensen ikke endrer påstanden) eller lapsed (den nye evidensen falt bort før noen rakk å ta stilling til den — et funn ble trukket tilbake, fikk et åpent avvik eller ble kastet). De fire er uttømmende. De to midterste er avgjørelser med et menneske bak; lapsed er det ikke, og derfor er den ikke en avgjørelse men en opplysning om at det ikke lenger er noe å avgjøre. Uten den ville en oppgave ingen kan fullføre, blitt stående i den åpne arbeidsoversikten som planlagt arbeid (ANTIDEP_CONSTITUTION.md regel 4).';
 
 create type workflow.claim_revision_review_transition as enum (
-  'opened', 'widened', 'narrowed', 'reopened', 'revision_ordered', 'set_aside', 'lapsed');
+  'opened', 'widened', 'narrowed', 'reopened', 'restored',
+  'revision_ordered', 'set_aside', 'lapsed');
 
 revoke usage on type workflow.claim_revision_review_transition from public;
 
 comment on type workflow.claim_revision_review_transition is
-  'Overgangen ett spor beskriver: opened (Antidep la merke til ny evidens om en påstand som finnes), widened (enda et funn kom til mens oppgaven sto åpen), narrowed (et funn falt bort, men noe står igjen), lapsed (det siste falt bort, og det er ikke lenger noe å avgjøre), reopened (grunnlaget er blitt et annet siden forrige avgjørelse), revision_ordered og set_aside (en redaktør avgjorde). Skillet mellom opened, widened og narrowed er grunnen til at sporet finnes: uten det kunne ingen svare på om oppgaven har vokst eller krympet siden den ble sett — og «widened» om et grunnlag som krympet, ville vært usant.';
+  'Overgangen ett spor beskriver: opened (Antidep la merke til ny evidens om en påstand som finnes), widened (enda et funn kom til mens oppgaven sto åpen), narrowed (et funn falt bort, men noe står igjen), lapsed (det siste falt bort, og det er ikke lenger noe å avgjøre), reopened (grunnlaget er blitt et annet siden forrige avgjørelse), restored (grunnlaget er gått tilbake til nøyaktig det en redaktør allerede konkluderte på, og konklusjonen står igjen), revision_ordered og set_aside (en redaktør avgjorde). Skillet mellom opened, widened og narrowed er grunnen til at sporet finnes: uten det kunne ingen svare på om oppgaven har vokst eller krympet siden den ble sett — og «widened» om et grunnlag som krympet, ville vært usant. restored er en observasjon og ikke en avgjørelse: avgjørelsen står allerede i sporet, med mennesket som tok den, og en ny linje med den samme aktøren ville sagt at hen bestemte seg to ganger.';
 
 -- ----------------------------------------------------------------------------
 -- 2. Avtrykket av en mengde evidensfunn
@@ -549,6 +550,7 @@ declare
   v_count integer;
   v_digest text;
   v_job_state workflow.pipeline_job_state;
+  v_decision workflow.claim_revision_review_events;
 begin
   v_claim_id := workflow.claim_awaiting_revision(p_subject_drug_id, p_topic_concept_id);
   if v_claim_id is null then
@@ -628,10 +630,55 @@ begin
   end if;
 
   if v_review.state = 'open'::workflow.claim_revision_review_state then
-    -- Grunnlaget har endret seg på en oppgave som alt står åpen. Fortsatt én
-    -- avgjørelse å ta, og derfor fortsatt én rad. Svaret er NULL, fordi ingen
-    -- oppgave ble åpnet — den sto åpen fra før.
+    -- ----------------------------------------------------------------------
+    -- Grunnlaget kan ha gått tilbake til noe som allerede er avgjort
+    --
+    -- En konklusjon om at den nye forskningen ikke endrer påstanden, gjelder
+    -- nøyaktig det grunnlaget den gjaldt. Kommer det så et funn til, er
+    -- grunnlaget et annet, og oppgaven åpner seg igjen — men faller *det*
+    -- funnet siden bort, er grunnlaget igjen nøyaktig det redaktøren allerede
+    -- konkluderte på. Å be om den samme avgjørelsen om det samme en gang til
+    -- ville vært menneskearbeid Antidep selv hadde funnet på
+    -- (ANTIDEP_CONSTITUTION.md regel 4), og det ville dessuten motsagt det
+    -- avgjørelsen er bundet til.
+    --
+    -- Konklusjonen hentes fra sporet, som er append-only og derfor er det ene
+    -- stedet som fortsatt vet hva som ble bestemt på hvilket grunnlag: raden
+    -- selv ble nullstilt da oppgaven åpnet seg. Bare `set_aside` gjenopprettes.
+    -- En besluttet revisjon som faktisk ble bygget, lenker funnene sine, og da
+    -- kan grunnlaget ikke gå tilbake til det samme; en som ikke ble bygget,
+    -- ville gjenopprettet en revisjon som ikke finnes.
+    -- ----------------------------------------------------------------------
     if v_review.pending_evidence_digest is distinct from v_digest then
+      select e.* into v_decision
+      from workflow.claim_revision_review_events e
+      where e.claim_revision_review_id = v_review.id
+        and e.transition = 'set_aside'::workflow.claim_revision_review_transition
+        and e.evidence_digest = v_digest
+      order by e.occurred_at desc, e.created_at desc
+      limit 1;
+
+      if found then
+        update workflow.claim_revision_reviews r
+        set state = 'set_aside'::workflow.claim_revision_review_state,
+            pending_evidence_digest = v_digest,
+            pending_evidence_count = v_count,
+            decided_evidence_digest = v_digest,
+            decided_at = v_decision.occurred_at,
+            decided_by_actor_id = v_decision.actor_id,
+            decision_note = v_decision.note,
+            pipeline_job_id = null
+        where r.id = v_review.id;
+
+        perform workflow.record_claim_revision_review_event(
+          v_review.id, 'restored'::workflow.claim_revision_review_transition,
+          v_digest, v_count, null, null);
+        return null;
+      end if;
+
+      -- Grunnlaget har endret seg på en oppgave som alt står åpen. Fortsatt én
+      -- avgjørelse å ta, og derfor fortsatt én rad. Svaret er NULL, fordi ingen
+      -- oppgave ble åpnet — den sto åpen fra før.
       update workflow.claim_revision_reviews r
       set pending_evidence_digest = v_digest,
           pending_evidence_count = v_count
@@ -2456,6 +2503,9 @@ declare
   -- også bort veien tilbake til subjektet (migrasjon 012d).
   v_subjects jsonb := '[]'::jsonb;
   v_subject jsonb;
+  v_subject_keys text[];
+  v_locked_keys text[];
+  v_key text;
 begin
   -- Fjerningen er en redaksjonell handling med en ansvarlig, ikke en
   -- driftsoperasjon: auditraden skal navngi den som bestemte den.
@@ -2489,6 +2539,41 @@ begin
       message = 'Listen inneholder samme evidensfunn mer enn én gang.',
       hint = 'En dublett betyr at listen ikke er den gjennomgåtte listen. Rett den framfor å la kallet gjøre noe annet enn det som ble bestemt.';
   end if;
+
+  -- ------------------------------------------------------------------------
+  -- Subjektlåsene, og hvorfor de tas før tabellåsene
+  --
+  -- Fjerningen ender med å lese den redaksjonelle tilstanden på nytt, og den
+  -- lesningen tar subjektlåsen. Beslutningsveien
+  -- (api.record_claim_revision_decision(...)) tar den samme låsen *først* og
+  -- leser evidenstabellene etterpå. Tok fjerningen tabellåsene først, ville de
+  -- to gått i hver sin retning gjennom de samme to låsene, og to samtidige
+  -- kall kunne endt i en vranglås Postgres måtte bryte ved å avbryte den ene.
+  -- Rekkefølgen her er derfor beslutningsveiens, og ikke omvendt.
+  --
+  -- Subjektet leses før låsen fordi låsen trenger et navn. Det er trygt:
+  -- knowledge.evidence_items er append-only, så et funn som finnes, kan ikke
+  -- skifte virkestoff eller endepunkt. Et funn som *ikke* fantes da subjektene
+  -- ble lest, men finnes når tabellåsen er tatt, ville derimot blitt slettet
+  -- uten at subjektet var låst — og det avvises eksplisitt nedenfor framfor å
+  -- gå upåaktet hen.
+  --
+  -- Låsene tas i sortert rekkefølge, slik at to fjerninger som overlapper,
+  -- heller ikke kan gå i hver sin retning gjennom hverandres subjekter.
+  -- ------------------------------------------------------------------------
+  select coalesce(
+           array_agg(distinct format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)
+                     order by format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)),
+           array[]::text[])
+    into v_locked_keys
+  from knowledge.evidence_items e
+  where e.id = any(p_evidence_item_ids)
+    and e.intervention_drug_id is not null
+    and e.outcome_concept_id is not null;
+
+  foreach v_key in array v_locked_keys loop
+    perform workflow.lock_chain_subject('claim_synthesis'::provenance.agent_role, v_key);
+  end loop;
 
   -- ------------------------------------------------------------------------
   -- Låsen. Den tas før kontrollene, ikke som en følge av slettingen, og det er
@@ -2561,6 +2646,25 @@ begin
         hint = 'Kontrollen registrerte hva den faktisk leste. Å fjerne funnet ville skrevet om den nedtegnelsen.';
     end if;
 
+    -- En besluttet revisjon som ennå ikke er bygget, bærer funnet i manifestet
+    -- sitt uten å ha lenket det: lenken finnes først når syntesen er registrert.
+    -- Ble funnet slettet i det vinduet, ville oppgaven stått som besluttet mens
+    -- jobben pekte på evidens som ikke finnes — og den ville svikte teknisk
+    -- framfor å bli avvist her (migrasjon 012d, ANTIDEP_CONSTITUTION.md regel 4).
+    if exists (
+      select 1
+      from workflow.pipeline_jobs j
+      where j.agent_role = 'claim_synthesis'::provenance.agent_role
+        and j.state in ('ready'::workflow.pipeline_job_state,
+                        'leased'::workflow.pipeline_job_state)
+        and j.input_manifest -> 'evidence_item_ids' @> to_jsonb(v_id)
+    ) then
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format('Evidensfunnet %s inngår i en besluttet revisjon som ennå ikke er bygget, og fjernes ikke.', v_id),
+        hint = 'En redaktør har bestemt at påstanden skal skrives om med dette grunnlaget, og oppgaven ligger i køen. Vent til den er ferdig, eller la den feile først — en revisjon bygget på evidens som er borte, ville uansett ikke kunne registreres.';
+    end if;
+
     -- Øyeblikksbildet tas før slettingen, og er hele kontrollgrunnlaget: det som
     -- fjernes, skal fortsatt kunne leses av den som spør hva som sto der.
     v_snapshots := v_snapshots || jsonb_build_object(
@@ -2590,12 +2694,26 @@ begin
   -- endepunktet, så subjektet må leses nå (migrasjon 012d).
   -- ------------------------------------------------------------------------
   select coalesce(jsonb_agg(distinct jsonb_build_object(
-           'drug', e.intervention_drug_id, 'topic', e.outcome_concept_id)), '[]'::jsonb)
-    into v_subjects
+           'drug', e.intervention_drug_id, 'topic', e.outcome_concept_id)), '[]'::jsonb),
+         coalesce(
+           array_agg(distinct format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)
+                     order by format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)),
+           array[]::text[])
+    into v_subjects, v_subject_keys
   from knowledge.evidence_items e
   where e.id = any(p_evidence_item_ids)
     and e.intervention_drug_id is not null
     and e.outcome_concept_id is not null;
+
+  -- Subjektene skal være nøyaktig de som ble låst før tabellåsene. Er de ikke
+  -- det, ble en rad skrevet i vinduet mellom de to lesningene, og fjerningen
+  -- ville rørt et subjekt ingen lås dekket. Da stopper den framfor å gjøre det.
+  if v_subject_keys is distinct from v_locked_keys then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'Evidensfunnene gjelder ikke lenger de samme virkestoffene og endepunktene som da kallet begynte.',
+      hint = 'En rad er kommet til mens listen ble kontrollert. Hent køen på nytt framfor å fjerne noe annet enn det som ble gjennomgått.';
+  end if;
 
   -- ------------------------------------------------------------------------
   -- Slettingen. Append-only-vernet er fasiten for enhver annen skrivevei, og
