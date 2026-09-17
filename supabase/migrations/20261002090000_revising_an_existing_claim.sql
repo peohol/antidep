@@ -2467,6 +2467,23 @@ create trigger sources_sync_claim_revision
 comment on trigger sources_sync_claim_revision on knowledge.sources is
   'Samme grunn som review_decisions_sync_claim_revision: ingen skrivevei endrer kildestatus i dag, og tilstanden skal være i takt den dagen en gjør det, uten at noen må huske å kalle noe.';
 
+create function workflow.try_lock_chain_subject(
+  p_agent_role provenance.agent_role,
+  p_subject text
+)
+  returns boolean
+  language sql
+  set search_path = ''
+as $$
+  select pg_catalog.pg_try_advisory_xact_lock(
+    pg_catalog.hashtextextended('antidep:kjede-subjekt:' || p_agent_role::text || ':' || p_subject, 0));
+$$;
+
+comment on function workflow.try_lock_chain_subject(provenance.agent_role, text) is
+  'Den samme subjektlåsen workflow.lock_chain_subject(provenance.agent_role, text) tar, med ordrett den samme nøkkelen, men uten å vente: svarer usant når en annen transaksjon holder den. Finnes for den ene veien som ikke kan ta låsen først — den harde fjerningen av et ekstraksjonsartefakt må ha ACCESS EXCLUSIVE på evidenstabellene for å kunne slette, mens alle de andre veiene tar subjektlåsen etter at de har rørt de samme tabellene. En venting der ville vært den ene halvdelen av en vranglås; et nei er en fjerning som trygt kan gjøres om igjen et øyeblikk senere.';
+
+revoke execute on function workflow.try_lock_chain_subject(provenance.agent_role, text) from public;
+
 -- ----------------------------------------------------------------------------
 -- 14b. Den harde fjerningen av et ekstraksjonsartefakt
 --
@@ -2503,7 +2520,6 @@ declare
   -- også bort veien tilbake til subjektet (migrasjon 012d).
   v_subjects jsonb := '[]'::jsonb;
   v_subject jsonb;
-  v_subject_keys text[];
   v_locked_keys text[];
   v_key text;
 begin
@@ -2540,40 +2556,6 @@ begin
       hint = 'En dublett betyr at listen ikke er den gjennomgåtte listen. Rett den framfor å la kallet gjøre noe annet enn det som ble bestemt.';
   end if;
 
-  -- ------------------------------------------------------------------------
-  -- Subjektlåsene, og hvorfor de tas før tabellåsene
-  --
-  -- Fjerningen ender med å lese den redaksjonelle tilstanden på nytt, og den
-  -- lesningen tar subjektlåsen. Beslutningsveien
-  -- (api.record_claim_revision_decision(...)) tar den samme låsen *først* og
-  -- leser evidenstabellene etterpå. Tok fjerningen tabellåsene først, ville de
-  -- to gått i hver sin retning gjennom de samme to låsene, og to samtidige
-  -- kall kunne endt i en vranglås Postgres måtte bryte ved å avbryte den ene.
-  -- Rekkefølgen her er derfor beslutningsveiens, og ikke omvendt.
-  --
-  -- Subjektet leses før låsen fordi låsen trenger et navn. Det er trygt:
-  -- knowledge.evidence_items er append-only, så et funn som finnes, kan ikke
-  -- skifte virkestoff eller endepunkt. Et funn som *ikke* fantes da subjektene
-  -- ble lest, men finnes når tabellåsen er tatt, ville derimot blitt slettet
-  -- uten at subjektet var låst — og det avvises eksplisitt nedenfor framfor å
-  -- gå upåaktet hen.
-  --
-  -- Låsene tas i sortert rekkefølge, slik at to fjerninger som overlapper,
-  -- heller ikke kan gå i hver sin retning gjennom hverandres subjekter.
-  -- ------------------------------------------------------------------------
-  select coalesce(
-           array_agg(distinct format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)
-                     order by format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)),
-           array[]::text[])
-    into v_locked_keys
-  from knowledge.evidence_items e
-  where e.id = any(p_evidence_item_ids)
-    and e.intervention_drug_id is not null
-    and e.outcome_concept_id is not null;
-
-  foreach v_key in array v_locked_keys loop
-    perform workflow.lock_chain_subject('claim_synthesis'::provenance.agent_role, v_key);
-  end loop;
 
   -- ------------------------------------------------------------------------
   -- Låsen. Den tas før kontrollene, ikke som en følge av slettingen, og det er
@@ -2597,6 +2579,49 @@ begin
   lock table workflow.evidence_verifications in access exclusive mode;
   lock table knowledge.evidence_field_groundings in access exclusive mode;
   lock table knowledge.evidence_items in access exclusive mode;
+
+  -- ------------------------------------------------------------------------
+  -- Subjektlåsene, og hvorfor de tas uten å vente
+  --
+  -- Fjerningen ender med å lese den redaksjonelle tilstanden på nytt, og den
+  -- lesningen tar subjektlåsen (workflow.notice_claim_revision_need(uuid, uuid)).
+  -- Alle de andre veiene inn i den tilstanden tar den låsen *etter* at de har
+  -- rørt evidenstabellene: en ekstraksjonskontroll har allerede radlåsen på
+  -- workflow.evidence_verifications når triggeren kjører, og beslutningsveien
+  -- leser evidensgrunnlaget under låsen. Fjerningen må ha tabellåsene for i det
+  -- hele tatt å kunne slette, og den kan derfor ikke ta subjektlåsen først uten
+  -- å snu rekkefølgen for alle de andre.
+  --
+  -- Derfor tas den ikke ved å vente. En vranglås krever at noen *venter*: holder
+  -- en annen transaksjon subjektet, gir fjerningen opp med en gang og feiler
+  -- lukket, framfor å stille seg i en kø der den andre venter på tabellene
+  -- fjerningen selv holder. En fjerning er en eksplisitt, gjennomgått handling
+  -- som trygt kan gjøres om igjen et øyeblikk senere; en vranglås kan ikke
+  -- velge hvem den avbryter.
+  --
+  -- Subjektene leses her og ikke før tabellåsene, slik at de er lest under den
+  -- låsen som gjør tilstanden stabil. Sortert rekkefølge, slik at to fjerninger
+  -- som overlapper, tar dem i den samme rekkefølgen.
+  -- ------------------------------------------------------------------------
+  select coalesce(
+           array_agg(distinct format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)
+                     order by format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)),
+           array[]::text[])
+    into v_locked_keys
+  from knowledge.evidence_items e
+  where e.id = any(p_evidence_item_ids)
+    and e.intervention_drug_id is not null
+    and e.outcome_concept_id is not null;
+
+  foreach v_key in array v_locked_keys loop
+    if not workflow.try_lock_chain_subject(
+             'claim_synthesis'::provenance.agent_role, v_key) then
+      raise exception using
+        errcode = 'lock_not_available',
+        message = 'Et av virkestoffene og endepunktene fjerningen gjelder, er opptatt av en annen operasjon akkurat nå.',
+        hint = 'Ingenting er fjernet. En kontroll eller en redaksjonell avgjørelse om det samme faglige subjektet holder på; prøv igjen om et øyeblikk. Fjerningen venter ikke med vilje: den holder tabellåsene den andre trenger, og en venting ville vært den ene halvdelen av en vranglås.';
+    end if;
+  end loop;
 
   -- ------------------------------------------------------------------------
   -- Kontrollene. Alle kjøres før noe slettes, og én rad som feiler stopper
@@ -2694,26 +2719,12 @@ begin
   -- endepunktet, så subjektet må leses nå (migrasjon 012d).
   -- ------------------------------------------------------------------------
   select coalesce(jsonb_agg(distinct jsonb_build_object(
-           'drug', e.intervention_drug_id, 'topic', e.outcome_concept_id)), '[]'::jsonb),
-         coalesce(
-           array_agg(distinct format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)
-                     order by format('%s+%s', e.intervention_drug_id, e.outcome_concept_id)),
-           array[]::text[])
-    into v_subjects, v_subject_keys
+           'drug', e.intervention_drug_id, 'topic', e.outcome_concept_id)), '[]'::jsonb)
+    into v_subjects
   from knowledge.evidence_items e
   where e.id = any(p_evidence_item_ids)
     and e.intervention_drug_id is not null
     and e.outcome_concept_id is not null;
-
-  -- Subjektene skal være nøyaktig de som ble låst før tabellåsene. Er de ikke
-  -- det, ble en rad skrevet i vinduet mellom de to lesningene, og fjerningen
-  -- ville rørt et subjekt ingen lås dekket. Da stopper den framfor å gjøre det.
-  if v_subject_keys is distinct from v_locked_keys then
-    raise exception using
-      errcode = 'restrict_violation',
-      message = 'Evidensfunnene gjelder ikke lenger de samme virkestoffene og endepunktene som da kallet begynte.',
-      hint = 'En rad er kommet til mens listen ble kontrollert. Hent køen på nytt framfor å fjerne noe annet enn det som ble gjennomgått.';
-  end if;
 
   -- ------------------------------------------------------------------------
   -- Slettingen. Append-only-vernet er fasiten for enhver annen skrivevei, og
