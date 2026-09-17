@@ -18,7 +18,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(30);
+select plan(34);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -345,6 +345,55 @@ select is(
                                 '10.1234/antidep.820d')),
   0,
   'en avvist bestilling etterlater ingen halv kilde'
+);
+
+-- ===========================================================================
+-- Del 7b — En katalograd som er tatt ut av bruk mens skjemaet sto åpent
+-- ===========================================================================
+-- Listen flaten velger fra, er de radene som er i bruk. Et skjema lastes én
+-- gang og sendes inn senere, og i mellomtiden kan en rad ha blitt tatt ut —
+-- et virkestoff trukket fra markedet, for eksempel. Da bærer skjemaet fortsatt
+-- navnet, og den autoritative veien er det eneste stedet det kan stoppes.
+--
+-- Prøven bruker en egen katalograd og rører ingen seedet verdi: det som prøves
+-- her, er porten, ikke hvilke virkestoff Antidep kjenner.
+insert into catalog.drugs (id, canonical_name, status)
+values ('82000000-0000-4000-8000-0000000000d1', 'prøvestoff 820', 'active');
+
+select set_config('request.jwt.claims',
+                  '{"sub":"82000000-0000-4000-8000-00000000000b"}', true);
+set local role authenticated;
+insert into result select 'options_active', api.full_text_request_options();
+reset role;
+
+select ok(
+  (select payload -> 'drugs' ? 'prøvestoff 820' from result where label = 'options_active'),
+  'et virkestoff i bruk står i listen redaktøren velger fra'
+);
+
+update catalog.drugs set status = 'withdrawn'
+where id = '82000000-0000-4000-8000-0000000000d1';
+
+set local role authenticated;
+insert into result select 'options_withdrawn', api.full_text_request_options();
+select throws_like(
+  $$ select api.request_missing_full_text(
+       '10.1234/antidep.820g', 'En artikkel om et trukket virkestoff', 'En forfatter',
+       array['prøvestoff 820'], array['vektendring'], array[]::text[], null, null) $$,
+  '%ikke lenger i bruk%',
+  'og en bestilling på det etter at det er tatt ut av bruk, avvises — ikke som en skrivefeil'
+);
+reset role;
+
+select ok(
+  not (select payload -> 'drugs' ? 'prøvestoff 820' from result where label = 'options_withdrawn'),
+  'listen tilbyr det ikke lenger'
+);
+select is(
+  (select count(*)::integer from knowledge.source_identifiers i
+   where i.identifier_value = '10.1234/antidep.820g'),
+  0,
+  'og den avviste bestillingen etterlot ingen halv kilde'
 );
 
 -- ===========================================================================

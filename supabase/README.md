@@ -8,9 +8,12 @@ npm run db:test:upgrade
 npm run db:reset
 npm run db:test
 npm run db:test:lock
+npm run db:test:race
 npm run db:test:chain
 npm run db:stop
 ```
+
+`db:test:race` kjører to reelle forbindelser mot hverandre på de to stedene kjeden «finner eller oppretter»: synteseoppgaven for et virkestoff og et endepunkt, og kilden bak en fulltekstbestilling. Ingen av dem fanges av et unikhetskrav, fordi radene de to øktene skriver, ikke er like nok til å kollidere — og pgTAP-filene kjører i én transaksjon og kan derfor ikke se dem.
 
 `db:test:upgrade` går tilbake til siste legacy-migrasjon og prøver Antidep 2-resetten som en faktisk oppgradering med syntetisk eksisterende innhold. `seed.sql` inneholder ikke klinisk prototypeinnhold. Migrasjoner til og med `20260924095000` er historiske og kontrolleres av `npm run verify:repo`. Nye migrasjoner er fremoverrettede.
 

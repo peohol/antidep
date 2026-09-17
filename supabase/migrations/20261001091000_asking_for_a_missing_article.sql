@@ -116,6 +116,17 @@ grant execute on function api.full_text_request_options() to authenticated;
 --
 -- Avvisningen navngir verdien og ikke raden: «vektendringg finnes ikke i
 -- katalogen» er noe en redaktør kan rette, mens en uuid ikke er det.
+--
+-- Oppslaget krever at raden er i bruk, akkurat som listen flaten valgte fra.
+-- `api.full_text_request_options()` svarer bare med aktive rader, og et skjema
+-- som ble lastet før en rad ble tatt ut av bruk, bærer fortsatt navnet. Uten
+-- kravet her ville den autoritative veien vært mildere enn listen den ba fra —
+-- og en bestilling kunne blitt lagt inn på en avgrensning katalogen ikke lenger
+-- tilbyr. Kravet står her og ikke i
+-- `workflow.full_text_request_scope_problem(uuid[], uuid[], uuid[])`, som deles
+-- med `api.request_full_text(...)` og id-veiene inn dit: den porten svarer på
+-- «peker disse id-ene på noe», og å gjøre den strengere ville endret en
+-- kontrakt denne leveransen ikke eier.
 -- ----------------------------------------------------------------------------
 create function workflow.catalog_ids_for_names(p_kind text, p_names text[])
   returns uuid[]
@@ -124,39 +135,60 @@ create function workflow.catalog_ids_for_names(p_kind text, p_names text[])
   set search_path = ''
 as $$
 declare
+  -- Ett oppslag per akse, ikke tre: id-ene, navnene katalogen ikke kjenner, og
+  -- navnene den kjenner men ikke lenger tilbyr. De to siste er skilt fordi de
+  -- har hver sin retting — en skrivefeil, og et skjema som er blitt gammelt.
   v_ids uuid[];
   v_missing text;
+  v_retired text;
 begin
   if p_names is null or cardinality(p_names) = 0 then
     return array[]::uuid[];
   end if;
 
   if p_kind = 'drug' then
-    select array_agg(distinct d.id) into v_ids
-    from catalog.drugs d
-    where d.canonical_name = any (p_names);
-
-    select string_agg(distinct wanted.name, ', ' order by wanted.name) into v_missing
+    select
+      array_agg(distinct d.id) filter (where d.id is not null),
+      string_agg(distinct wanted.name, ', ' order by wanted.name)
+        filter (where d.id is null and not exists (
+          select 1 from catalog.drugs x where x.canonical_name = wanted.name)),
+      string_agg(distinct wanted.name, ', ' order by wanted.name)
+        filter (where d.id is null and exists (
+          select 1 from catalog.drugs x where x.canonical_name = wanted.name))
+    into v_ids, v_missing, v_retired
     from unnest(p_names) as wanted(name)
-    where not exists (select 1 from catalog.drugs d where d.canonical_name = wanted.name);
+    left join catalog.drugs d
+      on d.canonical_name = wanted.name and d.status = 'active';
   elsif p_kind = 'outcome' then
-    select array_agg(distinct c.id) into v_ids
-    from catalog.clinical_concepts c
-    where c.concept_type = 'outcome' and c.canonical_label = any (p_names);
-
-    select string_agg(distinct wanted.name, ', ' order by wanted.name) into v_missing
+    select
+      array_agg(distinct c.id) filter (where c.id is not null),
+      string_agg(distinct wanted.name, ', ' order by wanted.name)
+        filter (where c.id is null and not exists (
+          select 1 from catalog.clinical_concepts x
+          where x.concept_type = 'outcome' and x.canonical_label = wanted.name)),
+      string_agg(distinct wanted.name, ', ' order by wanted.name)
+        filter (where c.id is null and exists (
+          select 1 from catalog.clinical_concepts x
+          where x.concept_type = 'outcome' and x.canonical_label = wanted.name))
+    into v_ids, v_missing, v_retired
     from unnest(p_names) as wanted(name)
-    where not exists (
-      select 1 from catalog.clinical_concepts c
-      where c.concept_type = 'outcome' and c.canonical_label = wanted.name);
+    left join catalog.clinical_concepts c
+      on c.concept_type = 'outcome'
+     and c.canonical_label = wanted.name
+     and c.status = 'active';
   elsif p_kind = 'population' then
-    select array_agg(distinct p.id) into v_ids
-    from catalog.populations p
-    where p.canonical_label = any (p_names);
-
-    select string_agg(distinct wanted.name, ', ' order by wanted.name) into v_missing
+    select
+      array_agg(distinct p.id) filter (where p.id is not null),
+      string_agg(distinct wanted.name, ', ' order by wanted.name)
+        filter (where p.id is null and not exists (
+          select 1 from catalog.populations x where x.canonical_label = wanted.name)),
+      string_agg(distinct wanted.name, ', ' order by wanted.name)
+        filter (where p.id is null and exists (
+          select 1 from catalog.populations x where x.canonical_label = wanted.name))
+    into v_ids, v_missing, v_retired
     from unnest(p_names) as wanted(name)
-    where not exists (select 1 from catalog.populations p where p.canonical_label = wanted.name);
+    left join catalog.populations p
+      on p.canonical_label = wanted.name and p.status = 'active';
   else
     raise exception using
       errcode = 'invalid_parameter_value',
@@ -170,12 +202,23 @@ begin
       hint = 'Velg fra listen api.full_text_request_options() svarer med. Et navn som ikke finnes, skal aldri bli en avgrensning med ett valg mindre enn den som ba om den, ba om.';
   end if;
 
+  -- Raden finnes, men er tatt ut av bruk. Et skjema som ble lastet før den ble
+  -- det, bærer fortsatt navnet, og uten denne porten ville bestillingen blitt
+  -- lagt inn på en avgrensning katalogen ikke lenger tilbyr. Avvisningen er en
+  -- egen setning fordi den har en annen retting: det er ikke en skrivefeil.
+  if v_retired is not null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('Disse er ikke lenger i bruk: %s.', v_retired),
+      hint = 'Last flaten på nytt og velg fra de gjeldende valgene. api.full_text_request_options() svarer bare med rader som er i bruk, og bestillingsveien skal ikke være mildere enn listen den ba fra.';
+  end if;
+
   return coalesce(v_ids, array[]::uuid[]);
 end;
 $$;
 
 comment on function workflow.catalog_ids_for_names(text, text[]) is
-  'Katalogradene bak en liste navn, for én akse: virkestoff, endepunkt eller populasjon. Én funksjon framfor tre nesten like. Avviser med navnet som ikke fantes, aldri med en id og aldri med en avgrensning som har ett valg mindre enn den som ble bedt om — en stille utelatelse ville latt arbeidet bli noe annet enn det redaktøren avgjorde. Samme oppslag api.build_extraction_assignment(uuid, text[], text[], text[]) gjør, som en egen funksjon fordi bestillingsveien trenger nøyaktig det samme.';
+  'Katalogradene bak en liste navn, for én akse: virkestoff, endepunkt eller populasjon. Én funksjon framfor tre nesten like. Krever at raden er i bruk, slik listen flaten valgte fra gjør, og skiller de to avvisningene fra hverandre: et navn katalogen ikke kjenner er en skrivefeil, et navn den ikke lenger tilbyr er et skjema som er blitt gammelt. Avviser med navnet, aldri med en id og aldri med en avgrensning som har ett valg mindre enn den som ble bedt om — en stille utelatelse ville latt arbeidet bli noe annet enn det redaktøren avgjorde. Samme oppslag api.build_extraction_assignment(uuid, text[], text[], text[]) gjør, som en egen funksjon fordi bestillingsveien trenger nøyaktig det samme.';
 
 revoke execute on function workflow.catalog_ids_for_names(text, text[]) from public;
 
@@ -243,41 +286,60 @@ begin
 
   -- Kilden: den som allerede bærer DOI-en, eller en ny.
   --
-  -- Låsen på identifikatorraden gjør at to samtidige bestillinger av den samme
-  -- artikkelen blir én kilde. Uten den ville den ene fått unique_violation på
-  -- en rad den ikke visste om.
+  -- Låsen gjør «finn eller opprett» til én udelelig handling. To samtidige
+  -- bestillinger av den samme artikkelen skal bli én kilde, og uten låsen ville
+  -- begge sett «finnes ikke» og begge opprettet hver sin rad før den ene møtte
+  -- unikhetskravet på DOI-en. Den står på den normaliserte DOI-en, ikke på en
+  -- rad, nettopp fordi raden ennå ikke finnes. Låsen slippes når transaksjonen
+  -- er over.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('antidep:kilde-doi:' || v_doi, 0));
+
   select i.source_id into v_source_id
   from knowledge.source_identifiers i
   where i.identifier_system = 'doi' and i.identifier_value = v_doi;
 
   if v_source_id is null then
-    insert into knowledge.sources (
-      source_type, title, authors_or_issuer, publisher_or_journal,
-      publication_date, publication_date_precision, created_by_actor_id
-    )
-    values (
-      'journal_article', v_title, v_authors, v_journal,
-      case when p_year is null then null else make_date(p_year, 1, 1) end,
-      case when p_year is null then null else 'year'::knowledge.date_precision end,
-      v_actor_id
-    )
-    returning id into v_source_id;
-    v_created := true;
-
+    -- Kilden og identifikatoren settes inn i den samme underblokken med vilje.
+    -- En annen skrivevei — api.create_source(...) — kan registrere den samme
+    -- DOI-en uten å ta låsen over, og taper vi det kappløpet, skal *begge*
+    -- innsettingene rulles tilbake. Lå kilderaden utenfor, ville taperen
+    -- etterlatt en artikkel uten identifikator: en rad ingenting peker på, som
+    -- den neste bestillingen av den samme artikkelen ikke ville funnet igjen.
     begin
+      insert into knowledge.sources (
+        source_type, title, authors_or_issuer, publisher_or_journal,
+        publication_date, publication_date_precision, created_by_actor_id
+      )
+      values (
+        'journal_article', v_title, v_authors, v_journal,
+        case when p_year is null then null else make_date(p_year, 1, 1) end,
+        case when p_year is null then null else 'year'::knowledge.date_precision end,
+        v_actor_id
+      )
+      returning id into v_source_id;
+
       insert into knowledge.source_identifiers (source_id, identifier_system, identifier_value)
       values (v_source_id, 'doi', v_doi);
+
+      v_created := true;
     exception
-      -- To samtidige bestillinger av den samme artikkelen er fortsatt én
-      -- artikkel. Den som taper kappløpet, bruker den andres kilde — og den
-      -- tomme kilderaden blir stående uten identifikator framfor at hele
-      -- bestillingen feiler. En kilde uten DOI er ikke en feiltilstand: den er
-      -- en rad ingenting peker på.
+      -- To bestillinger av den samme artikkelen er fortsatt én artikkel. Den
+      -- som taper, bruker den andres kilde. Underblokken har rullet begge
+      -- innsettingene tilbake, så ingen kilderad blir stående igjen — men
+      -- v_source_id er en PL/pgSQL-variabel og overlever rullingen, så den
+      -- settes om igjen fra raden som faktisk vant.
       when unique_violation then
+        v_created := false;
         select i.source_id into v_source_id
         from knowledge.source_identifiers i
         where i.identifier_system = 'doi' and i.identifier_value = v_doi;
-        v_created := false;
+        if v_source_id is null then
+          raise exception using
+            errcode = 'invalid_parameter_value',
+            message = 'Artikkelen kunne ikke registreres nå. Prøv igjen.',
+            hint = 'Unikhetskravet på DOI-en slo til, men raden som vant, fantes ikke da den ble slått opp igjen. Det er en tilstand bestillingen ikke kan tolke, og den skal stoppe framfor å opprette en artikkel til.';
+        end if;
     end;
   end if;
 

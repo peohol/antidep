@@ -97,7 +97,15 @@ det ikke i køen — kjeden stopper, og det er hva fail-closed betyr her.
 Ingen overgang kan lage to semantisk like oppgaver. `workflow.pipeline_jobs` er
 unik på `(agent_role, job_key)`, og for de semantiske leddene spør overgangen i
 tillegg om *subjektet* — virkestoffet og temaet, eller påstandsrevisjonen —
-allerede har en oppgave i rollen, uansett hvem som la den inn.
+allerede har en oppgave i rollen, uansett hvem som la den inn. Det spørsmålet
+stilles etter at overgangen har tatt en lås på subjektet, fordi to kontroller som
+kommer samtidig, ellers begge kunne svart «nei» og lagt inn hver sin oppgave
+under hvert sitt navn. To reelle forbindelser kappes om nettopp det i
+`npm run db:test:race`.
+
+Et ledd som har stoppet, meldes ikke friskt av at noe annet gikk bra.
+Opprydningen avgjør hvert av de fem leddene for seg, og slukker lampen bare når
+den så hele leddet uten en eneste svikt.
 
 ## Det som fortsatt er teknisk drift
 

@@ -76,6 +76,13 @@ jobs:
       - name: Samtidighetsprøve (to forbindelser)
         if: always()
         run: npm run db:test:lock
+      # De to automatiske kjedeovergangene «finn eller opprett» — synteseoppgaven
+      # og kilden bak en fulltekstbestilling — er kappløp som ingen unikhetskrav
+      # fanger, fordi radene de to øktene skriver, ikke er like nok til å
+      # kollidere. Denne kjører de to øktene mot hverandre (migrasjon 012b, 012c).
+      - name: Samtidighetsprøve for kjedeovergangene
+        if: always()
+        run: npm run db:test:race
       # Kvoten på rå diagnostikk er «tell, og sett inn hvis tallet er lavt
       # nok» — et kappløp som bare finnes mellom transaksjoner, og som pgTAP
       # derfor ikke kan se. Denne kjører mange forbindelser mot hverandre og

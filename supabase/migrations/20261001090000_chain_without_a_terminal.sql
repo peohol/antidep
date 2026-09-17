@@ -304,9 +304,49 @@ as $$
 $$;
 
 comment on function workflow.agent_task_subject_queued(provenance.agent_role, text) is
-  'Om det allerede finnes en ekstern agentoppgave om dette subjektet i dette agentleddet, uansett tilstand og uansett hvem som la den inn. Finnes for at en automatisk kjedeovergang ikke skal kunne lage en andre, semantisk lik oppgave når grunnlaget vokser med ett funn: nøkkelen ville da vært en annen, og unikheten på (agent_role, job_key) ville ikke fanget det. Leser jobbnøkkelens eget subjektledd, slik at en oppgave lagt inn av en redaktør og en lagt inn av kjeden er den samme oppgaven.';
+  'Om det allerede finnes en ekstern agentoppgave om dette subjektet i dette agentleddet, uansett tilstand og uansett hvem som la den inn. Finnes for at en automatisk kjedeovergang ikke skal kunne lage en andre, semantisk lik oppgave når grunnlaget vokser med ett funn: nøkkelen ville da vært en annen, og unikheten på (agent_role, job_key) ville ikke fanget det. Leser jobbnøkkelens eget subjektledd, slik at en oppgave lagt inn av en redaktør og en lagt inn av kjeden er den samme oppgaven. Spørsmålet er bare sant under workflow.lock_chain_subject(provenance.agent_role, text): uten låsen er svaret et øyeblikksbilde to samtidige overganger begge kan lese som nei.';
 
 revoke execute on function workflow.agent_task_subject_queued(provenance.agent_role, text) from public;
+
+-- ----------------------------------------------------------------------------
+-- Og låsen som gjør svaret over sant
+--
+-- Unikheten på `(agent_role, job_key)` serialiserer bare de overgangene som
+-- kommer fram til den *samme* nøkkelen. For `claim_synthesis` gjør de ikke det:
+-- nøkkelen bærer et avtrykk av hele inndatamanifestet, og manifestet inneholder
+-- evidenssettet. To kontroller av *forskjellige* funn på det samme virkestoffet
+-- og endepunktet kan derfor kjøre samtidig, begge lese «ingen oppgave» fordi
+-- den andres rad ikke er commitet ennå, bygge hvert sitt sett — {A} og {B} —
+-- og få hver sin nøkkel. Da fanger unikheten ingenting, og subjektet får to
+-- semantisk like oppgaver.
+--
+-- Låsen gjør spørsmålet og innleggingen til ett udelelig steg per subjekt. Den
+-- er en rådgivende transaksjonslås og ikke en radlås, fordi det ikke finnes noen
+-- rad å låse: det som skal serialiseres, er *fraværet* av en jobb. Samme grep
+-- som `workflow.record_technical_incident(...)` bruker på observasjonsnummeret,
+-- og det virker av samme grunn: Data API-et kjører READ COMMITTED, så den som
+-- venter på låsen, leser på nytt med et ferskt øyeblikksbilde og ser da raden
+-- vinneren commitet.
+--
+-- Nøkkelrommet er navngitt med rollen foran subjektet, slik at to ledd om det
+-- samme subjektet ikke venter på hverandre uten grunn.
+-- ----------------------------------------------------------------------------
+create function workflow.lock_chain_subject(
+  p_agent_role provenance.agent_role,
+  p_subject text
+)
+  returns void
+  language sql
+  set search_path = ''
+as $$
+  select pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('antidep:kjede-subjekt:' || p_agent_role::text || ':' || p_subject, 0));
+$$;
+
+comment on function workflow.lock_chain_subject(provenance.agent_role, text) is
+  'Serialiserer alle kjedeoverganger om det samme subjektet i det samme agentleddet, slik at spørsmålet workflow.agent_task_subject_queued(provenance.agent_role, text) stiller, og innleggingen som følger, er ett udelelig steg. En rådgivende transaksjonslås og ikke en radlås, fordi det som skal serialiseres er fraværet av en jobb: det finnes ingen rad å låse. Uten den kunne to samtidige kontroller av forskjellige evidensfunn på det samme virkestoffet og endepunktet begge lest «ingen oppgave», bygget hvert sitt evidenssett og fått hver sin jobbnøkkel — og unikheten på (agent_role, job_key) ville ikke fanget det.';
+
+revoke execute on function workflow.lock_chain_subject(provenance.agent_role, text) from public;
 
 -- ----------------------------------------------------------------------------
 -- Hvem overgangen tilskrives
@@ -469,7 +509,13 @@ begin
     return null;
   end if;
 
+  -- Låsen først, og deretter spørsmålet. Uten den rekkefølgen kan to samtidige
+  -- kontroller av forskjellige funn på det samme subjektet begge lese «ingen
+  -- oppgave» og legge inn hver sin, fordi evidenssettet — og dermed nøkkelen —
+  -- blir forskjellig.
   v_subject := format('%s+%s', v_item.intervention_drug_id, v_item.outcome_concept_id);
+  perform workflow.lock_chain_subject('claim_synthesis'::provenance.agent_role, v_subject);
+
   if workflow.agent_task_subject_queued('claim_synthesis'::provenance.agent_role, v_subject) then
     return null;
   end if;
@@ -596,6 +642,13 @@ begin
   if not found or v_verification.outcome <> 'verified' then
     return null;
   end if;
+
+  -- Manifestet her er bare påstandsrevisjonen, så nøkkelen er deterministisk og
+  -- unikheten ville fanget et kappløp uansett. Låsen står likevel, av den samme
+  -- grunnen som over: invarianten «ett subjekt, én oppgave» skal holde fordi
+  -- den er håndhevet, ikke fordi manifestet tilfeldigvis er smalt i dag.
+  perform workflow.lock_chain_subject(
+    'evidence_assessment'::provenance.agent_role, p_claim_revision_id::text);
 
   if workflow.agent_task_subject_queued(
        'evidence_assessment'::provenance.agent_role, p_claim_revision_id::text) then
@@ -804,7 +857,7 @@ end;
 $$;
 
 comment on function workflow.chain_resolve_step(text) is
-  'Lukker det tekniske problemet for ett kjedeledd. Kalles når en overgang i leddet faktisk kom gjennom: et problem som var der og ikke er der lenger, skal ikke bli stående som uløst fordi ingen så etter.';
+  'Lukker det tekniske problemet for ett kjedeledd. Kalles bare fra rekonsilieringen i api.resume_chain_transitions(text, text), og bare når den gikk gjennom *hele* leddet uten en eneste teknisk svikt. Aldri fra en overgang som lyktes: signaturen er per ledd og ikke per rad, så en overgang som lyktes for subjekt B sier ingenting om den som fortsatt svikter for subjekt A — og et «løst» som hvilte på det, ville vært usant. Et problem som ikke lenger består, lukkes ved neste kontrollkjøring, som uansett går hvert kvarter.';
 
 revoke execute on function workflow.chain_resolve_step(text) from public;
 
@@ -826,7 +879,6 @@ declare
 begin
   begin
     perform workflow.chain_control_for_evidence_item(new.id);
-    perform workflow.chain_resolve_step('ekstraksjonskontroll');
   exception
     -- Grunnlaget er ikke klart. Kjeden står, og det er porten som gjør jobben
     -- sin — ikke en teknisk svikt. Nøyaktig de tre klassene
@@ -864,7 +916,6 @@ begin
 
   begin
     perform workflow.chain_task_for_verified_extraction(new.evidence_item_id);
-    perform workflow.chain_resolve_step('syntese');
   exception
     -- Grunnlaget er ikke klart. Kjeden står, og det er porten som gjør jobben
     -- sin — ikke en teknisk svikt. Nøyaktig de tre klassene
@@ -898,7 +949,6 @@ declare
 begin
   begin
     perform workflow.chain_control_for_claim_revision(new.id);
-    perform workflow.chain_resolve_step('kildestottekontroll');
   exception
     -- Grunnlaget er ikke klart. Kjeden står, og det er porten som gjør jobben
     -- sin — ikke en teknisk svikt. Nøyaktig de tre klassene
@@ -936,7 +986,6 @@ begin
 
   begin
     perform workflow.chain_task_for_verified_claim(new.claim_revision_id);
-    perform workflow.chain_resolve_step('evidensvurdering');
   exception
     -- Grunnlaget er ikke klart. Kjeden står, og det er porten som gjør jobben
     -- sin — ikke en teknisk svikt. Nøyaktig de tre klassene
@@ -970,7 +1019,6 @@ declare
 begin
   begin
     perform workflow.chain_candidate_for_assessment(new.claim_revision_id);
-    perform workflow.chain_resolve_step('kandidat');
   exception
     -- Grunnlaget er ikke klart. Kjeden står, og det er porten som gjør jobben
     -- sin — ikke en teknisk svikt. Nøyaktig de tre klassene
@@ -1098,11 +1146,17 @@ create function api.resume_chain_transitions(p_identity_key text, p_secret text)
   set search_path = ''
 as $$
 declare
+  -- Hvor mange rader én rekonsiliering ser på per ledd. Grensen er ikke bare en
+  -- kostnadsgrense: den avgjør om passeringen *så hele leddet*, og dermed om den
+  -- i det hele tatt kan uttale seg om at leddet er friskt igjen.
+  v_limit constant integer := 200;
   v_identity provenance.agent_identities;
   v_row record;
   v_state text;
   v_queued integer := 0;
   v_candidates integer := 0;
+  v_seen integer;
+  v_failed boolean;
 begin
   select i.* into v_identity
   from provenance.agent_identities i
@@ -1120,7 +1174,16 @@ begin
   perform provenance.authenticate_agent_identity(
     p_identity_key, p_secret, v_identity.agent_role);
 
+  -- --------------------------------------------------------------------
   -- Ekstraksjonskontroller som mangler.
+  --
+  -- Hvert ledd telles og rekonsilieres for seg. `v_failed` er det som avgjør
+  -- om leddets tekniske problem kan lukkes, og `v_seen < v_limit` er det som
+  -- avgjør om denne passeringen i det hele tatt så hele leddet: en passering
+  -- som stoppet på grensen, kan ikke vite om raden bak den fortsatt svikter.
+  -- --------------------------------------------------------------------
+  v_seen := 0;
+  v_failed := false;
   for v_row in
     select e.id
     from knowledge.evidence_items e
@@ -1129,8 +1192,9 @@ begin
       where j.agent_role = 'extraction_verification'::provenance.agent_role
         and j.job_key = workflow.control_job_key('ekstraksjon', e.id))
     order by e.created_at
-    limit 200
+    limit v_limit
   loop
+    v_seen := v_seen + 1;
     begin
       if workflow.chain_control_for_evidence_item(v_row.id) is not null then
         v_queued := v_queued + 1;
@@ -1141,17 +1205,24 @@ begin
       when others then
         get stacked diagnostics v_state = returned_sqlstate;
         perform workflow.chain_note_failure('ekstraksjonskontroll', v_row.id, v_state);
+        v_failed := true;
     end;
   end loop;
+  if not v_failed and v_seen < v_limit then
+    perform workflow.chain_resolve_step('ekstraksjonskontroll');
+  end if;
 
   -- Synteseoppgaver som mangler.
+  v_seen := 0;
+  v_failed := false;
   for v_row in
     select distinct ev.evidence_item_id as id
     from workflow.evidence_verifications ev
     where ev.outcome = 'verified'
     order by 1
-    limit 200
+    limit v_limit
   loop
+    v_seen := v_seen + 1;
     begin
       if workflow.chain_task_for_verified_extraction(v_row.id) is not null then
         v_queued := v_queued + 1;
@@ -1162,10 +1233,16 @@ begin
       when others then
         get stacked diagnostics v_state = returned_sqlstate;
         perform workflow.chain_note_failure('syntese', v_row.id, v_state);
+        v_failed := true;
     end;
   end loop;
+  if not v_failed and v_seen < v_limit then
+    perform workflow.chain_resolve_step('syntese');
+  end if;
 
   -- Kildestøttekontroller som mangler.
+  v_seen := 0;
+  v_failed := false;
   for v_row in
     select r.id
     from knowledge.claim_revisions r
@@ -1174,8 +1251,9 @@ begin
       where j.agent_role = 'citation_support_verification'::provenance.agent_role
         and j.job_key = workflow.control_job_key('kildestotte', r.id))
     order by r.created_at
-    limit 200
+    limit v_limit
   loop
+    v_seen := v_seen + 1;
     begin
       if workflow.chain_control_for_claim_revision(v_row.id) is not null then
         v_queued := v_queued + 1;
@@ -1186,17 +1264,24 @@ begin
       when others then
         get stacked diagnostics v_state = returned_sqlstate;
         perform workflow.chain_note_failure('kildestottekontroll', v_row.id, v_state);
+        v_failed := true;
     end;
   end loop;
+  if not v_failed and v_seen < v_limit then
+    perform workflow.chain_resolve_step('kildestottekontroll');
+  end if;
 
   -- Evidensvurderinger som mangler.
+  v_seen := 0;
+  v_failed := false;
   for v_row in
     select distinct cv.claim_revision_id as id
     from workflow.claim_verifications cv
     where cv.outcome = 'verified'
     order by 1
-    limit 200
+    limit v_limit
   loop
+    v_seen := v_seen + 1;
     begin
       if workflow.chain_task_for_verified_claim(v_row.id) is not null then
         v_queued := v_queued + 1;
@@ -1207,36 +1292,44 @@ begin
       when others then
         get stacked diagnostics v_state = returned_sqlstate;
         perform workflow.chain_note_failure('evidensvurdering', v_row.id, v_state);
+        v_failed := true;
     end;
   end loop;
+  if not v_failed and v_seen < v_limit then
+    perform workflow.chain_resolve_step('evidensvurdering');
+  end if;
 
   -- Kandidater som mangler. Gaten avgjør, som i overgangen: en revisjon som
-  -- ikke er ferdig, forsegles ikke, og det er ikke en feil — det er kjeden som
-  -- ikke er kommet dit ennå. Derfor telles bare de som faktisk ble bygget, og
-  -- ingen teknisk rad skrives for de øvrige.
+  -- ikke er ferdig, forseglet ikke, og det er ikke en feil — det er kjeden som
+  -- ikke er kommet dit ennå. De tre klassene som betyr nettopp det, går derfor
+  -- stille; alt annet er en teknisk svikt og skal telles som en, akkurat som i
+  -- de fire leddene over. Et `when others` som svelget uten å registrere, ville
+  -- gjort den ene svikten som *ikke* har en trigger bak seg, usynlig.
+  v_seen := 0;
+  v_failed := false;
   for v_row in
     select distinct a.claim_revision_id as id
     from knowledge.evidence_assessments a
     where not exists (
       select 1 from knowledge.candidates c where c.claim_revision_id = a.claim_revision_id)
     order by 1
-    limit 200
+    limit v_limit
   loop
+    v_seen := v_seen + 1;
     begin
       if workflow.chain_candidate_for_assessment(v_row.id) is not null then
         v_candidates := v_candidates + 1;
       end if;
     exception
-      when others then
+      when restrict_violation or no_data_found or invalid_parameter_value then
         null;
+      when others then
+        get stacked diagnostics v_state = returned_sqlstate;
+        perform workflow.chain_note_failure('kandidat', v_row.id, v_state);
+        v_failed := true;
     end;
   end loop;
-
-  if v_queued > 0 or v_candidates > 0 then
-    perform workflow.chain_resolve_step('ekstraksjonskontroll');
-    perform workflow.chain_resolve_step('syntese');
-    perform workflow.chain_resolve_step('kildestottekontroll');
-    perform workflow.chain_resolve_step('evidensvurdering');
+  if not v_failed and v_seen < v_limit then
     perform workflow.chain_resolve_step('kandidat');
   end if;
 
@@ -1245,7 +1338,7 @@ end;
 $$;
 
 comment on function api.resume_chain_transitions(text, text) is
-  'Tar igjen de automatiske kjedeovergangene en teknisk svikt etterlot. Leser hva databasens egen tilstand tilsier og legger inn nøyaktig det triggerne ville lagt inn — de samme funksjonene, de samme portene, den samme idempotensen — og tar ikke imot ett eneste felt fra kalleren. Den erstatter ingen tilstandsovergang: overgangen har allerede skjedd, og dette er lesningen av hva som mangler i forhold til den. Krever en identitet i et av de to deterministiske kontrolleddene, fordi det er den kjøringen som uansett går med jevne mellomrom. Svarer med hvor mange jobber som ble lagt inn og hvor mange kandidater som ble forseglet. SECURITY DEFINER fordi knowledge, workflow og provenance har RLS med default deny; EXECUTE går til anon og authenticated av samme grunn som for de øvrige agentveiene.';
+  'Tar igjen de automatiske kjedeovergangene en teknisk svikt etterlot, og rekonsilierer samtidig det tekniske bildet. Leser hva databasens egen tilstand tilsier og legger inn nøyaktig det triggerne ville lagt inn — de samme funksjonene, de samme portene, den samme idempotensen — og tar ikke imot ett eneste felt fra kalleren. Den erstatter ingen tilstandsovergang: overgangen har allerede skjedd, og dette er lesningen av hva som mangler i forhold til den. Hvert ledd rekonsilieres for seg, og leddets tekniske problem lukkes bare når passeringen kom gjennom *hele* leddet uten en eneste teknisk svikt: en overgang som lyktes for ett subjekt, sier ingenting om den som fortsatt svikter for et annet, og en passering som stoppet på grensen, vet ikke hva som står bak den. Krever en identitet i et av de to deterministiske kontrolleddene, fordi det er den kjøringen som uansett går med jevne mellomrom. Svarer med hvor mange jobber som ble lagt inn og hvor mange kandidater som ble forseglet. SECURITY DEFINER fordi knowledge, workflow og provenance har RLS med default deny; EXECUTE går til anon og authenticated av samme grunn som for de øvrige agentveiene.';
 
 revoke execute on function api.resume_chain_transitions(text, text) from public;
 grant execute on function api.resume_chain_transitions(text, text) to anon, authenticated;

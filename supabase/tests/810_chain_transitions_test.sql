@@ -24,7 +24,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(47);
+select plan(52);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -696,6 +696,17 @@ reset role;
 -- ===========================================================================
 -- Del 10 — En teknisk svikt stopper arbeidet, ikke registreringen
 -- ===========================================================================
+-- De ekte definisjonene tas vare på først. Del 11 og 12 setter dem tilbake én
+-- om gangen, og en prøve som skrev dem av på nytt ville prøvd sin egen kopi
+-- framfor den som faktisk er utrullet.
+create temporary table original_definition (name text primary key, body text not null)
+  on commit drop;
+insert into original_definition values
+  ('control_job_key',
+   pg_get_functiondef('workflow.control_job_key(text,uuid)'::regprocedure)),
+  ('grounding_machine_proved',
+   pg_get_functiondef('workflow.grounding_machine_proved(uuid)'::regprocedure));
+
 -- Overgangen gjøres umulig med vilje. `create or replace function` er
 -- transaksjonell, så erstatningen forsvinner med prøven.
 create or replace function workflow.control_job_key(p_kind text, p_subject uuid)
@@ -725,6 +736,26 @@ values ('81000000-0000-4000-8000-000000000012', '81000000-0000-4000-8000-0000000
         'not_reported', 'decrease', 'not_reported', 'not_reported',
         'Avsnitt 2', 'ai_assisted', (select id from fixture where name = 'extractor'));
 
+-- Og et funn til, registrert mens kjeden er nede. Del 11 trenger to rader som
+-- begge mangler kontrollen sin: én som lar seg legge inn når kjeden kommer opp
+-- igjen, og én som fortsatt svikter.
+insert into knowledge.evidence_items (
+  id, source_id, source_version_id, design_code, population_id,
+  population_availability, population_detail, sample_size_availability,
+  intervention_drug_id, comparator_kind, outcome_concept_id, outcome_detail,
+  timepoint_availability, reported_direction, estimate_availability,
+  confidence_interval_availability, source_locator, extraction_method,
+  created_by_actor_id
+)
+values ('81000000-0000-4000-8000-000000000014', '81000000-0000-4000-8000-000000000001',
+        '81000000-0000-4000-8000-000000000021', 'randomized_controlled_trial',
+        (select id from fixture where name = 'adults'),
+        'reported_value', 'Prøve i 810, tredje funn.', 'not_reported',
+        (select id from fixture where name = 'sertralin'), 'none',
+        (select id from fixture where name = 'topic'), 'Et tredje funn for 810.',
+        'not_reported', 'decrease', 'not_reported', 'not_reported',
+        'Avsnitt 4', 'ai_assisted', (select id from fixture where name = 'extractor'));
+
 select is(
   (select count(*)::integer from knowledge.evidence_items e
    where e.id = '81000000-0000-4000-8000-000000000012'),
@@ -752,6 +783,95 @@ select is(
          = '81000000-0000-4000-8000-000000000012'),
   0,
   'arbeidet står, og ingen halvferdig jobb ble liggende igjen'
+);
+
+-- ===========================================================================
+-- Del 11 — Et ledd som fortsatt svikter, meldes ikke friskt
+-- ===========================================================================
+-- Rekonsilieringen legger inn det som mangler. Den avgjør også om leddets
+-- tekniske problem kan lukkes — og den avgjørelsen kan ikke være «noe gikk
+-- bra». Går én rad gjennom mens en annen fortsatt svikter, er leddet ikke
+-- friskt, og et lukket problem ville skjult en svikt som fortsatt er der.
+--
+-- Den ekte jobbnøkkelen settes tilbake, og svikten flyttes inn i en funksjon
+-- bare overgangen kaller: `workflow.control_job_key(text, uuid)` står også i
+-- spørringen rekonsilieringen løper over, og en svikt der ville stoppet hele
+-- passeringen framfor å la én rad svikte.
+do $$ begin
+  execute (select body from original_definition where name = 'control_job_key');
+end $$;
+
+create or replace function workflow.grounding_machine_proved(p_evidence_item_id uuid)
+  returns boolean
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  if p_evidence_item_id = '81000000-0000-4000-8000-000000000012' then
+    raise exception using
+      errcode = 'io_error',
+      message = 'Prøve i 810: framkalt teknisk svikt i én rad.';
+  end if;
+  return false;
+end;
+$$;
+
+create temporary table partial (label text primary key, payload jsonb not null) on commit drop;
+grant select, insert on partial to anon;
+set local role anon;
+insert into partial
+select 'uneven', api.resume_chain_transitions(
+  'agent-identity:extraction-verification-01',
+  (select secret from cred where name = 'extraction_verifier'));
+reset role;
+
+select ok(
+  exists (select 1 from workflow.pipeline_jobs j
+          where j.job_key = 'kontroll:ekstraksjon:81000000-0000-4000-8000-000000000014'),
+  'raden som lar seg legge inn, kommer inn'
+);
+select is(
+  (select count(*)::integer from workflow.pipeline_jobs j
+   where j.job_key = 'kontroll:ekstraksjon:81000000-0000-4000-8000-000000000012'),
+  0,
+  'og raden som fortsatt svikter, står igjen — porten er ikke myknet for å få framgang'
+);
+select is(
+  (select count(*)::integer from workflow.technical_incidents ti
+   where ti.area = 'automatic_task' and ti.signature = 'kjede:ekstraksjonskontroll'
+     and ti.resolved_at is null),
+  1,
+  'leddets tekniske problem står fortsatt uløst, selv om passeringen gjorde framgang'
+);
+
+-- ===========================================================================
+-- Del 12 — …og lukkes når leddet faktisk er friskt igjen
+-- ===========================================================================
+-- Kontrasten hører med: en rekonsiliering som aldri lukket noe, ville vært like
+-- ubrukelig som en som lukket alt. Med den ekte funksjonen tilbake ser
+-- passeringen hele leddet uten en eneste svikt, og først da er lampen slukket.
+do $$ begin
+  execute (select body from original_definition where name = 'grounding_machine_proved');
+end $$;
+
+set local role anon;
+insert into partial
+select 'healthy', api.resume_chain_transitions(
+  'agent-identity:extraction-verification-01',
+  (select secret from cred where name = 'extraction_verifier'));
+reset role;
+
+select ok(
+  exists (select 1 from workflow.pipeline_jobs j
+          where j.job_key = 'kontroll:ekstraksjon:81000000-0000-4000-8000-000000000012'),
+  'raden som sviktet, kommer inn når leddet er friskt'
+);
+select is(
+  (select count(*)::integer from workflow.technical_incidents ti
+   where ti.area = 'automatic_task' and ti.signature = 'kjede:ekstraksjonskontroll'
+     and ti.resolved_at is null),
+  0,
+  'og først da lukkes leddets tekniske problem'
 );
 
 select * from finish();
