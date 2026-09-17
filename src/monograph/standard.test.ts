@@ -19,12 +19,14 @@ import { describe, expect, it } from 'vitest'
 import {
   ANSWER_FORMS,
   MONOGRAPH_STANDARD_VERSION,
+  PRESCRIBED_SCOPE_VALUES,
   QUESTION_TEMPLATES,
   REQUIREMENT_TYPES,
   SCOPE_AXES,
   SEARCH_TRACKS,
   SOURCE_PROFILES,
   SOURCE_PROFILE_CODES,
+  prescribedScopeValues,
   questionTemplate,
   requiredSearchTracks,
   sourceProfile,
@@ -205,5 +207,52 @@ describe('monografistandarden som maskinlesbar kontrakt', () => {
     expect(() => sourceProfile('XYZ')).toThrow(/XYZ/)
     expect(questionTemplate('MN01').code).toBe('MN01')
     expect(sourceProfile('REG').code).toBe('REG')
+  })
+})
+
+describe('verdiene standarden selv navngir', () => {
+  const doc = readFileSync(STANDARD_DOC, 'utf8')
+
+  it('har nøyaktig de antallene standardens screeningslister skriver ut', () => {
+    expect(prescribedScopeValues('MN38')).toHaveLength(11)
+    expect(prescribedScopeValues('MN50')).toHaveLength(4)
+    expect(prescribedScopeValues('MN51')).toHaveLength(6)
+    expect(prescribedScopeValues('MN55')).toHaveLength(5)
+    // Og ingen andre maler har prescribed verdier: resten utvides av
+    // dokumenterte funn, ikke av en liste i standarden.
+    const templates = new Set(PRESCRIBED_SCOPE_VALUES.map((value) => value.template))
+    expect([...templates].sort()).toEqual(['MN38', 'MN50', 'MN51', 'MN55'])
+  })
+
+  it('gjengir MN38s risikoområder fra standardens egen setning', () => {
+    const sentence = doc.split('\n').find((line) => line.startsWith('MN38 skal minst vurdere'))
+    expect(sentence).toBeDefined()
+    for (const value of prescribedScopeValues('MN38')) {
+      expect(sentence, value.label).toContain(value.label)
+      expect(value.axis).toBe('risk_area')
+    }
+  })
+
+  it('gjengir screeningsverdiene fra malens eget spørsmål', () => {
+    for (const code of ['MN50', 'MN51', 'MN55']) {
+      const prompt = questionTemplate(code).prompt
+      for (const value of prescribedScopeValues(code)) {
+        expect(prompt, `${code}: ${value.label}`).toContain(value.label)
+      }
+    }
+  })
+
+  it('bruker en akse malen faktisk gjentas på', () => {
+    for (const value of PRESCRIBED_SCOPE_VALUES) {
+      expect(SCOPE_AXES).toContain(value.axis)
+      expect(questionTemplate(value.template).expansionAxes, value.template).toContain(value.axis)
+    }
+  })
+
+  it('navngir hver verdi bare én gang per mal og akse', () => {
+    const keys = PRESCRIBED_SCOPE_VALUES.map(
+      (value) => `${value.template}|${value.axis}|${value.label}`,
+    )
+    expect(new Set(keys).size).toBe(keys.length)
   })
 })

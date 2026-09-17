@@ -45,9 +45,18 @@ select enum_has_labels(
     -- Migrasjon 009: fulltekstbiblioteket (009a), modellregisteret (009c) og
     -- kandidaten med sin sluttkontroll (009d).
     'source_document_stored', 'role_model_assignment_registered', 'role_model_assignment_closed',
-    'candidate_built', 'candidate_final_control_recorded'
+    'candidate_built', 'candidate_final_control_recorded',
+    -- Migrasjon 013b: monografibestillingen, relevansavgjørelsen, det
+    -- aksepterte fagbegrepet, svarrevisjonen, låsingen, kildebegrensningen,
+    -- den forseglede monografikandidaten, sluttkontrollen, publiseringen og
+    -- tilbaketrekkingen.
+    'monograph_edition_ordered', 'monograph_need_relevance_decided',
+    'monograph_term_accepted', 'monograph_answer_revision_created',
+    'monograph_answer_lock_changed', 'monograph_source_restriction_registered',
+    'monograph_candidate_built', 'monograph_final_control_recorded',
+    'monograph_published', 'monograph_publication_withdrawn'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt, de to fjerningene av testartefakter og opprettelsen av en påstandsrevisjon, samt fulltekstbiblioteket, modellregisteret og kandidaten med sin sluttkontroll'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt, de to fjerningene av testartefakter og opprettelsen av en påstandsrevisjon, samt fulltekstbiblioteket, modellregisteret og kandidaten med sin sluttkontroll, samt monografilaget i fase C (013b)'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -312,7 +321,20 @@ select is_empty(
         -- Kontrolleres i 830_claim_revision_review_test.sql.
         'api.claim_revision_queue()',
         'api.claim_revision_for_decision(text)',
-        'api.record_claim_revision_decision(text,text,text,text)'
+        'api.record_claim_revision_decision(text,text,text,text)',
+        -- Migrasjon 013c. Monografibestillingen og dekningskartet. Alle
+        -- authenticated og ingen av dem anon: å avgjøre at Antidep skal si noe
+        -- om et virkestoff er en redaksjonell handling, og et dekningskart er
+        -- internt arbeidsmateriale som krever mandat å lese
+        -- (ANTIDEP_CONSTITUTION.md regel 5). Kontrolleres i
+        -- 850_monograph_order_test.sql.
+        'api.monograph_order_options()',
+        'api.order_monograph(text,text)',
+        'api.monograph_orders()',
+        'api.monograph_coverage(text)',
+        'api.propose_monograph_term(text,text,text,text)',
+        'api.decide_monograph_term(text,boolean,text)',
+        'api.monograph_term_proposals(text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

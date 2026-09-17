@@ -66,8 +66,11 @@ select set_eq(
            -- koblingene mellom dem.
            ('monograph_standard_versions'), ('monograph_source_profiles'),
            ('monograph_question_templates'), ('monograph_template_profiles'),
-           ('monograph_search_tracks'), ('monograph_search_track_profiles')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b og 013a'
+           ('monograph_search_tracks'), ('monograph_search_track_profiles'),
+           ('monograph_prescribed_scope_values'),
+           -- Migrasjon 013c: bestillingen og de konkrete kunnskapsbehovene.
+           ('monograph_editions'), ('monograph_needs')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a og 013c'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
@@ -110,8 +113,11 @@ select set_eq(
            -- Migrasjon 012d: ny evidens om en påstand som allerede finnes, og
            -- den redaksjonelle avgjørelsen om hva som skal skje med den, med
            -- sitt eget append-only spor.
-           ('claim_revision_reviews'), ('claim_revision_review_events')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b og 012d'
+           ('claim_revision_reviews'), ('claim_revision_review_events'),
+           -- Migrasjon 013c: sporet over kunnskapsbehovenes tilstander, og
+           -- forslagene om nye faglige begreper.
+           ('monograph_need_events'), ('monograph_term_proposals')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d og 013c'
 );
 select set_eq(
   $$

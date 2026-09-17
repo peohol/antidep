@@ -19,6 +19,7 @@
 
 import {
   MONOGRAPH_STANDARD_VERSION,
+  PRESCRIBED_SCOPE_VALUES,
   QUESTION_TEMPLATES,
   SEARCH_TRACKS,
   SOURCE_PROFILES,
@@ -143,6 +144,22 @@ export function monographStandardSeedSql(): string {
       `  on k.standard_version = ${VERSION} and k.code = v.track_code`,
       `join knowledge.monograph_source_profiles p`,
       `  on p.standard_version = ${VERSION} and p.code = v.profile_code;`,
+    ].join('\n'),
+  )
+
+  parts.push(
+    [
+      'insert into knowledge.monograph_prescribed_scope_values',
+      '  (template_id, axis, label, ordinal)',
+      'select t.id, v.axis::knowledge.monograph_scope_axis, v.label, v.ordinal',
+      'from (values',
+      PRESCRIBED_SCOPE_VALUES.map(
+        (value, index) =>
+          `  (${literal(value.template)}, ${literal(value.axis)}, ${literal(value.label)}, ${String(index + 1)})`,
+      ).join(',\n'),
+      ') as v(template_code, axis, label, ordinal)',
+      `join knowledge.monograph_question_templates t`,
+      `  on t.standard_version = ${VERSION} and t.code = v.template_code;`,
     ].join('\n'),
   )
 

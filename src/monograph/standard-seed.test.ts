@@ -16,7 +16,13 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import { monographStandardSeedSql } from './standard-seed.ts'
-import { MONOGRAPH_STANDARD_VERSION, QUESTION_TEMPLATES, SOURCE_PROFILES } from './standard.ts'
+import {
+  MONOGRAPH_STANDARD_VERSION,
+  PRESCRIBED_SCOPE_VALUES,
+  QUESTION_TEMPLATES,
+  SOURCE_PROFILES,
+  prescribedScopeValues,
+} from './standard.ts'
 
 const MIGRATION = 'supabase/migrations/20261003090000_monograph_standard_register.sql'
 
@@ -42,15 +48,28 @@ describe('seeden av monografistandarden', () => {
     )
   })
 
-  it('nevner hver mal og hver profil én gang i verdilisten', () => {
+  it('nevner hver mal og hver profil så mange ganger som koblingene krever', () => {
     const seed = monographStandardSeedSql()
     for (const template of QUESTION_TEMPLATES) {
       const occurrences = seed.split(`'${template.code}'`).length - 1
-      // Én gang i malinnleggingen, og én gang per kildeprofil i koblingen.
-      expect(occurrences, template.code).toBe(1 + template.sourceProfiles.length)
+      // Én gang i malinnleggingen, én gang per kildeprofil i profilkoblingen,
+      // og én gang per verdi standarden selv navngir for malen.
+      expect(occurrences, template.code).toBe(
+        1 + template.sourceProfiles.length + prescribedScopeValues(template.code).length,
+      )
     }
     for (const profile of SOURCE_PROFILES) {
       expect(seed, profile.code).toContain(`'${profile.code}'`)
+    }
+  })
+
+  it('legger inn hver verdi standarden selv navngir', () => {
+    const seed = monographStandardSeedSql()
+    expect(seed).toContain('insert into knowledge.monograph_prescribed_scope_values')
+    for (const value of PRESCRIBED_SCOPE_VALUES) {
+      expect(seed, value.label).toContain(
+        `(${JSON.stringify(value.template).replaceAll('"', "'")}, '${value.axis}', '${value.label}'`,
+      )
     }
   })
 

@@ -308,6 +308,47 @@ comment on table knowledge.monograph_search_track_profiles is
 alter table knowledge.monograph_search_track_profiles enable row level security;
 
 -- ----------------------------------------------------------------------------
+-- 5c. Verdiene standarden selv navngir
+--
+-- Fire maler er screeningsspørsmål med en liste standarden skriver ut: MN38
+-- navngir elleve alvorlige risikoområder, MN50 fire psykiatriske
+-- tilleggstilstander, MN51 seks somatiske forhold og MN55 fem eksponeringer
+-- (MONOGRAPH_STANDARD.md §3.6, §3.7, §3.8).
+--
+-- De hører i registeret og ikke i en utvidelsesregel, fordi de er *spørsmål
+-- standarden stiller* og ikke funn en agent gjør. «MN38 skal minst vurdere …»
+-- er et krav om å undersøke, og ikke en erklæring om at hvert virkestoff gir
+-- hver risiko. Et dekningskart oppretter derfor ett behov per verdi med én
+-- gang, framfor å vente på at noe blir dokumentert — og en risiko som ikke er
+-- undersøkt, blir da synlig framfor å mangle.
+-- ----------------------------------------------------------------------------
+
+create table knowledge.monograph_prescribed_scope_values (
+  id uuid primary key default gen_random_uuid(),
+  template_id uuid not null
+    references knowledge.monograph_question_templates (id)
+    on update restrict on delete restrict,
+  axis knowledge.monograph_scope_axis not null,
+  label text not null,
+  ordinal integer not null,
+  created_at timestamptz not null default now(),
+
+  constraint monograph_prescribed_scope_values_key unique (template_id, axis, label),
+  constraint monograph_prescribed_scope_values_ordinal_key unique (ordinal),
+  constraint monograph_prescribed_scope_values_label_shape_check
+    check (label = btrim(label) and length(label) between 1 and 300),
+  constraint monograph_prescribed_scope_values_ordinal_check check (ordinal between 1 and 999)
+);
+
+comment on table knowledge.monograph_prescribed_scope_values is
+  'Avgrensningsverdiene standarden selv navngir for en screeningsmal: de elleve risikoområdene i MN38, de psykiatriske tilstandene i MN50, de somatiske forholdene i MN51 og eksponeringene i MN55. De er spørsmål standarden stiller og ikke funn en agent gjør, så et dekningskart oppretter ett behov per verdi med én gang — en risiko som ikke er undersøkt, blir da synlig framfor å mangle. Ordinalen er standardens egen rekkefølge.';
+
+alter table knowledge.monograph_prescribed_scope_values enable row level security;
+
+create index monograph_prescribed_scope_values_template_idx
+  on knowledge.monograph_prescribed_scope_values (template_id, ordinal);
+
+-- ----------------------------------------------------------------------------
 -- 5b. created_at eies av databasen, ikke av innleggingen
 --
 -- En ren default gjelder bare når kolonnen utelates. Registeret er append-only,
@@ -334,6 +375,9 @@ create trigger monograph_search_tracks_set_created_at
   for each row execute function catalog.set_created_at();
 create trigger monograph_search_track_profiles_set_created_at
   before insert or update on knowledge.monograph_search_track_profiles
+  for each row execute function catalog.set_created_at();
+create trigger monograph_prescribed_scope_values_set_created_at
+  before insert or update on knowledge.monograph_prescribed_scope_values
   for each row execute function catalog.set_created_at();
 
 -- ----------------------------------------------------------------------------
@@ -379,6 +423,9 @@ create trigger monograph_search_tracks_are_frozen
   for each row execute function knowledge.freeze_monograph_standard();
 create trigger monograph_search_track_profiles_are_frozen
   before update or delete on knowledge.monograph_search_track_profiles
+  for each row execute function knowledge.freeze_monograph_standard();
+create trigger monograph_prescribed_scope_values_are_frozen
+  before update or delete on knowledge.monograph_prescribed_scope_values
   for each row execute function knowledge.freeze_monograph_standard();
 
 -- ----------------------------------------------------------------------------
@@ -1324,6 +1371,40 @@ join knowledge.monograph_search_tracks k
 join knowledge.monograph_source_profiles p
   on p.standard_version = '1.0.0' and p.code = v.profile_code;
 
+insert into knowledge.monograph_prescribed_scope_values
+  (template_id, axis, label, ordinal)
+select t.id, v.axis::knowledge.monograph_scope_axis, v.label, v.ordinal
+from (values
+  ('MN38', 'risk_area', 'rytme-/ledningsforstyrrelser og QT', 1),
+  ('MN38', 'risk_area', 'blodtrykksendring/ortostase', 2),
+  ('MN38', 'risk_area', 'hyponatremi', 3),
+  ('MN38', 'risk_area', 'blødning', 4),
+  ('MN38', 'risk_area', 'kramper', 5),
+  ('MN38', 'risk_area', 'mani/hypomani', 6),
+  ('MN38', 'risk_area', 'serotonerg toksisitet', 7),
+  ('MN38', 'risk_area', 'lever-/annen organskade', 8),
+  ('MN38', 'risk_area', 'alvorlige overfølsomhetsreaksjoner', 9),
+  ('MN38', 'risk_area', 'fall', 10),
+  ('MN38', 'risk_area', 'klinisk betydningsfull antikolinerg belastning', 11),
+  ('MN50', 'comorbidity', 'bipolaritet/mani', 12),
+  ('MN50', 'comorbidity', 'psykose', 13),
+  ('MN50', 'comorbidity', 'rusmiddelproblemer', 14),
+  ('MN50', 'comorbidity', 'relevante angsttilstander', 15),
+  ('MN51', 'comorbidity', 'hjerte-/karsykdom', 16),
+  ('MN51', 'comorbidity', 'epilepsi', 17),
+  ('MN51', 'comorbidity', 'blødningsrisiko', 18),
+  ('MN51', 'comorbidity', 'metabolsk sykdom', 19),
+  ('MN51', 'comorbidity', 'glaukom/urinretensjon', 20),
+  ('MN51', 'comorbidity', 'endret gastrointestinal anatomi/absorpsjon', 21),
+  ('MN55', 'exposure', 'mat', 22),
+  ('MN55', 'exposure', 'alkohol', 23),
+  ('MN55', 'exposure', 'andre rusmidler', 24),
+  ('MN55', 'exposure', 'røykestatus', 25),
+  ('MN55', 'exposure', 'natur-/kosttilskudd', 26)
+) as v(template_code, axis, label, ordinal)
+join knowledge.monograph_question_templates t
+  on t.standard_version = '1.0.0' and t.code = v.template_code;
+
 -- >>> SLUTTEN PÅ DEN GENERERTE SEEDEN <<<
 
 -- ----------------------------------------------------------------------------
@@ -1444,6 +1525,25 @@ begin
     raise exception using
       errcode = 'no_data_found',
       message = format('Monografistandard 1.0.0 har bare %s søkespor.', v_tracks);
+  end if;
+
+  -- Screeningslistene standarden skriver ut, skal være komplette. Mangler én
+  -- risiko, blir den ikke et åpent behov noen ser: den blir et spørsmål ingen
+  -- stilte (MONOGRAPH_STANDARD.md §3.6).
+  select string_agg(format('%s: %s', x.code, x.n), ', ' order by x.code) into v_missing
+  from (values ('MN38', 11), ('MN50', 4), ('MN51', 6), ('MN55', 5)) as expected(code, n)
+  cross join lateral (
+    select expected.code as code, expected.n as n,
+           (select count(*) from knowledge.monograph_prescribed_scope_values v
+            join knowledge.monograph_question_templates t on t.id = v.template_id
+            where t.standard_version = '1.0.0' and t.code = expected.code) as actual
+  ) x
+  where x.actual <> x.n;
+  if v_missing is not null then
+    raise exception using
+      errcode = 'no_data_found',
+      message = format('Screeningslistene er ikke komplette; forventet antall per mal: %s.', v_missing),
+      hint = 'MN38 navngir elleve risikoområder, MN50 fire psykiatriske tilstander, MN51 seks somatiske forhold og MN55 fem eksponeringer (MONOGRAPH_STANDARD.md §3.6, §3.7, §3.8). Mangler én, blir den et spørsmål ingen stilte.';
   end if;
 end;
 $$;

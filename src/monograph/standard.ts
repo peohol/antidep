@@ -1363,6 +1363,73 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
 ]
 
 // ----------------------------------------------------------------------------
+// De verdiene standarden selv navngir
+//
+// Fire maler er screeningsspørsmål med en liste standarden skriver ut: MN38
+// navngir elleve alvorlige risikoområder, MN50 fire psykiatriske
+// tilleggstilstander, MN51 seks somatiske forhold og MN55 fem eksponeringer.
+// De er ikke funn en agent skal finne på — de er spørsmål som skal stilles
+// uansett hva svaret blir, og listen er standardens egen
+// (MONOGRAPH_STANDARD.md §3.6, §3.7, §3.8).
+//
+// Derfor får de hvert sitt behov med én gang, framfor å vente på at noe blir
+// dokumentert. «MN38 skal minst vurdere …» er et krav om å undersøke, ikke en
+// erklæring om at hvert virkestoff gir hver risiko.
+// ----------------------------------------------------------------------------
+
+export interface PrescribedScopeValue {
+  /** Malen verdien hører til. */
+  readonly template: string
+  readonly axis: ScopeAxis
+  /** Verdien slik standarden navngir den. */
+  readonly label: string
+}
+
+export const PRESCRIBED_SCOPE_VALUES: readonly PrescribedScopeValue[] = [
+  // MN38 — §3.6: de elleve alvorlige risikoområdene screeningen minst dekker.
+  { template: 'MN38', axis: 'risk_area', label: 'rytme-/ledningsforstyrrelser og QT' },
+  { template: 'MN38', axis: 'risk_area', label: 'blodtrykksendring/ortostase' },
+  { template: 'MN38', axis: 'risk_area', label: 'hyponatremi' },
+  { template: 'MN38', axis: 'risk_area', label: 'blødning' },
+  { template: 'MN38', axis: 'risk_area', label: 'kramper' },
+  { template: 'MN38', axis: 'risk_area', label: 'mani/hypomani' },
+  { template: 'MN38', axis: 'risk_area', label: 'serotonerg toksisitet' },
+  { template: 'MN38', axis: 'risk_area', label: 'lever-/annen organskade' },
+  { template: 'MN38', axis: 'risk_area', label: 'alvorlige overfølsomhetsreaksjoner' },
+  { template: 'MN38', axis: 'risk_area', label: 'fall' },
+  {
+    template: 'MN38',
+    axis: 'risk_area',
+    label: 'klinisk betydningsfull antikolinerg belastning',
+  },
+
+  // MN50 — §3.7: de psykiatriske tilleggstilstandene som minst undersøkes.
+  { template: 'MN50', axis: 'comorbidity', label: 'bipolaritet/mani' },
+  { template: 'MN50', axis: 'comorbidity', label: 'psykose' },
+  { template: 'MN50', axis: 'comorbidity', label: 'rusmiddelproblemer' },
+  { template: 'MN50', axis: 'comorbidity', label: 'relevante angsttilstander' },
+
+  // MN51 — §3.7: de somatiske forholdene som minst vurderes.
+  { template: 'MN51', axis: 'comorbidity', label: 'hjerte-/karsykdom' },
+  { template: 'MN51', axis: 'comorbidity', label: 'epilepsi' },
+  { template: 'MN51', axis: 'comorbidity', label: 'blødningsrisiko' },
+  { template: 'MN51', axis: 'comorbidity', label: 'metabolsk sykdom' },
+  { template: 'MN51', axis: 'comorbidity', label: 'glaukom/urinretensjon' },
+  {
+    template: 'MN51',
+    axis: 'comorbidity',
+    label: 'endret gastrointestinal anatomi/absorpsjon',
+  },
+
+  // MN55 — §3.8: eksponeringene interaksjonsscreeningen minst dekker.
+  { template: 'MN55', axis: 'exposure', label: 'mat' },
+  { template: 'MN55', axis: 'exposure', label: 'alkohol' },
+  { template: 'MN55', axis: 'exposure', label: 'andre rusmidler' },
+  { template: 'MN55', axis: 'exposure', label: 'røykestatus' },
+  { template: 'MN55', axis: 'exposure', label: 'natur-/kosttilskudd' },
+]
+
+// ----------------------------------------------------------------------------
 // Søkesporene kildepolitikkens §4.2 krever forsøkt og dokumentert
 //
 // Sporene er *minimumsdekningen* per profil, ikke en anbefaling. Et spor som
@@ -1495,4 +1562,9 @@ export function sourceProfile(code: string): SourceProfile {
 /** Sporene som må være forsøkt og dokumentert for en profil. */
 export function requiredSearchTracks(profile: SourceProfileCode): readonly SearchTrack[] {
   return SEARCH_TRACKS.filter((track) => track.profiles.includes(profile))
+}
+
+/** Verdiene standarden selv navngir for én mal, eller en tom liste. */
+export function prescribedScopeValues(code: string): readonly PrescribedScopeValue[] {
+  return PRESCRIBED_SCOPE_VALUES.filter((value) => value.template === code)
 }
