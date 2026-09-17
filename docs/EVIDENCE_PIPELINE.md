@@ -64,7 +64,11 @@ Antidep eier oppgavekontrakten, integritetskontrollene og lagringen. Eksterne KI
 
 ## Mangler
 
-Kjeden synteserer ikke om igjen en påstand som allerede finnes for det samme temaet og virkestoffet, og det skal den ikke: *hva* påstanden skal si i lys av ny evidens, er en redaksjonell avgjørelse og ikke en transport. Det er ikke lenger et hull — tilstanden er eksplisitt, synlig i den åpne arbeidsoversikten og avgjørbar på `/ny-evidens` — men det er fortsatt en grense automatikken ikke går over, og den er ført her framfor å se ut som om automatikken dekker mer enn den gjør.
+Kjeden synteserer ikke om igjen en påstand som allerede finnes for det samme temaet, virkestoffet **og den samme avgrensningen**, og det skal den ikke: *hva* påstanden skal si i lys av ny evidens, er en redaksjonell avgjørelse og ikke en transport. Tilstanden er eksplisitt, synlig i den åpne arbeidsoversikten og avgjørbar på `/ny-evidens`.
+
+Avgrensningen kom til i fase C, og den flyttet grensen et sted den skulle flyttes. `knowledge.claims.monograph_need_id` er nå del av påstandens identitet, utledet av databasen selv fra evidenslenkene gjennom `knowledge.monograph_source_uses` — en kaller kan ikke oppgi den. To *forskjellige* monografispørsmål om det samme virkestoffet og det samme endepunktet er derfor to påstander, og den ene stanser ikke syntesen av den andre. Den eksisterende, uavgrensede påstanden får sitt revisjonsvarsel likevel, slik at ny evidens om temaet ikke forsvinner: den blir vurdert mot den, ikke skrevet inn i den. `npm run db:test:monograph:upgrade` prøver nettopp dette på en base som alt har en publisert påstand om sertralin og vektendring.
+
+Grensen som står, er derfor den den skal være: automatikken bygger ikke en ny formulering av et svar som alt finnes for det samme spørsmålet. Den lager et revisjonsforslag, og et menneske avgjør.
 
 En påstand der *alle* evidenssyntesene for paret er trukket tilbake, får ingen revisjonsoppgave: en tilbaketrukket påstand kan ikke få nye revisjoner, og en oppgave om noe som ikke kan gjøres, ville vært en menneskeoppgave uten et utfall. Da stopper kjeden som før. Skal temaet fortsatt dekkes, er det en ny påstand og ikke en revisjon.
 

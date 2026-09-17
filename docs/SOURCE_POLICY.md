@@ -2,7 +2,7 @@
 
 Versjon: **1.0.0**. Utarbeidet: **2026-09-17** av ChatGPT etter repo-eiers startsignal til fase A og B i [monografiplanen](MONOGRAPH_PLAN.md).
 
-Status: **faglig spesifikasjon, ikke implementert eller validert i en reell monografikjøring**. Dette dokumentet er ikke en registrert kildevurdering eller menneskelig publiseringsgodkjenning. [Konstitusjonen](ANTIDEP_CONSTITUTION.md) og eksisterende tilgangs- og publiseringskontroller gjelder uendret.
+Status: **faglig spesifikasjon, implementert som versjonert kontrakt i fase C, men ikke validert i en reell monografikjøring**. De 13 kildeprofilene og deres obligatoriske søkespor ligger i `knowledge.monograph_source_profiles` og `knowledge.monograph_search_tracks`, og `src/monograph/standard.test.ts` leser dette dokumentet på nytt ved hver kjøring og krever at hver rad er den samme. Den faglige valideringen er fase D ([overleveringen](MONOGRAPH_PHASE_D_HANDOVER.md)). Dette dokumentet er ikke en registrert kildevurdering eller menneskelig publiseringsgodkjenning. [Konstitusjonen](ANTIDEP_CONSTITUTION.md) og eksisterende tilgangs- og publiseringskontroller gjelder uendret.
 
 ## 1. Formål og avgrensning
 

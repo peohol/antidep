@@ -1,8 +1,10 @@
 # Plan for legemiddelmonografier og autonom kildeoppdagelse
 
-Status per **2026-09-17**: **Fase A og B er utarbeidet etter repo-eiers uttrykkelige startsignal. Fase C–E er ikke startet i denne leveransen.**
+Status per **2026-09-17**: **Fase A, B og C er levert. Fase D–E er ikke startet.**
 
-De to faglige spesifikasjonene er nå [Monograph Standard v1](MONOGRAPH_STANDARD.md) og [Source Policy v1](SOURCE_POLICY.md). De er ikke implementert, ikke prøvd på en komplett monografi og ikke en menneskelig godkjenning av klinisk innhold. Det tidligere stoppkravet før fase A og B er oppfylt ved startsignalet; neste tekniske leveranse krever en egen bestilling.
+De to faglige spesifikasjonene er [Monograph Standard v1](MONOGRAPH_STANDARD.md) og [Source Policy v1](SOURCE_POLICY.md), og de er nå implementert som versjonerte kontrakter: 80 spørsmålsmaler og 13 kildeprofiler ligger i ett maskinlesbart register som prøves mot dokumentene ved hver kjøring.
+
+Fase C er teknisk prøvd ende til ende og **ikke** faglig: ingen komplett monografi er utarbeidet, ingen klinisk monografi er godkjent eller publisert, og ingen agent kan attestere at et menneske har vurdert innhold. Fase D — pilotmonografien for sertralin — er beskrevet i [overleveringen](MONOGRAPH_PHASE_D_HANDOVER.md).
 
 Dette dokumentet bevarer produktmålet og leveranserekkefølgen. Detaljer om spørsmål, svarformer, kilder, stoppkriterier og vedlikehold har én gjeldende beskrivelse i standardene, ikke parallelle foreløpige lister her.
 
@@ -97,6 +99,6 @@ Når pilotens generelle arbeidsform fungerer, bygg monografier for øvrige antid
 
 ## 5. Neste handling
 
-Fase A og B er levert som dokumenter. **Neste steg er å bestille fase C**, med de to standardene som grunnlag og én presis, sammenhengende implementeringsoppgave. Fase C er ikke igangsatt av startsignalet til A/B.
+Fase A og B er levert som dokumenter, og fase C som fungerende, prøvd kode: fra én virkestoffbestilling til et kontrollert, delvis monografiutkast med ærlig dekning, gjennom de autoriserte inngangene. **Neste steg er fase D** — å prøve arbeidsformen faglig på én reell sertralinmonografi. [Overleveringen](MONOGRAPH_PHASE_D_HANDOVER.md) sier hvordan piloten startes, hvor den inspiseres, og hvilke reelle tilgangsbegrensninger som står igjen.
 
 Planen har lykkes når klinikeren kan være faglig kontrollør og mulig redaktør, uten å måtte være litteratursøkets manuelle arbeidsleder.

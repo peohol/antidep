@@ -14,6 +14,22 @@ Katalogdata er begreper og legemiddelidentiteter, ikke kliniske konklusjoner. Ki
 
 `knowledge.publication_events` er den append-only historikken over hva Antidep har sagt. Hver hendelse navngir både revisjonen og det forseglede innholdet som ble publisert — og for en tilbaketrekking, det innholdet som ble tatt ut av visning — sammen med den sluttkontrollen publiseringen hviler på. `knowledge.claims` bærer to pekere som ikke kan si hver sin ting: revisjonen og kandidaten som er publisert nå.
 
+## Monografilaget
+
+`knowledge.monograph_question_templates` og `monograph_source_profiles` er standarden som maskinlesbart register — ett register, versjonert, som `src/monograph/standard.test.ts` leser mot dokumentene ved hver kjøring. `monograph_editions` er bestillingen, og `monograph_needs` de konkrete kunnskapsbehovene den ga: én mal blir flere behov der avgrensningen krever det, så 80 maler er verken 80 behov, 80 søk eller 80 artikler. Behovet bærer relevans, arbeidstilstand og faglig utfall som tre atskilte kolonner, og `workflow.monograph_need_events` er det append-only sporet over hver overgang med sin egen aktiveringsgrunn.
+
+`knowledge.monograph_source_uses` er den godkjente bruken av én kildeversjon for ett behov — mange-til-mange i begge retninger, og med den bruken kilden er godkjent *til* skrevet ut. Den er nøkkelen til at kjeden kan være avgrensningsbevisst: `knowledge.claims.monograph_need_id` utledes av databasen selv fra evidenslenkene gjennom denne tabellen, og en kaller kan ikke oppgi den. To spørsmål om det samme virkestoffet og det samme temaet er derfor to påstander, ikke én som stanser den andre. `monograph_source_use_revocations` forkaster en godkjenning uten å slette den.
+
+`knowledge.monograph_answers` og `monograph_answer_revisions` er de strukturerte svarene. Hver kunnskapstype har sin egen dokumentasjonskontrakt i en uttømmende CHECK: et forskningsfunn hviler på en kontrollert påstandsrevisjon, en regulatorisk opplysning og en preparatdata på en kildeversjon med dato, utdrag og lokalisering, et attribuert råd i tillegg på en navngitt instans med en anbefalingsdato, og et resonnement eller et avledet svar bare på andre gjeldende svar i den samme utgaven. En preparatstyrke kan derfor ikke presses inn i kontrakten som bare passer et numerisk forskningsfunn, og ingen av de tre siste får en oppdiktet GRADE-karakter.
+
+`knowledge.authority_documents` er myndighetsveien for originalmateriale: HTML, XML eller JSON med sitt eget fingeravtrykk, sin egen størrelsesgrense og en oppskriftsliste for tekstuttrekk. PDF er bevisst utelatt der — forskningsfulltekstens PDF-vei har sin egen kontroll, og de to blandes ikke. `workflow.monograph_document_requests` er den samlede forespørselen når et menneske virkelig trengs.
+
+`knowledge.monograph_edition_candidates` forsegler den samlede utgaven: innholdet, dekningen, standardversjonen og de eksakte svarrevisjonene, med et avtrykk som *er* innholdet. `workflow.monograph_final_controls` er en navngitt fagpersons beslutning om nøyaktig den kandidaten, låst til den av en sammensatt fremmednøkkel, og `monograph_publication_events` kan strukturelt ikke bære en publisering uten en godkjent kontroll for den kandidaten.
+
+`workflow.monograph_source_restrictions` begrenser et område til forhåndsgodkjente kilder, og `monograph_revision_proposals` er avviket: en relevant kilde utenfor listen, eller ny evidens som utfordrer et låst svar, blir et *synlig* forslag framfor å bli brukt i stillhet eller erklært irrelevant.
+
+`knowledge.studies` og `study_reports` skiller studien fra publikasjonen om den, med dokumentert grunnlag. En usikker kobling er lagret som usikker framfor å bli løst ved en sammenslåing, og én kilde hører til høyst én studie — ellers ville dobbelttellingsvernet vært uten virkning.
+
 ## Planlagt, ikke implementert
 
-Et eget studie-/rapportobjekt.
+Individuell nedtrapping og bytte, og en full sammenlikningsfunksjon. Datamodellen bærer dem: en rettet relasjon er rettet, og A→B er ikke den samme raden som B→A.
