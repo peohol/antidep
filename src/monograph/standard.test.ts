@@ -256,3 +256,47 @@ describe('verdiene standarden selv navngir', () => {
     expect(new Set(keys).size).toBe(keys.length)
   })
 })
+
+// ----------------------------------------------------------------------------
+// Utfallsaksen
+//
+// Et forskningssvar må kunne finne behovet sitt. Uten et navngitt endepunkt på
+// behovet finnes det ingen avgrensning ekstraksjonen kan kontrolleres mot, og
+// to funn om det samme virkestoffet og den samme indikasjonen ville hatt samme
+// avtrykk selv når det ene handler om respons og det andre om frafall
+// (MONOGRAPH_STANDARD.md §2).
+//
+// Men aksen hører bare der delutfallene faktisk *er* målte endepunkter. Der
+// standarden selv navngir en annen dimensjon for delutfallene — risikoområde,
+// tilleggstilstand eller et navngitt funn — er det den dimensjonen behovet
+// gjentas på, og en utfallsakse i tillegg ville delt det samme spørsmålet i to
+// lag ingen har bedt om.
+// ----------------------------------------------------------------------------
+describe('utfallsaksen', () => {
+  /** Aksene standarden bruker til å navngi delutfallene i en profil. */
+  const SUBRESULT_AXES = ['risk_area', 'comorbidity', 'finding'] as const
+
+  it('står på hver mal som ber om et estimat', () => {
+    for (const template of QUESTION_TEMPLATES) {
+      if (!template.forms.includes('estimate')) continue
+      expect(template.expansionAxes, template.code).toContain('outcome')
+    }
+  })
+
+  it('står ikke der standarden navngir en annen delutfallsakse', () => {
+    for (const template of QUESTION_TEMPLATES) {
+      const named = SUBRESULT_AXES.filter((axis) => template.expansionAxes.includes(axis))
+      if (named.length === 0) continue
+      expect(template.expansionAxes, `${template.code} (${named.join(', ')})`).not.toContain(
+        'outcome',
+      )
+    }
+  })
+
+  it('står ikke på en mal som ikke ber om et estimat eller en profil', () => {
+    for (const template of QUESTION_TEMPLATES) {
+      if (template.forms.includes('estimate') || template.forms.includes('profile')) continue
+      expect(template.expansionAxes, template.code).not.toContain('outcome')
+    }
+  })
+})

@@ -44,7 +44,7 @@ select is_empty(
       ('api.monograph_order_options()'),
       ('api.monograph_orders()'),
       ('api.monograph_coverage(text)'),
-      ('api.propose_monograph_term(text,text,text,text)'),
+      ('api.propose_monograph_term(text,text,text,text,text)'),
       ('api.decide_monograph_term(text,boolean,text)'),
       ('api.monograph_term_proposals(text)')
     ) as f(name),

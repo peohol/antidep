@@ -266,7 +266,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['REG', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: ['outcome'],
+    expansionAxes: [],
   },
   {
     code: 'MN03',
@@ -770,7 +770,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['SAFE', 'REG'],
     openSourceProfiles: false,
-    expansionAxes: ['risk_area', 'outcome'],
+    expansionAxes: ['risk_area'],
   },
   {
     code: 'MN39',
@@ -938,7 +938,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'SAFE', 'EFF'],
     openSourceProfiles: false,
-    expansionAxes: ['comorbidity', 'outcome'],
+    expansionAxes: ['comorbidity'],
   },
   {
     code: 'MN51',
@@ -952,7 +952,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['POP', 'REG', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: ['comorbidity', 'outcome'],
+    expansionAxes: ['comorbidity'],
   },
   {
     code: 'MN52',
@@ -966,7 +966,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['INT', 'PK'],
     openSourceProfiles: false,
-    expansionAxes: ['outcome'],
+    expansionAxes: [],
   },
   {
     code: 'MN53',
@@ -1106,7 +1106,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: ['PK', 'INT'],
     openSourceProfiles: false,
-    expansionAxes: ['finding', 'outcome'],
+    expansionAxes: ['finding'],
   },
   {
     code: 'MN63',
@@ -1358,7 +1358,7 @@ export const QUESTION_TEMPLATES: readonly QuestionTemplate[] = [
     forms: ['profile'],
     sourceProfiles: [],
     openSourceProfiles: true,
-    expansionAxes: ['finding', 'outcome'],
+    expansionAxes: ['finding'],
   },
 ]
 

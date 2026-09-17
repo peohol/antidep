@@ -520,7 +520,7 @@ values
    null, null,
    array['profile']::knowledge.monograph_answer_form[],
    false,
-   array['outcome']::knowledge.monograph_scope_axis[]),
+   array[]::knowledge.monograph_scope_axis[]),
   ('1.0.0', 'MN03', 3,
    '3.1 Identitet og norske preparater',
    'Hvilke norske produkter finnes? Handelsnavn, formulering, administrasjonsvei, styrke og relevant pakningsidentitet.',
@@ -808,7 +808,7 @@ values
    'ett behov per risikoområde', null,
    array['profile']::knowledge.monograph_answer_form[],
    false,
-   array['risk_area', 'outcome']::knowledge.monograph_scope_axis[]),
+   array['risk_area']::knowledge.monograph_scope_axis[]),
   ('1.0.0', 'MN39', 39,
    '3.6 Alvorlig risiko og forholdsregler',
    'Hva vet vi om suicidalitet og selvskading? Alder, behandlingsfase, grunnrisiko, hendelsesdefinisjon og datakilde; absolutt risiko når mulig.',
@@ -904,7 +904,7 @@ values
    null, 'B fordypning',
    array['profile']::knowledge.monograph_answer_form[],
    false,
-   array['comorbidity', 'outcome']::knowledge.monograph_scope_axis[]),
+   array['comorbidity']::knowledge.monograph_scope_axis[]),
   ('1.0.0', 'MN51', 51,
    '3.7 Særlige pasientgrupper',
    'Hvilke somatiske forhold endrer vurderingen? Minst hjerte-/karsykdom, epilepsi, blødningsrisiko, metabolsk sykdom, glaukom/urinretensjon og endret gastrointestinal anatomi/absorpsjon vurderes.',
@@ -912,7 +912,7 @@ values
    null, 'B fordypning',
    array['profile']::knowledge.monograph_answer_form[],
    false,
-   array['comorbidity', 'outcome']::knowledge.monograph_scope_axis[]),
+   array['comorbidity']::knowledge.monograph_scope_axis[]),
   ('1.0.0', 'MN52', 52,
    '3.8 Interaksjoner',
    'Hvilke enzymer/transportører er relevante for substrat-, hemmer- eller induserrolle? Dokumentert klinisk betydning og styrke skilles fra in vitro-funn.',
@@ -920,7 +920,7 @@ values
    null, null,
    array['profile']::knowledge.monograph_answer_form[],
    false,
-   array['outcome']::knowledge.monograph_scope_axis[]),
+   array[]::knowledge.monograph_scope_axis[]),
   ('1.0.0', 'MN53', 53,
    '3.8 Interaksjoner',
    'Hvilke farmakokinetiske kombinasjoner har praktisk betydning? Motpart, påvirket stoff, eksponeringsendring, klinisk utfall/råd og tidsforløp.',
@@ -1000,7 +1000,7 @@ values
    null, 'B fordypning',
    array['profile']::knowledge.monograph_answer_form[],
    false,
-   array['finding', 'outcome']::knowledge.monograph_scope_axis[]),
+   array['finding']::knowledge.monograph_scope_axis[]),
   ('1.0.0', 'MN63', 63,
    '3.10 TDM og farmakogenetikk',
    'Når kan konsentrasjonsmåling være nyttig, og hva kan den ikke avklare? Klinisk indikasjon og evidens/veiledning.',
@@ -1144,7 +1144,7 @@ values
    null, null,
    array['profile']::knowledge.monograph_answer_form[],
    true,
-   array['finding', 'outcome']::knowledge.monograph_scope_axis[])
+   array['finding']::knowledge.monograph_scope_axis[])
 ;
 
 insert into knowledge.monograph_template_profiles (template_id, profile_id, ordinal)

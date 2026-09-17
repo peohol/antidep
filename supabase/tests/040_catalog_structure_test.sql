@@ -69,8 +69,11 @@ select set_eq(
            ('monograph_search_tracks'), ('monograph_search_track_profiles'),
            ('monograph_prescribed_scope_values'),
            -- Migrasjon 013c: bestillingen og de konkrete kunnskapsbehovene.
-           ('monograph_editions'), ('monograph_needs')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a og 013c'
+           ('monograph_editions'), ('monograph_needs'),
+           -- Migrasjon 013g: den godkjente kildebruken per behov, og studien
+           -- atskilt fra rapportene om den.
+           ('monograph_source_uses'), ('studies'), ('study_reports')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c og 013g'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
