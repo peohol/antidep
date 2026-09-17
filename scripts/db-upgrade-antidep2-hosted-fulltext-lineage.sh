@@ -89,9 +89,13 @@ alter table knowledge.claim_revisions disable trigger claim_revisions_record_cre
 alter table knowledge.claim_revisions disable trigger claim_revisions_enforce_supersedes_order;
 alter table audit.events disable trigger events_set_created_at;
 
--- The immutable identities the hosted prototype roots actually carry. These are
--- read straight out of production: the content hash and grounding digest of each
--- re-extraction, and the model-request digest of the extraction run that made it.
+-- The immutable identities the hosted prototype roots actually carry, read
+-- straight out of production: the content hash and grounding digest of each
+-- re-extraction, the model-request digest of the extraction run that made it,
+-- and the extraction recipe its full text was read with. The two roots do not
+-- share that recipe — the mirtazapine root still rests on the retired
+-- antidep-reading-order@1 — so the fixture must not level them, or it would
+-- stop exercising the very lineage this change exists to authorize.
 create temporary table hosted on commit drop as
 select * from (values
   (
@@ -101,6 +105,7 @@ select * from (values
     'sha256:43971be1e4a28cd1ce5d1d55456256762fa9cd56fa6fb4d8a7c69399e5850810',
     'sha256-v3:cc4fc45130204ea17ff3456d10a94f00125008ed2f93e24e0cc2b5a5f09d1e12',
     'sha256-v1:444d6bd33d1be8edd9626fedde14a4b40b8cac24ef6a8308ab07072fcc91924a',
+    'antidep-reading-order@2',
     timestamptz '2026-09-12T19:23:11Z',
     timestamptz '2026-09-12T19:41:53Z'
   ),
@@ -111,11 +116,12 @@ select * from (values
     'sha256:67296bc917398cd95de2bb8cb9e0167e3cb7bb0112a7d11e5690322f46650fc0',
     'sha256-v3:a271c1c7917ba9bf493e74b106d7d91c5826dab04a61a77a69f103f82307ae3b',
     'sha256-v1:2574bc207d68e1e844f76ef453d75e59c39725d177a8ffcb3fea1afe30eb25a6',
+    'antidep-reading-order@1',
     timestamptz '2026-09-12T10:18:03Z',
     timestamptz '2026-09-12T20:39:56Z'
   )
 ) as t(drug, source_version_id, run_id, request_digest, content_hash,
-       grounding_digest, version_created_at, extracted_at);
+       grounding_digest, extraction_transform, version_created_at, extracted_at);
 
 create temporary table hosted_revision on commit drop as
 select * from (values
@@ -145,7 +151,7 @@ select
   'pdftotext',
   'pdftotext 24.02.0',
   '-bbox-layout -enc UTF-8 -eol unix',
-  'antidep-reading-order@2',
+  h.extraction_transform,
   h.version_created_at + ($version_shift),
   h.version_created_at + ($version_shift)
 from hosted h
@@ -333,6 +339,9 @@ assert_hosted_shape() {
     'de hostede evidensrøttene skal peke på fulltekstrepresentasjoner'
   assert_eq "$(scalar 'select count(*) from knowledge.evidence_items where agent_run_id is not null')" '2' \
     'de hostede evidensrøttene skal være agentopprettede'
+  assert_eq "$(scalar "select string_agg(sv.text_extraction_transform, ',' order by d.canonical_name) from knowledge.evidence_items e join catalog.drugs d on d.id = e.intervention_drug_id join knowledge.source_versions sv on sv.id = e.source_version_id")" \
+    'antidep-reading-order@1,antidep-reading-order@2' \
+    'fiksturen skal gjengi produksjonens to ulike tekstuttrekksoppskrifter, ikke jevne dem ut'
   assert_eq "$(scalar "select count(*) from audit.events ae join knowledge.evidence_items e on e.id = ae.object_id where ae.operation = 'evidence_item_created'")" '2' \
     'de hostede evidensrøttene skal ha creation-audit'
   assert_eq "$(scalar 'select count(*) from knowledge.claims')" '1' \
