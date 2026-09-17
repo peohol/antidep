@@ -28,7 +28,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(81);
+select plan(84);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1179,6 +1179,42 @@ select is(
   (select count(*)::integer from workflow.claim_revision_reviews),
   2,
   'og det finnes fortsatt nøyaktig én oppgave per påstand'
+);
+
+-- ===========================================================================
+-- Del 14 — en fjernet påstand etterlater ingen oppgave om ingenting
+-- ===========================================================================
+-- `knowledge.discard_unpublished_claim_artifacts(uuid[], text)` sletter
+-- påstanden selv, og oppgaven peker på den. Uten at fjerningen river den ned,
+-- ville enten kallet feilet på en fremmednøkkel, eller oppgaven blitt stående i
+-- den åpne arbeidsoversikten og bedt om en avgjørelse om noe som ikke finnes.
+select set_config('request.jwt.claims',
+                  '{"sub":"83000000-0000-4000-8000-00000000000a"}', true);
+insert into svar (label, payload)
+select 'kastet', knowledge.discard_unpublished_claim_artifacts(
+  array['83000000-0000-4000-8000-000000000042']::uuid[],
+  'Prøve i 830: påstanden kastes med vilje.');
+select set_config('request.jwt.claims', '', true);
+
+select is(
+  (select (payload ->> 'deleted_claim_revision_reviews')::integer
+   from svar where label = 'kastet'),
+  1,
+  'fjerningen river ned den redaksjonelle oppgaven sammen med påstanden'
+);
+select is(
+  (select count(*)::integer from workflow.claim_revision_reviews r
+   where r.claim_id = '83000000-0000-4000-8000-000000000042'),
+  0,
+  'og oppgaven er borte'
+);
+select is_empty(
+  $$
+    select 1 from workflow.claim_revision_review_events e
+    where not exists (
+      select 1 from workflow.claim_revision_reviews r where r.id = e.claim_revision_review_id)
+  $$,
+  'og sporet etterlater ingen rad som peker på en oppgave som ikke finnes'
 );
 
 select * from finish();
