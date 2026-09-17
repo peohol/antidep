@@ -54,6 +54,11 @@
 # begge øktene ville hoppet over — prøven ville bestått uten å ha prøvd noe.
 # Radene er syntetiske, upubliserte og lenket til ingenting.
 #
+# Bestillingen prøve 2 legger inn, trekkes tilbake igjen til slutt gjennom
+# produktets egen vei: en åpen fulltekstbestilling ville ellers blitt stående i
+# den åpne arbeidsoversikten etter kjøringen, og talt med av enhver senere prøve
+# som leser hele oversikten.
+#
 # Kjøres av CI. Hører til teknisk drift, aldri til en brukerflate.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -446,6 +451,36 @@ SQL
                        where s.title = 'Kappløpsartikkelen ${kjoring:0:8}'")
   [ "$forespoersler" = "1" ] || feil "$navn" \
     "Ventelisten har $forespoersler rader for artikkelen. Den skal ha én."
+
+  # Og til slutt: bestillingen trekkes tilbake igjen.
+  #
+  # Prøven har lagt en ekte, åpen fulltekstbestilling i den åpne oversikten, og
+  # den ville blitt stående der etter kjøringen — synlig for alle, og talt med av
+  # enhver senere prøve som leser hele oversikten. Tilbaketrekkingen går gjennom
+  # produktets egen vei, med det samme redaktørmandatet bestillingen ble gjort
+  # med, framfor å slette rader utenom skriveveiene.
+  local referanse
+  referanse=$(les "select r.reference from workflow.full_text_requests r
+                   join knowledge.sources s on s.id = r.source_id
+                   where s.title = 'Kappløpsartikkelen ${kjoring:0:8}'")
+  if ! psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/rydd.log" 2>&1 <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+set local role authenticated;
+select api.withdraw_full_text_request(
+  '$referanse', 'Opprydning etter samtidighetsprøven i scripts/db-chain-race-test.sh.');
+commit;
+SQL
+  then
+    feil "$navn" 'Bestillingen lot seg ikke trekke tilbake etterpå.' "$arbeid/rydd.log"
+  fi
+
+  local aapne
+  aapne=$(les "select count(*) from workflow.full_text_requests r
+               join knowledge.sources s on s.id = r.source_id
+               where s.title = 'Kappløpsartikkelen ${kjoring:0:8}' and r.state = 'open'")
+  [ "$aapne" = "0" ] || feil "$navn" \
+    'Prøven etterlot en åpen bestilling i den åpne arbeidsoversikten.'
 
   printf 'ok       %s\n' "$navn"
 }
