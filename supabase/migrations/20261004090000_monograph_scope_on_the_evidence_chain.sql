@@ -2706,22 +2706,13 @@ $function$;
 -- ----------------------------------------------------------------------------
 -- 11. Tilgangene
 --
--- Ingen skriverett til klienten, og lesing bare for en aktiv redaktør. De nye
--- radene er interne: de sier hvilke kilder som er godkjent for hvilke spørsmål,
--- og hvilke publikasjoner som hører til den samme studien.
+-- Ingen leserett og ingen leseregel. De nye radene er interne — de sier hvilke
+-- kilder som er godkjent for hvilke spørsmål, og hvilke publikasjoner som hører
+-- til den samme studien — og de forlater databasen bare gjennom en kontrollert
+-- funksjon, som resten av monografiradene fra migrasjon 013c. En leseregel uten
+-- en leserett bak ville ikke gitt noen tilgang, men den ville sett ut som om den
+-- gjorde det.
 -- ----------------------------------------------------------------------------
-
-create policy monograph_source_uses_editor_read on knowledge.monograph_source_uses
-  for select to authenticated
-  using (workflow.caller_is_active_editor());
-
-create policy studies_editor_read on knowledge.studies
-  for select to authenticated
-  using (workflow.caller_is_active_editor());
-
-create policy study_reports_editor_read on knowledge.study_reports
-  for select to authenticated
-  using (workflow.caller_is_active_editor());
 
 -- ----------------------------------------------------------------------------
 -- 12. Et forslag som navngir behovet det kom fra

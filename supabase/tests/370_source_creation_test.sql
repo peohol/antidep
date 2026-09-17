@@ -347,7 +347,14 @@ select is_empty(
         'api.close_monograph_search_plan(text,text)',
         'api.pause_monograph_search_plan(text,text)',
         'api.resume_monograph_search_plan(text)',
-        'api.decide_monograph_candidate(text,text,text)'
+        'api.decide_monograph_candidate(text,text,text)',
+        -- Migrasjon 013h. Den samlede forespørselen om originalmateriale,
+        -- registreringen av et myndighetsdokument og tilbaketrekkingen av en
+        -- forespørsel. Alle tre krever editor- eller admin-mandat i databasen.
+        -- Kontrolleres i 890_monograph_acquisition_test.sql.
+        'api.monograph_source_requests(text)',
+        'api.submit_monograph_document(text,text,text,text,text,text,text)',
+        'api.withdraw_monograph_document_request(text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'
