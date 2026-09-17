@@ -1,0 +1,27 @@
+{
+  "hitCount": 3,
+  "resultList": {
+    "result": [
+      {
+        "id": "40000001",
+        "pmid": "40000001",
+        "doi": "10.1000/syntetisk.2024.001",
+        "title": "Weight change during sertraline treatment: a randomised trial",
+        "authorString": "Testforfatter A, Testforfatter B",
+        "journalTitle": "Journal of Synthetic Trials",
+        "pubYear": "2024",
+        "isOpenAccess": "Y"
+      },
+      {
+        "id": "40000002",
+        "pmid": "40000002",
+        "doi": "10.1000/syntetisk.2023.002",
+        "title": "Appetite and sertraline: a cohort study",
+        "authorString": "Testforfatter C",
+        "journalTitle": "Journal of Synthetic Cohorts",
+        "pubYear": "2023",
+        "isOpenAccess": "N"
+      }
+    ]
+  }
+}
