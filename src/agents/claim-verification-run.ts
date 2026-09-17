@@ -57,9 +57,11 @@
 // ============================================================================
 
 import type { Uuid } from '../types/api.ts'
+import { registeredTextLookup } from './agent-api.ts'
 import type {
   AgentRunPremises,
   ClaimVerificationApi,
+  PipelineJobLease,
   RegisterClaimVerificationArgs,
 } from './agent-api.ts'
 import { checkClaim, type ClaimCheckReport, type CheckedLink } from './claim-checks.ts'
@@ -123,6 +125,20 @@ export interface RunOptions extends ResolvePorts {
   readonly dryRun?: boolean
   /** Hvor mange revisjoner kjøringen tar i ett. `null` for alle. */
   readonly limit?: number | null
+  /**
+   * Uttaket fra den varige køen kjøringen gjøres for, når den er det.
+   *
+   * Satt av kontrollkjøreren (`src/ops/control-worker.ts`), som tar oppgaven ut
+   * av `workflow.pipeline_jobs` med en leie. Uten den er kjøringen en direkte
+   * kjøring uten kø, som før.
+   */
+  readonly job?: PipelineJobLease | null
+  /**
+   * Om kjøringen skal kunne slå opp den registrerte representasjonen når den
+   * ikke har originaldokumentet. Se `extraction-verification-run.ts` for hvorfor
+   * den er av som standard.
+   */
+  readonly useRegisteredText?: boolean
   readonly log?: (line: string) => void
 }
 
@@ -208,6 +224,10 @@ async function collectLinks(
         retrievedFrom: version.retrievedFrom,
         contentHash: version.contentHash,
         document: version.document,
+        // Kildeversjonens id følger med, slik at kjøringen kan slå opp den
+        // registrerte representasjonen når den ikke har originaldokumentet
+        // (`source-binding.ts`).
+        sourceVersionId: version.sourceVersionId,
       },
       ports,
     )
@@ -298,13 +318,6 @@ export async function runClaimVerification(options: RunOptions): Promise<RunRepo
     limit = null,
     log = () => {},
   } = options
-  const ports: ResolvePorts = {
-    ...(options.retrieve === undefined ? {} : { retrieve: options.retrieve }),
-    ...(options.retrieveOptions === undefined ? {} : { retrieveOptions: options.retrieveOptions }),
-    ...(options.documents === undefined ? {} : { documents: options.documents }),
-    ...(options.runTool === undefined ? {} : { runTool: options.runTool }),
-  }
-
   const inputManifest: Record<string, unknown> = {
     mode: claimRevisionId === null ? 'queue' : 'single',
     claim_revision_id: claimRevisionId,
@@ -313,8 +326,26 @@ export async function runClaimVerification(options: RunOptions): Promise<RunRepo
     check: 'deterministic-claim-check',
   }
 
-  const agentRunId = await api.beginRun(premises, inputManifest)
+  // Er kjøringen gjort for et uttak fra den varige køen, åpnes den gjennom
+  // `api.begin_pipeline_job_run` og bindes av databasen til nøyaktig det
+  // uttaket (migrasjon 009b, workflow.pipeline_job_runs).
+  const agentRunId = await api.beginRun(premises, inputManifest, null, options.job ?? null)
   log(`Agentkjøring åpnet: ${agentRunId}`)
+
+  // Oppslaget av den registrerte representasjonen bindes til kjøringen som
+  // nettopp ble åpnet: databasen krever en åpen kjøring som tilhører
+  // identiteten, slik at ingen lesning av kildetekst skjer uten en
+  // proveniensrad.
+  const ports: ResolvePorts = {
+    ...(options.retrieve === undefined ? {} : { retrieve: options.retrieve }),
+    ...(options.retrieveOptions === undefined ? {} : { retrieveOptions: options.retrieveOptions }),
+    ...(options.documents === undefined ? {} : { documents: options.documents }),
+    ...(options.registeredText === undefined ? {} : { registeredText: options.registeredText }),
+    ...(options.useRegisteredText === true
+      ? { registeredText: registeredTextLookup(api, agentRunId) }
+      : {}),
+    ...(options.runTool === undefined ? {} : { runTool: options.runTool }),
+  }
 
   const results: RevisionResult[] = []
   const cache = new Map<string, Resolved>()

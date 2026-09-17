@@ -274,7 +274,36 @@ select is_empty(
         'api.technical_problem_board()',
         'api.technical_problem_summary()',
         'api.report_technical_problem(text,text,text,text,integer,text,uuid)',
-        'api.record_client_diagnostic(uuid,text,text,text,text,integer,text,text)'
+        'api.record_client_diagnostic(uuid,text,text,text,text,integer,text,text)',
+        -- Migrasjon 012b. De to veiene de deterministiske kontrolleddene har,
+        -- og ingen andre. Begge er anon og authenticated av samme grunn som de
+        -- øvrige agentveiene: et kontrolledd har ingen brukerkonto, og
+        -- kontrollen er legitimasjonen og den eksplisitte rollen — her
+        -- extraction_verification eller citation_support_verification — og ikke
+        -- Data API-rollen.
+        --
+        -- api.control_source_representation(...) gir den lagrede,
+        -- etterprøvbare representasjonen av én kildeversjon, altså nøyaktig den
+        -- teksten kildeversjonens content_hash ble beregnet av. Originalfilen
+        -- forlater aldri databasen der, og veien krever i tillegg en åpen
+        -- kjøring som tilhører identiteten, slik at ingen lesning av kildetekst
+        -- skjer uten en proveniensrad.
+        --
+        -- api.resume_chain_transitions(...) tar ikke imot ett eneste felt fra
+        -- kalleren: den leser hva databasens egen tilstand tilsier og legger inn
+        -- nøyaktig det triggerne ville lagt inn. Kontrolleres i
+        -- 810_chain_transitions_test.sql.
+        'api.control_source_representation(text,text,uuid,uuid)',
+        'api.resume_chain_transitions(text,text)',
+        -- Migrasjon 012c. Den klinikervennlige bestillingen av en artikkel
+        -- Antidep mangler. Alle tre er authenticated og ingen av dem anon:
+        -- bestillingen krever editor-mandat, listene den velger fra er de samme
+        -- redaktørveiene, og hva den innloggede kan gjøre, er et svar på et
+        -- spørsmål bare en innlogget kan stille. Kontrolleres i
+        -- 820_full_text_request_test.sql.
+        'api.request_missing_full_text(text,text,text,text[],text[],text[],text,integer)',
+        'api.full_text_request_options()',
+        'api.full_text_capabilities()'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

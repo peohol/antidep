@@ -25,6 +25,8 @@ Agent-CLI-ene bruker prosjektets Data API med publishable key, aldri `service_ro
 - `ANTIDEP_CLAIM_AGENT_*` brukes av den separate kildestøttekontrolløren.
 - `ANTIDEP_ASSESSMENT_AGENT_*` brukes av evidensvurdereren.
 
+`ANTIDEP_AGENT_*` og `ANTIDEP_CLAIM_AGENT_*` er i tillegg de to legitimasjonene den planlagte kontrollkjøringen leser (`npm run ops:controls`, `.github/workflows/deterministic-controls.yml`). De legges inn som repository secrets sammen med `ANTIDEP_SUPABASE_URL` og `ANTIDEP_SUPABASE_PUBLISHABLE_KEY`; mangler en av dem, avslutter kjøringen grønt med en advarsel framfor å stå rød. Kjøringen trenger ingen dokumentkatalog: kildeteksten slås opp som den registrerte representasjonen, og originalfilen forlater aldri databasen.
+
 Hemmeligheter skal bare ligge i gitignorerte lokale miljøfiler eller et autorisert runtime-miljø. De skal aldri få `VITE_`-prefiks, commites eller legges i klientbunten.
 
 Den eksterne agent-handoffen trenger ingen av dem, og ingen modelleverandørnøkkel. Oppgaven hentes og svaret importeres av et menneske med editor-mandat, gjennom sin egen innlogging; databasen åpner kjøringen og skriver gjennom de samme kontrollerte veiene som agentkjørerne bruker.

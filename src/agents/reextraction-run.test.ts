@@ -171,6 +171,9 @@ function spies(options: SpyOptions = {}): Spy {
     },
     verificationApi: {
       beginRun: () => Promise.resolve(VERIFICATION_RUN_ID),
+      // Doblen modellerer ikke den lagrede representasjonen; prøven kjører med
+      // dokumentkatalogen.
+      readRegisteredText: () => Promise.resolve(null),
       completeRun: (run, status) => {
         completions.push({ run, status })
         return Promise.resolve()

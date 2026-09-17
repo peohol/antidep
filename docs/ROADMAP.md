@@ -1,8 +1,8 @@
 # Roadmap
 
-Forrige leveranse — **en klinikervennlig arbeidsflate, og teknikken som
-Antideps eget ansvar** — er implementert. Den kom foran det som tidligere sto
-som neste leveranse etter PR #97, og grunnen står under.
+Forrige leveranse — **resten av terminalen ut av veien fulltekst → kandidat** —
+er implementert (issue #101). Den fullførte det som sto igjen etter den
+klinikervennlige arbeidsflaten, og den er beskrevet under.
 
 Eieren har besluttet at Antidep ikke skal ta i bruk et betalt modell-API. Det
 står fast: ingen OpenAI-nøkkel, ingen Anthropic-nøkkel, ingen annen
@@ -19,12 +19,26 @@ skyves aldri tilbake på klinikeren.**
 Regelen er varig og står i `AGENTS.md`. Den gjelder hver senere leveranse, og en
 flate som bryter den, er ikke ferdig uansett hva den ellers gjør.
 
-Dette er grunnen til at leveransen kom først. Flaten `/agentarbeid` ba mennesker
-velge leverandør, modell og modellversjon for hvert agentledd, registrere en
-«kjører», hente en tilkoblingskode, laste ned en oppgavefil og laste opp et
-svar — og den viste rå feilmeldinger fra databasen når noe gikk galt. Ingen av
-delene er klinisk eller redaksjonelt arbeid. Å bygge videre på den flaten ville
-gjort gjelden større for hver leveranse.
+## De to menneskehandlingene
+
+Hele veien fra «Antidep mangler en artikkel» til «en kandidat ligger til
+sluttkontroll» har nå **to** punkter der et menneske gjør noe, og begge er
+redaksjonelle:
+
+1. **Å be om artikkelen** (`/be-om-artikkel`). En redaktør sier hvilken artikkel
+   Antidep bør ha — tittel, forfattere, tidsskrift, år og DOI — og hva et funn
+   fra den kan gjelde: hvilke virkestoff, hvilke endepunkt og hvilken
+   populasjon. Katalogvalgene er navn, aldri id-er.
+2. **Å velge riktig PDF** (`/fulltekst`). En editor eller admin kjenner igjen
+   artikkelen og velger filen. Ingenting mer.
+
+Og ett punkt til slutt, som skal være et menneskes:
+
+3. **Sluttkontrollen** (`/kandidater`). En navngitt fagperson vurderer det
+   ferdige produktet i den samme visningen klinikeren får, og publiseringen er
+   en egen, eksplisitt handling etter den.
+
+Alt mellom disse er Antideps eget arbeid.
 
 ## Flatene nå
 
@@ -36,35 +50,76 @@ gjort gjelden større for hver leveranse.
   sideoppfriskning og en ny sesjon. Ingen agentrolle, ingen modell, ingen
   kjører, ingen jobbnøkkel, ingen artikkeltittel, ingen uuid og ingen feiltekst
   forlater databasen der.
+- **`/be-om-artikkel` — bestillingen.** En redaktør ber om en artikkel Antidep
+  mangler. Skjemaet spør om bibliografien og den faglige avgrensningen, og om
+  ingenting annet. Antidep oppretter eller gjenfinner kilden på DOI-en, utleder
+  adressen dokumentet hentes fra, og legger behovet i den åpne oversikten som
+  «venter på fulltekst».
 - **`/fulltekst` — fulltekstinnboksen.** En editor eller admin ser hvilken
   artikkel som mangler, i klartekst, og gjør én ting: velger riktig PDF.
   Antidep binder filen til publikasjonen, kontrollerer at den faktisk *er* den
   artikkelen, prøver lesbarheten med tabellene i behold, kjører det registrerte
   tekstuttrekket, registrerer kildeversjonen og legger neste ledd i køen. Ingen
   uuid, ingen hash, ingen oppskrift og ingen terminalkommando er synlig.
+- **`/kandidater` og `/publisert`.** Sluttkontrollen av det ferdige produktet,
+  og det Antidep faktisk sier.
 - **`/tekniske-problemer` — driftens side.** Admin-mandat, et merke i
   navigasjonen når noe er uløst, og bare det en ikke-teknisk admin trenger:
   hvilket område, når det oppsto og sist ble sett, og om det fortsatt pågår.
   Den rå diagnosen finnes i `workflow.technical_incidents`, privat, og forlater
   aldri databasen gjennom noe `api`-objekt.
 
-## Det som ikke lenger er en menneskeoppgave i produktet
+## Kjeden går av seg selv
 
-Valg av KI-tjeneste for et agentledd, registrering av en autonom kjører,
-tilkoblingskoder, nedlasting av oppgavefiler og opplasting av agentsvar er ute
-av produkt-UI. Handlingene finnes fortsatt — de er de samme `api`-funksjonene —
-men de kjøres som et driftssteg:
+Overgangene mellom leddene er **databasens egne**, ikke en kjøreplans. Hver av
+dem er en trigger på den raden som utløser den, i den samme transaksjonen som
+skrev raden (migrasjon 012b):
 
-```sh
-npm run ops:agents -- assign-model --role evidence_extraction --provider … --model …
-npm run ops:agents -- register-runner --key … --name … --role … --platform-ref … --disclosure …
-npm run ops:agents -- pair --key …
-npm run ops:agents -- export-task --job … / import-answer --job … --answer …
-```
+| Det som blir registrert | Det Antidep gjør i det samme kallet |
+| --- | --- |
+| Fulltekst registrert | Ekstraksjonsoppgaven legges i køen, med avgrensningen bestillingen bar |
+| Evidensfunn registrert | Ekstraksjonskontrollen legges i køen |
+| Ekstraksjonskontroll bekreftet | Synteseoppgaven legges i køen |
+| Påstandsrevisjon registrert | Kildestøttekontrollen legges i køen |
+| Kildestøttekontroll bekreftet | Evidensvurderingen legges i køen |
+| Evidensvurdering registrert | Kandidaten forsegles, og ligger til sluttkontroll |
 
-Tekstuttrekket av opplastede fulltekster er ikke engang det: det kjøres planlagt
-av `.github/workflows/full-text-extraction.yml` hvert kvarter, og ingen starter
-det. `npm run ops:full-text` er den samme kjøringen, tilgjengelig for feilsøking.
+Ingen poller, ingen cron og ingen orkestrator som kan gå ned mellom to ledd.
+Overgangen gjelder like mye for den autonome MCP-kjøreren, for
+recovery-importen og for et menneske med mandat — tre veier inn som ellers
+måtte huske det samme skrittet hver for seg.
+
+Ingen kontrollport er fjernet eller gjort mildere. Innleggingen kjører den
+samme forhåndskontrollen av grunnlaget som før, med de samme funksjonene
+skriveveiene leser når svaret kommer tilbake. Kan neste ledd ikke bygges, legges
+det ikke i køen — kjeden stopper, og det er hva fail-closed betyr her.
+
+Ingen overgang kan lage to semantisk like oppgaver. `workflow.pipeline_jobs` er
+unik på `(agent_role, job_key)`, og for de semantiske leddene spør overgangen i
+tillegg om *subjektet* — virkestoffet og temaet, eller påstandsrevisjonen —
+allerede har en oppgave i rollen, uansett hvem som la den inn.
+
+## Det som fortsatt er teknisk drift
+
+To planlagte kjøringer, begge uten noen i transporten:
+
+- **Tekstuttrekket** (`.github/workflows/full-text-extraction.yml`, hvert
+  kvarter). Den registrerte oppskriften er `pdftotext` med en låst argumentliste,
+  og en nettleser kan ikke kjøre den.
+- **De deterministiske kontrollene**
+  (`.github/workflows/deterministic-controls.yml`, hvert kvarter). Kontrollene
+  er flere tusen linjer deterministisk TypeScript, og en SQL-kopi av dem ville
+  vært en andre implementasjon av den ene tingen som skal være uomtvistelig.
+  Kjøringen tar uttak fra køen med hvert kontrolledds egen legitimasjon og
+  registrerer resultatet gjennom de samme skriveveiene som før.
+
+Begge finnes også som kommandoer for feilsøking — `npm run ops:full-text` og
+`npm run ops:controls` — men ingen trenger å starte dem. Får kontrollen ikke
+kjørt, står arbeidet i kø; det blir aldri borte, og det blir aldri en
+menneskeoppgave.
+
+`npm run ops:agents` dekker modelltildeling, kjøreroppsett og manuell handoff
+som recovery. Ingen av kommandoene finnes i produkt-UI.
 
 Sikkerhetsgrensene er uendret. Tildelingen er fortsatt en attestert avgjørelse
 tatt *før* oppgaven hentes ut, den inngår fortsatt i oppgavens avtrykk, og et
@@ -112,38 +167,21 @@ registreres det som `not_exposed`, og Antidep hevder ikke at separasjonen er
 bevist av plattformen — den hviler da på den registrerte tildelingen, akkurat som
 i den manuelle handoffen.
 
-## Det som fortsatt krever en terminal
+## Grensen automatikken ikke går over
 
-- **De uavhengige kontrolleddene.** Ekstraksjonskontrollen og
-  kildestøttekontrollen er Antideps egen deterministiske kode, og de kjøres i
-  dag av kommandoer med hver sin agentlegitimasjon. Når et agentsvar er
-  registrert — av en planlagt kjøring eller av en recovery-import — går kjeden
-  derfor ikke videre av seg selv.
-Tekstuttrekket står ikke lenger på denne listen. Det kjøres planlagt av
-GitHub Actions hvert kvarter, på en maskin der `pdftotext` er installert, og
-ingen trenger å starte det. Får det ikke kjørt, blir arbeidet stående som
-blokkert med filen i behold og fortsetter av seg selv når driften svarer —
-en teknisk svikt skal aldri bli en menneskeoppgave.
+Kjeden synteserer ikke om igjen en påstand som allerede finnes for det samme
+temaet og virkestoffet. Kommer det et nytt evidensfunn på et par som alt har en
+påstand, blir funnet kontrollert og står klart — men *hva* påstanden skal si i
+lys av det, er en redaksjonell avgjørelse og ikke en transport.
 
-Ingen av delene er noe en kliniker møter.
+Det er den ene stedet kjeden med vilje stopper før den er tom for arbeid, og det
+er ført her framfor å se ut som om automatikken dekker mer enn den gjør.
 
 ## Neste leveranse
 
-Neste sammenhengende leveranse er **resten av veien fra registrert fulltekst til
-kandidat uten et terminalvindu**. Etter denne leveransen gjenstår tre ting av
-den, og de henger sammen:
-
-- at de deterministiske kontrolleddene kjøres automatisk når grunnlaget for dem
-  finnes, med sin egen rolle og sin egen identitet som før,
-- at det neste semantiske leddet legges i køen av seg selv når kontrollen foran
-  er ferdig, slik at den planlagte kjøreren finner arbeidet uten at noen legger
-  det inn for hånd, og
-- et enkelt, klinikervennlig sted å be om en artikkel Antidep mangler — altså
-  `api.request_full_text(...)` med en flate foran, med den redaksjonelle
-  avgrensningen som det den er: en faglig avgjørelse om hvilke virkestoff,
-  hvilke endepunkt og hvilken populasjon et funn kan gjelde.
-
-Kildeinngangen og selve opplastingen er ute av terminalen allerede. Det som
-gjenstår, er automatikken mellom leddene — og den skal bygges under den samme
-regelen: klinisk og redaksjonelt arbeid i UI, teknisk arbeid hos systemet og de
-tekniske agentene.
+Neste sammenhengende leveranse er **revisjonen av en påstand som allerede
+finnes**: en redaksjonell flate der en redaktør avgjør at ny evidens skal inn i
+en eksisterende påstand, og lar kjeden bygge den nye revisjonen med de samme
+kontrollene. Det er det siste leddet i golden slice som fortsatt er en
+menneskeoppgave uten en flate — og det er en faglig avgjørelse, ikke en
+transport, så flaten skal bygges under den samme regelen som resten.

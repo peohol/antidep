@@ -10,12 +10,14 @@
 // Denne kjøringen går hele veien, mot den lokale stacken:
 //
 //   1. en uinnlogget leser ser arbeidsoversikten, og den er tom
-//   2. en redaktør ber om fullteksten til én artikkel
+//   2. en redaktør ber om artikkelen i produktet, med bare bibliografi og en
+//      faglig avgrensning — ingen uuid, ingen hash, ingen kommando
 //   3. den uinnloggede ser «venter på fulltekst» som planlagt arbeid
 //   4. redaktøren laster opp PDF-en, og gjør ingenting annet
 //   5. den uinnloggede ser at arbeidet pågår
 //   6. Antideps egen tekstuttrekker kjører den registrerte oppskriften
-//   7. kildeversjonen er registrert, og neste ledd ligger i køen
+//   7. kildeversjonen er registrert, og både ekstraksjonsoppgaven og
+//      ekstraksjonskontrollen ligger i køen uten at noen la dem inn
 //   8. den uinnloggede ser planlagt arbeid — uten én eneste teknisk verdi
 //   9. grensene holder: uinnlogget, redaktør og admin får hver sitt
 //
@@ -28,6 +30,11 @@ import { createClient } from '@supabase/supabase-js'
 import { syntheticArticlePdf } from '../src/agents/test-support.ts'
 import { parseWorkBoard } from '../src/lib/work-board.ts'
 import { parseFullTextInbox, parseFullTextSubmission } from '../src/lib/full-text-inbox.ts'
+import {
+  parseCapabilities,
+  parseRequestOptions,
+  parseRequestResult,
+} from '../src/lib/full-text-request.ts'
 import { parseTechnicalProblems } from '../src/lib/technical-problems.ts'
 import { runFullTextWorker, type FullTextIntakeApi } from '../src/ops/full-text-worker.ts'
 import type { Database } from '../src/types/database.ts'
@@ -77,7 +84,7 @@ async function rejected(
 // ----------------------------------------------------------------------------
 // Fikstur. Alt er syntetisk, og ingenting av det er klinisk innhold.
 // ----------------------------------------------------------------------------
-function seed(): { readonly sourceId: string } {
+function seed(): void {
   psql(
     config,
     `
@@ -115,35 +122,20 @@ function seed(): { readonly sourceId: string } {
       where ur.user_id = v.user_id::uuid and ur.role_code = v.role_code::workflow.app_role
     );
 
-    insert into knowledge.sources
-      (source_type, title, authors_or_issuer, publication_date, publication_date_precision,
-       created_by_actor_id)
-    select 'journal_article', ${q(TITLE)}, 'Prøveforfatter', date '2019-01-01', 'year',
-           (select id from provenance.actors where actor_key = 'human:intake-e2e-editor')
-    where not exists (select 1 from knowledge.sources where title = ${q(TITLE)});
-
-    insert into knowledge.source_identifiers (source_id, identifier_system, identifier_value)
-    select s.id, 'doi', ${q(DOI)}
-    from knowledge.sources s
-    where s.title = ${q(TITLE)}
-      and not exists (
-        select 1 from knowledge.source_identifiers i
-        where i.source_id = s.id and i.identifier_system = 'doi'
-      );
     `,
   )
-  return {
-    sourceId: psql(config, `select id from knowledge.sources where title = ${q(TITLE)}`),
-  }
 }
 
-function catalogIds(): { readonly drugId: string; readonly outcomeId: string } {
+/**
+ * Katalogradene, bare til assertionene.
+ *
+ * Bestillingen sender navn, ikke id-er. Prøven slår dem opp for å kunne
+ * kontrollere at oppgaven som senere legges i køen, faktisk bærer den
+ * avgrensningen redaktøren valgte.
+ */
+function catalogIds(): { readonly drugId: string } {
   return {
     drugId: psql(config, "select id from catalog.drugs where canonical_name = 'sertralin'"),
-    outcomeId: psql(
-      config,
-      "select id from catalog.clinical_concepts where concept_type = 'outcome' and canonical_label = 'vektendring'",
-    ),
   }
 }
 
@@ -165,8 +157,8 @@ function intakeApi(caller: Client): FullTextIntakeApi {
 }
 
 async function main(): Promise<void> {
-  const { sourceId } = seed()
-  const { drugId, outcomeId } = catalogIds()
+  seed()
+  const { drugId } = catalogIds()
 
   const anonymous = client(null)
   const editor = client(EDITOR_USER)
@@ -191,12 +183,79 @@ async function main(): Promise<void> {
     (await rejected(editor, 'technical_problem_board', {})).includes('admin-rolle'),
   )
 
-  console.log('Forespørselen')
-  await rpc(editor, 'request_full_text', {
-    p_source_id: sourceId,
-    p_drug_ids: [drugId],
-    p_outcome_concept_ids: [outcomeId],
-  })
+  console.log('Bestillingen, slik en redaktør gjør den i produktet')
+  const capabilities = parseCapabilities(await rpc(editor, 'full_text_capabilities', {}))
+  check('redaktøren kan bestille og laste opp', capabilities.mayRequest && capabilities.mayUpload)
+  check(
+    'en admin kan laste opp, men bestillingen er en redaksjonell avgjørelse',
+    !parseCapabilities(await rpc(admin, 'full_text_capabilities', {})).mayRequest,
+  )
+
+  const options = parseRequestOptions(await rpc(editor, 'full_text_request_options', {}))
+  check('valgene navngir virkestoffene i katalogen', options.drugs.includes('sertralin'))
+  check('og endepunktene', options.outcomes.includes('vektendring'))
+  check(
+    'og ikke én eneste uuid',
+    !/[0-9a-f]{8}-[0-9a-f]{4}-/.test(JSON.stringify(options)),
+    JSON.stringify(options),
+  )
+
+  // Nøyaktig de feltene flaten sender: bibliografi og navn. Ingen uuid, ingen
+  // hash, ingen adresse og ingen kommando.
+  const requested = parseRequestResult(
+    await rpc(editor, 'request_missing_full_text', {
+      p_doi: `https://doi.org/${DOI}`,
+      p_title: TITLE,
+      p_authors: 'Prøveforfatter m.fl.',
+      p_drug_names: ['sertralin'],
+      p_outcome_labels: ['vektendring'],
+      p_population_labels: [],
+      p_journal: 'Journal of Synthetic Trials',
+      p_year: 2019,
+    }),
+  )
+  check('bestillingen tas imot', requested.requested, JSON.stringify(requested))
+
+  const sourceId = psql(config, `select id from knowledge.sources where title = ${q(TITLE)}`)
+  check(
+    'artikkelen er registrert med DOI-en redaktøren skrev',
+    psql(
+      config,
+      `select count(*) from knowledge.source_identifiers i
+       where i.source_id = ${q(sourceId)} and i.identifier_system = 'doi'
+         and i.identifier_value = ${q(DOI)}`,
+    ) === '1',
+  )
+  check(
+    'den samme bestillingen to ganger er én bestilling',
+    !parseRequestResult(
+      await rpc(editor, 'request_missing_full_text', {
+        p_doi: DOI,
+        p_title: TITLE,
+        p_authors: 'Prøveforfatter m.fl.',
+        p_drug_names: ['sertralin'],
+        p_outcome_labels: ['vektendring'],
+        p_population_labels: [],
+        p_journal: 'Journal of Synthetic Trials',
+        p_year: 2019,
+      }),
+    ).requested,
+  )
+  check(
+    'og en kliniker uten mandat kan ikke bestille',
+    (
+      await rejected(clinician, 'request_missing_full_text', {
+        p_doi: '10.1234/antidep.intake-e2e-2',
+        p_title: 'En annen artikkel',
+        p_authors: 'En forfatter',
+        p_drug_names: ['sertralin'],
+        p_outcome_labels: ['vektendring'],
+        p_population_labels: [],
+        p_journal: null,
+        p_year: null,
+      })
+    ).length > 0,
+  )
 
   const waiting = parseWorkBoard(await rpc(anonymous, 'public_work_board', {}))
   const waitingItem = waiting.find(
@@ -291,6 +350,21 @@ async function main(): Promise<void> {
          and j.agent_role = 'evidence_extraction'
          and j.input_manifest -> 'drug_ids' ? ${q(drugId)}`,
     ) === '1',
+  )
+
+  // Kjeden går videre av seg selv. Ekstraksjonsoppgaven hentes av den planlagte
+  // kjøreren; kontrollen bak den legges i køen av databasen selv i det svaret
+  // registreres (migrasjon 012b), og det er prøvd i
+  // supabase/tests/810_chain_transitions_test.sql. Her kontrolleres bare at
+  // ingen kontrolljobb kan hentes ut som en ekstern agentoppgave.
+  check(
+    'en kontrolljobb er aldri en ekstern agentoppgave',
+    psql(
+      config,
+      `select count(*) from workflow.agent_handoff_jobs h
+       join workflow.pipeline_jobs j on j.id = h.pipeline_job_id
+       where j.agent_role in ('extraction_verification', 'citation_support_verification')`,
+    ) === '0',
   )
 
   console.log('Etterpå')

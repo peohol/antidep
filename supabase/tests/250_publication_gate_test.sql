@@ -32,7 +32,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(38);
+select plan(39);
 
 create temporary table fixture (name text primary key, id uuid not null) on commit drop;
 
@@ -334,11 +334,22 @@ where r.id = (select id from fixture where name = 'rev');
 
 -- §38: «nødvendig menneskelig review er godkjent» — og MVP_IMPLEMENTATION_PLAN.md
 -- §42 sitt «publisering uten human review når dette kreves».
+--
+-- Fra migrasjon 012b forsegler den registrerte evidensvurderingen kandidaten
+-- selv: kjeden går automatisk helt fram til det ferdige produktet, og stopper
+-- der. Det som mangler nå, er derfor ikke kandidaten, men den ene avgjørelsen
+-- som skal være et menneskes — og gaten sier nettopp det.
+select is(
+  (select count(*)::integer from knowledge.candidates c
+   where c.claim_revision_id = (select id from fixture where name = 'rev')),
+  1,
+  'kandidaten forsegles av den registrerte evidensvurderingen, uten at noen ber om det'
+);
 select throws_like(
   $$select knowledge.assert_claim_revision_publishable(
       (select id from fixture where name = 'rev'))$$,
-  '%har ingen gjeldende kandidat%',
-  'gaten avviser publisering uten et forseglet, sluttkontrollert kandidatinnhold (ANTIDEP_CONSTITUTION.md regel 5)'
+  '%er ikke sluttkontrollert%',
+  'gaten avviser publisering uten en navngitt fagpersons sluttkontroll (ANTIDEP_CONSTITUTION.md regel 5)'
 );
 
 -- Fra migrasjon 009e er den menneskelige beslutningen gaten leser, en

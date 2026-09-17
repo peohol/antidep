@@ -3,6 +3,7 @@ import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router'
 import { CandidatePage } from './CandidatePage'
 import { CandidateQueuePage } from './CandidateQueuePage'
 import { FullTextInboxPage } from './FullTextInboxPage'
+import { FullTextRequestPage } from './FullTextRequestPage'
 import { PublishedClaimPage } from './PublishedClaimPage'
 import { PublishedIndexPage } from './PublishedIndexPage'
 import { SiteNav } from './SiteNav'
@@ -17,6 +18,7 @@ import {
   CANDIDATE_PATH,
   CANDIDATE_QUEUE_PATH,
   FULL_TEXT_INBOX_PATH,
+  FULL_TEXT_REQUEST_PATH,
   HOME_PATH,
   PUBLISHED_CLAIM_PATH,
   PUBLISHED_PATH,
@@ -24,6 +26,7 @@ import {
   WORK_BOARD_PATH,
   candidateQueuePath,
   fullTextInboxPath,
+  fullTextRequestPath,
   publishedPath,
   workBoardPath,
 } from './routes'
@@ -59,6 +62,10 @@ export function ResetHome() {
         <p>
           <Link to={fullTextInboxPath()}>Fulltekst</Link> — artiklene Antidep mangler, og
           opplastingen av dem. Krever mandat.
+        </p>
+        <p>
+          <Link to={fullTextRequestPath()}>Be om en artikkel</Link> — si fra om en artikkel Antidep
+          bør ha, og hva et funn fra den kan gjelde. Krever redaktørmandat.
         </p>
       </section>
     </main>
@@ -111,6 +118,11 @@ function WorkBoardRoute({ gateway }: { readonly gateway: WorkBoardGateway | unde
 /** Fulltekstinnboksen, med klienten opprettet først når ruten vises. */
 function FullTextRoute({ gateway }: { readonly gateway: FullTextGateway | undefined }) {
   return <FullTextInboxPage gateway={gateway ?? createFullTextGateway()} />
+}
+
+/** Bestillingen av en artikkel Antidep mangler, opprettet på samme måte. */
+function FullTextRequestRoute({ gateway }: { readonly gateway: FullTextGateway | undefined }) {
+  return <FullTextRequestPage gateway={gateway ?? createFullTextGateway()} />
 }
 
 /** Den tekniske problemoversikten, med klienten opprettet først når ruten vises. */
@@ -172,6 +184,10 @@ export function AppLayout({
         <Route element={<CandidateRoute gateway={gateway} />} path={CANDIDATE_PATH} />
         <Route element={<WorkBoardRoute gateway={workBoard} />} path={WORK_BOARD_PATH} />
         <Route element={<FullTextRoute gateway={fullText} />} path={FULL_TEXT_INBOX_PATH} />
+        <Route
+          element={<FullTextRequestRoute gateway={fullText} />}
+          path={FULL_TEXT_REQUEST_PATH}
+        />
         <Route element={<TechnicalRoute gateway={technical} />} path={TECHNICAL_PROBLEMS_PATH} />
         <Route element={<PublishedRoute gateway={publication} />} path={PUBLISHED_PATH} />
         <Route

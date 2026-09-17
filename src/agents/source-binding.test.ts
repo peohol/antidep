@@ -290,6 +290,83 @@ describe('resolveRepresentation — teksten ut av originaldokumentet', () => {
     expect(resolved.status === 'error' && resolved.message).toMatch(/Fant ingen fil/)
   })
 
+  it('slår opp den registrerte representasjonen når kjøringen ikke har filen', async () => {
+    // Veien en planlagt kontrollkjøring tar: den har ingen dokumentkatalog, og
+    // skal ikke ha en. Teksten er den samme, og den kontrolleres på den samme
+    // måten — sha256 av den må være den registrerte.
+    const hash = await sourceVersionContentHash(DOKUMENTTEKST)
+    let hentetAdresse = false
+    const resolved = await resolveRepresentation(
+      {
+        retrievedFrom: 'https://doi.org/10.0000/x',
+        contentHash: hash,
+        document: await dokumentbinding(),
+        sourceVersionId: 'sv-1',
+      },
+      {
+        registeredText: () => Promise.resolve({ status: 'ok', text: DOKUMENTTEKST }),
+        retrieve: (url) => {
+          hentetAdresse = true
+          return hentet(TEKST, hash)(url)
+        },
+      },
+    )
+    expect(hentetAdresse).toBe(false)
+    expect(resolved.status === 'ok' && resolved.text).toBe(DOKUMENTTEKST)
+    expect(resolved.status === 'ok' && resolved.origin).toBe('registered_representation')
+  })
+
+  it('bruker originaldokumentet når det finnes, også med et oppslag tilgjengelig', async () => {
+    let sloOpp = false
+    const resolved = await resolveRepresentation(
+      {
+        retrievedFrom: 'https://doi.org/10.0000/x',
+        contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
+        document: await dokumentbinding(),
+        sourceVersionId: 'sv-1',
+      },
+      await porter({
+        registeredText: () => {
+          sloOpp = true
+          return Promise.resolve({ status: 'ok', text: DOKUMENTTEKST })
+        },
+      }),
+    )
+    // Dokumentveien beviser i tillegg at teksten lar seg *gjenskape* av den
+    // registrerte oppskriften, og den opplysningen skal ikke forsvinne der den
+    // faktisk finnes.
+    expect(sloOpp).toBe(false)
+    expect(resolved.status === 'ok' && resolved.origin).toBe('extracted_from_document')
+  })
+
+  it('avviser en lagret representasjon som ikke hasher til den registrerte', async () => {
+    const resolved = await resolveRepresentation(
+      {
+        retrievedFrom: 'https://doi.org/10.0000/x',
+        contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
+        document: await dokumentbinding(),
+        sourceVersionId: 'sv-1',
+      },
+      { registeredText: () => Promise.resolve({ status: 'ok', text: 'En annen tekst.' }) },
+    )
+    expect(resolved.status).toBe('error')
+    expect(resolved.status === 'error' && resolved.message).toMatch(/hasher til/)
+  })
+
+  it('krever kildeversjonens id for å kunne slå opp den lagrede representasjonen', async () => {
+    // Uten den vet oppslaget ikke hvilken rad det gjelder, og leddet mister
+    // bare *den* veien — ikke kontrollen.
+    const resolved = await resolveRepresentation(
+      {
+        retrievedFrom: 'https://doi.org/10.0000/x',
+        contentHash: await sourceVersionContentHash(DOKUMENTTEKST),
+        document: await dokumentbinding(),
+      },
+      { registeredText: () => Promise.resolve({ status: 'ok', text: DOKUMENTTEKST }) },
+    )
+    expect(resolved.status === 'error' && resolved.message).toMatch(/ANTIDEP_DOCUMENT_DIR/)
+  })
+
   it('sier fra når leddet ikke har noen dokumentkatalog i det hele tatt', async () => {
     const resolved = await resolveRepresentation(
       {

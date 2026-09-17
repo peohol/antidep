@@ -42,9 +42,11 @@
 // ============================================================================
 
 import type { Uuid } from '../types/api.ts'
+import { registeredTextLookup } from './agent-api.ts'
 import type {
   AgentRunPremises,
   ExtractionVerificationApi,
+  PipelineJobLease,
   RegisterVerificationArgs,
 } from './agent-api.ts'
 import {
@@ -147,6 +149,24 @@ export interface RunOptions extends ResolvePorts {
    * en tørrkjøring. Aktøren som svarer, ser bare filer.
    */
   readonly absencePrompts?: string | null
+  /**
+   * Uttaket fra den varige køen kjøringen gjøres for, når den er det.
+   *
+   * Satt av kontrollkjøreren (`src/ops/control-worker.ts`), som tar oppgaven ut
+   * av `workflow.pipeline_jobs` med en leie. Uten den er kjøringen en direkte
+   * kjøring uten kø, som før.
+   */
+  readonly job?: PipelineJobLease | null
+  /**
+   * Om kjøringen skal kunne slå opp den registrerte representasjonen når den
+   * ikke har originaldokumentet.
+   *
+   * Av som standard, fordi den som kjører med en dokumentkatalog, skal få vite
+   * at filen mangler framfor å få den stille erstattet. Kontrollkjøreren og
+   * kommandoene slår den på: der finnes ingen dokumentkatalog, og uten veien
+   * ville kontrollen ikke konkludert i det hele tatt (`source-binding.ts`).
+   */
+  readonly useRegisteredText?: boolean
   readonly log?: (line: string) => void
 }
 
@@ -239,6 +259,10 @@ async function evaluateItemUnguarded(
       retrievedFrom: version.retrievedFrom,
       contentHash: version.contentHash,
       document: version.document,
+      // Kildeversjonens id følger med, slik at kjøringen kan slå opp den
+      // registrerte representasjonen når den ikke har originaldokumentet
+      // (`source-binding.ts`).
+      sourceVersionId: version.sourceVersionId,
     },
     ports,
   )
@@ -297,6 +321,13 @@ async function documentIsAvailable(item: VerificationItem, ports: ResolvePorts):
   if (document === null) {
     return true
   }
+  // Har kjøringen en vei til den registrerte representasjonen, er teksten
+  // tilgjengelig uansett om filen ligger i katalogen: den lagrede
+  // representasjonen er den samme teksten, kontrollert mot det samme
+  // fingeravtrykket (`source-binding.ts`).
+  if (ports.registeredText !== undefined && item.sourceVersion !== null) {
+    return true
+  }
   if (ports.documents === undefined) {
     return false
   }
@@ -348,8 +379,26 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     source_wide_absence_prompts: absencePrompts === null ? 'none' : 'written',
   }
 
-  const agentRunId = await api.beginRun(premises, inputManifest)
+  // Er kjøringen gjort for et uttak fra den varige køen, åpnes den gjennom
+  // `api.begin_pipeline_job_run` og bindes av databasen til nøyaktig det
+  // uttaket. Uten bindingen kunne et utfall meldes med en kjøring som tjente en
+  // annen jobb (migrasjon 009b, workflow.pipeline_job_runs).
+  const agentRunId = await api.beginRun(premises, inputManifest, null, options.job ?? null)
   log(`Agentkjøring åpnet: ${agentRunId}`)
+
+  // Oppslaget av den registrerte representasjonen bindes til denne kjøringen:
+  // databasen krever en åpen kjøring som tilhører identiteten, slik at ingen
+  // lesning av kildetekst skjer uten en proveniensrad.
+  const ports: ResolvePorts = {
+    ...(options.retrieve === undefined ? {} : { retrieve: options.retrieve }),
+    ...(options.retrieveOptions === undefined ? {} : { retrieveOptions: options.retrieveOptions }),
+    ...(options.documents === undefined ? {} : { documents: options.documents }),
+    ...(options.registeredText === undefined ? {} : { registeredText: options.registeredText }),
+    ...(options.useRegisteredText === true
+      ? { registeredText: registeredTextLookup(api, agentRunId) }
+      : {}),
+    ...(options.runTool === undefined ? {} : { runTool: options.runTool }),
+  }
 
   const results: ItemResult[] = []
 
@@ -371,7 +420,7 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     const unavailable: VerificationItem[] = []
     const available: VerificationItem[] = []
     for (const item of selected) {
-      ;((await documentIsAvailable(item, options)) ? available : unavailable).push(item)
+      ;((await documentIsAvailable(item, ports)) ? available : unavailable).push(item)
     }
 
     const queue = limit === null ? available : available.slice(0, limit)
@@ -420,7 +469,7 @@ export async function runExtractionVerification(options: RunOptions): Promise<Ru
     }
 
     for (const item of queue) {
-      const evaluation = await evaluateItem(item, options, absence)
+      const evaluation = await evaluateItem(item, ports, absence)
 
       if (evaluation.kind === 'skip') {
         log(`— ${summarize(item)}: ingen verifikasjon registrert. ${evaluation.reason}`)

@@ -38,6 +38,7 @@
     "agent:draft-extraction": "node src/agents/draft-extraction-cli.ts",
     "editor:assignment": "node --env-file-if-exists=.env.editor.local src/ops/extraction-assignment-cli.ts",
     "ops:full-text": "node --env-file-if-exists=.env.editor.local src/ops/full-text-worker-cli.ts",
+    "ops:controls": "node --env-file-if-exists=.env.agent.local src/ops/control-worker-cli.ts",
     "ops:agents": "node --env-file-if-exists=.env.editor.local src/ops/agent-platform-cli.ts",
     "verify:repo": "./scripts/verify-repo.sh"
   },

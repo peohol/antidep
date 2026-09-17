@@ -327,6 +327,8 @@ async function verify(written: RegisterAgentExtractionArgs): Promise<RegisterVer
       registered.push(args)
       return Promise.resolve('44444444-4444-4444-8444-444444444444')
     },
+    // Kjeden her leser kilden fra adressen sin; ingen representasjon er lagret.
+    readRegisteredText: () => Promise.resolve(null),
     completeRun: () => Promise.resolve(),
   }
   await runExtractionVerification({
