@@ -24,7 +24,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(52);
+select plan(60);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -872,6 +872,165 @@ select is(
      and ti.resolved_at is null),
   0,
   'og først da lukkes leddets tekniske problem'
+);
+
+-- ===========================================================================
+-- Del 13 — En kostnadsgrense skal ikke bli til sult
+-- ===========================================================================
+-- Rekonsilieringen ser på et begrenset antall rader per ledd per passering.
+-- Uten en markør ville den lest de *samme* radene hver gang, og en manglende
+-- overgang bak grensen ville aldri blitt sett — og leddet kunne aldri meldes
+-- friskt, fordi ingen passering noen gang kom gjennom hele det.
+--
+-- Prøven bygger derfor ett subjekt mer enn grensen, og krever at nummer
+-- «grense pluss én» faktisk blir tatt igjen.
+create temporary table sweep (label text primary key, payload jsonb not null) on commit drop;
+grant select, insert on sweep to anon;
+
+-- Ett endepunkt per subjekt: synteseleddet spør om *subjektet* har en oppgave,
+-- så rader på det samme paret ville vært ett subjekt og ikke mange.
+insert into catalog.clinical_concepts (id, canonical_label, concept_type)
+select ('81aa0000-0000-4000-8000-' || lpad(i::text, 12, '0'))::uuid,
+       'kappløpsendepunkt ' || i || ' i prøve 810', 'outcome'
+from generate_series(1, workflow.chain_reconciliation_limit() + 1) as g(i);
+
+insert into knowledge.evidence_items (
+  id, source_id, source_version_id, design_code, population_id,
+  population_availability, population_detail, sample_size_availability,
+  intervention_drug_id, comparator_kind, outcome_concept_id, outcome_detail,
+  timepoint_availability, reported_direction, estimate_availability,
+  confidence_interval_availability, source_locator, extraction_method,
+  created_by_actor_id
+)
+select ('81bb0000-0000-4000-8000-' || lpad(i::text, 12, '0'))::uuid,
+       '81000000-0000-4000-8000-000000000001', '81000000-0000-4000-8000-000000000021',
+       'randomized_controlled_trial', (select id from fixture where name = 'adults'),
+       'reported_value', 'Prøve i 810, mengdefunn ' || i || '.', 'not_reported',
+       (select id from fixture where name = 'sertralin'), 'none',
+       ('81aa0000-0000-4000-8000-' || lpad(i::text, 12, '0'))::uuid,
+       'Mengdefunn ' || i || '.', 'not_reported', 'decrease', 'not_reported',
+       'not_reported', 'Avsnitt ' || i, 'ai_assisted',
+       (select id from fixture where name = 'extractor')
+from generate_series(1, workflow.chain_reconciliation_limit() + 1) as g(i);
+
+-- Kontrollen føres i to rader, som ellers i denne filen: den kildeomfattende
+-- halvdelen har sitt eget krav (migrasjon 005ae).
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, rationale, verified_at, agent_run_id)
+select e.id, e.created_by_actor_id,
+       (select id from fixture where name = 'extraction_verifier'),
+       'verified', 'verifiable_representation',
+       array['source_wide_absence']::workflow.evidence_check_field[],
+       'Prøve i 810: et søk gjennom hele representasjonen fant ingen verdi.',
+       now() - interval '1 hour', '81000000-0000-4000-8000-000000000051'
+from knowledge.evidence_items e
+where e.id::text like '81bb0000%'
+  and 'source_wide_absence' = any (workflow.required_check_fields(e.id));
+
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, rationale, verified_at)
+select e.id, e.created_by_actor_id,
+       (select id from fixture where name = 'extraction_verifier'),
+       'verified', 'verifiable_representation',
+       array_remove(workflow.required_check_fields(e.id),
+                    'source_wide_absence'::workflow.evidence_check_field),
+       'Prøve i 810: fullstendig kontrollert mengdefunn.', now()
+from knowledge.evidence_items e
+where e.id::text like '81bb0000%';
+
+select is(
+  (select count(*)::integer from workflow.pipeline_jobs j
+   where j.agent_role = 'claim_synthesis'
+     and j.input_manifest ->> 'topic_concept_id' like '81aa0000%'),
+  workflow.chain_reconciliation_limit() + 1,
+  'triggeren rekker alle subjektene: det er den som er den autoritative veien'
+);
+
+-- Og så etterlignes den tapte forbindelsen — for alle sammen. Etter dette er
+-- hele mengden utestående arbeid for rekonsilieringen, og den er med vilje ett
+-- subjekt større enn grensen.
+set local session_replication_role = replica;
+delete from workflow.pipeline_job_events e
+where e.pipeline_job_id in (
+  select j.id from workflow.pipeline_jobs j
+  where j.agent_role = 'claim_synthesis'
+    and j.input_manifest ->> 'topic_concept_id' like '81aa0000%');
+delete from workflow.pipeline_jobs j
+where j.agent_role = 'claim_synthesis'
+  and j.input_manifest ->> 'topic_concept_id' like '81aa0000%';
+-- Markøren settes til begynnelsen, slik at prøven måler hva som skjer ved
+-- grensen og ikke hvor forrige del av filen tilfeldigvis etterlot den.
+update workflow.chain_reconciliation_cursors
+set cursor_position = '', sweep_clean = true, sweeps_completed = 0
+where step = 'syntese';
+set local session_replication_role = origin;
+
+-- Og lampen tennes, slik at det kan prøves at den ikke slukkes av en passering
+-- som ikke kom gjennom leddet.
+select workflow.chain_note_failure(
+  'syntese', '81bb0000-0000-4000-8000-000000000001', 'XX000');
+
+set local role anon;
+insert into sweep
+select 'first', api.resume_chain_transitions(
+  'agent-identity:extraction-verification-01',
+  (select secret from cred where name = 'extraction_verifier'));
+reset role;
+
+select ok(
+  (select count(*)::integer from workflow.pipeline_jobs j
+   where j.agent_role = 'claim_synthesis'
+     and j.input_manifest ->> 'topic_concept_id' like '81aa0000%')
+  < workflow.chain_reconciliation_limit() + 1,
+  'én passering tar grensen og ikke mer: kostnadsgrensen er reell'
+);
+select ok(
+  (select c.cursor_position <> '' from workflow.chain_reconciliation_cursors c
+   where c.step = 'syntese'),
+  'og markøren blir stående midt i leddet, framfor å peke på begynnelsen igjen'
+);
+select is(
+  (select count(*)::integer from workflow.technical_incidents ti
+   where ti.area = 'automatic_task' and ti.signature = 'kjede:syntese'
+     and ti.resolved_at is null),
+  1,
+  'en passering som ikke så hele leddet, kan ikke melde det friskt'
+);
+
+set local role anon;
+insert into sweep
+select 'second', api.resume_chain_transitions(
+  'agent-identity:extraction-verification-01',
+  (select secret from cred where name = 'extraction_verifier'));
+reset role;
+
+select is(
+  (select count(*)::integer from workflow.pipeline_jobs j
+   where j.agent_role = 'claim_synthesis'
+     and j.input_manifest ->> 'topic_concept_id' like '81aa0000%'),
+  workflow.chain_reconciliation_limit() + 1,
+  'neste passering fortsetter der den forrige slapp: subjektet bak grensen sulter ikke'
+);
+select is(
+  (select c.cursor_position from workflow.chain_reconciliation_cursors c
+   where c.step = 'syntese'),
+  '',
+  'og når feiingen er rundt, begynner markøren forfra'
+);
+select is(
+  (select c.sweeps_completed from workflow.chain_reconciliation_cursors c
+   where c.step = 'syntese'),
+  1::bigint,
+  'nøyaktig én hel feiing er talt, og ikke én per passering'
+);
+select is(
+  (select count(*)::integer from workflow.technical_incidents ti
+   where ti.area = 'automatic_task' and ti.signature = 'kjede:syntese'
+     and ti.resolved_at is null),
+  0,
+  'og en hel feiing uten svikt melder leddet friskt — også når leddet er stort'
 );
 
 select * from finish();

@@ -1139,6 +1139,151 @@ grant execute on function api.control_source_representation(text, text, uuid, uu
 -- veien gir, er nøyaktig «kjeden går videre slik tilstanden allerede tilsier» —
 -- ikke mer, fordi ingen verdi utenfra kan nå inn i den.
 -- ----------------------------------------------------------------------------
+-- Markøren hvert ledd rekonsilieres fra.
+--
+-- En passering må ha en kostnadsgrense: uten den kunne én kjøring blitt stående
+-- og holdt leier mens den gikk gjennom en tabell som vokser. Men en grense
+-- alene gir sult. Tar passeringen alltid de *første* radene, blir de samme
+-- radene lest hver gang, og en manglende overgang bak grensen ville aldri blitt
+-- sett — og leddet kunne aldri meldes friskt, fordi ingen passering noen gang
+-- kom gjennom hele det.
+--
+-- Markøren løser begge deler. Hver passering tar opp til grensen rader *etter*
+-- forrige posisjon, og flytter posisjonen. Når en passering finner færre rader
+-- enn grensen, er leddet gått gjennom, posisjonen nullstilles, og feiingen
+-- begynner forfra. Leddet meldes friskt bare når en hel feiing — ikke en
+-- passering — kom gjennom uten en eneste teknisk svikt, og `sweep_clean` bærer
+-- den opplysningen mellom passeringene.
+--
+-- Tilstanden ligger i en rad og ikke i en kjøring, slik at den overlever en
+-- omstart, og slik at den kan etterprøves i databasen.
+create table workflow.chain_reconciliation_cursors (
+  id uuid primary key default gen_random_uuid(),
+
+  -- Leddet markøren gjelder: ekstraksjonskontroll, syntese,
+  -- kildestottekontroll, evidensvurdering eller kandidat. Den samme strengen
+  -- workflow.chain_step_signature(text) bygger lampens signatur av, slik at
+  -- markøren og lampen ikke kan komme til å gjelde hvert sitt ledd.
+  step text not null,
+
+  -- Sorteringsnøkkelen til den siste raden forrige passering så.
+  cursor_position text not null default '',
+
+  sweep_clean boolean not null default true,
+  sweeps_completed bigint not null default 0,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  constraint chain_reconciliation_cursors_step_key unique (step),
+  constraint chain_reconciliation_cursors_step_shape_check
+    check (step = btrim(step) and length(step) between 1 and 60),
+  constraint chain_reconciliation_cursors_sweeps_check check (sweeps_completed >= 0)
+);
+
+comment on table workflow.chain_reconciliation_cursors is
+  'Hvor api.resume_chain_transitions(text, text) fortsetter fra i hvert ledd, og om feiingen som pågår, har vært fri for teknisk svikt. Finnes fordi en passering med en kostnadsgrense, men uten en markør, ville lest de samme radene hver gang: en manglende overgang bak grensen ville sultet, og leddet kunne aldri meldes friskt. Raden er reparasjonsveiens egen bokføring og ikke klinisk innhold.';
+
+comment on column workflow.chain_reconciliation_cursors.cursor_position is
+  'Sorteringsnøkkelen til den siste raden forrige passering så. Tom streng betyr «fra begynnelsen», og settes tilbake dit når en feiing er fullført.';
+
+comment on column workflow.chain_reconciliation_cursors.sweep_clean is
+  'Om feiingen som pågår, så langt er fri for teknisk svikt. Én passering vet bare om sin egen del av leddet, så opplysningen må bæres videre til feiingen er rundt.';
+
+comment on column workflow.chain_reconciliation_cursors.sweeps_completed is
+  'Hvor mange hele feiinger leddet har vært gjennom. Finnes for at det skal kunne etterprøves i databasen at rekonsilieringen faktisk kommer rundt.';
+
+alter table workflow.chain_reconciliation_cursors enable row level security;
+
+create trigger chain_reconciliation_cursors_set_row_timestamps
+  before insert or update on workflow.chain_reconciliation_cursors
+  for each row execute function catalog.set_row_timestamps();
+
+-- Hvor mange rader én passering ser på per ledd.
+--
+-- En funksjon og ikke et tall i kroppen: grensen er en del av kontrakten
+-- mellom markøren og rekonsilieringen, den skal kunne leses av en prøve som
+-- vil vise hva som skjer *ved* grensen, og et tall gjemt i en funksjonskropp
+-- ville ikke kunnet det.
+create function workflow.chain_reconciliation_limit()
+  returns integer
+  language sql
+  immutable
+  set search_path = ''
+as $$ select 200 $$;
+
+comment on function workflow.chain_reconciliation_limit() is
+  'Hvor mange rader api.resume_chain_transitions(text, text) ser på per ledd per passering. En kostnadsgrense, ikke en grense for hvor mye som kan tas igjen: markøren i workflow.chain_reconciliation_cursors gjør at neste passering fortsetter der denne slapp.';
+
+revoke execute on function workflow.chain_reconciliation_limit() from public;
+
+-- Posisjonen ett ledd skal fortsette fra.
+create function workflow.chain_cursor_position(p_step text)
+  returns text
+  language sql
+  stable
+  set search_path = ''
+as $$
+  select coalesce(
+    (select c.cursor_position from workflow.chain_reconciliation_cursors c
+     where c.step = p_step),
+    '');
+$$;
+
+comment on function workflow.chain_cursor_position(text) is
+  'Sorteringsnøkkelen api.resume_chain_transitions(text, text) skal fortsette etter i ett ledd. Tom streng når leddet aldri har vært rekonsiliert, eller når forrige feiing kom rundt.';
+
+revoke execute on function workflow.chain_cursor_position(text) from public;
+
+-- Flytter markøren, og svarer om leddet nå kan meldes friskt.
+create function workflow.chain_cursor_step(
+  p_step text,
+  p_position text,
+  p_failed boolean,
+  p_reached_end boolean
+)
+  returns boolean
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_clean boolean;
+begin
+  insert into workflow.chain_reconciliation_cursors (step)
+  values (p_step)
+  on conflict (step) do nothing;
+
+  -- Radlåsen først: to passeringer som kom samtidig, skal ikke kunne skrive hver
+  -- sin posisjon over hverandre og la et stykke av leddet falle mellom dem.
+  select c.sweep_clean into v_clean
+  from workflow.chain_reconciliation_cursors c
+  where c.step = p_step
+  for update;
+
+  v_clean := v_clean and not p_failed;
+
+  if p_reached_end then
+    update workflow.chain_reconciliation_cursors c
+    set cursor_position = '',
+        sweep_clean = true,
+        sweeps_completed = c.sweeps_completed + 1
+    where c.step = p_step;
+    return v_clean;
+  end if;
+
+  update workflow.chain_reconciliation_cursors c
+  set cursor_position = p_position,
+      sweep_clean = v_clean
+  where c.step = p_step;
+  return false;
+end;
+$$;
+
+comment on function workflow.chain_cursor_step(text, text, boolean, boolean) is
+  'Bokfører én passering av ett ledd og svarer om leddets tekniske problem kan lukkes. Svarer true bare når passeringen kom til enden av leddet *og* hele feiingen dit var fri for teknisk svikt — ikke når én passering tilfeldigvis gikk bra. Nullstiller posisjonen og begynner en ny feiing når enden er nådd.';
+
+revoke execute on function workflow.chain_cursor_step(text, text, boolean, boolean) from public;
+
 create function api.resume_chain_transitions(p_identity_key text, p_secret text)
   returns jsonb
   language plpgsql
@@ -1146,10 +1291,11 @@ create function api.resume_chain_transitions(p_identity_key text, p_secret text)
   set search_path = ''
 as $$
 declare
-  -- Hvor mange rader én rekonsiliering ser på per ledd. Grensen er ikke bare en
-  -- kostnadsgrense: den avgjør om passeringen *så hele leddet*, og dermed om den
-  -- i det hele tatt kan uttale seg om at leddet er friskt igjen.
-  v_limit constant integer := 200;
+  -- Grensen er en kostnadsgrense, og den avgjør i tillegg om passeringen nådde
+  -- *enden* av leddet: færre rader enn grensen betyr at feiingen er rundt.
+  -- Markøren (workflow.chain_reconciliation_cursors) gjør at neste passering
+  -- fortsetter der denne slapp, slik at en grense ikke blir til sult.
+  v_limit constant integer := workflow.chain_reconciliation_limit();
   v_identity provenance.agent_identities;
   v_row record;
   v_state text;
@@ -1157,6 +1303,7 @@ declare
   v_candidates integer := 0;
   v_seen integer;
   v_failed boolean;
+  v_position text;
 begin
   select i.* into v_identity
   from provenance.agent_identities i
@@ -1184,17 +1331,20 @@ begin
   -- --------------------------------------------------------------------
   v_seen := 0;
   v_failed := false;
+  v_position := workflow.chain_cursor_position('ekstraksjonskontroll');
   for v_row in
-    select e.id
+    select e.id, e.id::text as sort_key
     from knowledge.evidence_items e
     where not exists (
       select 1 from workflow.pipeline_jobs j
       where j.agent_role = 'extraction_verification'::provenance.agent_role
         and j.job_key = workflow.control_job_key('ekstraksjon', e.id))
-    order by e.created_at
+      and e.id::text > v_position
+    order by e.id::text
     limit v_limit
   loop
     v_seen := v_seen + 1;
+    v_position := v_row.sort_key;
     begin
       if workflow.chain_control_for_evidence_item(v_row.id) is not null then
         v_queued := v_queued + 1;
@@ -1208,21 +1358,52 @@ begin
         v_failed := true;
     end;
   end loop;
-  if not v_failed and v_seen < v_limit then
+  if workflow.chain_cursor_step(
+       'ekstraksjonskontroll', v_position, v_failed, v_seen < v_limit) then
     perform workflow.chain_resolve_step('ekstraksjonskontroll');
   end if;
 
   -- Synteseoppgaver som mangler.
+  --
+  -- Utvalget er de *subjektene* som mangler en oppgave, og ikke enhver
+  -- kontrollert rad: ett subjekt er én oppgave, og uten avgrensningen ville
+  -- passeringen brukt grensen sin på rader den allerede hadde gjort ferdig.
+  -- Portene speiler overgangens egne — den gjeldende kontrollen er den siste, og
+  -- et par som alt har en påstand, er ikke automatikkens å skrive om — slik at
+  -- en rad som med rette står, ikke blir liggende i utvalget for alltid.
   v_seen := 0;
   v_failed := false;
+  v_position := workflow.chain_cursor_position('syntese');
   for v_row in
-    select distinct ev.evidence_item_id as id
-    from workflow.evidence_verifications ev
-    where ev.outcome = 'verified'
-    order by 1
+    with gjeldende as (
+      select distinct on (ev.evidence_item_id)
+             ev.evidence_item_id, ev.outcome
+      from workflow.evidence_verifications ev
+      order by ev.evidence_item_id, ev.registration_ordinal desc
+    ),
+    utestaaende as (
+      select e.intervention_drug_id as drug_id,
+             e.outcome_concept_id as topic_id,
+             min(e.id::text) as sort_key
+      from knowledge.evidence_items e
+      join gjeldende g on g.evidence_item_id = e.id and g.outcome = 'verified'
+      where not exists (
+        select 1 from knowledge.claims c
+        where c.topic_concept_id = e.outcome_concept_id
+          and c.subject_drug_id = e.intervention_drug_id)
+      group by e.intervention_drug_id, e.outcome_concept_id
+    )
+    select u.sort_key::uuid as id, u.sort_key
+    from utestaaende u
+    where not workflow.agent_task_subject_queued(
+            'claim_synthesis'::provenance.agent_role,
+            format('%s+%s', u.drug_id, u.topic_id))
+      and u.sort_key > v_position
+    order by u.sort_key
     limit v_limit
   loop
     v_seen := v_seen + 1;
+    v_position := v_row.sort_key;
     begin
       if workflow.chain_task_for_verified_extraction(v_row.id) is not null then
         v_queued := v_queued + 1;
@@ -1236,24 +1417,27 @@ begin
         v_failed := true;
     end;
   end loop;
-  if not v_failed and v_seen < v_limit then
+  if workflow.chain_cursor_step('syntese', v_position, v_failed, v_seen < v_limit) then
     perform workflow.chain_resolve_step('syntese');
   end if;
 
   -- Kildestøttekontroller som mangler.
   v_seen := 0;
   v_failed := false;
+  v_position := workflow.chain_cursor_position('kildestottekontroll');
   for v_row in
-    select r.id
+    select r.id, r.id::text as sort_key
     from knowledge.claim_revisions r
     where not exists (
       select 1 from workflow.pipeline_jobs j
       where j.agent_role = 'citation_support_verification'::provenance.agent_role
         and j.job_key = workflow.control_job_key('kildestotte', r.id))
-    order by r.created_at
+      and r.id::text > v_position
+    order by r.id::text
     limit v_limit
   loop
     v_seen := v_seen + 1;
+    v_position := v_row.sort_key;
     begin
       if workflow.chain_control_for_claim_revision(v_row.id) is not null then
         v_queued := v_queued + 1;
@@ -1267,21 +1451,34 @@ begin
         v_failed := true;
     end;
   end loop;
-  if not v_failed and v_seen < v_limit then
+  if workflow.chain_cursor_step(
+       'kildestottekontroll', v_position, v_failed, v_seen < v_limit) then
     perform workflow.chain_resolve_step('kildestottekontroll');
   end if;
 
-  -- Evidensvurderinger som mangler.
+  -- Evidensvurderinger som mangler. Som over: de revisjonene som faktisk mangler
+  -- oppgaven, lest med den gjeldende kontrollen og ikke med en hvilken som helst.
   v_seen := 0;
   v_failed := false;
+  v_position := workflow.chain_cursor_position('evidensvurdering');
   for v_row in
-    select distinct cv.claim_revision_id as id
-    from workflow.claim_verifications cv
-    where cv.outcome = 'verified'
-    order by 1
+    with gjeldende as (
+      select distinct on (cv.claim_revision_id)
+             cv.claim_revision_id, cv.outcome
+      from workflow.claim_verifications cv
+      order by cv.claim_revision_id, cv.registration_ordinal desc
+    )
+    select g.claim_revision_id as id, g.claim_revision_id::text as sort_key
+    from gjeldende g
+    where g.outcome = 'verified'
+      and not workflow.agent_task_subject_queued(
+            'evidence_assessment'::provenance.agent_role, g.claim_revision_id::text)
+      and g.claim_revision_id::text > v_position
+    order by g.claim_revision_id::text
     limit v_limit
   loop
     v_seen := v_seen + 1;
+    v_position := v_row.sort_key;
     begin
       if workflow.chain_task_for_verified_claim(v_row.id) is not null then
         v_queued := v_queued + 1;
@@ -1295,7 +1492,8 @@ begin
         v_failed := true;
     end;
   end loop;
-  if not v_failed and v_seen < v_limit then
+  if workflow.chain_cursor_step(
+       'evidensvurdering', v_position, v_failed, v_seen < v_limit) then
     perform workflow.chain_resolve_step('evidensvurdering');
   end if;
 
@@ -1307,15 +1505,18 @@ begin
   -- gjort den ene svikten som *ikke* har en trigger bak seg, usynlig.
   v_seen := 0;
   v_failed := false;
+  v_position := workflow.chain_cursor_position('kandidat');
   for v_row in
-    select distinct a.claim_revision_id as id
+    select distinct a.claim_revision_id as id, a.claim_revision_id::text as sort_key
     from knowledge.evidence_assessments a
     where not exists (
       select 1 from knowledge.candidates c where c.claim_revision_id = a.claim_revision_id)
-    order by 1
+      and a.claim_revision_id::text > v_position
+    order by a.claim_revision_id::text
     limit v_limit
   loop
     v_seen := v_seen + 1;
+    v_position := v_row.sort_key;
     begin
       if workflow.chain_candidate_for_assessment(v_row.id) is not null then
         v_candidates := v_candidates + 1;
@@ -1329,7 +1530,7 @@ begin
         v_failed := true;
     end;
   end loop;
-  if not v_failed and v_seen < v_limit then
+  if workflow.chain_cursor_step('kandidat', v_position, v_failed, v_seen < v_limit) then
     perform workflow.chain_resolve_step('kandidat');
   end if;
 
@@ -1338,7 +1539,7 @@ end;
 $$;
 
 comment on function api.resume_chain_transitions(text, text) is
-  'Tar igjen de automatiske kjedeovergangene en teknisk svikt etterlot, og rekonsilierer samtidig det tekniske bildet. Leser hva databasens egen tilstand tilsier og legger inn nøyaktig det triggerne ville lagt inn — de samme funksjonene, de samme portene, den samme idempotensen — og tar ikke imot ett eneste felt fra kalleren. Den erstatter ingen tilstandsovergang: overgangen har allerede skjedd, og dette er lesningen av hva som mangler i forhold til den. Hvert ledd rekonsilieres for seg, og leddets tekniske problem lukkes bare når passeringen kom gjennom *hele* leddet uten en eneste teknisk svikt: en overgang som lyktes for ett subjekt, sier ingenting om den som fortsatt svikter for et annet, og en passering som stoppet på grensen, vet ikke hva som står bak den. Krever en identitet i et av de to deterministiske kontrolleddene, fordi det er den kjøringen som uansett går med jevne mellomrom. Svarer med hvor mange jobber som ble lagt inn og hvor mange kandidater som ble forseglet. SECURITY DEFINER fordi knowledge, workflow og provenance har RLS med default deny; EXECUTE går til anon og authenticated av samme grunn som for de øvrige agentveiene.';
+  'Tar igjen de automatiske kjedeovergangene en teknisk svikt etterlot, og rekonsilierer samtidig det tekniske bildet. Leser hva databasens egen tilstand tilsier og legger inn nøyaktig det triggerne ville lagt inn — de samme funksjonene, de samme portene, den samme idempotensen — og tar ikke imot ett eneste felt fra kalleren. Den erstatter ingen tilstandsovergang: overgangen har allerede skjedd, og dette er lesningen av hva som mangler i forhold til den. Hvert ledd rekonsilieres for seg, fra sin egen markør, slik at en kostnadsgrense per passering ikke blir til sult: en manglende overgang bak grensen tas igjen ved neste passering, ikke aldri. Leddets tekniske problem lukkes bare når en hel feiing — ikke en enkelt passering — kom gjennom leddet uten en eneste teknisk svikt: en overgang som lyktes for ett subjekt, sier ingenting om den som fortsatt svikter for et annet. Krever en identitet i et av de to deterministiske kontrolleddene, fordi det er den kjøringen som uansett går med jevne mellomrom. Svarer med hvor mange jobber som ble lagt inn og hvor mange kandidater som ble forseglet. SECURITY DEFINER fordi knowledge, workflow og provenance har RLS med default deny; EXECUTE går til anon og authenticated av samme grunn som for de øvrige agentveiene.';
 
 revoke execute on function api.resume_chain_transitions(text, text) from public;
 grant execute on function api.resume_chain_transitions(text, text) to anon, authenticated;
@@ -1494,3 +1695,128 @@ revoke execute on function workflow.chain_after_claim_revision_discarded() from 
 create trigger claim_revisions_close_citation_control
   after delete on knowledge.claim_revisions
   for each row execute function workflow.chain_after_claim_revision_discarded();
+
+-- ----------------------------------------------------------------------------
+-- 10. Den manuelle innleggingen deltar i den samme låsen
+--
+-- Overgangen spør om subjektet allerede har en oppgave i rollen — uansett hvem
+-- som la den inn — og tar `workflow.lock_chain_subject(...)` før den spør, slik
+-- at to overganger ikke kan svare «nei» samtidig.
+--
+-- Men overgangen er ikke den eneste veien inn i køen.
+-- `api.enqueue_agent_task(text, jsonb)` (migrasjon 010c) er redaktørens og
+-- recovery-veiens, og den har med vilje en jobbnøkkel som skiller på manifestet:
+-- to forskjellige avgrensninger av det samme subjektet skal kunne bli to
+-- oppgaver, fordi det er en redaksjonell avgjørelse med mandat bak seg. Den
+-- deltok bare ikke i låsen, og da holdt ikke overgangens egen garanti: en
+-- innlegging som commitet i vinduet mellom overgangens spørsmål og dens
+-- skriving, ville ikke blitt sett — og unikhetskravet på (agent_role, job_key)
+-- fanger den ikke, nettopp fordi nøklene er forskjellige.
+--
+-- Veien tar derfor den samme låsen på det samme subjektet. Den avviser ingenting
+-- den ikke avviste før: redaktørens rett til å legge inn en annen avgrensning
+-- med vilje er urørt. Det som endrer seg, er at en overgang som kappes mot en
+-- slik innlegging, må vente — og da *ser* den oppgaven, og lar være.
+--
+-- Subjektet utledes nøyaktig som før. Utledningen står uendret her framfor å
+-- løftes ut, fordi den er kontrakten jobbnøkkelen bygges av, og en omskriving
+-- av den ville vært en endring av nøkler som allerede ligger i køen.
+-- ----------------------------------------------------------------------------
+create or replace function api.enqueue_agent_task(p_agent_role text, p_input_manifest jsonb)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_role provenance.agent_role;
+  v_subject text;
+  v_job_key text;
+  v_result jsonb;
+  v_job workflow.pipeline_jobs;
+  v_problem text;
+begin
+  begin
+    v_role := p_agent_role::provenance.agent_role;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format('%L er ikke en kjent agentrolle.', p_agent_role);
+  end;
+
+  if workflow.agent_task_contract(v_role) is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format(
+        'Rollen %L kan ikke settes ut til en ekstern KI-agent.', p_agent_role),
+      hint = 'De uavhengige kontrolleddene er Antideps egen deterministiske kode. En ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en modellvurdering (ANTIDEP_CONSTITUTION.md regel 3).';
+  end if;
+
+  if p_input_manifest is null or jsonb_typeof(p_input_manifest) <> 'object' then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'Inndatamanifestet må være et JSON-objekt.';
+  end if;
+
+  v_subject := case v_role
+    when 'evidence_extraction' then coalesce(p_input_manifest ->> 'source_version_id', '?')
+    when 'claim_synthesis' then format('%s+%s',
+      coalesce(p_input_manifest ->> 'subject_drug_id', '?'),
+      coalesce(p_input_manifest ->> 'topic_concept_id', '?'))
+    else coalesce(p_input_manifest ->> 'claim_revision_id', '?')
+  end;
+
+  -- Den samme låsen kjedeovergangene tar, på nøyaktig det samme subjektet
+  -- (migrasjon 012b). Den avviser ingenting: den gjør bare at en overgang som
+  -- spør «har subjektet en oppgave», ikke kan få svaret sitt fra et øyeblikk
+  -- denne innleggingen allerede har forlatt. Låsen slippes når transaksjonen er
+  -- over, og en kaller uten mandat holder den bare til avvisningen under.
+  perform workflow.lock_chain_subject(v_role, v_subject);
+
+  -- Nøkkelen utledes av hva jobben handler om, med et kort avtrykk av hele
+  -- manifestet bak. Subjektet gjør køen lesbar; avtrykket gjør to forskjellige
+  -- avgrensninger av det samme subjektet til to jobber framfor til en kollisjon.
+  v_job_key := format('agent-handoff:%s:%s', v_subject,
+    left(encode(sha256(convert_to(p_input_manifest::text, 'UTF8')), 'hex'), 12));
+
+  v_result := api.enqueue_pipeline_job(p_agent_role, v_job_key, p_input_manifest);
+
+  select j.* into v_job
+  from workflow.pipeline_jobs j
+  where j.id = (v_result ->> 'pipeline_job_id')::uuid;
+
+  -- Utførelsesmåten settes i det samme kallet som oppretter jobben, og aldri
+  -- etterpå. Fikk vi tilbake en jobb som allerede fantes, må den ha vært en
+  -- handoff-jobb fra før: en intern pipelinejobb som ble omdøpt til en ekstern
+  -- oppgave i ettertid, ville kunnet stå midt i en kjøring.
+  if (v_result ->> 'enqueued')::boolean then
+    insert into workflow.agent_handoff_jobs (pipeline_job_id, registered_by_actor_id)
+    values (v_job.id, v_job.enqueued_by_actor_id);
+  elsif not exists (
+    select 1 from workflow.agent_handoff_jobs h where h.pipeline_job_id = v_job.id
+  ) then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format(
+        'Jobben %L finnes allerede for rollen %L som en intern pipelinejobb.', v_job_key, p_agent_role),
+      hint = 'Utførelsesmåten avgjøres når jobben legges inn. En intern jobb som ble gjort om til en ekstern agentoppgave i ettertid, kunne stått midt i en kjøring — og det samme arbeidet ville blitt gjort to ganger.';
+  end if;
+
+  -- Bare grunnlaget. At ingen KI-tjeneste er valgt for leddet ennå, er ikke en
+  -- grunn til å nekte å legge inn oppgaven — det er noe køen ber om, og valget
+  -- hører hjemme der og ikke i en innlegging.
+  v_problem := workflow.agent_task_input_problem(v_job);
+  if v_problem is not null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = v_problem,
+      hint = 'En oppgave som ikke kan bygges, skal ikke legges i køen: den ville stått der som noe som ventet på et menneske, uten å kunne utføres (ANTIDEP_CONSTITUTION.md regel 4).';
+  end if;
+
+  return v_result || jsonb_build_object('job_key', v_job_key);
+end;
+$$;
+
+comment on function api.enqueue_agent_task(text, jsonb) is
+  'Legger inn én ekstern agentoppgave og utleder jobbnøkkelen av hva oppgaven handler om — subjektet i klartekst, med et kort avtrykk av hele inndatamanifestet bak, slik at to forskjellige avgrensninger av det samme subjektet blir to jobber framfor en kollisjon. Tar den samme subjektlåsen kjedeovergangene tar, slik at invarianten «overgangen legger aldri inn en oppgave for et subjekt som allerede har en» holder også når en redaktør legger inn samtidig; låsen avviser ingenting av det veien tillot før. Kaller api.enqueue_pipeline_job(text, text, jsonb), som er idempotent på (rolle, nøkkel), og avviser en oppgave som ikke kan bygges av grunnlaget som faktisk ligger der. Krever editor-mandat gjennom det kallet.';

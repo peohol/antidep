@@ -114,6 +114,9 @@ funn_a=$(nyid)
 funn_b=$(nyid)
 kjoring_a=$(nyid)
 kjoring_b=$(nyid)
+endepunkt2=$(nyid)
+funn_c=$(nyid)
+kjoring_c=$(nyid)
 bruker=$(nyid)
 aktor=$(nyid)
 doi="10.9999/antidep.kapplop.${kjoring:0:8}"
@@ -259,6 +262,82 @@ insert into workflow.user_roles
   (user_id, role_code, scope_id, valid_from, granted_by_actor_id, grant_reason)
 values ('$bruker', 'editor', null, now() - interval '1 year', '$aktor',
         'Gyldig editor-tildeling for kappløpsprøven.');
+
+-- ----------------------------------------------------------------------------
+-- Prøve 3 trenger et subjekt til: ett som er ferdig kontrollert, men som ennå
+-- ikke har fått synteseoppgaven sin.
+--
+-- Triggeren legger den inn med det samme, så den eneste måten å framkalle
+-- tilstanden på er å fjerne jobben etterpå — nøyaktig som
+-- supabase/tests/810_chain_transitions_test.sql gjør når den etterligner en
+-- tapt forbindelse.
+-- ----------------------------------------------------------------------------
+insert into catalog.clinical_concepts (id, canonical_label, concept_type)
+values ('$endepunkt2', 'våkenhet i kappløpsprøven ${kjoring:0:8}', 'outcome');
+
+insert into knowledge.evidence_items (
+  id, source_id, source_version_id, design_code, population_id,
+  population_availability, population_detail, sample_size_availability,
+  intervention_drug_id, comparator_kind, outcome_concept_id, outcome_detail,
+  timepoint_availability, reported_direction, estimate_availability,
+  confidence_interval_availability, source_locator, extraction_method,
+  created_by_actor_id
+)
+select '$funn_c', '$kilde', '$versjon', 'randomized_controlled_trial',
+       p.id, 'reported_value', 'Kappløpsprøven, funn C.', 'not_reported',
+       d.id, 'none', '$endepunkt2', 'Kappløpsprøven, funn C.',
+       'not_reported', 'decrease', 'not_reported', 'not_reported',
+       'Avsnitt 3', 'ai_assisted', a.id
+from catalog.drugs d
+cross join catalog.populations p
+cross join provenance.actors a
+where d.canonical_name = 'sertralin'
+  and p.canonical_label = 'voksne med depressiv lidelse'
+  and a.actor_key = 'agent:evidence-extraction';
+
+insert into provenance.agent_runs
+  (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
+   prompt_template_version, pipeline_version, input_manifest)
+select '$kjoring_c', ai.id, ai.actor_id, 'extraction_verification', 'antidep',
+       'deterministic-extraction-check', '1.0.0',
+       'extraction-verification/deterministic/1', 'antidep-evidence/1',
+       jsonb_build_object('mode', 'race-probe')
+from provenance.agent_identities ai
+where ai.identity_key = 'agent-identity:extraction-verification-01';
+
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, rationale, verified_at, agent_run_id)
+select e.id, e.created_by_actor_id, a.id, 'verified', 'verifiable_representation',
+       array['source_wide_absence']::workflow.evidence_check_field[],
+       'Kappløpsprøven: et søk gjennom hele representasjonen fant ingen verdi.',
+       now() - interval '1 hour', '$kjoring_c'
+from knowledge.evidence_items e
+cross join provenance.actors a
+where e.id = '$funn_c' and a.actor_key = 'agent:extraction-verification'
+  and 'source_wide_absence' = any (workflow.required_check_fields(e.id));
+
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, rationale, verified_at)
+select e.id, e.created_by_actor_id, a.id, 'verified', 'verifiable_representation',
+       array_remove(workflow.required_check_fields(e.id),
+                    'source_wide_absence'::workflow.evidence_check_field),
+       'Kappløpsprøven: fullstendig kontrollert ekstraksjon, funn C.', now()
+from knowledge.evidence_items e
+cross join provenance.actors a
+where e.id = '$funn_c' and a.actor_key = 'agent:extraction-verification';
+
+set session_replication_role = replica;
+delete from workflow.pipeline_job_events ev
+where ev.pipeline_job_id in (
+  select j.id from workflow.pipeline_jobs j
+  where j.agent_role = 'claim_synthesis'
+    and j.input_manifest ->> 'topic_concept_id' = '$endepunkt2');
+delete from workflow.pipeline_jobs j
+where j.agent_role = 'claim_synthesis'
+  and j.input_manifest ->> 'topic_concept_id' = '$endepunkt2';
+set session_replication_role = origin;
 SQL
 then
   feil 'fiksturen' 'Fiksturen lot seg ikke bygge.' "$arbeid/fikstur.log"
@@ -485,7 +564,110 @@ SQL
   printf 'ok       %s\n' "$navn"
 }
 
+# ============================================================================
+# Prøve 3 — den manuelle innleggingen og den automatiske overgangen deler lås
+# ============================================================================
+# Overgangen spør om subjektet allerede har en oppgave, uansett hvem som la den
+# inn. `api.enqueue_agent_task(...)` er redaktørens og recovery-veiens, og den
+# har med vilje en jobbnøkkel som skiller på manifestet: to forskjellige
+# avgrensninger av det samme subjektet skal kunne bli to oppgaver.
+#
+# Nettopp derfor fanger ikke unikhetskravet dette kappløpet. Uten en felles lås
+# kunne redaktøren commite en oppgave i vinduet mellom overgangens spørsmål og
+# dens skriving, og subjektet ville endt med to.
+proeve3() {
+  local navn='en manuell innlegging og en overgang gir til sammen én oppgave'
+  local styr="$arbeid/styr3" sql_b="$arbeid/b3.sql"
+  local a_log="$arbeid/a3.log" b_log="$arbeid/b3.log"
+
+  # Katalogverdien slås opp her og ikke i økt A: der er kalleren `authenticated`,
+  # og en innlogget bruker kommer ikke til katalogskjemaet — som hen ikke skal.
+  local virkestoff
+  virkestoff=$(les "select id from catalog.drugs where canonical_name = 'sertralin'")
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  # Økt B er den automatiske overgangen: en kontroll til på det samme funnet
+  # utløser triggeren på nytt, og den bygger manifestet sitt av hele det
+  # brukbare grunnlaget — med populasjonen, som redaktørens ikke har.
+  cat > "$sql_b" <<SQL
+begin;
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, rationale, verified_at)
+select e.id, e.created_by_actor_id, a.id, 'verified', 'verifiable_representation',
+       array_remove(workflow.required_check_fields(e.id),
+                    'source_wide_absence'::workflow.evidence_check_field),
+       'Kappløpsprøven: kontrollen kjørt om igjen, funn C.', now()
+from knowledge.evidence_items e
+cross join provenance.actors a
+where e.id = '$funn_c' and a.actor_key = 'agent:extraction-verification';
+commit;
+SQL
+
+  # Økt A er redaktøren, med en annen avgrensning av det samme subjektet.
+  (
+    printf 'begin;\n'
+    printf "select set_config('request.jwt.claims', '{\"sub\":\"%s\"}', true);\n" "$bruker"
+    printf 'set local role authenticated;\n'
+    printf "select api.enqueue_agent_task('claim_synthesis', jsonb_build_object(
+              'topic_concept_id', '%s'::uuid,
+              'subject_drug_id', '%s'::uuid,
+              'evidence_item_ids', jsonb_build_array('%s'::uuid)));\n" \
+      "$endepunkt2" "$virkestoff" "$funn_c"
+    printf '\\echo KLAR\n'
+    printf '\\o /dev/null\n'
+    cat "$styr"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$a_log" 2>&1 &
+  okt_a_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 150); do
+    grep -q 'KLAR' "$a_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$a_log" 2>/dev/null || feil "$navn" 'Økt A kom ikke i gang.' "$a_log"
+
+  psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$sql_b" > "$b_log" 2>&1 &
+  okt_b_pid=$!
+
+  vent_paa_blokkering "$navn"
+
+  printf 'commit;\n' >&9
+  exec 9>&-
+  wait "$okt_a_pid" 2>/dev/null; local a_status=$?
+  okt_a_pid=""
+  wait "$okt_b_pid" 2>/dev/null; local b_status=$?
+  okt_b_pid=""
+  rm -f "$styr"
+
+  [ "$a_status" -eq 0 ] || feil "$navn" 'Økt A kom ikke gjennom.' "$a_log"
+  [ "$b_status" -eq 0 ] || feil "$navn" 'Økt B kom ikke gjennom.' "$b_log"
+
+  local antall
+  antall=$(les "select count(*) from workflow.pipeline_jobs
+                where agent_role = 'claim_synthesis'
+                  and input_manifest ->> 'topic_concept_id' = '$endepunkt2'")
+  [ "$antall" = "1" ] || feil "$navn" \
+    "Subjektet har $antall synteseoppgaver. Redaktørens innlegging og overgangen skal til sammen gi én."
+
+  # Og det er redaktørens som står: hen kom først, og overgangen skal se den og
+  # la være — ikke skrive over den.
+  local manuell
+  manuell=$(les "select count(*) from workflow.agent_handoff_jobs h
+                 join workflow.pipeline_jobs j on j.id = h.pipeline_job_id
+                 where j.agent_role = 'claim_synthesis'
+                   and j.input_manifest ->> 'topic_concept_id' = '$endepunkt2'")
+  [ "$manuell" = "1" ] || feil "$navn" \
+    'Oppgaven som ble stående, er ikke den redaktøren la inn.'
+
+  printf 'ok       %s\n' "$navn"
+}
+
 printf 'Samtidighetsprøver for de automatiske kjedeovergangene\n'
 proeve1
 proeve2
-printf 'Begge prøvene bestod.\n'
+proeve3
+printf 'Alle prøvene bestod.\n'

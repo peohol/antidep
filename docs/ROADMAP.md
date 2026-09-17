@@ -103,9 +103,15 @@ kommer samtidig, ellers begge kunne svart «nei» og lagt inn hver sin oppgave
 under hvert sitt navn. To reelle forbindelser kappes om nettopp det i
 `npm run db:test:race`.
 
+Den samme låsen tas av den manuelle innleggingen, slik at en redaktør som
+legger inn i samme øyeblikk, ikke kan gjøre overgangens svar foreldet mens det
+skrives. Redaktørens rett til å legge inn en annen avgrensning med vilje er
+urørt — det er en redaksjonell avgjørelse, ikke et kappløp.
+
 Et ledd som har stoppet, meldes ikke friskt av at noe annet gikk bra.
-Opprydningen avgjør hvert av de fem leddene for seg, og slukker lampen bare når
-den så hele leddet uten en eneste svikt.
+Opprydningen avgjør hvert av de fem leddene for seg, går gjennom leddet fra sin
+egen markør slik at en kostnadsgrense ikke blir til sult for raden bak den, og
+slukker lampen bare når en hel runde kom gjennom uten en eneste svikt.
 
 ## Det som fortsatt er teknisk drift
 
