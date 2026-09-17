@@ -445,6 +445,24 @@ fi
 # rader og ikke én. Ett sted framfor tre: prøve 1, 4 og 5 registrerer nøyaktig
 # den samme halvdelen, og tre kopier ville kunnet drive fra hverandre.
 # ----------------------------------------------------------------------------
+# Kontrollen som *ikke* bekrefter. Samme vei inn som kontroll_sql, og den tar
+# derfor de samme låsene i den samme rekkefølgen: subjektlåsen først, gjennom
+# workflow.notice_claim_revision_need(uuid, uuid), og evidenstabellene etterpå.
+avvis_sql() {
+  cat <<SQL
+insert into workflow.evidence_verifications
+  (evidence_item_id, verified_item_creator_actor_id, verifier_actor_id, outcome,
+   source_access, checked_fields, findings, rationale, verified_at)
+select e.id, e.created_by_actor_id, a.id, 'needs_correction', 'verifiable_representation',
+       array['source_locator']::workflow.evidence_check_field[],
+       'Kappløpsprøven: kildepekeren stemmer ikke.',
+       'Kappløpsprøven: kontrollen fant et avvik, og funnet er ikke brukbart.', now()
+from knowledge.evidence_items e
+cross join provenance.actors a
+where e.id = '$1' and a.actor_key = 'agent:extraction-verification';
+SQL
+}
+
 kontroll_sql() {
   cat <<SQL
 insert into workflow.evidence_verifications
@@ -983,10 +1001,13 @@ SQL
 # først og subjektlåsen etterpå, ville de gått i hver sin retning gjennom de
 # samme låsene, og Postgres måtte brutt vranglåsen ved å avbryte den ene.
 #
-# Prøven holder subjektlåsen i økt B, slik beslutningsveien gjør før den leser
-# evidens, og lar økt A fjerne et funn samtidig. Det avgjørende er ikke bare at
+# Økt B er en ekstraksjonskontroll som ikke bekrefter — en av produktets egne
+# veier, og en som følger den normale rekkefølgen — og økt A fjerner den siste
+# nye evidensen om det samme subjektet samtidig. Det avgjørende er ikke bare at
 # A venter, men at B fortsatt kan lese evidenstabellen mens A venter: det er
 # nettopp den lesningen som ville stått fast om fjerningen holdt tabellåsene.
+# Til slutt prøves tilstanden: uten noe igjen å avgjøre skal oppgaven være
+# lukket, og ikke stå åpen om ingenting.
 # ----------------------------------------------------------------------------
 proeve6() {
   local navn='fjerning og beslutning tar låsene i samme rekkefølge'
@@ -1009,29 +1030,35 @@ SQL
   grep -q 'inngår i en besluttet revisjon' "$arbeid/a6a.log" || feil "$navn" \
     'Fjerningen ble avvist, men ikke fordi funnet inngår i en besluttet revisjon.' "$arbeid/a6a.log"
 
-  # Jobben svikter teknisk, slik en jobb kan gjøre. Da er funnet fjernbart, og
-  # selve låserekkefølgen kan prøves.
+  # Jobben svikter teknisk, slik en jobb kan gjøre, og oppgaven settes tilbake
+  # slik den sto rett før beslutningen i prøve 5. Prøven under trenger en åpen
+  # oppgave med ny evidens som faktisk kan falle bort; hvordan den åpne
+  # tilstanden oppsto, har ingenting med låserekkefølgen å gjøre.
   psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > /dev/null 2>&1 <<SQL
 update workflow.pipeline_jobs
 set state = 'failed', completed_at = now(),
     failure_reason = 'Kappløpsprøve: jobben svikter med vilje.'
 where agent_role = 'claim_synthesis'
   and input_manifest ->> 'topic_concept_id' = '$endepunkt3';
+
+update workflow.claim_revision_reviews r
+set state = 'open', pending_evidence_count = 3, decided_evidence_digest = null,
+    decided_at = null, decided_by_actor_id = null, decision_note = null,
+    pipeline_job_id = null
+where r.claim_id = '$paastand';
 SQL
 
   rm -f "$styr"
   mkfifo "$styr"
 
-  # Økt B holder subjektlåsen, slik beslutningsveien gjør før den leser evidens.
+  # Økt B er en ekstraksjonskontroll som ikke bekrefter — en av produktets egne
+  # veier, og en som følger den normale rekkefølgen: subjektlåsen først,
+  # evidenstabellene etterpå. Den tar låsen og holder den til den commiter.
   (
-    cat <<SQL
-begin;
-select workflow.lock_chain_subject('claim_synthesis'::provenance.agent_role,
-  (select format('%s+%s', c.subject_drug_id, c.topic_concept_id)
-   from knowledge.claims c where c.id = '$paastand'));
-\echo KLAR
-\o /dev/null
-SQL
+    printf 'begin;\n'
+    avvis_sql "$funn_f"
+    printf '\\echo KLAR\n'
+    printf '\\o /dev/null\n'
     cat "$styr"
   ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$b_log" 2>&1 &
   okt_b_pid=$!
@@ -1044,11 +1071,13 @@ SQL
   done
   grep -q 'KLAR' "$b_log" 2>/dev/null || feil "$navn" 'Økt B kom ikke i gang.' "$b_log"
 
+  # Økt A fjerner den siste nye evidensen om det samme subjektet.
   cat > "$sql_a" <<SQL
 begin;
 select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
 select knowledge.discard_unpublished_extraction_artifacts(
-  array['$funn_f']::uuid[], 'Kappløpsprøve: fjerning mens beslutningen holder låsen.');
+  array['$funn_d', '$funn_e']::uuid[],
+  'Kappløpsprøve: fjerning mens en kontroll holder subjektlåsen.');
 commit;
 SQL
   psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$sql_a" > "$a_log" 2>&1 &
@@ -1058,7 +1087,7 @@ SQL
 
   # Hele poenget: økt B leser evidenstabellen mens økt A venter på låsen B
   # holder. Holdt A tabellåsene, ville denne lesningen stått fast bak dem, og de
-  # to ville ventet på hverandre.
+  # to ville ventet på hverandre til databasen brøt vranglåsen.
   printf 'select count(*) from knowledge.evidence_items;\ncommit;\n' >&9
   exec 9>&-
   wait "$okt_b_pid" 2>/dev/null; local b_status=$?
@@ -1068,13 +1097,22 @@ SQL
   rm -f "$styr"
 
   [ "$b_status" -eq 0 ] || feil "$navn" \
-    'Økt B kom ikke gjennom. Låsene tas i hver sin rekkefølge, og de to venter på hverandre.' "$b_log"
+    'Kontrollen kom ikke gjennom. Låsene tas i hver sin rekkefølge, og de to venter på hverandre.' "$b_log"
   [ "$a_status" -eq 0 ] || feil "$navn" \
     'Fjerningen kom ikke gjennom etter at subjektlåsen ble sluppet.' "$a_log"
 
-  local igjen
-  igjen=$(les "select count(*) from knowledge.evidence_items where id = '$funn_f'")
-  [ "$igjen" = "0" ] || feil "$navn" 'Fjerningen sa den gikk gjennom, men funnet står.'
+  local igjen tilstand
+  igjen=$(les "select count(*) from knowledge.evidence_items
+               where id in ('$funn_d', '$funn_e', '$funn_f')")
+  [ "$igjen" = "1" ] || feil "$navn" \
+    "Etter fjerningen står $igjen av de tre funnene. Bare det avviste skal stå."
+
+  # Og tilstanden etterpå er den sanne: all den nye evidensen er enten fjernet
+  # eller ubrukbar, og da er det ikke lenger noe å avgjøre.
+  tilstand=$(les "select state from workflow.claim_revision_reviews
+                  where claim_id = '$paastand'")
+  [ "$tilstand" = "lapsed" ] || feil "$navn" \
+    "Oppgaven står som «$tilstand». Uten noe å avgjøre skal den være lukket."
 
   printf 'ok       %s\n' "$navn"
 }
