@@ -128,10 +128,7 @@ export interface AcquisitionReport {
 }
 
 /** Europe PMC-oppslaget som finner en åpen PDF, når det finnes en. */
-export async function openAccessPdfUrl(
-  doi: string,
-  fetcher: Fetcher,
-): Promise<string | null> {
+export async function openAccessPdfUrl(doi: string, fetcher: Fetcher): Promise<string | null> {
   const endpoint =
     'https://www.ebi.ac.uk/europepmc/webservices/rest/search' +
     `?query=${encodeURIComponent(`DOI:"${doi}"`)}&format=json&pageSize=1&resultType=core`
@@ -149,9 +146,7 @@ export async function openAccessPdfUrl(
 
   const list = (payload['resultList'] as Record<string, unknown> | undefined)?.['result']
   const first = Array.isArray(list) ? (list[0] as Record<string, unknown> | undefined) : undefined
-  const urls = (first?.['fullTextUrlList'] as Record<string, unknown> | undefined)?.[
-    'fullTextUrl'
-  ]
+  const urls = (first?.['fullTextUrlList'] as Record<string, unknown> | undefined)?.['fullTextUrl']
   if (!Array.isArray(urls)) {
     return null
   }
@@ -159,7 +154,12 @@ export async function openAccessPdfUrl(
   for (const entry of urls) {
     const row = entry as Record<string, unknown>
     if (String(row['documentStyle'] ?? '').toLowerCase() !== 'pdf') continue
-    if (String(row['availability'] ?? '').toLowerCase().includes('subscription')) continue
+    if (
+      String(row['availability'] ?? '')
+        .toLowerCase()
+        .includes('subscription')
+    )
+      continue
     const url = String(row['url'] ?? '')
     // Bare https. En adresse uten kryptering ville gjort dokumentets identitet
     // avhengig av et ledd underveis.

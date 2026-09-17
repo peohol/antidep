@@ -447,13 +447,7 @@ export function buildMonographAnswerDraftSchema(): Schema {
       answer: {
         type: 'object',
         additionalProperties: false,
-        required: [
-          'knowledge_type',
-          'statement',
-          'as_of',
-          'source_quote',
-          'source_locator',
-        ],
+        required: ['knowledge_type', 'statement', 'as_of', 'source_quote', 'source_locator'],
         properties: {
           knowledge_type: vocabulary(
             ['regulatory_fact', 'product_data', 'attributed_advice'],

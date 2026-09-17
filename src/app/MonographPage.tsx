@@ -20,11 +20,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
-import {
-  blockedSummary,
-  completionLabel,
-  type MonographCoverage,
-} from '../lib/monograph'
+import { blockedSummary, completionLabel, type MonographCoverage } from '../lib/monograph'
 import { formatTimestampWithClock, renderedText } from '../lib/norwegian-format'
 import type { MonographGateway } from './monograph-gateway'
 import { monographEditionPath } from './routes'
@@ -39,17 +35,15 @@ function CoverageSummary({ coverage }: { readonly coverage: MonographCoverage })
   return (
     <li className="work-item">
       <h3>
-        <Link to={monographEditionPath(coverage.reference)}>
-          Monografi for {coverage.drug}
-        </Link>
+        <Link to={monographEditionPath(coverage.reference)}>Monografi for {coverage.drug}</Link>
       </h3>
       <p className="work-item__what">{completionLabel(coverage)}</p>
       <p className="work-item__subjects">
         {coverage.counts.answered} av {coverage.counts.total} spørsmål er besvart.{' '}
         {coverage.counts.reviewedGaps} er gjennomgåtte kunnskapshull eller motstrider,{' '}
         {coverage.counts.justifiedNotApplicable} er avgjort som ikke relevante, og{' '}
-        {coverage.counts.undeterminedRelevance} har uavklart relevans.{' '}
-        {coverage.counts.open} står fortsatt åpne.
+        {coverage.counts.undeterminedRelevance} har uavklart relevans. {coverage.counts.open} står
+        fortsatt åpne.
       </p>
       {blocked.length === 0 ? null : (
         <ul className="monograph-blocked">
@@ -125,13 +119,12 @@ export function MonographPage({ gateway }: MonographPageProps): React.JSX.Elemen
       <p className="eyebrow">Monografi</p>
       <h1>Bygg en monografi</h1>
       <p className="lead">
-        Velg et virkestoff, så gjør Antidep resten: oppretter kunnskapsbehovene, leter etter
-        kilder, vurderer dem og bygger et kontrollert utkast. Du skal ikke foreslå artikler én
-        for én.
+        Velg et virkestoff, så gjør Antidep resten: oppretter kunnskapsbehovene, leter etter kilder,
+        vurderer dem og bygger et kontrollert utkast. Du skal ikke foreslå artikler én for én.
       </p>
       <p className="notice">
-        Antidep er et eksperimentelt kunnskapsverktøy om antidepressiver. Ingenting her er
-        klinisk veiledning, og et utkast er ikke godkjent innhold.
+        Antidep er et eksperimentelt kunnskapsverktøy om antidepressiver. Ingenting her er klinisk
+        veiledning, og et utkast er ikke godkjent innhold.
       </p>
 
       <section aria-labelledby="bestill-title">

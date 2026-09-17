@@ -160,7 +160,11 @@ describe('openAccessPdfUrl', () => {
       served({
         europepmc: {
           body: svar([
-            { documentStyle: 'pdf', availability: 'Subscription required', url: 'https://x.test/a.pdf' },
+            {
+              documentStyle: 'pdf',
+              availability: 'Subscription required',
+              url: 'https://x.test/a.pdf',
+            },
           ]),
           contentType: 'application/json',
         },
@@ -200,7 +204,11 @@ describe('acquireOne — forskningsfulltekst', () => {
                   {
                     fullTextUrlList: {
                       fullTextUrl: [
-                        { documentStyle: 'pdf', availability: 'Open access', url: 'https://x.test/a.pdf' },
+                        {
+                          documentStyle: 'pdf',
+                          availability: 'Open access',
+                          url: 'https://x.test/a.pdf',
+                        },
                       ],
                     },
                   },
@@ -223,7 +231,9 @@ describe('acquireOne — forskningsfulltekst', () => {
     const outcome = await acquireOne(
       api(),
       RESEARCH,
-      served({ europepmc: { body: bytes('{"resultList":{"result":[]}}'), contentType: 'application/json' } }),
+      served({
+        europepmc: { body: bytes('{"resultList":{"result":[]}}'), contentType: 'application/json' },
+      }),
     )
     expect(outcome.status).toBe('left_open')
     expect(outcome.note).toContain('ikke en faglig konklusjon')

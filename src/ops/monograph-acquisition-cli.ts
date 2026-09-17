@@ -55,7 +55,10 @@ function requestFrom(row: Record<string, unknown>): SourceRequest {
       typeof row['required_representation'] === 'string' ? row['required_representation'] : null,
     identifiers: identifiers.map((entry) => {
       const identifier = entry as Record<string, unknown>
-      return { system: String(identifier['system'] ?? ''), value: String(identifier['value'] ?? '') }
+      return {
+        system: String(identifier['system'] ?? ''),
+        value: String(identifier['value'] ?? ''),
+      }
     }),
   }
 }
@@ -132,9 +135,7 @@ async function main(): Promise<void> {
       const documents = Array.isArray(payload['authority_documents'])
         ? (payload['authority_documents'] as unknown[])
         : []
-      return [...research, ...documents].map((row) =>
-        requestFrom(row as Record<string, unknown>),
-      )
+      return [...research, ...documents].map((row) => requestFrom(row as Record<string, unknown>))
     },
 
     async submitDocument(args) {
