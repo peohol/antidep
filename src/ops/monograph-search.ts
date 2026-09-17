@@ -50,7 +50,13 @@ export type Fetcher = (
   url: string,
   overrides?: Partial<GuardedGetOptions>,
 ) => Promise<
-  | { status: 'ok'; httpStatus: number; contentType: string | null; bytes: Uint8Array; finalUrl: string }
+  | {
+      status: 'ok'
+      httpStatus: number
+      contentType: string | null
+      bytes: Uint8Array
+      finalUrl: string
+    }
   | { status: 'error'; message: string }
 >
 
@@ -136,7 +142,10 @@ function trimmed(value: unknown): string | undefined {
 }
 
 /** Et svar som ikke lot seg lese, er `failed` — ikke null treff. */
-function unreadable(base: Omit<MachineSearch, 'outcome' | 'resultCount' | 'limitationNote'>, why: string): MachineSearch {
+function unreadable(
+  base: Omit<MachineSearch, 'outcome' | 'resultCount' | 'limitationNote'>,
+  why: string,
+): MachineSearch {
   return {
     ...base,
     outcome: 'failed',
@@ -147,12 +156,17 @@ function unreadable(base: Omit<MachineSearch, 'outcome' | 'resultCount' | 'limit
 
 /** En søkevei Antidep ikke kom til, er `unavailable` — heller ikke null treff. */
 function unreachable(
-  base: Omit<MachineSearch, 'outcome' | 'resultCount' | 'limitationNote' | 'responseDigest'>,
+  base: Omit<MachineSearch, 'outcome' | 'resultCount' | 'limitationNote' | 'responseDigest'> & {
+    readonly responseDigest?: string | null
+  },
   why: string,
 ): MachineSearch {
   return {
     ...base,
-    responseDigest: null,
+    // Et svar Antidep faktisk fikk, beholder avtrykket sitt også når det var en
+    // HTTP-feil: avtrykket er utførelsesbeviset, og det finnes uansett hva
+    // tjenesten svarte. Kom det ikke noe svar i det hele tatt, finnes det ikke.
+    responseDigest: base.responseDigest ?? null,
     outcome: 'unavailable',
     resultCount: null,
     limitationNote: why,
@@ -190,7 +204,13 @@ export const EUROPE_PMC: SearchPlatform = {
       const pmid = trimmed(row['pmid'])
       const pmcid = trimmed(row['pmcid'])
       const identifier: CandidateSource['identifier_kind'] | null =
-        doi !== undefined ? 'doi' : pmid !== undefined ? 'pmid' : pmcid !== undefined ? 'pmcid' : null
+        doi !== undefined
+          ? 'doi'
+          : pmid !== undefined
+            ? 'pmid'
+            : pmcid !== undefined
+              ? 'pmcid'
+              : null
       if (identifier === null) continue
       const isOpen = trimmed(row['isOpenAccess']) === 'Y'
       candidates.push({
@@ -257,7 +277,9 @@ export const CROSSREF: SearchPlatform = {
       const titles = Array.isArray(row['title']) ? (row['title'] as unknown[]) : []
       const title = trimmed(titles[0])
       if (doi === undefined || title === undefined) continue
-      const authors = Array.isArray(row['author']) ? (row['author'] as Record<string, unknown>[]) : []
+      const authors = Array.isArray(row['author'])
+        ? (row['author'] as Record<string, unknown>[])
+        : []
       const container = Array.isArray(row['container-title'])
         ? trimmed((row['container-title'] as unknown[])[0])
         : undefined

@@ -6,6 +6,8 @@ import {
   CLAIM_REVISION_QUEUE_PATH,
   FULL_TEXT_INBOX_PATH,
   HOME_PATH,
+  MONOGRAPH_EDITION_PATH,
+  MONOGRAPH_PATH,
   PUBLISHED_CLAIM_PATH,
   PUBLISHED_PATH,
   TECHNICAL_PROBLEMS_PATH,
@@ -16,6 +18,8 @@ import {
   claimRevisionQueuePath,
   fullTextInboxPath,
   homePath,
+  monographEditionPath,
+  monographPath,
   publishedClaimPath,
   publishedPath,
   technicalProblemsPath,
@@ -32,6 +36,8 @@ const ALL_PATHS = [
   FULL_TEXT_INBOX_PATH,
   CLAIM_REVISION_QUEUE_PATH,
   CLAIM_REVISION_PATH,
+  MONOGRAPH_PATH,
+  MONOGRAPH_EDITION_PATH,
   TECHNICAL_PROBLEMS_PATH,
 ] as const
 
@@ -54,6 +60,9 @@ describe('routes', () => {
     expect(CLAIM_REVISION_QUEUE_PATH).toBe('/ny-evidens')
     expect(claimRevisionQueuePath()).toBe('/ny-evidens')
     expect(CLAIM_REVISION_PATH).toBe('/ny-evidens/:reference')
+    expect(MONOGRAPH_PATH).toBe('/monografi')
+    expect(monographPath()).toBe('/monografi')
+    expect(MONOGRAPH_EDITION_PATH).toBe('/monografi/:reference')
   })
 
   // Den tekniske agentarbeidsflaten er avviklet. Adressen skal ikke komme
@@ -74,6 +83,7 @@ describe('routes', () => {
       WORK_BOARD_PATH,
       FULL_TEXT_INBOX_PATH,
       CLAIM_REVISION_QUEUE_PATH,
+      MONOGRAPH_PATH,
       TECHNICAL_PROBLEMS_PATH,
       CANDIDATE_QUEUE_PATH,
       PUBLISHED_PATH,
@@ -123,5 +133,13 @@ describe('routes', () => {
       '/ny-evidens/9f2c1a4b8e6d0c3a5b7f9e1d',
     )
     expect(claimRevisionPath('../annet')).toBe('/ny-evidens/..%2Fannet')
+  })
+
+  // Håndtaket til en monografiutgave er databasens eget, av samme grunn.
+  it('URL-koder håndtaket til en monografiutgave', () => {
+    expect(monographEditionPath('3c7a1f5e9b2d4a6c8e0f1a3b')).toBe(
+      '/monografi/3c7a1f5e9b2d4a6c8e0f1a3b',
+    )
+    expect(monographEditionPath('../annet')).toBe('/monografi/..%2Fannet')
   })
 })

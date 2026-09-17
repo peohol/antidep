@@ -229,3 +229,114 @@ form button[disabled] {
   display: inline;
   font-weight: 400;
 }
+
+/* Blokkert: noe hindrer arbeidet, og det er verken et faglig utfall eller en
+   teknisk feil. Egen tone, fordi «venter på fulltekst» aldri skal leses som
+   «ingen relevante studier» — og egen form på tegnet, ikke bare egen farge. */
+.status--blocked {
+  color: #6b3a86;
+  background: #f4edf9;
+}
+
+/* --------------------------------------------------------------------------
+ * Monografien
+ *
+ * Få hovedpunkter øverst, og dybden bak en knapp. Tellingene står ved siden av
+ * hverandre på en skjerm som har plass, og under hverandre på en telefon — uten
+ * at noe av teksten forsvinner.
+ * -------------------------------------------------------------------------- */
+.monograph-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.monograph-counts li {
+  min-width: 8rem;
+}
+.monograph-counts .monograph-counts__number {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.monograph-counts .monograph-counts__what {
+  color: #4c564f;
+  font-size: 0.92rem;
+}
+.monograph-blocked {
+  margin: 0.4rem 0 0;
+  padding: 0 0 0 1.1rem;
+  color: #4c564f;
+  font-size: 0.92rem;
+}
+.monograph-section {
+  margin: 0.5rem 0;
+  border-top: 0.06rem solid #dfe5e0;
+}
+.monograph-section h3 {
+  margin: 0;
+}
+/* Knappen som åpner en seksjon er en overskrift og ikke en handlingsknapp: den
+   skal se ut som teksten den er, slik at den grønne knappen fortsatt betyr at
+   noe faktisk skjer. */
+.monograph-section h3 button {
+  width: 100%;
+  padding: 0.75rem 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.monograph-section h3 button:hover {
+  text-decoration: underline;
+}
+.monograph-entry__states {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.35rem;
+}
+.monograph-answer {
+  margin: 0.35rem 0;
+  font-size: 1.05rem;
+}
+.monograph-detail {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem 1rem;
+  border-left: 0.2rem solid #dfe5e0;
+  background: #f7f9f7;
+}
+.monograph-detail p {
+  margin: 0.3rem 0;
+}
+.monograph-detail textarea {
+  width: 100%;
+  min-height: 6rem;
+  padding: 0.45rem 0.6rem;
+  border: 0.06rem solid #c6cfc8;
+  border-radius: 0.3rem;
+  font: inherit;
+}
+/* Knappene som står utenfor et skjema, får samme utseende som de i et skjema:
+   det er den samme handlingen for den som ser på siden. */
+.monograph-detail button,
+.work-item > p > button:not(.monograph-section h3 button) {
+  padding: 0.45rem 0.9rem;
+  border: 0.06rem solid #235c39;
+  border-radius: 0.3rem;
+  background: #235c39;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.monograph-detail button[disabled],
+.work-item > p > button[disabled] {
+  border-color: #8d9a92;
+  background: #8d9a92;
+  cursor: default;
+}

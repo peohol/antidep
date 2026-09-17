@@ -45,7 +45,7 @@
 // agentarbeidsflaten.
 // ============================================================================
 
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 
 import { createClient } from '@supabase/supabase-js'
 
@@ -294,7 +294,10 @@ async function main(): Promise<void> {
   )
   const edition = String(order['reference'] ?? '')
   check('bestillingen gjelder virkestoffet redaktøren navnga', order['drug'] === 'sertralin')
-  check('og den er én utgave med en standardversjon', edition.length === 32 && order['standard_version'] === '1.0.0')
+  check(
+    'og den er én utgave med en standardversjon',
+    edition.length === 32 && order['standard_version'] === '1.0.0',
+  )
 
   const coverage = record(await call(editor, 'monograph_coverage', { p_reference: edition }))
   const needs = record(coverage['needs'])
@@ -436,10 +439,8 @@ async function main(): Promise<void> {
   check('søkene står i loggen, med sin egen utførelsesform', searchCount === '2')
   check(
     'og de er registrert som agentens egen beretning, ikke som maskinelt bekreftet',
-    psql(
-      config,
-      `select distinct execution_evidence::text from workflow.monograph_searches`,
-    ) === 'agent_reported',
+    psql(config, `select distinct execution_evidence::text from workflow.monograph_searches`) ===
+      'agent_reported',
   )
   check(
     'et utført nullsøk er lagret som et nullsøk, ikke som en utilgjengelig søkevei',
@@ -588,7 +589,9 @@ async function main(): Promise<void> {
     ) === DOI.toLowerCase(),
   )
 
-  const requests = record(await call(editor, 'monograph_source_requests', { p_edition_reference: edition }))
+  const requests = record(
+    await call(editor, 'monograph_source_requests', { p_edition_reference: edition }),
+  )
   const research = rows(requests['research_full_text'])
   check('fullteksten er etterspurt i én samlet forespørsel', research.length === 1)
   check(
@@ -683,7 +686,10 @@ async function main(): Promise<void> {
     renderAgentTaskFile(extractionTask).includes('Mean percent weight change was 1.0%'),
   )
 
-  const drugId = psql(config, `select id::text from catalog.drugs where canonical_name = 'sertralin'`)
+  const drugId = psql(
+    config,
+    `select id::text from catalog.drugs where canonical_name = 'sertralin'`,
+  )
   const outcomeId = psql(
     config,
     `select id::text from catalog.clinical_concepts where canonical_label = 'vektendring'`,
@@ -779,7 +785,10 @@ async function main(): Promise<void> {
     p_pipeline_version: EXTRACTION_VERIFICATION_PREMISES.pipelineVersion,
     p_input_manifest: { evidence_item_id: evidenceItemId },
   })
-  check('den uavhengige ekstraksjonskontrollen åpner sin egen kjøring', typeof extractionRun === 'string')
+  check(
+    'den uavhengige ekstraksjonskontrollen åpner sin egen kjøring',
+    typeof extractionRun === 'string',
+  )
 
   await call(control, 'register_extraction_verification', {
     p_identity_key: 'agent-identity:extraction-verification-01',
@@ -793,15 +802,18 @@ async function main(): Promise<void> {
   })
 
   const synthesisJob = jobFor('claim_synthesis')
-  check(
-    'en bekreftet ekstraksjonskontroll legger synteseoppgaven i køen',
-    synthesisJob.length > 0,
-  )
+  check('en bekreftet ekstraksjonskontroll legger synteseoppgaven i køen', synthesisJob.length > 0)
   if (synthesisJob.length === 0) return
   check(
     'og oppgavens subjekt bærer kunnskapsbehovet som avgrensning',
-    psql(config, `select job_key from workflow.pipeline_jobs where id = ${q(synthesisJob)}`).includes(
-      psql(config, `select id::text from knowledge.monograph_needs where reference = ${q(scopedNeed)}`),
+    psql(
+      config,
+      `select job_key from workflow.pipeline_jobs where id = ${q(synthesisJob)}`,
+    ).includes(
+      psql(
+        config,
+        `select id::text from knowledge.monograph_needs where reference = ${q(scopedNeed)}`,
+      ),
     ),
   )
 
@@ -829,7 +841,8 @@ async function main(): Promise<void> {
   const brief = record(synthesisTask.input['monograph_need'])
   check(
     'synteseoppgaven sier hvilket spørsmål svaret skal gjelde, ordrett fra standarden',
-    String(brief['question'] ?? '').length > 20 && String(brief['template_code'] ?? '').startsWith('MN'),
+    String(brief['question'] ?? '').length > 20 &&
+      String(brief['template_code'] ?? '').startsWith('MN'),
   )
 
   await call(editor, 'import_agent_answer', {
@@ -874,7 +887,10 @@ async function main(): Promise<void> {
      where n.reference = ${q(scopedNeed)}
      order by r.revision_number desc limit 1`,
   )
-  check('påstanden er bygget, og den bærer kunnskapsbehovet som avgrensning', revisionId.length === 36)
+  check(
+    'påstanden er bygget, og den bærer kunnskapsbehovet som avgrensning',
+    revisionId.length === 36,
+  )
 
   const claimLinks = psql(
     config,
@@ -904,8 +920,10 @@ async function main(): Promise<void> {
     p_pipeline_version: CLAIM_VERIFICATION_PREMISES.pipelineVersion,
     p_input_manifest: { claim_revision_id: revisionId },
   })
-  check('kildestøttekontrollen åpner sin egen kjøring, med sin egen legitimasjon',
-    typeof claimRun === 'string')
+  check(
+    'kildestøttekontrollen åpner sin egen kjøring, med sin egen legitimasjon',
+    typeof claimRun === 'string',
+  )
 
   await call(control, 'register_claim_verification', {
     p_identity_key: 'agent-identity:citation-support-verification-01',
@@ -934,7 +952,10 @@ async function main(): Promise<void> {
   })
 
   const assessmentJob = jobFor('evidence_assessment')
-  check('en bekreftet kildestøttekontroll legger evidensvurderingen i køen', assessmentJob.length > 0)
+  check(
+    'en bekreftet kildestøttekontroll legger evidensvurderingen i køen',
+    assessmentJob.length > 0,
+  )
   if (assessmentJob.length === 0) return
 
   const assessmentTask = parseAgentTask(
@@ -1024,7 +1045,9 @@ async function main(): Promise<void> {
   // --------------------------------------------------------------------
   // 11. Kandidaten, sluttkontrollen og publiseringen
   // --------------------------------------------------------------------
-  const candidate = record(await call(editor, 'build_monograph_candidate', { p_edition_reference: edition }))
+  const candidate = record(
+    await call(editor, 'build_monograph_candidate', { p_edition_reference: edition }),
+  )
   const candidateReference = String(candidate['reference'] ?? '')
   const digest = String(candidate['content_digest'] ?? '')
   check('kandidaten fryses med et avtrykk av hele innholdet', /^sha256:[0-9a-f]{64}$/.test(digest))
