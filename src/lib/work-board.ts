@@ -41,8 +41,15 @@ export interface WorkBoardItem {
   /** Produktets eget ord for hva slags arbeid det er. Aldri en agentrolle. */
   readonly activity: string
   readonly status: WorkStatus
-  /** Om det som står i veien, er at fullteksten mangler. */
-  readonly waitingForFullText: boolean
+  /**
+   * Hva arbeidet venter på utenfor kjeden, eller `null`.
+   *
+   * Ett felt med ett ord i, og ikke ett boolsk felt per ting det kan vente på:
+   * to felter som utelukker hverandre, ville vært to formuleringer av det
+   * samme spørsmålet, og det tredje som en gang kommer, ville blitt et tredje
+   * felt.
+   */
+  readonly waitingFor: string | null
   /** Virkestoffene arbeidet gjelder. Kan være tom. */
   readonly subjects: readonly string[]
   readonly updatedAt: string
@@ -71,6 +78,7 @@ export const WORK_STATUS_ORDER: readonly WorkStatus[] = ['in_progress', 'planned
 
 const ACTIVITY_LABELS: Readonly<Record<string, string>> = {
   full_text: 'Skaffe fullteksten til en forskningsartikkel',
+  claim_revision: 'Vurdere om ny forskning endrer en påstand Antidep allerede har',
   findings: 'Hente funn ut av en forskningsartikkel',
   findings_check: 'Kontrollere funnene mot artikkelen',
   claim: 'Formulere en klinisk påstand av funnene',
@@ -84,14 +92,29 @@ export function activityLabel(activity: string): string {
 }
 
 /**
+ * Setningene om hva et stykke arbeid venter på.
+ *
+ * Begge er produkttilstander: kjeden kan ikke gå videre av seg selv, men
+ * ingenting er i stykker (ANTIDEP_CONSTITUTION.md regel 4). Den andre er
+ * planlagt redaksjonelt arbeid — ny kunnskap finnes, og en redaktør skal
+ * avgjøre om den eksisterende teksten skal skrives om i lys av den.
+ */
+const WAITING_NOTES: Readonly<Record<string, string>> = {
+  full_text: 'Venter på fulltekst',
+  editorial_decision:
+    'Ny forskning er kommet til, og venter på at en redaktør avgjør om påstanden ' +
+    'skal oppdateres',
+}
+
+/**
  * Setningen som står under en oppgave.
  *
- * «Venter på fulltekst» er den ene formuleringen issue #99 navngir, og den er
- * en produkttilstand: kjeden kan ikke gå videre, men ingenting er i stykker.
+ * En ventetilstand flaten ikke kjenner, gir ingen setning framfor en gjettet:
+ * en oversikt som fant på en forklaring, ville sagt noe den ikke vet.
  */
 export function workStatusNote(item: WorkBoardItem): string | null {
-  if (item.waitingForFullText) {
-    return 'Venter på fulltekst'
+  if (item.waitingFor !== null) {
+    return WAITING_NOTES[item.waitingFor] ?? null
   }
   if (item.status === 'failed') {
     return 'Antidep kom ikke videre med denne, og ser på den igjen'
@@ -128,17 +151,17 @@ export function parseWorkBoard(value: unknown): readonly WorkBoardItem[] {
   }
   return value.map((entry, index) => {
     const fields = fieldsOf(entry, SUBJECT, `rad ${String(index)}`)
-    const waiting = raw(fields, 'waiting_for_full_text')
-    if (typeof waiting !== 'boolean') {
+    const waiting = raw(fields, 'waiting_for')
+    if (waiting !== null && waiting !== undefined && typeof waiting !== 'string') {
       throw new Error(
-        `${SUBJECT} er ugyldig: ${fields.where}.waiting_for_full_text er ikke en boolsk verdi.`,
+        `${SUBJECT} er ugyldig: ${fields.where}.waiting_for er verken en tekst eller tom.`,
       )
     }
     return {
       reference: asText(fields, 'reference'),
       activity: asText(fields, 'activity'),
       status: asStatus(fields, 'status'),
-      waitingForFullText: waiting,
+      waitingFor: typeof waiting === 'string' && waiting.length > 0 ? waiting : null,
       subjects: asStringList(fields, 'subjects'),
       updatedAt: asText(fields, 'updated_at'),
     }

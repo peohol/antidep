@@ -2,6 +2,8 @@ import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router'
 
 import { CandidatePage } from './CandidatePage'
 import { CandidateQueuePage } from './CandidateQueuePage'
+import { ClaimRevisionPage } from './ClaimRevisionPage'
+import { ClaimRevisionQueuePage } from './ClaimRevisionQueuePage'
 import { FullTextInboxPage } from './FullTextInboxPage'
 import { FullTextRequestPage } from './FullTextRequestPage'
 import { PublishedClaimPage } from './PublishedClaimPage'
@@ -10,6 +12,7 @@ import { SiteNav } from './SiteNav'
 import { TechnicalProblemsPage } from './TechnicalProblemsPage'
 import { WorkBoardPage } from './WorkBoardPage'
 import { createCandidateGateway, type CandidateGateway } from './candidate-gateway'
+import { createClaimRevisionGateway, type ClaimRevisionGateway } from './claim-revision-gateway'
 import { createFullTextGateway, type FullTextGateway } from './full-text-gateway'
 import { createPublicationGateway, type PublicationGateway } from './publication-gateway'
 import { createTechnicalGateway, type TechnicalGateway } from './technical-gateway'
@@ -17,6 +20,8 @@ import { createWorkBoardGateway, type WorkBoardGateway } from './work-board-gate
 import {
   CANDIDATE_PATH,
   CANDIDATE_QUEUE_PATH,
+  CLAIM_REVISION_PATH,
+  CLAIM_REVISION_QUEUE_PATH,
   FULL_TEXT_INBOX_PATH,
   FULL_TEXT_REQUEST_PATH,
   HOME_PATH,
@@ -25,6 +30,7 @@ import {
   TECHNICAL_PROBLEMS_PATH,
   WORK_BOARD_PATH,
   candidateQueuePath,
+  claimRevisionQueuePath,
   fullTextInboxPath,
   fullTextRequestPath,
   publishedPath,
@@ -66,6 +72,11 @@ export function ResetHome() {
         <p>
           <Link to={fullTextRequestPath()}>Be om en artikkel</Link> — si fra om en artikkel Antidep
           bør ha, og hva et funn fra den kan gjelde. Krever redaktørmandat.
+        </p>
+        <p>
+          <Link to={claimRevisionQueuePath()}>Ny forskning</Link> — påstander Antidep allerede har,
+          der ny forskning er kommet til og venter på en redaksjonell avgjørelse. Krever
+          redaktørmandat.
         </p>
       </section>
     </main>
@@ -125,6 +136,32 @@ function FullTextRequestRoute({ gateway }: { readonly gateway: FullTextGateway |
   return <FullTextRequestPage gateway={gateway ?? createFullTextGateway()} />
 }
 
+/** Køen av påstander som har fått ny forskning, opprettet på samme måte. */
+function ClaimRevisionQueueRoute({
+  gateway,
+}: {
+  readonly gateway: ClaimRevisionGateway | undefined
+}) {
+  return <ClaimRevisionQueuePage gateway={gateway ?? createClaimRevisionGateway()} />
+}
+
+/**
+ * Én revisjonsoppgave.
+ *
+ * En adresse uten håndtak er ingen oppgave, og skal ikke bli til et kall med en
+ * tom streng: da ville avvisningen kommet fra databasen, om noe som aldri ble
+ * bedt om.
+ */
+function ClaimRevisionRoute({ gateway }: { readonly gateway: ClaimRevisionGateway | undefined }) {
+  const { reference } = useParams()
+  if (reference === undefined || reference.length === 0) {
+    return <NotFound />
+  }
+  return (
+    <ClaimRevisionPage gateway={gateway ?? createClaimRevisionGateway()} reference={reference} />
+  )
+}
+
 /** Den tekniske problemoversikten, med klienten opprettet først når ruten vises. */
 function TechnicalRoute({ gateway }: { readonly gateway: TechnicalGateway | undefined }) {
   return <TechnicalProblemsPage gateway={gateway ?? createTechnicalGateway()} />
@@ -166,6 +203,8 @@ export interface AppLayoutProps {
   readonly fullText?: FullTextGateway | undefined
   /** Veien til den tekniske problemoversikten, injisert av samme grunn som over. */
   readonly technical?: TechnicalGateway | undefined
+  /** Veien til revisjonsoppgavene, injisert av samme grunn som over. */
+  readonly claimRevision?: ClaimRevisionGateway | undefined
 }
 
 export function AppLayout({
@@ -174,6 +213,7 @@ export function AppLayout({
   workBoard,
   fullText,
   technical,
+  claimRevision,
 }: AppLayoutProps = {}) {
   return (
     <>
@@ -187,6 +227,14 @@ export function AppLayout({
         <Route
           element={<FullTextRequestRoute gateway={fullText} />}
           path={FULL_TEXT_REQUEST_PATH}
+        />
+        <Route
+          element={<ClaimRevisionQueueRoute gateway={claimRevision} />}
+          path={CLAIM_REVISION_QUEUE_PATH}
+        />
+        <Route
+          element={<ClaimRevisionRoute gateway={claimRevision} />}
+          path={CLAIM_REVISION_PATH}
         />
         <Route element={<TechnicalRoute gateway={technical} />} path={TECHNICAL_PROBLEMS_PATH} />
         <Route element={<PublishedRoute gateway={publication} />} path={PUBLISHED_PATH} />

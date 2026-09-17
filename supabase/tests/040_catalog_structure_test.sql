@@ -100,8 +100,12 @@ select set_eq(
            -- Migrasjon 012b: hvor rekonsilieringen av hvert kjedeledd
            -- fortsetter fra, slik at en kostnadsgrense per passering ikke blir
            -- til sult for raden bak den.
-           ('chain_reconciliation_cursors')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a og 012b'
+           ('chain_reconciliation_cursors'),
+           -- Migrasjon 012d: ny evidens om en påstand som allerede finnes, og
+           -- den redaksjonelle avgjørelsen om hva som skal skje med den, med
+           -- sitt eget append-only spor.
+           ('claim_revision_reviews'), ('claim_revision_review_events')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b og 012d'
 );
 select set_eq(
   $$

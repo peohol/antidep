@@ -15,7 +15,7 @@ function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     reference: 'a1',
     activity: 'findings',
     status: 'planned',
-    waiting_for_full_text: false,
+    waiting_for: null,
     subjects: ['sertralin'],
     updated_at: '2026-09-28T09:00:00+00:00',
     ...overrides,
@@ -29,7 +29,7 @@ describe('lesingen av arbeidsoversikten', () => {
       reference: 'a1',
       activity: 'findings',
       status: 'planned',
-      waitingForFullText: false,
+      waitingFor: null,
       subjects: ['sertralin'],
       updatedAt: '2026-09-28T09:00:00+00:00',
     })
@@ -41,7 +41,7 @@ describe('lesingen av arbeidsoversikten', () => {
     ['ikke en liste', {}],
     ['en tilstand som ikke finnes', [row({ status: 'kanskje' })]],
     ['en manglende referanse', [row({ reference: '' })]],
-    ['en ventetilstand som ikke er boolsk', [row({ waiting_for_full_text: 'ja' })]],
+    ['en ventetilstand som verken er tekst eller tom', [row({ waiting_for: 7 })]],
     ['et virkestoff som ikke er tekst', [row({ subjects: [1] })]],
   ])('avviser %s', (_what, value) => {
     expect(() => parseWorkBoard(value)).toThrow(/Arbeidsoversikten er ugyldig/)
@@ -81,9 +81,31 @@ describe('vokabularet oversikten viser', () => {
   // en produkttilstand — ikke en teknisk feil.
   it('sier «Venter på fulltekst» når det er artikkelen som mangler', () => {
     const [waiting] = parseWorkBoard([
-      row({ activity: 'full_text', status: 'planned', waiting_for_full_text: true }),
+      row({ activity: 'full_text', status: 'planned', waiting_for: 'full_text' }),
     ])
     expect(workStatusNote(waiting as never)).toBe('Venter på fulltekst')
+  })
+
+  // Og den andre ventetilstanden: ny kunnskap finnes, og en redaktør skal
+  // avgjøre om den eksisterende teksten skal skrives om. Planlagt redaksjonelt
+  // arbeid, aldri en teknisk feil (ANTIDEP_CONSTITUTION.md regel 4).
+  it('sier hva som venter når en redaktør må avgjøre noe', () => {
+    const [waiting] = parseWorkBoard([
+      row({ activity: 'claim_revision', status: 'planned', waiting_for: 'editorial_decision' }),
+    ])
+    const note = workStatusNote(waiting as never) ?? ''
+    expect(note).toContain('Ny forskning')
+    expect(note).toContain('redaktør')
+    expect(note.toLowerCase()).not.toContain('feil')
+    expect(activityLabel('claim_revision')).toBe(
+      'Vurdere om ny forskning endrer en påstand Antidep allerede har',
+    )
+  })
+
+  // En ventetilstand flaten ikke kjenner, skal ikke bli til en gjettet setning.
+  it('finner ikke på en forklaring den ikke har', () => {
+    const [waiting] = parseWorkBoard([row({ waiting_for: 'noe_helt_nytt' })])
+    expect(workStatusNote(waiting as never)).toBeNull()
   })
 
   it('sier noe annet, og aldri noe teknisk, når en oppgave har stoppet', () => {

@@ -339,9 +339,9 @@ select is(
   'en artikkel som mangler, står som planlagt arbeid'
 );
 select is(
-  (select (payload -> 'items' -> 0 ->> 'waiting_for_full_text')::boolean
+  (select payload -> 'items' -> 0 ->> 'waiting_for'
    from result where label = 'board_waiting'),
-  true,
+  'full_text',
   'og den sier at det som står i veien, er at fullteksten mangler'
 );
 select is(
@@ -357,7 +357,7 @@ select is(
   (select array_agg(k order by k)
    from result, lateral jsonb_object_keys(payload -> 'items' -> 0) as k
    where label = 'board_waiting'),
-  array['activity', 'reference', 'status', 'subjects', 'updated_at', 'waiting_for_full_text'],
+  array['activity', 'reference', 'status', 'subjects', 'updated_at', 'waiting_for'],
   'den åpne oversikten bærer nøyaktig seks felter, og ingen av dem er interne'
 );
 select ok(
@@ -454,9 +454,9 @@ select is(
   'når filen er levert, står arbeidet som pågående'
 );
 select is(
-  (select (payload -> 'items' -> 0 ->> 'waiting_for_full_text')::boolean
+  (select payload -> 'items' -> 0 ->> 'waiting_for'
    from result where label = 'board_processing'),
-  false,
+  null,
   'og ventingen er over'
 );
 
@@ -684,10 +684,10 @@ select is(
   'den åpne oversikten sier at arbeidet har stoppet'
 );
 select is(
-  (select (item ->> 'waiting_for_full_text')::boolean
+  (select item ->> 'waiting_for'
    from result, lateral jsonb_array_elements(payload -> 'items') as item
    where label = 'board_blocked' and item ->> 'activity' = 'full_text'),
-  false,
+  null,
   'og at det ikke er artikkelen det står på'
 );
 

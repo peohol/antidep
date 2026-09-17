@@ -25,6 +25,7 @@ import { Link } from 'react-router'
 
 import {
   candidateQueuePath,
+  claimRevisionQueuePath,
   fullTextInboxPath,
   fullTextRequestPath,
   homePath,
@@ -105,6 +106,9 @@ export function SiteNav({ technical }: SiteNavProps): React.JSX.Element {
         </li>
         <li>
           <Link to={fullTextRequestPath()}>Be om en artikkel</Link>
+        </li>
+        <li>
+          <Link to={claimRevisionQueuePath()}>Ny forskning</Link>
         </li>
         {unresolved === null ? null : (
           <li>

@@ -60,6 +60,21 @@ export const FULL_TEXT_INBOX_PATH = '/fulltekst' as const
 export const FULL_TEXT_REQUEST_PATH = '/be-om-artikkel' as const
 
 /**
+ * Ny forskning på en påstand Antidep allerede har.
+ *
+ * Egen adresse og ikke en del av arbeidsoversikten, av samme grunn som
+ * fulltekstinnboksen er det: den ene er åpen og read-only, den andre krever
+ * mandat og er stedet et menneske faktisk avgjør noe. Det som avgjøres her, er
+ * faglig — om ny kunnskap skal inn i en påstand Antidep allerede sier noe med —
+ * og det krever redaktørmandat for fagområdet påstanden hører under.
+ *
+ * Adressen bærer databasens eget ugjennomsiktige håndtak og aldri en intern id,
+ * som `/fulltekst`.
+ */
+export const CLAIM_REVISION_QUEUE_PATH = '/ny-evidens' as const
+export const CLAIM_REVISION_PATH = '/ny-evidens/:reference' as const
+
+/**
  * Den tekniske problemoversikten: driftens egen side.
  *
  * Krever admin-mandat, og sier bare hvilket område som har problemer, når det
@@ -86,6 +101,15 @@ export function fullTextRequestPath(): string {
 
 export function technicalProblemsPath(): string {
   return TECHNICAL_PROBLEMS_PATH
+}
+
+export function claimRevisionQueuePath(): string {
+  return CLAIM_REVISION_QUEUE_PATH
+}
+
+/** Adressen til én revisjonsoppgave. Håndtaket URL-kodes: det er data, ikke en sti. */
+export function claimRevisionPath(reference: string): string {
+  return `${CLAIM_REVISION_QUEUE_PATH}/${encodeURIComponent(reference)}`
 }
 
 export function candidateQueuePath(): string {

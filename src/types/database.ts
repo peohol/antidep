@@ -657,6 +657,36 @@ export type Database = {
         }
         Returns: unknown
       }
+      // Den redaksjonelle avgjørelsen om ny evidens på en påstand som allerede
+      // finnes (migrasjon 012d).
+      //
+      // Referansen er databasens eget ugjennomsiktige håndtak, av samme grunn
+      // som i fulltekstinnboksen: en redaktør skal kunne åpne oppgaven uten at
+      // en intern id står i adressefeltet.
+      //
+      // `p_seen_evidence_basis` er avtrykket flaten faktisk viste, sendt tilbake
+      // uendret — samme form som `p_seen_candidate_digest` over, og av samme
+      // grunn: en beslutning gjennomført på et annet evidensgrunnlag enn det som
+      // ble lest, ville vært en avgjørelse om noe ingen så.
+      claim_revision_queue: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      claim_revision_for_decision: {
+        Args: {
+          p_reference: string
+        }
+        Returns: unknown
+      }
+      record_claim_revision_decision: {
+        Args: {
+          p_reference: string
+          p_decision: string
+          p_seen_evidence_basis: string
+          p_note?: string | null
+        }
+        Returns: unknown
+      }
     }
   }
 }
