@@ -60,8 +60,14 @@ select set_eq(
            ('full_text_readability_checks'), ('candidates'),
            -- Migrasjon 010b: representasjonen kildeversjonen er registrert med,
            -- lagret privat ved siden av originalfilen.
-           ('source_version_texts')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d og 010b'
+           ('source_version_texts'),
+           -- Migrasjon 013a: monografistandarden som et versjonert register —
+           -- spørsmålsmalene MN01-MN80, kildeprofilene, søkesporene og
+           -- koblingene mellom dem.
+           ('monograph_standard_versions'), ('monograph_source_profiles'),
+           ('monograph_question_templates'), ('monograph_template_profiles'),
+           ('monograph_search_tracks'), ('monograph_search_track_profiles')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b og 013a'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
