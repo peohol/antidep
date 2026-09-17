@@ -29,6 +29,7 @@
     "db:test:mcp": "node scripts/agent-runner-e2e.ts",
     "db:test:intake": "node scripts/full-text-intake-e2e.ts",
     "db:test:revision": "node scripts/claim-revision-e2e.ts",
+    "db:test:monograph": "node scripts/monograph-e2e.ts",
     "db:test:diagnostics": "node scripts/diagnostics-e2e.ts",
     "agent:verify-extraction": "node --env-file-if-exists=.env.agent.local src/agents/verify-extraction-cli.ts",
     "agent:verify-claims": "node --env-file-if-exists=.env.agent.local src/agents/verify-claims-cli.ts",

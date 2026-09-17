@@ -796,6 +796,7 @@ declare
   v_drug_ids uuid[];
   v_outcome_ids uuid[];
   v_population_ids uuid[];
+  v_any_population boolean;
   v_problem text;
   v_retrieved_from text;
   v_existing workflow.full_text_requests;
@@ -808,8 +809,9 @@ begin
   select workflow.sorted_unique(array_agg(distinct e.drug_id)),
          workflow.sorted_unique(array_agg(distinct n.outcome_concept_id)),
          workflow.sorted_unique(
-           array_remove(array_agg(distinct n.population_id), null))
-    into v_drug_ids, v_outcome_ids, v_population_ids
+           array_remove(array_agg(distinct n.population_id), null)),
+         bool_or(n.population_id is null)
+    into v_drug_ids, v_outcome_ids, v_population_ids, v_any_population
   from workflow.monograph_candidate_sources c
   join workflow.monograph_candidate_source_needs cn on cn.candidate_source_id = c.id
   join knowledge.monograph_needs n on n.id = cn.need_id
@@ -819,6 +821,29 @@ begin
     and n.relevance <> 'not_applicable'
     and n.outcome_concept_id is not null
     and knowledge.monograph_need_material_kind(cn.need_id) = 'research_full_text';
+
+  -- Et behov uten en populasjonsavgrensning gjelder enhver populasjon, og
+  -- avgrensningen på forespørselen er en tillatelsesliste: en tom liste ville
+  -- betydd at ekstraksjonen ikke fikk navngi den populasjonen artikkelen
+  -- faktisk rapporterer, og et funn uten populasjon er et dårligere funn enn
+  -- det kilden gir. Listen fylles derfor med de registrerte populasjonene.
+  --
+  -- Grensen er forespørselens egen (50). Blir katalogen større enn det, står
+  -- de eksplisitt avgrensede først, og resten faller utenfor — en synlig
+  -- begrensning framfor en avvisning av hele innhentingen.
+  if coalesce(v_any_population, false) then
+    select workflow.sorted_unique(
+             coalesce(v_population_ids, array[]::uuid[])
+             || coalesce(array_agg(p.id), array[]::uuid[]))
+      into v_population_ids
+    from (
+      select pop.id
+      from catalog.populations pop
+      where not (pop.id = any (coalesce(v_population_ids, array[]::uuid[])))
+      order by pop.created_at, pop.id
+      limit greatest(0, 50 - cardinality(coalesce(v_population_ids, array[]::uuid[])))
+    ) p;
+  end if;
 
   if v_outcome_ids is null or cardinality(v_outcome_ids) = 0 then
     return null;
