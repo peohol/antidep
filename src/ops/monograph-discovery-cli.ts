@@ -84,11 +84,16 @@ function planFrom(row: Record<string, unknown>): DiscoveryPlan {
   const asText = (value: unknown): string | undefined =>
     typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
 
+  const tracks = Array.isArray(row['tracks']) ? (row['tracks'] as unknown[]) : []
+
   return {
     planReference: String(row['plan_reference'] ?? ''),
     drug: String(row['drug'] ?? ''),
     editionReference: String(row['edition_reference'] ?? ''),
     profileCode: String(profile['code'] ?? '?'),
+    requiredTracks: tracks
+      .map((track) => String((track as Record<string, unknown>)['code'] ?? ''))
+      .filter((code) => code.length > 0),
     scope: {
       drug: asText(scope['drug']) ?? String(row['drug'] ?? ''),
       indication: asText(scope['indication']),
@@ -128,7 +133,15 @@ async function main(): Promise<void> {
       if (error !== null) {
         throw new Error('Søkearbeidet kunne ikke hentes.')
       }
-      const rows = Array.isArray(data) ? data : []
+      // Svaret er ett dokument med `plans` i seg, og ikke en liste: funksjonen
+      // bærer også hvilken identitet og hvilket ledd arbeidet ble hentet for.
+      // En avlesning som forventet en liste, fikk aldri én eneste plan — og
+      // ingenting sa fra, fordi «ingen åpne planer» er et gyldig svar.
+      const payload = (data ?? {}) as Record<string, unknown>
+      const rows = payload['plans']
+      if (!Array.isArray(rows)) {
+        throw new Error('Søkearbeidet kom uten en liste over søkeplaner.')
+      }
       return rows.map((row) => planFrom(row as Record<string, unknown>))
     },
 

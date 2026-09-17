@@ -37,7 +37,15 @@
 // at regelen står ett sted.
 // ============================================================================
 
-import { assertPublishableKey } from '../lib/supabase.ts'
+// Regelen leses fra sin egen modul og ikke fra `lib/supabase.ts`.
+//
+// `lib/supabase.ts` er flatens modul: den leser `import.meta.env` og importerer
+// uten filending, slik Vite gjør det. Node kan ikke løse en slik import, så en
+// kjører som gikk den veien, døde med ERR_MODULE_NOT_FOUND før den hadde lest
+// en enkelt miljøvariabel. Vakten ligger i `lib/publishable-key.ts` nettopp for
+// å kunne leses fra begge sider (se hodekommentaren der), og MCP-appen gjør det
+// samme.
+import { assertPublishableKey } from '../lib/publishable-key.ts'
 import { agentSecret, type AgentCredential } from './agent-credential.ts'
 
 /** Miljøet slik en kjører leser det. `process.env` passer formen. */

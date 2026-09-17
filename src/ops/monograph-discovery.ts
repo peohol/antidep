@@ -46,6 +46,15 @@ export interface DiscoveryPlan {
   readonly editionReference: string
   readonly scope: SearchScope
   readonly profileCode: string
+  /**
+   * De søkesporene kildeprofilen krever for denne planen.
+   *
+   * Et søk kan bare erklære å dekke et spor som står her (SOURCE_POLICY.md
+   * §4.2). Listen kommer fra databasen og ikke fra plattformdefinisjonene:
+   * hvilke spor som er obligatoriske, er en kildepolitisk avgjørelse, og en
+   * kjører som avgjorde det selv, kunne fått porten til å se dekket ut.
+   */
+  readonly requiredTracks: readonly string[]
 }
 
 /** Databasegrensen kjøringen bruker. Et smalt grensesnitt, av to grunner:
@@ -121,7 +130,7 @@ export async function runMonographDiscovery(
 
     let recorded = 0
     for (const platform of settings.platforms) {
-      const search = await runSearch(platform, plan.scope, settings.fetcher)
+      const search = await runSearch(platform, plan.scope, settings.fetcher, plan.requiredTracks)
       searches += 1
       if (search.outcome === 'executed') executed += 1
       if (search.outcome === 'zero_results') zeroResults += 1

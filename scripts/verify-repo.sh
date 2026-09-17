@@ -186,5 +186,40 @@ reject_grep_matches \
   'MVP_IMPLEMENTATION_PLAN|ROUTINE_EXTRACTION|/extraction-review|/review' \
   "${operational_docs[@]}"
 
+# Ingen Node-side modul importerer flatens Supabase-modul.
+#
+# `src/lib/supabase.ts` er flatens: den leser `import.meta.env`, og den
+# importerer uten filending slik Vite gjør. Node kan ikke løse en slik import,
+# så en kjører som gikk den veien, døde med ERR_MODULE_NOT_FOUND før den hadde
+# lest en enkelt miljøvariabel — og det er nøyaktig det som hadde skjedd med
+# hver eneste `npm run agent:*` og `npm run ops:*`. Regelen om publishable key
+# ligger i `src/lib/publishable-key.ts` for å kunne leses fra begge sider.
+reject_grep_matches \
+  'En Node-side modul importerer flatens Supabase-modul. Bruk lib/publishable-key.ts.' \
+  -R -n -E \
+  --include='*.ts' \
+  "from '\.\./lib/supabase" \
+  src/agents src/ops src/mcp src/diagnostics
+
+# Og hver kommando kan faktisk lastes.
+#
+# Kontrollen over fanger den ene formen feilen hadde. Denne fanger alle andre:
+# hver kommando kjøres med `--help`, som verken rører databasen eller nettet,
+# men som krever at hele importtreet lastes. En kommando som ikke kan startes,
+# er ikke levert.
+#
+# Utfallskoden brukes ikke: flere kommandoer skriver bruksteksten ved å kaste,
+# og det er en gyldig `--help`. Det som aldri er gyldig, er at Node ikke finner
+# en modul — da er det importtreet som er galt, og ingen miljøvariabel eller
+# argumentliste kan rette det.
+while IFS= read -r cli; do
+  output=$(node "$cli" --help 2>&1 || true)
+  if grep -qE 'ERR_MODULE_NOT_FOUND|ERR_UNSUPPORTED_DIR_IMPORT|Cannot find (module|package)' \
+      <<<"$output"; then
+    printf 'Kommandoen kan ikke lastes: %s\n%s\n' "$cli" "$output" >&2
+    exit 1
+  fi
+done < <(find src/agents src/ops -type f -name '*-cli.ts' | sort)
+
 node --test scripts/local-test-db.node-test.mjs
 node scripts/verify-doc-links.mjs

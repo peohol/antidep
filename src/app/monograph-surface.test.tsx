@@ -420,7 +420,13 @@ describe('den redaksjonelle kontrollen', () => {
   }
 
   const editAnswer = vi.fn(() => Promise.resolve())
-  const lockAnswer = vi.fn((_needReference: string, _reason: string) => Promise.resolve())
+  // Signaturen er skrevet ut for at `toHaveBeenCalledWith` skal kunne
+  // typekontrolleres: en `vi.fn(() => …)` har en tom argumentliste.
+  const lockAnswer = vi.fn((needReference: string, reason: string) => {
+    void needReference
+    void reason
+    return Promise.resolve()
+  })
   const gateway = monograph({ editAnswer, lockAnswer })
 
   it('lar en redaktør rette teksten med en begrunnelse, uten kode eller SQL', async () => {

@@ -31,6 +31,7 @@
     "db:test:revision": "node scripts/claim-revision-e2e.ts",
     "db:test:monograph": "node scripts/monograph-e2e.ts",
     "db:test:monograph:upgrade": "bash ./scripts/db-upgrade-monograph.sh",
+    "db:test:web-smoke": "node scripts/monograph-web-smoke.ts",
     "db:test:diagnostics": "node scripts/diagnostics-e2e.ts",
     "agent:verify-extraction": "node --env-file-if-exists=.env.agent.local src/agents/verify-extraction-cli.ts",
     "agent:verify-claims": "node --env-file-if-exists=.env.agent.local src/agents/verify-claims-cli.ts",

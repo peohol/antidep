@@ -15,6 +15,7 @@ const PLAN: DiscoveryPlan = {
   editionReference: 'b'.repeat(32),
   profileCode: 'AE',
   scope: { drug: 'sertralin', outcome: 'vektendring' },
+  requiredTracks: ['bibliographic_database', 'trial_registry'],
 }
 
 function recorded(file: string): Fetcher {
@@ -114,5 +115,39 @@ describe('runMonographDiscovery', () => {
     expect(text).toContain('Søkeplaner tatt: 1')
     expect(text).not.toContain('sertralin')
     expect(text).not.toContain('vektendring')
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Sporene et søk kan erklære
+// ----------------------------------------------------------------------------
+
+describe('søkesporene', () => {
+  it('erklærer bare de sporene kildeprofilen faktisk krever', async () => {
+    const { api: port, searches } = api({
+      work: async () => [{ ...PLAN, requiredTracks: ['trial_registry'] }],
+    })
+    await runMonographDiscovery(port, {
+      platforms: [EUROPE_PMC],
+      fetcher: recorded('europe-pmc-sertraline.json'),
+    })
+
+    // Europe PMC kan dekke `bibliographic_database`, men profilen her krever
+    // det ikke. Et søk som erklærte det likevel, ville fått porten til å se
+    // dekket ut for et spor ingen ba om — og databasen avviser det, med rette.
+    expect(searches.length).toBe(1)
+    expect(searches[0]?.trackCodes).toEqual([])
+    expect(searches[0]?.outcome).toBe('executed')
+  })
+
+  it('erklærer sporet når profilen krever det', async () => {
+    const { api: port, searches } = api({
+      work: async () => [{ ...PLAN, requiredTracks: ['bibliographic_database'] }],
+    })
+    await runMonographDiscovery(port, {
+      platforms: [EUROPE_PMC],
+      fetcher: recorded('europe-pmc-sertraline.json'),
+    })
+    expect(searches[0]?.trackCodes).toEqual(['bibliographic_database'])
   })
 })

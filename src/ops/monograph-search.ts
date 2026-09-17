@@ -327,6 +327,7 @@ export async function runSearch(
   platform: SearchPlatform,
   scope: SearchScope,
   fetcher: Fetcher = guardedGet,
+  allowedTracks?: readonly string[],
 ): Promise<MachineSearch> {
   const query = buildQuery(scope)
   const endpoint = platform.endpoint(query)
@@ -338,7 +339,15 @@ export async function runSearch(
     screenedCount: 0,
     truncated: false,
     truncationNote: null,
-    trackCodes: platform.trackCodes,
+    // Et søk kan bare erklære å dekke et spor kildeprofilen faktisk krever
+    // (SOURCE_POLICY.md §4.2). Plattformen sier hva den *kan* dekke; planen
+    // sier hva som er obligatorisk for den. Uten skjæringen ville et søk
+    // erklært et spor profilen ikke ber om — og databasen avviser det, med
+    // rette: ellers ville porten sett dekket ut uten at noe var forsøkt.
+    trackCodes:
+      allowedTracks === undefined
+        ? platform.trackCodes
+        : platform.trackCodes.filter((code) => allowedTracks.includes(code)),
     candidates: [] as readonly CandidateSource[],
   }
 
