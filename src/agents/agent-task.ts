@@ -88,6 +88,12 @@ export const HANDOFF_ROLES = [
   'evidence_extraction',
   'claim_synthesis',
   'evidence_assessment',
+  // Migrasjon 013f: kildeoppdagelsen og den separate kontrollen av
+  // søkedekningen. Begge er semantiske ledd — å planlegge et søk og å vurdere
+  // om dekningen holder, er faglige avgjørelser — og begge går gjennom nøyaktig
+  // den samme kontrakten, jobbtabellen og transporten som de tre over.
+  'source_discovery',
+  'source_quality_assessment',
 ] as const
 
 export type HandoffRole = (typeof HANDOFF_ROLES)[number]
@@ -133,6 +139,22 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
     label: 'Evidensvurdering',
     summary:
       'Vurder sikkerheten i kunnskapsgrunnlaget bak én påstand, med hvert GRADE-domene eksplisitt bedømt.',
+  },
+  source_discovery: {
+    role: 'source_discovery',
+    promptTemplateVersion: 'source-discovery/handoff-search/1',
+    outputSchemaVersion: 'antidep/source-discovery-draft@1',
+    label: 'Kildeoppdagelse',
+    summary:
+      'Søk etter grunnlaget de oppgitte kunnskapsbehovene trenger, dokumenter søkene du faktisk utførte, og si hvilke kilder som kan brukes til hva.',
+  },
+  source_quality_assessment: {
+    role: 'source_quality_assessment',
+    promptTemplateVersion: 'source-coverage/handoff-control/1',
+    outputSchemaVersion: 'antidep/source-coverage-control-draft@1',
+    label: 'Kontroll av søkedekning',
+    summary:
+      'Let selv etter oversette og motstridende kilder, kontroller de sentrale eksklusjonene, og avgjør om begrunnelsen for å avslutte søket holder.',
   },
 }
 
