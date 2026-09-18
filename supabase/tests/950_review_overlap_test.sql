@@ -26,7 +26,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(95);
+select plan(96);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1454,13 +1454,23 @@ select is(
 );
 
 -- Hele historikken består. Tilbaketrekkingen er en ny rad, ikke en sletting.
+-- Tilbaketrekkingen er en *ren* tilstandsendring: sikkerheten står som den var.
+-- Sa raden «-> documented» eller «-> uncertain» her, ville den som bare trakk
+-- koblingen tilbake, også fått tilskrevet en endring av sikkerhetsvurderingen.
 select is(
-  (select a.previous_state::text || '->' || a.state::text
+  (select a.previous_certainty::text || '->' || a.certainty::text
+            || '/' || a.previous_state::text || '->' || a.state::text
    from knowledge.review_inclusion_assessments a
    where a.review_included_study_id = (select id from fixture_950 where name = 'r3-inklusjon')
    order by a.assessment_number desc limit 1),
-  'included->retracted',
-  'tilbaketrekkingen står i sporet med et før og et etter'
+  'uncertain->uncertain/included->retracted',
+  'tilbaketrekkingen står i sporet med et før og et etter, og den lar sikkerheten stå'
+);
+
+select is(
+  (select payload ->> 'certain' from maalt where label = 'tilbaketrukket'),
+  'false',
+  'og svaret oppgir den sikkerheten som gjelder, ikke en ny'
 );
 
 select is(

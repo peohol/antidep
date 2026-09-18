@@ -1357,24 +1357,36 @@ SQL
 }
 
 # ----------------------------------------------------------------------------
-# Prøve 9: to samtidige avklaringer av den samme inklusjonen
+# Prøve 9: en avklaring og en tilbaketrekking samtidig
 #
-# Avklaringen leser gjeldende sikkerhet og skriver en ny vurdering med neste
-# løpenummer. Uten låsen på koblingsraden kunne begge øktene lest det samme
-# utgangspunktet, og begge skrevet «forrige = usikker» — og da ville sporet
-# fortalt at to forskjellige avklaringer gikk ut fra den samme tilstanden, som
-# er umulig. Låsen serialiserer dem, og kjeden i sporet henger sammen.
+# To ting prøves her, og de henger sammen.
+#
+# Det første er låsen. Avklaringen leser gjeldende tilstand og skriver en ny
+# vurdering med neste løpenummer. Uten låsen på koblingsraden kunne begge
+# øktene lest det samme utgangspunktet, og begge skrevet det samme «forrige» —
+# og da ville sporet fortalt at to forskjellige endringer gikk ut fra den samme
+# tilstanden, som er umulig.
+#
+# Det andre er at en tilbaketrekking *bare* er en tilbaketrekking. Den går
+# gjennom api-veien med vilje, fordi det var der en foreldet forhåndslesning av
+# sikkerheten satt: leste tilbaketrekkingen sikkerheten før den fikk låsen,
+# skrev den tilbake avklaringen som ble committet mens den ventet — og sporet
+# tilskrev sikkerhetsendringen den som bare trakk koblingen tilbake. Etterpå
+# skal sikkerheten være den A satte, og tilstanden den B satte.
 # ----------------------------------------------------------------------------
 proeve9() {
-  local navn='en samtidig avklaring og tilbaketrekking serialiseres, og sporet henger sammen'
+  local navn='en tilbaketrekking lar en samtidig avklaring stå'
   local styr="$arbeid/styr9" a_log="$arbeid/a9.log" b_log="$arbeid/b9.log"
-  local studie
+  local studie tittel='Kappløpsprøve: oversikt med usikker inklusjon'
 
   psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/fikstur9.log" 2>&1 <<SQL
 insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
 values ('$oversikt2', 'journal_article',
-        'Kappløpsprøve: oversikt med usikker inklusjon ${kjoring:0:8}', 'Kappløpsprøven',
+        '$tittel ${kjoring:0:8}', 'Kappløpsprøven',
         (select id from provenance.actors where actor_key = 'human:peder-holman'));
+
+insert into knowledge.source_identifiers (source_id, identifier_system, identifier_value)
+values ('$oversikt2', 'doi', '$doi-oversikt');
 
 select knowledge.link_review_included_study(
   '$oversikt2',
@@ -1416,17 +1428,15 @@ SQL
   done
   grep -q 'KLAR' "$a_log" 2>/dev/null || feil "$navn" 'Økt A kom ikke i gang.' "$a_log"
 
-  # Økt B vil trekke koblingen tilbake, samtidig. Tilstandsendringen går samme
-  # vei som sikkerhetsendringen, og skal ha det samme vernet.
+  # Økt B trekker koblingen tilbake, samtidig — gjennom redaktørveien, fordi det
+  # var der den foreldede forhåndslesningen av sikkerheten satt.
   psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$b_log" 2>&1 <<SQL &
 begin;
 set local statement_timeout = '30s';
-select knowledge.link_review_included_study(
-  '$oversikt2', '$studie',
-  'Kappløpsprøve: økt B mener oversikten ikke fører studien i det hele tatt.',
-  'uncertain'::knowledge.study_link_certainty,
-  (select id from provenance.actors where actor_key = 'human:peder-holman'), null,
-  'retracted'::knowledge.review_inclusion_state);
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+select api.retract_review_included_study(
+  'doi:$doi-oversikt', 'clinicaltrials_gov', '$nct2', 'Kappløpsstudien 2',
+  'Kappløpsprøve: økt B fant ved kontroll at oversikten ikke fører studien.');
 commit;
 SQL
   okt_b_pid=$!
@@ -1454,7 +1464,10 @@ SQL
                from knowledge.review_inclusion_assessments a
                join knowledge.review_included_studies ri on ri.id = a.review_included_study_id
                where ri.review_source_id = '$oversikt2'")
-  [ "$kjede" = "1:uncertain->documented/included->included 2:documented->uncertain/included->retracted" ] \
+  # Tilbaketrekkingen skal ha beholdt sikkerheten A satte: «documented ->
+  # documented» sammen med «included -> retracted». Sto det «-> uncertain»
+  # her, hadde B skrevet tilbake A sin avklaring.
+  [ "$kjede" = "1:uncertain->documented/included->included 2:documented->documented/included->retracted" ] \
     || feil "$navn" "Sporet henger ikke sammen: «$kjede»."
 
   local aktiv
@@ -1463,6 +1476,13 @@ SQL
                where ri.review_source_id = '$oversikt2'")
   [ "$aktiv" = "f" ] || feil "$navn" \
     'Koblingen gjelder fortsatt, selv om den siste endringen trakk den tilbake.'
+
+  local sikkerhet
+  sikkerhet=$(les "select knowledge.review_inclusion_certainty(ri.id)
+                   from knowledge.review_included_studies ri
+                   where ri.review_source_id = '$oversikt2'")
+  [ "$sikkerhet" = "documented" ] || feil "$navn" \
+    "Sikkerheten er «$sikkerhet», ikke den avklaringen den andre økten gjorde. Tilbaketrekkingen skrev den tilbake."
 
   printf 'ok       %s\n' "$navn"
 }

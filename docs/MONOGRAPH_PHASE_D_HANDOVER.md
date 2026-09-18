@@ -169,7 +169,7 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
 ## 7. Prøvene som viser at flyten virker
 
 ```
-npm run db:test                       # 79 filer, 2992 databaseprøver
+npm run db:test                       # 79 filer, 2993 databaseprøver
 npm run db:test:monograph             # hele forløpet, fersk base
 npm run db:test:monograph:upgrade     # samme forløp oppå en base med innhold
 npm run test                          # flatene og modulene
