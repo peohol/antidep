@@ -26,7 +26,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(41);
+select plan(48);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -384,6 +384,42 @@ select is(
 );
 
 -- ===========================================================================
+-- Del 6b — Delvis overlapp: oversikten beholder det bare den bærer
+-- ===========================================================================
+-- Oversikten fører A og B. Består grunnlaget av oversikten og *bare* A, er B
+-- fortsatt noe ingen andre har lagt fram. Fram til migrasjon 013o ble hele
+-- oversikten merket som avledet i det A fantes direkte, og da forsvant B ut av
+-- uavhengighetsmodellen — grunnlaget så smalere ut enn det er.
+select is(
+  (knowledge.study_units_for_evidence(array[
+     '95000000-0000-4000-8000-000000000031'::uuid,
+     '95000000-0000-4000-8000-000000000032'::uuid])
+     ->> 'independent_units')::integer,
+  2,
+  'oversikten pluss én av de to studiene den fører, er to enheter: B finnes bare gjennom oversikten'
+);
+
+select is(
+  (knowledge.study_units_for_evidence(array[
+     '95000000-0000-4000-8000-000000000031'::uuid,
+     '95000000-0000-4000-8000-000000000032'::uuid])
+     ->> 'derived_reviews')::integer,
+  0,
+  'og oversikten er ikke avledet: den bærer noe som ikke er lagt fram for seg'
+);
+
+select is(
+  (select (u.value ->> 'unique_studies')::integer
+   from jsonb_array_elements(
+          knowledge.study_units_for_evidence(array[
+            '95000000-0000-4000-8000-000000000031'::uuid,
+            '95000000-0000-4000-8000-000000000032'::uuid]) -> 'units') as u(value)
+   where u.value ->> 'role' = 'partially_derived_review'),
+  1,
+  'den sier hvor mye bare den bærer, og hvilken studie den deler med grunnlaget ellers'
+);
+
+-- ===========================================================================
 -- Del 7 — Og et svar avgitt på den gamle strukturen er foreldet
 -- ===========================================================================
 insert into maalt (label, payload)
@@ -586,9 +622,9 @@ select is(
 
 select is(
   (knowledge.study_units_for_evidence((select funn from oversiktsgrunnlag))
-     ->> 'review_overlaps')::integer,
+     ->> 'derived_reviews')::integer,
   1,
-  'og overlappet er synlig som det det er'
+  'og den ene står som avledet: alt den dekker, dekkes av den andre'
 );
 
 select is(
@@ -673,13 +709,27 @@ select ok(
 );
 
 -- Og nå virker overlappet: oversikten er avledet av studien den listet.
+-- R1 fører to studier: den delte NCT00950050, som ingen har lagt fram, og den
+-- navngitte som nå er lagt fram. Overlappet virker — men R1 bærer fortsatt noe
+-- ingen andre har lagt fram, og står derfor igjen som uavhengig for nettopp det.
 select is(
   (knowledge.study_units_for_evidence(array[
      '95000000-0000-4000-8000-000000000034'::uuid,
      '95000000-0000-4000-8000-000000000036'::uuid])
-     ->> 'derived_reviews')::integer,
+     ->> 'review_overlaps')::integer,
   1,
-  'oversikten er nå avledet av den studien den listet med navn: koblingen virker'
+  'oversikten overlapper nå den studien den listet med navn: koblingen virker'
+);
+
+select is(
+  (select (u.value ->> 'unique_studies')::integer
+   from jsonb_array_elements(
+          knowledge.study_units_for_evidence(array[
+            '95000000-0000-4000-8000-000000000034'::uuid,
+            '95000000-0000-4000-8000-000000000036'::uuid]) -> 'units') as u(value)
+   where u.value ->> 'role' = 'partially_derived_review'),
+  1,
+  'og den oppgir at én av studiene den fører, fortsatt bare finnes gjennom den'
 );
 
 -- Men et navn som ikke er entydig, slås ikke sammen. To studier uten
@@ -705,6 +755,64 @@ select is(
    where s.registry_id = 'NCT00950070'),
   0,
   'og ingen studie ble opprettet på veien ut: avslaget etterlater ingen halv identitet'
+);
+
+-- ===========================================================================
+-- Del 11 — Den motsatte rekkefølgen splitter heller ikke identiteten
+--
+-- Registreres hovedartikkelen først med navn *og* registernummer, og kobler en
+-- oversikt senere den samme studien bare med navnet, lette navnegrenen fram til
+-- migrasjon 013o bare blant rader uten registernummer. Den registerbærende
+-- studien ble oversett, og det ble opprettet en parallell identitet ved siden
+-- av — med nøyaktig den samme følgen: oversiktskoblingen peker på én rad og
+-- rapporten på en annen.
+-- ===========================================================================
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+values ('95000000-0000-4000-8000-000000000007', 'journal_article',
+        'Syntetisk artikkel med nummer først for 950', 'Testforfatter M mfl.',
+        pg_temp.owner_actor_id());
+
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'nummer-forst', api.register_study_report(
+  'Syntetisk artikkel med nummer først for 950',
+  'clinicaltrials_gov', 'NCT00950080',
+  'Studien med nummer først i 950', 'primary_report',
+  'Artikkelen oppgir NCT00950080 i metodeavsnittet.', true);
+
+insert into maalt (label, payload)
+select 'oversikt-bare-navn', api.link_review_included_study(
+  'Syntetisk oversikt R2 for 950', null, null,
+  'Studien med nummer først i 950',
+  'R2 fører studien bare med navn, uten å gjenta registernummeret.', true);
+reset role;
+
+select is(
+  (select ri.study_id from knowledge.review_included_studies ri
+   join knowledge.studies s on s.id = ri.study_id
+   where ri.review_source_id = '95000000-0000-4000-8000-000000000005'
+     and s.label = 'Studien med nummer først i 950'),
+  (select r.study_id from knowledge.study_reports r
+   where r.source_id = '95000000-0000-4000-8000-000000000007'),
+  'oversiktskoblingen på bare navnet treffer den studien artikkelen alt registrerte med nummer'
+);
+
+select is(
+  (select count(*)::integer from knowledge.studies s
+   where lower(s.label) = 'studien med nummer først i 950'),
+  1,
+  'og det ble ikke opprettet noen parallell identitet ved siden av'
+);
+
+-- Et navn som treffer flere studier, avvises også i den rene navnegrenen.
+select throws_ok(
+  format($$select knowledge.find_or_create_study(
+    null, null, 'Tvetydig navn i 950', %L, null)$$,
+    'ac950000-0000-4000-8000-00000000000a'),
+  '23001', null,
+  'og et navn som treffer flere studier, avvises framfor å knytte grunnlaget til feil studie'
 );
 
 select * from finish();
