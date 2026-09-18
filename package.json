@@ -21,7 +21,7 @@
     "db:status": "supabase status",
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
-    "db:test:upgrade": "bash ./scripts/db-upgrade-antidep2.sh && bash ./scripts/db-upgrade-antidep2-evolved-legacy.sh && bash ./scripts/db-upgrade-antidep2-versionless-root.sh && bash ./scripts/db-upgrade-antidep2-source-identity-priority.sh && bash ./scripts/db-upgrade-antidep2-replacement-claim.sh && bash ./scripts/db-upgrade-antidep2-replacement-evidence.sh && bash ./scripts/db-upgrade-antidep2-hosted-fulltext-lineage.sh",
+    "db:test:upgrade": "bash ./scripts/db-upgrade-antidep2.sh && bash ./scripts/db-upgrade-antidep2-evolved-legacy.sh && bash ./scripts/db-upgrade-antidep2-versionless-root.sh && bash ./scripts/db-upgrade-antidep2-source-identity-priority.sh && bash ./scripts/db-upgrade-antidep2-replacement-claim.sh && bash ./scripts/db-upgrade-antidep2-replacement-evidence.sh && bash ./scripts/db-upgrade-antidep2-hosted-fulltext-lineage.sh && bash ./scripts/db-upgrade-monograph.sh",
     "db:test:lock": "./scripts/db-lock-antidep2.sh",
     "db:test:race": "./scripts/db-chain-race-test.sh",
     "db:test:quota": "./scripts/db-diagnostics-quota.sh",
@@ -29,6 +29,9 @@
     "db:test:mcp": "node scripts/agent-runner-e2e.ts",
     "db:test:intake": "node scripts/full-text-intake-e2e.ts",
     "db:test:revision": "node scripts/claim-revision-e2e.ts",
+    "db:test:monograph": "node scripts/monograph-e2e.ts",
+    "db:test:monograph:upgrade": "bash ./scripts/db-upgrade-monograph.sh",
+    "db:test:web-smoke": "node scripts/monograph-web-smoke.ts",
     "db:test:diagnostics": "node scripts/diagnostics-e2e.ts",
     "agent:verify-extraction": "node --env-file-if-exists=.env.agent.local src/agents/verify-extraction-cli.ts",
     "agent:verify-claims": "node --env-file-if-exists=.env.agent.local src/agents/verify-claims-cli.ts",
@@ -42,6 +45,8 @@
     "ops:full-text": "node --env-file-if-exists=.env.editor.local src/ops/full-text-worker-cli.ts",
     "ops:controls": "node --env-file-if-exists=.env.agent.local src/ops/control-worker-cli.ts",
     "ops:agents": "node --env-file-if-exists=.env.editor.local src/ops/agent-platform-cli.ts",
+    "ops:discovery": "node --env-file-if-exists=.env.agent.local src/ops/monograph-discovery-cli.ts",
+    "ops:acquire": "node --env-file-if-exists=.env.editor.local src/ops/monograph-acquisition-cli.ts",
     "verify:repo": "./scripts/verify-repo.sh"
   },
   "dependencies": {

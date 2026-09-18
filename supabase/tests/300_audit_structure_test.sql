@@ -178,9 +178,18 @@ select enum_has_labels(
     -- Migrasjon 009: fulltekstbiblioteket (009a), modellregisteret (009c) og
     -- kandidaten med sin sluttkontroll (009d).
     'source_document_stored', 'role_model_assignment_registered', 'role_model_assignment_closed',
-    'candidate_built', 'candidate_final_control_recorded'
+    'candidate_built', 'candidate_final_control_recorded',
+    -- Migrasjon 013b: monografibestillingen, relevansavgjørelsen, det
+    -- aksepterte fagbegrepet, svarrevisjonen, låsingen, kildebegrensningen,
+    -- den forseglede monografikandidaten, sluttkontrollen, publiseringen og
+    -- tilbaketrekkingen.
+    'monograph_edition_ordered', 'monograph_need_relevance_decided',
+    'monograph_term_accepted', 'monograph_answer_revision_created',
+    'monograph_answer_lock_changed', 'monograph_source_restriction_registered',
+    'monograph_candidate_built', 'monograph_final_control_recorded',
+    'monograph_published', 'monograph_publication_withdrawn'
   ],
-  'audit.event_operation dekker publiseringshandlingene, rolleforvaltningen, kildeopprettelse (migrasjon 008a), evidensregistrering (008b), agentidentitetenes livssyklus (008c), ekstraksjonsverifikasjon (008d), kildeversjoner (008e), claim-verifikasjon (008f), den menneskelige reviewbeslutningen (008g), kildeforankringen per kontrollfelt (008h), fjerningen av et evidensfunn (008i), fjerningen av en påstand (008j) og en ny påstandsrevisjon (008k), fulltekstbiblioteket (009a), modellregisteret (009c) og kandidaten med sin sluttkontroll (009d)'
+  'audit.event_operation dekker publiseringshandlingene, rolleforvaltningen, kildeopprettelse (migrasjon 008a), evidensregistrering (008b), agentidentitetenes livssyklus (008c), ekstraksjonsverifikasjon (008d), kildeversjoner (008e), claim-verifikasjon (008f), den menneskelige reviewbeslutningen (008g), kildeforankringen per kontrollfelt (008h), fjerningen av et evidensfunn (008i), fjerningen av en påstand (008j) og en ny påstandsrevisjon (008k), fulltekstbiblioteket (009a), modellregisteret (009c) og kandidaten med sin sluttkontroll (009d), samt monografibestillingen, relevansavgjørelsen, fagbegrepet, svarrevisjonen, låsingen, kildebegrensningen, monografikandidaten, sluttkontrollen og publiseringen (013b)'
 );
 
 -- De fire publiseringsverdiene skal svare én-til-én til

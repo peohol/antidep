@@ -6,6 +6,8 @@ import { ClaimRevisionPage } from './ClaimRevisionPage'
 import { ClaimRevisionQueuePage } from './ClaimRevisionQueuePage'
 import { FullTextInboxPage } from './FullTextInboxPage'
 import { FullTextRequestPage } from './FullTextRequestPage'
+import { MonographEditionPage } from './MonographEditionPage'
+import { MonographPage } from './MonographPage'
 import { PublishedClaimPage } from './PublishedClaimPage'
 import { PublishedIndexPage } from './PublishedIndexPage'
 import { SiteNav } from './SiteNav'
@@ -14,6 +16,7 @@ import { WorkBoardPage } from './WorkBoardPage'
 import { createCandidateGateway, type CandidateGateway } from './candidate-gateway'
 import { createClaimRevisionGateway, type ClaimRevisionGateway } from './claim-revision-gateway'
 import { createFullTextGateway, type FullTextGateway } from './full-text-gateway'
+import { createMonographGateway, type MonographGateway } from './monograph-gateway'
 import { createPublicationGateway, type PublicationGateway } from './publication-gateway'
 import { createTechnicalGateway, type TechnicalGateway } from './technical-gateway'
 import { createWorkBoardGateway, type WorkBoardGateway } from './work-board-gateway'
@@ -25,6 +28,8 @@ import {
   FULL_TEXT_INBOX_PATH,
   FULL_TEXT_REQUEST_PATH,
   HOME_PATH,
+  MONOGRAPH_EDITION_PATH,
+  MONOGRAPH_PATH,
   PUBLISHED_CLAIM_PATH,
   PUBLISHED_PATH,
   TECHNICAL_PROBLEMS_PATH,
@@ -33,6 +38,7 @@ import {
   claimRevisionQueuePath,
   fullTextInboxPath,
   fullTextRequestPath,
+  monographPath,
   publishedPath,
   workBoardPath,
 } from './routes'
@@ -77,6 +83,10 @@ export function ResetHome() {
           <Link to={claimRevisionQueuePath()}>Ny forskning</Link> — påstander Antidep allerede har,
           der ny forskning er kommet til og venter på en redaksjonell avgjørelse. Krever
           redaktørmandat.
+        </p>
+        <p>
+          <Link to={monographPath()}>Monografier</Link> — bestill en monografi for et
+          antidepressivum, og følg dekningen fram til et utkast. Krever redaktørmandat.
         </p>
       </section>
     </main>
@@ -162,6 +172,28 @@ function ClaimRevisionRoute({ gateway }: { readonly gateway: ClaimRevisionGatewa
   )
 }
 
+/** Monografibestillingene, med klienten opprettet først når ruten vises. */
+function MonographRoute({ gateway }: { readonly gateway: MonographGateway | undefined }) {
+  return <MonographPage gateway={gateway ?? createMonographGateway()} />
+}
+
+/**
+ * Én monografiutgave.
+ *
+ * En adresse uten håndtak er ingen utgave, og skal ikke bli til et kall med en
+ * tom streng: da ville avvisningen kommet fra databasen, om noe som aldri ble
+ * bedt om.
+ */
+function MonographEditionRoute({ gateway }: { readonly gateway: MonographGateway | undefined }) {
+  const { reference } = useParams()
+  if (reference === undefined || reference.length === 0) {
+    return <NotFound />
+  }
+  return (
+    <MonographEditionPage gateway={gateway ?? createMonographGateway()} reference={reference} />
+  )
+}
+
 /** Den tekniske problemoversikten, med klienten opprettet først når ruten vises. */
 function TechnicalRoute({ gateway }: { readonly gateway: TechnicalGateway | undefined }) {
   return <TechnicalProblemsPage gateway={gateway ?? createTechnicalGateway()} />
@@ -205,6 +237,8 @@ export interface AppLayoutProps {
   readonly technical?: TechnicalGateway | undefined
   /** Veien til revisjonsoppgavene, injisert av samme grunn som over. */
   readonly claimRevision?: ClaimRevisionGateway | undefined
+  /** Veien til monografiene, injisert av samme grunn som over. */
+  readonly monograph?: MonographGateway | undefined
 }
 
 export function AppLayout({
@@ -214,6 +248,7 @@ export function AppLayout({
   fullText,
   technical,
   claimRevision,
+  monograph,
 }: AppLayoutProps = {}) {
   return (
     <>
@@ -235,6 +270,11 @@ export function AppLayout({
         <Route
           element={<ClaimRevisionRoute gateway={claimRevision} />}
           path={CLAIM_REVISION_PATH}
+        />
+        <Route element={<MonographRoute gateway={monograph} />} path={MONOGRAPH_PATH} />
+        <Route
+          element={<MonographEditionRoute gateway={monograph} />}
+          path={MONOGRAPH_EDITION_PATH}
         />
         <Route element={<TechnicalRoute gateway={technical} />} path={TECHNICAL_PROBLEMS_PATH} />
         <Route element={<PublishedRoute gateway={publication} />} path={PUBLISHED_PATH} />

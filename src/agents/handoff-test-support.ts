@@ -24,6 +24,8 @@ export const TEST_EVIDENCE_ID = '78000000-0000-4000-8000-0000000000e1'
 export const TEST_OTHER_EVIDENCE_ID = '78000000-0000-4000-8000-0000000000e2'
 export const TEST_TOPIC_ID = '78000000-0000-4000-8000-0000000000f1'
 export const TEST_REVISION_ID = '78000000-0000-4000-8000-0000000000c9'
+export const TEST_SEARCH_PLAN_ID = '78000000-0000-4000-8000-0000000000a9'
+export const TEST_NEED_REFERENCE = 'abcdef0123456789abcdef0123456789'
 
 export const TEST_CONTENT_HASH = `sha256:${'9'.repeat(64)}`
 
@@ -43,9 +45,17 @@ export const TEST_REPRESENTATION = [
 
 const EXCERPT = 'Mean weight change from baseline was 0.8 kg in the testmiddel arm at 8 weeks.'
 
+const DIGEST_SEEDS: Readonly<Record<HandoffRole, string>> = {
+  evidence_extraction: '1',
+  claim_synthesis: '2',
+  evidence_assessment: '3',
+  source_discovery: '4',
+  source_quality_assessment: '5',
+  monograph_answer: '6',
+}
+
 function digestFor(role: HandoffRole): string {
-  const seed = { evidence_extraction: '1', claim_synthesis: '2', evidence_assessment: '3' }[role]
-  return `sha256:${seed.repeat(64)}`
+  return `sha256:${DIGEST_SEEDS[role].repeat(64)}`
 }
 
 /** Én oppgave, slik databasen bygger den. */
@@ -77,7 +87,73 @@ export function taskPayload(
       revision_content_hash: TEST_CONTENT_HASH,
       evidence_set_digest: `sha256:${'b'.repeat(64)}`,
     },
+    source_discovery: {
+      search_plan_id: TEST_SEARCH_PLAN_ID,
+      plan_version: 1,
+      profile_code: 'EFF',
+      scope_digest: `sha256:${'c'.repeat(64)}`,
+      need_ids: [TEST_OUTCOME_ID],
+      searches_seen: 0,
+      candidates_seen: 0,
+    },
+    source_quality_assessment: {
+      search_plan_id: TEST_SEARCH_PLAN_ID,
+      plan_version: 1,
+      profile_code: 'EFF',
+      scope_digest: `sha256:${'c'.repeat(64)}`,
+      need_ids: [TEST_OUTCOME_ID],
+      searches_seen: 1,
+      candidates_seen: 1,
+    },
+    monograph_answer: {
+      monograph_need_id: TEST_OUTCOME_ID,
+      scope_digest: `sha256:${'c'.repeat(64)}`,
+      source_version_id: TEST_SOURCE_VERSION_ID,
+      content_hash: `sha256:${'d'.repeat(64)}`,
+      representation: 'regulatory_summary',
+    },
   }[role]
+
+  const discoveryMaterial = {
+    search_plan_id: TEST_SEARCH_PLAN_ID,
+    plan_reference: 'a'.repeat(32),
+    plan_version: 1,
+    drug: 'testmiddel',
+    standard_version: '1.0.0',
+    source_profile: {
+      code: 'EFF',
+      question: 'Effekt, dose–respons, behandlingsfaser og sammenligning',
+      first_choice: 'Relevante systematiske oversikter',
+      supplement_and_control: 'Oppdateringssøk etter oversiktens siste søkedato',
+    },
+    scope: { drug: 'testmiddel', outcome: 'vektendring' },
+    needs: [
+      {
+        need_reference: TEST_NEED_REFERENCE,
+        template: 'MN12',
+        section: '3.3 Dokumentert effekt',
+        question: 'Hvor stor er endringen i relevante symptomer sammenlignet med komparator?',
+        requirement: 'B: aktiv indikasjon',
+        answer_form: 'estimate',
+      },
+    ],
+    required_tracks: [
+      {
+        code: 'bibliographic_database',
+        label: 'PubMed/MEDLINE eller et tilsvarende bibliografisk søk',
+        state: 'pending',
+        note: null,
+      },
+    ],
+    searches_so_far: [],
+    candidates_so_far: [],
+    closure_criteria: {
+      outstanding: 'Disse obligatoriske søkesporene er ikke forsøkt ennå: PubMed/MEDLINE.',
+      requirements: ['Hvert obligatorisk søkespor må være forsøkt og dokumentert.'],
+      not_sufficient: ['At tre artikler er funnet.'],
+    },
+    rules: ['En foreslått søkestreng er ikke et utført søk.'],
+  }
 
   const material = {
     evidence_extraction: {
@@ -120,12 +196,61 @@ export function taskPayload(
       },
       seen_evidence_set_digest: `sha256:${'b'.repeat(64)}`,
     },
+    monograph_answer: {
+      need: {
+        need_reference: TEST_NEED_REFERENCE,
+        template_code: 'MN03',
+        question:
+          'Hvilke norske produkter finnes? Handelsnavn, formulering, administrasjonsvei, styrke og relevant pakningsidentitet.',
+        answer_form: 'table',
+        requirement: 'mandatory',
+        scope: null,
+        scope_not_applicable: [],
+        standard_version: '1.0.0',
+      },
+      approved_use: 'Oppgir handelsnavn, formulering, styrke og pakningsidentitet.',
+      drug: 'testmiddel',
+      source: {
+        title: 'Syntetisk preparatomtale',
+        authors_or_issuer: 'Syntetisk myndighet',
+        publisher_or_journal: null,
+        source_type: 'summary_of_product_characteristics',
+        publication_date: null,
+      },
+      source_version: {
+        retrieved_from: 'https://example.test/preparatomtale',
+        retrieved_at: '2026-09-15T09:00:00Z',
+        representation: 'regulatory_summary',
+        content_hash: `sha256:${'d'.repeat(64)}`,
+      },
+      representation_text: 'Testmiddel tabletter 50 mg. Pakning med 28 tabletter.',
+    },
+    source_discovery: discoveryMaterial,
+    source_quality_assessment: {
+      ...discoveryMaterial,
+      control_task: {
+        instruction: 'Kontroller søkedekningen.',
+        own_search_required: true,
+        own_search_rule: 'Rapporter dine egne motsøk i «searches».',
+        excluded_candidates: [],
+        unresolved_candidates: [],
+      },
+    },
   }[role]
 
   const subject = {
     evidence_extraction: { kind: 'kilde', label: 'Syntetisk testkilde' },
     claim_synthesis: { kind: 'påstand', label: 'testmiddel — vektendring' },
     evidence_assessment: { kind: 'påstandsrevisjon', label: 'Syntetisk testpåstand.' },
+    source_discovery: {
+      kind: 'søkeplan',
+      label: 'testmiddel — Effekt, dose–respons, behandlingsfaser og sammenligning',
+    },
+    source_quality_assessment: {
+      kind: 'kontroll av søkedekning',
+      label: 'testmiddel — Effekt, dose–respons, behandlingsfaser og sammenligning',
+    },
+    monograph_answer: { kind: 'monografisvar', label: 'testmiddel — MN03' },
   }[role]
 
   return {
@@ -255,6 +380,95 @@ export function resultFor(role: HandoffRole): Record<string, unknown> {
           relevance_note: 'Funnet gjelder samme virkestoff, endepunkt og tidspunkt.',
         },
       ],
+    }
+  }
+  if (role === 'source_discovery') {
+    return {
+      searches: [
+        {
+          platform: 'Europe PMC',
+          query_string: 'testmiddel AND weight change AND systematic review',
+          filters: 'ingen språk- eller årsavgrensning',
+          outcome: 'executed',
+          result_count: 12,
+          screened_count: 12,
+          truncated: false,
+          truncation_note: null,
+          limitation_note: null,
+          track_codes: ['bibliographic_database'],
+        },
+      ],
+      candidates: [
+        {
+          identifier_kind: 'doi',
+          identifier_value: '10.1000/syntetisk-oversikt',
+          title: 'Syntetisk oversikt om testmiddel og vektendring',
+          authors_or_issuer: 'Testforfatter',
+          publisher_or_journal: 'Syntetisk tidsskrift',
+          publication_year: 2025,
+          discovery_path: 'Oversiktssøk i Europe PMC',
+          access_limited: false,
+          access_limitation_note: null,
+          could_change_conclusion: false,
+          materiality_reason: null,
+          decision: 'selected_for_retrieval',
+          decision_reason: 'Dekker endepunktet og avgrensningen behovet gjelder.',
+          uses: [
+            {
+              need_reference: TEST_NEED_REFERENCE,
+              proposed_use: 'Kan dokumentere endringen i vekt for den avgrensede populasjonen.',
+            },
+          ],
+        },
+      ],
+      term_proposals: [],
+      note: null,
+    }
+  }
+  if (role === 'monograph_answer') {
+    return {
+      answer: {
+        knowledge_type: 'product_data',
+        statement:
+          'Testmiddel finnes som tabletter 50 mg i pakning med 28 tabletter, ifølge preparatomtalen.',
+        structured_value: { strength_mg: 50, pack_size: 28 },
+        uncertainty_summary: null,
+        limitation_note: null,
+        as_of: '2026-09-01',
+        source_quote: 'Testmiddel tabletter 50 mg. Pakning med 28 tabletter.',
+        source_locator: 'Avsnitt 3',
+        recommending_body: null,
+        recommendation_date: null,
+        additional_sources: [],
+      },
+    }
+  }
+  if (role === 'source_quality_assessment') {
+    return {
+      searches: [
+        {
+          platform: 'PubMed',
+          query_string: 'testmiddel[tiab] AND (weight OR appetite)',
+          filters: null,
+          outcome: 'zero_results',
+          result_count: 0,
+          screened_count: 0,
+          truncated: false,
+          truncation_note: null,
+          limitation_note: null,
+          track_codes: ['bibliographic_database'],
+        },
+      ],
+      candidates: [],
+      control: {
+        outcome: 'accepted',
+        note: 'Eget motsøk i et uavhengig spor ga ingen oversette kilder, og eksklusjonene er gjennomgått.',
+        searched_independently: true,
+        missed_candidates: 0,
+        exclusions_checked: 1,
+        materiality_assessed: true,
+      },
+      note: null,
     }
   }
   return {

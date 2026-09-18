@@ -2,7 +2,7 @@
 
 Versjon: **1.0.0**. Utarbeidet: **2026-09-17** av ChatGPT etter repo-eiers startsignal til fase A og B i [monografiplanen](MONOGRAPH_PLAN.md).
 
-Status: **faglig spesifikasjon, ikke implementert eller validert i en reell monografikjøring**. Dette dokumentet er ikke en registrert kildevurdering eller menneskelig publiseringsgodkjenning. [Konstitusjonen](ANTIDEP_CONSTITUTION.md) og eksisterende tilgangs- og publiseringskontroller gjelder uendret.
+Status: **faglig spesifikasjon, implementert som versjonert kontrakt i fase C, men ikke validert i en reell monografikjøring**. De 13 kildeprofilene og deres obligatoriske søkespor ligger i `knowledge.monograph_source_profiles` og `knowledge.monograph_search_tracks`, og `src/monograph/standard.test.ts` leser dette dokumentet på nytt ved hver kjøring og krever at hver rad er den samme. Den faglige valideringen er fase D ([overleveringen](MONOGRAPH_PHASE_D_HANDOVER.md)). Dette dokumentet er ikke en registrert kildevurdering eller menneskelig publiseringsgodkjenning. [Konstitusjonen](ANTIDEP_CONSTITUTION.md) og eksisterende tilgangs- og publiseringskontroller gjelder uendret.
 
 ## 1. Formål og avgrensning
 
@@ -121,7 +121,22 @@ Modellseparasjon og deterministiske kontroller beholdes som prosjektgrenser, men
 
 Én studie kan ha protokoll, registeroppføring, hovedartikkel, sekundæranalyse, langtidsoppfølging og rettelse. Knytt disse sammen med studieidentitet og dokumenter grunnlaget for koblingen; tittel-likhet er ikke nok. Flere rapporter blir ikke flere uavhengige deltakerutvalg.
 
-En oversikt og de inkluderte primærstudiene er heller ikke uavhengige bekreftelser. Ved bruk av flere oversikter må overlapp i studier vurderes. Velg et begrunnet syntesegrunnlag, og ikke summer deltakere eller gjennomsnittsberegn estimater på tvers av overlappende materiale. Ved oppdatering med nye studier må det skilles mellom en narrativ oppdatering og en ny statistisk metaanalyse. Den siste krever en egen dokumentert analyse, ikke regning gjort i løpende generert tekst. Studie-/rapportkobling er en eksplisitt del av kravene til fase C; repoets kunnskapsmodell oppgir dette som ikke implementert.
+En oversikt og de inkluderte primærstudiene er heller ikke uavhengige bekreftelser. Ved bruk av flere oversikter må overlapp i studier vurderes. Velg et begrunnet syntesegrunnlag, og ikke summer deltakere eller gjennomsnittsberegn estimater på tvers av overlappende materiale. Ved oppdatering med nye studier må det skilles mellom en narrativ oppdatering og en ny statistisk metaanalyse. Den siste krever en egen dokumentert analyse, ikke regning gjort i løpende generert tekst.
+
+Kravet er implementert, og på to nivåer. `knowledge.study_reports` bærer rapportene om én studie, og `knowledge.review_included_studies` bærer overlappet gjennom en oversikt — en egen tabell, fordi relasjonen er mange-til-mange og rapportkoblingen med rette håndhever at én kilde hører til høyst én studie. `knowledge.study_units_for_evidence(uuid[])` leser begge, og avgjør med én regel: **en enhet er ikke uavhengig når alt den dekker, allerede er dekket av andre enheter i grunnlaget.**
+
+- En rapport om en studie dekker den studien og er alltid sitt eget utvalg. At en oversikt nevner den, gjør den ikke overflødig, og to primærstudier slås aldri sammen — at en oversikt fører A og B, sier ingenting om at A og B deler deltakere.
+- En oversikt dekker studiene den er registrert som å inkludere. Er alle lagt fram for seg, teller den ikke som et eget utvalg (`derived_review`), men beholder funnene sine og navngir enhetene den er et sammendrag av. Bærer den noe ingen andre har lagt fram, står den igjen som uavhengig for nettopp det (`partially_derived_review`), og oppgir både hva den deler og hvor mange av studiene den fører som bare finnes gjennom den.
+
+Rekkefølgen er deterministisk og grådig: rapportene først, så oversiktene med den bredeste først. Det er en lesning av det som faktisk er registrert, og ikke et bevis om minste mulige dekning — der to oversikter dekker hverandre delvis, står begge, fordi de da bærer hver sitt.
+
+En _usikker_ inklusjon dedupliserer som en dokumentert: den forsiktige lesningen er å behandle materialet som overlappende inntil det motsatte er vist. Men enheten sier da at sammenslåingen hviler på en usikker relasjon (`uncertain_linkage`) og navngir hvilke studier det gjelder (`uncertain_inclusions`), og avtrykket binder det — en avklaring fra usikker til dokumentert gjør derfor et utestående svar foreldet. Usikkerheten følger dekningen og ikke bare enhetens egen kobling: er studien bare _antatt_ lagt fram av den enheten som dekket den først, er overlappet usikkert uansett hvilken vei grunnlaget leses.
+
+Avklaringen er en ny rad i `knowledge.review_inclusion_assessments` og ikke en retting: den første vurderingen ble gjort av noen, på et grunnlag, og står urørt. Sporet er append-only i databasen og ikke bare i dokumentasjonen, rekkefølgen står på et løpenummer og ikke på et tidsstempel, og koblingen låses før gjeldende tilstand leses, slik at to samtidige endringer serialiseres.
+
+Hver rad i sporet sier både hvor sikker koblingen er og **om den gjelder**. Viser en kobling seg å være feil — oversikten inkluderte ved nærmere kontroll ikke studien likevel — trekkes den tilbake med `api.retract_review_included_study(...)`, og grupperingen leser den ikke lenger. Uten det skillet ville en feilregistrering vært permanent virksom: både `documented` og `uncertain` betyr at studien fortsatt regnes som inkludert, så et reelt uavhengig bidrag ville blitt undertrykt for alltid. Tilbaketrekkingen sletter ingenting og kan selv trekkes tilbake ved å registrere inklusjonen på nytt. Den er en _ren_ tilstandsendring: den lar sikkerhetsvurderingen stå, også når en annen økt avklarer den samtidig, slik at den som bare trakk koblingen tilbake, ikke får tilskrevet en endring av sikkerheten.
+
+Identiteten til en studie er paret (register, nummer), og registeret utledes av nummerets egen form. Uten den utledningen ville kildeoppdagelsens «other» og redaktørens «clinicaltrials_gov» om det samme NCT-nummeret blitt to studier, og vernet uten virkning. Både synteseoppgaven og evidensvurderingen er *bundet* til uavhengighetsstrukturen: registreres et overlapp etter at oppgaven ble hentet ut, blir et svar avgitt på den gamle strukturen avvist som foreldet.
 
 For effektoversikter vurderes søkets sluttdato, ikke bare publikasjonens år. Nyere dato er ikke alene et argument for å erstatte en bedre, mer relevant oversikt. Rettelser og tilbaketrekninger kontrolleres ved utgiver og pålitelige bibliografiske opplysninger. En tilbaketrukket kilde skal ikke bære et gjeldende klinisk svar; den og tidligere bruk av den beholdes som historikk.
 
@@ -183,7 +198,7 @@ Vanlige faglige uenigheter søkes løst og fremstilt av agentkjeden. Det som esk
 Dette dokumentet implementerer ingen agent, database eller brukerflate. Den neste tekniske leveransen må likevel kunne bevise følgende med kontrollerte testtilfeller og deretter en reell pilot:
 
 1. Én virkestoffbestilling lager relevante kunnskapsbehov og søkeoppgaver uten en menneskevalgt artikkel.
-2. En kilde kan brukes til flere behov, mens samme studie ikke dobbelttelles via flere rapporter/oversikter.
+2. En kilde kan brukes til flere behov, mens samme studie ikke dobbelttelles via flere rapporter/oversikter. Prøvd i `supabase/tests/940_study_identity_test.sql` (flere rapporter om én studie) og `supabase/tests/950_review_overlap_test.sql` (avledet oversikt, to overlappende oversikter, og en studie som først bare hadde et navn).
 3. Feil original, manglende tabell, utilgjengelig avgjørende fulltekst og avkortet søk gir riktig stopp, ikke «ingen evidens».
 4. Norsk regulatorisk faktagrunnlag, forskningssyntese og attribuert faglig råd holdes atskilt; nye representasjonsformer har faktisk kontrollert støtte før bruk.
 5. En motkilde kan endre et foreløpig svar. Ny evidens gir et nytt utkast til eksisterende svar uten skjult publisering.

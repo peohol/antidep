@@ -29,6 +29,7 @@ import {
   fullTextInboxPath,
   fullTextRequestPath,
   homePath,
+  monographPath,
   publishedPath,
   technicalProblemsPath,
   workBoardPath,
@@ -109,6 +110,9 @@ export function SiteNav({ technical }: SiteNavProps): React.JSX.Element {
         </li>
         <li>
           <Link to={claimRevisionQueuePath()}>Ny forskning</Link>
+        </li>
+        <li>
+          <Link to={monographPath()}>Monografier</Link>
         </li>
         {unresolved === null ? null : (
           <li>

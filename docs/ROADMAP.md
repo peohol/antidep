@@ -8,13 +8,17 @@ kliniker først velger artikler én for én.
 
 Fase A og B er utarbeidet som [Monograph Standard v1](MONOGRAPH_STANDARD.md) og
 [Source Policy v1](SOURCE_POLICY.md). [Monografiplanen](MONOGRAPH_PLAN.md) beskriver
-leveranserekkefølgen. Dokumentene er faglige spesifikasjoner, ikke implementerte
-funksjoner eller en ferdig klinisk monografi. **Fase C er ikke startet og krever
-en egen bestilling.** Sluttkontroll og publiseringsmandat er uendret.
+leveranserekkefølgen. **Fase C er implementert og teknisk prøvd**, ikke faglig:
+flyten fra «bygg monografi for sertralin» til et kontrollert, delvis utkast med
+ærlig dekning går gjennom de autoriserte inngangene ende til ende, og
+`npm run db:test:monograph` kjører hele forløpet. Den *faglige* pilotmonografien
+— fase D — er ikke gjennomført, og ingen klinisk monografi er godkjent eller
+publisert. Sluttkontroll og publiseringsmandat er uendret: de er fortsatt et
+navngitt menneske og en egen, autorisert handling.
 
-Beskrivelsen nedenfor gjelder den eksisterende artikkelbaserte kjeden, ikke en
-påstand om at monografiflyten allerede fungerer. Nødvendig feilretting og drift
-av dagens løsning kan fortsatt håndteres uavhengig av produktutvidelsen.
+[Overleveringen til fase D](MONOGRAPH_PHASE_D_HANDOVER.md) sier hvordan piloten
+startes, hvor dekning, kilder, kontroller, avvik og utkast inspiseres, og hvilke
+reelle oppsett- og tilgangsbegrensninger som står igjen.
 
 ## Eksisterende leveranse
 
@@ -262,21 +266,21 @@ automatisk godkjenning eller publisering.
 
 ## Neste leveranse
 
-Neste sammenhengende produktleveranse er fase C i [monografiplanen](MONOGRAPH_PLAN.md):
-**fra én virkestoffbestilling til standardiserte kunnskapsbehov, autonom
-kildeoppdagelse og kontrollert videre behandling mot en samlet monografi**.
-[Monograph Standard v1](MONOGRAPH_STANDARD.md) definerer spørsmål og svarformer;
-[Source Policy v1](SOURCE_POLICY.md) definerer kildevalg, søkedekning, kontroll
-og vedlikehold.
+Fase C er levert. Neste sammenhengende arbeid er **fase D**: å prøve
+arbeidsformen på en reell sertralinmonografi, faglig, før noe skaleres til flere
+antidepressiver.
 
-Leveransen skal samle bestillingen, dekningskartet, kildeoppdagelsen og
-koblingen til eksisterende evidenskjede, med korrekt støtte for forskjellige
-kunnskapstyper og kildeformer. Den må også håndtere revisjon av eksisterende
-svar, gjenbruk uten dobbelttelling, samlet monografikandidat og menneskelig
-redaksjonell kontroll. Den tidligere foreslåtte isolerte revisjonsflaten er
-ikke lenger hele neste produktleveranse; revisjonsbehovet inngår i denne større
-arbeidsformen.
+Det er ikke et kodearbeid i samme forstand. Det som skal prøves ut, er om
+dekningen er faglig meningsfull, om svarene holder, hvor agentene faktisk tar
+feil eller utelater noe, og hvor stor den menneskelige arbeidsmengden i praksis
+blir. [Overleveringen](MONOGRAPH_PHASE_D_HANDOVER.md) beskriver hvordan piloten
+kjøres, og hva som må rettes underveis framfor å bli en ny spesifikasjon.
 
-Ingen eksisterende kilde-, tilgangs- eller publiseringskontroll svekkes av at
-spesifikasjonene er skrevet. Fase C er ikke igangsatt. Etter implementeringen
-skal arbeidsformen prøves på en reell sertralinmonografi før skalering.
+Tre ting er bevisst ikke bygget, og datamodellen bærer dem fortsatt: en
+nedtrappings- og byttekalkulator, en full sammenlikningsfunksjon, og utrulling
+til alle antidepressiver. Ingen av dem hører i fase D.
+
+Ingen eksisterende kilde-, tilgangs- eller publiseringskontroll er svekket av
+fase C. De to nye innhentingsveiene — myndighetsdokumenter som HTML, XML eller
+JSON — har sine egne kontrakter og sine egne integritetskontroller, og
+PDF-kravet for forskningsfulltekst står urørt.

@@ -60,8 +60,41 @@ select set_eq(
            ('full_text_readability_checks'), ('candidates'),
            -- Migrasjon 010b: representasjonen kildeversjonen er registrert med,
            -- lagret privat ved siden av originalfilen.
-           ('source_version_texts')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d og 010b'
+           ('source_version_texts'),
+           -- Migrasjon 013a: monografistandarden som et versjonert register —
+           -- spørsmålsmalene MN01-MN80, kildeprofilene, søkesporene og
+           -- koblingene mellom dem.
+           ('monograph_standard_versions'), ('monograph_source_profiles'),
+           ('monograph_question_templates'), ('monograph_template_profiles'),
+           ('monograph_search_tracks'), ('monograph_search_track_profiles'),
+           ('monograph_prescribed_scope_values'),
+           -- Migrasjon 013c: bestillingen og de konkrete kunnskapsbehovene.
+           ('monograph_editions'), ('monograph_needs'),
+           -- Migrasjon 013g: den godkjente kildebruken per behov, og studien
+           -- atskilt fra rapportene om den.
+           ('monograph_source_uses'), ('studies'), ('study_reports'),
+           -- Migrasjon 013h: originalfilen til et myndighetsdokument, med sin
+           -- egen integritetskontrakt ved siden av PDF-veien.
+           ('authority_documents'),
+           -- Migrasjon 013i: det strukturerte svaret, revisjonene av det og
+           -- tilleggskildene én revisjon hviler på.
+           ('monograph_answers'), ('monograph_answer_revisions'),
+           ('monograph_answer_revision_sources'),
+           -- Migrasjon 013j: den frosne monografikandidaten og
+           -- publiseringshistorikken for utgaven.
+           ('monograph_edition_candidates'), ('monograph_publication_events'),
+           -- Migrasjon 013k: forkastingen av en godkjent kildebruk, bevart som
+           -- en ny opplysning framfor som en sletting.
+           ('monograph_source_use_revocations'),
+           -- Migrasjon 013m: overlappet mellom en systematisk oversikt og
+           -- primærstudiene den inkluderer.
+           ('review_included_studies'),
+           -- Migrasjon 013n: da en studie uten registernummer fikk ett.
+           ('study_identity_upgrades'),
+           -- Migrasjon 013p: senere vurderinger av hvor sikker en oversikts
+           -- inklusjon av en studie er.
+           ('review_inclusion_assessments')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j, 013k, 013m, 013n og 013p'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
@@ -104,8 +137,31 @@ select set_eq(
            -- Migrasjon 012d: ny evidens om en påstand som allerede finnes, og
            -- den redaksjonelle avgjørelsen om hva som skal skje med den, med
            -- sitt eget append-only spor.
-           ('claim_revision_reviews'), ('claim_revision_review_events')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b og 012d'
+           ('claim_revision_reviews'), ('claim_revision_review_events'),
+           -- Migrasjon 013c: sporet over kunnskapsbehovenes tilstander, og
+           -- forslagene om nye faglige begreper.
+           ('monograph_need_events'), ('monograph_term_proposals'),
+           -- Migrasjon 013e: søkeplanen, den dokumenterte søkeloggen, sporene
+           -- som må være forsøkt, kandidatkildene med sine mulige bruksområder
+           -- og den separate kontrollen av søkedekningen.
+           ('monograph_search_plans'), ('monograph_search_plan_needs'),
+           ('monograph_searches'), ('monograph_search_track_attempts'),
+           ('monograph_candidate_sources'), ('monograph_candidate_source_needs'),
+           ('monograph_coverage_controls'),
+           -- Migrasjon 013h: forespørselen om et myndighets-, preparat- eller
+           -- retningslinjedokument, atskilt fra den forskningsfaglige.
+           ('monograph_document_requests'),
+           -- Migrasjon 013i: hvilke felter den deterministiske svarkontrollen
+           -- faktisk kontrollerte for hver svarrevisjon.
+           ('monograph_answer_verifications'),
+           -- Migrasjon 013j: den navngitte menneskelige sluttkontrollen av én
+           -- frosset monografiutgave.
+           ('monograph_final_controls'),
+           -- Migrasjon 013k: kildebegrensningen for et område, de
+           -- forhåndsgodkjente kildene og de synlige avvikene.
+           ('monograph_source_restrictions'), ('monograph_restriction_sources'),
+           ('monograph_revision_proposals')$$,
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i, 013j og 013k'
 );
 select set_eq(
   $$

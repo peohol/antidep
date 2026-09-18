@@ -106,8 +106,14 @@ select enum_has_labels(
   'provenance', 'agent_role',
   array['source_discovery', 'source_quality_assessment', 'evidence_extraction',
         'extraction_verification', 'claim_synthesis', 'adversarial_review',
-        'evidence_assessment', 'citation_support_verification', 'editorial_compression'],
-  'provenance.agent_role dekker de sju agentrollene i ANTIDEP_CONSTITUTION.md §10, ekstraksjonsverifikatoren og evidensvurderingsagenten i EVIDENCE_PIPELINE.md §61'
+        'evidence_assessment',
+        -- Migrasjon 013d: de to monografisvarleddene. En preparatstyrke, en
+        -- godkjent indikasjon og et attribuert retningslinjeråd er ikke
+        -- forskningsfunn og kan ikke presses inn i ekstraksjonskontrakten; de
+        -- har sin egen oppgaveform, og kontrollen av dem sitt eget ledd.
+        'monograph_answer', 'monograph_answer_verification',
+        'citation_support_verification', 'editorial_compression'],
+  'provenance.agent_role dekker de sju agentrollene i ANTIDEP_CONSTITUTION.md §10, ekstraksjonsverifikatoren og evidensvurderingsagenten i EVIDENCE_PIPELINE.md §61, og de to monografisvarleddene i migrasjon 013d'
 );
 select enum_has_labels(
   'workflow', 'role_scope_type', array['clinical_concept'],

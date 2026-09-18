@@ -147,6 +147,10 @@ bruker=$(nyid)
 aktor=$(nyid)
 doi="10.9999/antidep.kapplop.${kjoring:0:8}"
 kjoring_g=$(nyid)
+oversikt=$(nyid)
+oversikt2=$(nyid)
+nct="NCT9${kjoring:0:7}"
+nct2="NCT8${kjoring:0:7}"
 
 # ----------------------------------------------------------------------------
 # Venter til én forbindelse faktisk står og venter på en rådgivende lås.
@@ -188,6 +192,28 @@ vent_paa_tabellblokkering() {
   printf 'AVVIK    %s\n' "$navn" >&2
   printf '         Ingen forbindelse ventet på %s. Da måler prøven rekkefølgen på to\n' "$tabell" >&2
   printf '         prosesser framfor låsen.\n' >&2
+  exit 1
+}
+
+# ----------------------------------------------------------------------------
+# Venter til én forbindelse faktisk står og venter på en radlås.
+#
+# En `select ... for update` som må vente, står i kø på den andre transaksjonens
+# id — ikke på en rådgivende lås og ikke på en tabellås. Søsteren til de to
+# andre venterne, for de tilfellene der køen er en rad.
+# ----------------------------------------------------------------------------
+vent_paa_radblokkering() {
+  local navn=$1 i
+  for i in $(seq 1 150); do
+    if [ "$(les "select count(*) from pg_locks
+                 where locktype in ('transactionid', 'tuple') and not granted")" != "0" ]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  printf 'AVVIK    %s\n' "$navn" >&2
+  printf '         Ingen forbindelse ventet på raden. Da leser to samtidige avklaringer\n' >&2
+  printf '         det samme utgangspunktet, og prøven måler ikke låsen.\n' >&2
   exit 1
 }
 
@@ -1238,6 +1264,229 @@ SQL
   printf 'ok       %s\n' "$navn"
 }
 
+# ----------------------------------------------------------------------------
+# Prøve 8: to samtidige registreringer av den samme oversiktskoblingen
+#
+# «Finn eller opprett» igjen, denne gangen på oversiktens inklusjon av en studie.
+# Begge øktene leser «finnes ikke», og begge prøver å skrive. Unikhetskravet på
+# paret fanger den andre — men bare hvis skriveveien tar imot det og fortsetter
+# på raden som vant. Gjorde den ikke det, ville et helt lovlig samtidig kall
+# feilet, og redaktøren ville sett en teknisk feil på en handling som var utført.
+# ----------------------------------------------------------------------------
+proeve8() {
+  local navn='to samtidige inklusjonskoblinger blir én rad'
+  local styr="$arbeid/styr8" a_log="$arbeid/a8.log" b_log="$arbeid/b8.log"
+  local studie
+
+  # Studien opprettes i fiksturen med vilje. Gjorde de to øktene det selv, ville
+  # de stått i kø på den rådgivende låsen rundt studieidentiteten, og prøven
+  # ville målt *den* framfor kappløpet om koblingsraden.
+  psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/fikstur8.log" 2>&1 <<SQL
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+values ('$oversikt', 'journal_article',
+        'Kappløpsprøve: systematisk oversikt ${kjoring:0:8}', 'Kappløpsprøven',
+        (select id from provenance.actors where actor_key = 'human:peder-holman'));
+
+select knowledge.find_or_create_study('clinicaltrials_gov', '$nct', 'Kappløpsstudien',
+  (select id from provenance.actors where actor_key = 'human:peder-holman'), null);
+SQL
+  [ $? -eq 0 ] || feil "$navn" 'Fiksturen for prøve 8 lot seg ikke legge inn.' "$arbeid/fikstur8.log"
+
+  studie=$(les "select id from knowledge.studies where registry_id = '$nct'")
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  # Økt A åpner, skriver koblingen, og holder transaksjonen åpen.
+  (
+    cat <<SQL
+begin;
+select knowledge.link_review_included_study(
+  '$oversikt', '$studie',
+  'Kappløpsprøve: økt A registrerer inklusjonen.',
+  'uncertain'::knowledge.study_link_certainty,
+  (select id from provenance.actors where actor_key = 'human:peder-holman'), null);
+\echo KLAR
+\o /dev/null
+SQL
+    cat "$styr"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$a_log" 2>&1 &
+  okt_a_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 150); do
+    grep -q 'KLAR' "$a_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$a_log" 2>/dev/null || feil "$navn" 'Økt A kom ikke i gang.' "$a_log"
+
+  # Økt B prøver den samme koblingen mens A fortsatt holder den.
+  psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$b_log" 2>&1 <<SQL &
+begin;
+set local statement_timeout = '30s';
+select knowledge.link_review_included_study(
+  '$oversikt', '$studie',
+  'Kappløpsprøve: økt B registrerer den samme inklusjonen.',
+  'uncertain'::knowledge.study_link_certainty,
+  (select id from provenance.actors where actor_key = 'human:peder-holman'), null);
+commit;
+SQL
+  okt_b_pid=$!
+
+  vent_paa_radblokkering "$navn"
+
+  printf 'commit;\n' >&9
+  exec 9>&-
+  wait "$okt_a_pid" 2>/dev/null
+  okt_a_pid=""
+  wait "$okt_b_pid" 2>/dev/null
+  local b_status=$?
+  okt_b_pid=""
+  rm -f "$styr"
+
+  [ "$b_status" -eq 0 ] || feil "$navn" \
+    'Den tapende økten feilet i stedet for å fortsette på raden som vant.' "$b_log"
+
+  local rader
+  rader=$(les "select count(*) from knowledge.review_included_studies ri
+               where ri.review_source_id = '$oversikt'")
+  [ "$rader" = "1" ] || feil "$navn" "To samtidige kall ga $rader koblinger, ikke én."
+
+  printf 'ok       %s\n' "$navn"
+}
+
+# ----------------------------------------------------------------------------
+# Prøve 9: en avklaring og en tilbaketrekking samtidig
+#
+# To ting prøves her, og de henger sammen.
+#
+# Det første er låsen. Avklaringen leser gjeldende tilstand og skriver en ny
+# vurdering med neste løpenummer. Uten låsen på koblingsraden kunne begge
+# øktene lest det samme utgangspunktet, og begge skrevet det samme «forrige» —
+# og da ville sporet fortalt at to forskjellige endringer gikk ut fra den samme
+# tilstanden, som er umulig.
+#
+# Det andre er at en tilbaketrekking *bare* er en tilbaketrekking. Den går
+# gjennom api-veien med vilje, fordi det var der en foreldet forhåndslesning av
+# sikkerheten satt: leste tilbaketrekkingen sikkerheten før den fikk låsen,
+# skrev den tilbake avklaringen som ble committet mens den ventet — og sporet
+# tilskrev sikkerhetsendringen den som bare trakk koblingen tilbake. Etterpå
+# skal sikkerheten være den A satte, og tilstanden den B satte.
+# ----------------------------------------------------------------------------
+proeve9() {
+  local navn='en tilbaketrekking lar en samtidig avklaring stå'
+  local styr="$arbeid/styr9" a_log="$arbeid/a9.log" b_log="$arbeid/b9.log"
+  local studie tittel='Kappløpsprøve: oversikt med usikker inklusjon'
+
+  psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/fikstur9.log" 2>&1 <<SQL
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+values ('$oversikt2', 'journal_article',
+        '$tittel ${kjoring:0:8}', 'Kappløpsprøven',
+        (select id from provenance.actors where actor_key = 'human:peder-holman'));
+
+insert into knowledge.source_identifiers (source_id, identifier_system, identifier_value)
+values ('$oversikt2', 'doi', '$doi-oversikt');
+
+select knowledge.link_review_included_study(
+  '$oversikt2',
+  knowledge.find_or_create_study('clinicaltrials_gov', '$nct2', 'Kappløpsstudien 2',
+    (select id from provenance.actors where actor_key = 'human:peder-holman'), null),
+  'Kappløpsprøve: inklusjonen er usikker til å begynne med.',
+  'uncertain'::knowledge.study_link_certainty,
+  (select id from provenance.actors where actor_key = 'human:peder-holman'), null);
+SQL
+  [ $? -eq 0 ] || feil "$navn" 'Fiksturen for prøve 9 lot seg ikke legge inn.' "$arbeid/fikstur9.log"
+
+  studie=$(les "select ri.study_id from knowledge.review_included_studies ri
+                where ri.review_source_id = '$oversikt2'")
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  # Økt A avklarer til dokumentert, og holder transaksjonen åpen.
+  (
+    cat <<SQL
+begin;
+select knowledge.link_review_included_study(
+  '$oversikt2', '$studie',
+  'Kappløpsprøve: økt A dokumenterer inklusjonen.',
+  'documented'::knowledge.study_link_certainty,
+  (select id from provenance.actors where actor_key = 'human:peder-holman'), null);
+\echo KLAR
+\o /dev/null
+SQL
+    cat "$styr"
+  ) | psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$a_log" 2>&1 &
+  okt_a_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 150); do
+    grep -q 'KLAR' "$a_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$a_log" 2>/dev/null || feil "$navn" 'Økt A kom ikke i gang.' "$a_log"
+
+  # Økt B trekker koblingen tilbake, samtidig — gjennom redaktørveien, fordi det
+  # var der den foreldede forhåndslesningen av sikkerheten satt.
+  psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$b_log" 2>&1 <<SQL &
+begin;
+set local statement_timeout = '30s';
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+select api.retract_review_included_study(
+  'doi:$doi-oversikt', 'clinicaltrials_gov', '$nct2', 'Kappløpsstudien 2',
+  'Kappløpsprøve: økt B fant ved kontroll at oversikten ikke fører studien.');
+commit;
+SQL
+  okt_b_pid=$!
+
+  vent_paa_radblokkering "$navn"
+
+  printf 'commit;\n' >&9
+  exec 9>&-
+  wait "$okt_a_pid" 2>/dev/null
+  okt_a_pid=""
+  wait "$okt_b_pid" 2>/dev/null
+  local b_status=$?
+  okt_b_pid=""
+  rm -f "$styr"
+
+  [ "$b_status" -eq 0 ] || feil "$navn" 'Den andre endringen feilet.' "$b_log"
+
+  # To vurderinger, nummerert 1 og 2, og kjeden henger sammen på begge aksene:
+  # den andre gikk ut fra det den første landet på.
+  local kjede
+  kjede=$(les "select string_agg(
+                 a.assessment_number || ':' || a.previous_certainty || '->' || a.certainty
+                   || '/' || a.previous_state || '->' || a.state,
+                 ' ' order by a.assessment_number)
+               from knowledge.review_inclusion_assessments a
+               join knowledge.review_included_studies ri on ri.id = a.review_included_study_id
+               where ri.review_source_id = '$oversikt2'")
+  # Tilbaketrekkingen skal ha beholdt sikkerheten A satte: «documented ->
+  # documented» sammen med «included -> retracted». Sto det «-> uncertain»
+  # her, hadde B skrevet tilbake A sin avklaring.
+  [ "$kjede" = "1:uncertain->documented/included->included 2:documented->documented/included->retracted" ] \
+    || feil "$navn" "Sporet henger ikke sammen: «$kjede»."
+
+  local aktiv
+  aktiv=$(les "select knowledge.review_inclusion_active(ri.id)
+               from knowledge.review_included_studies ri
+               where ri.review_source_id = '$oversikt2'")
+  [ "$aktiv" = "f" ] || feil "$navn" \
+    'Koblingen gjelder fortsatt, selv om den siste endringen trakk den tilbake.'
+
+  local sikkerhet
+  sikkerhet=$(les "select knowledge.review_inclusion_certainty(ri.id)
+                   from knowledge.review_included_studies ri
+                   where ri.review_source_id = '$oversikt2'")
+  [ "$sikkerhet" = "documented" ] || feil "$navn" \
+    "Sikkerheten er «$sikkerhet», ikke den avklaringen den andre økten gjorde. Tilbaketrekkingen skrev den tilbake."
+
+  printf 'ok       %s\n' "$navn"
+}
+
 printf 'Samtidighetsprøver for de automatiske kjedeovergangene\n'
 proeve1
 proeve2
@@ -1246,4 +1495,6 @@ proeve4
 proeve5
 proeve6
 proeve7
+proeve8
+proeve9
 printf 'Alle prøvene bestod.\n'

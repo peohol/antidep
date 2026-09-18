@@ -41,7 +41,11 @@ jobs:
   database:
     name: Migrasjoner og databasetester på lokal Supabase-stack
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Oppgraderingsprøvene er den lange delen, og monografiens egen bygger hele
+    # kjeden to ganger: én gang for innholdet som skal finnes fra før, og én
+    # gang oppå det. Jobben lå på ~11 minutter og ligger nå på ~15 av 20, og en
+    # grense så tett på er en flaky jobb som venter på å skje.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

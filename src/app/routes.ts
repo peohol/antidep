@@ -75,6 +75,19 @@ export const CLAIM_REVISION_QUEUE_PATH = '/ny-evidens' as const
 export const CLAIM_REVISION_PATH = '/ny-evidens/:reference' as const
 
 /**
+ * Monografien: bestillingen, dekningen og utkastet.
+ *
+ * Egen adresse og ikke en visningsmodus på kandidatadressen, av samme grunn som
+ * de andre redaksjonelle flatene har sine egne: en monografi under arbeid er
+ * eksperimentelt, upublisert innhold som krever redaktørmandat å lese, og det
+ * er noe annet enn en publisert påstand.
+ *
+ * Adressen bærer databasens eget ugjennomsiktige håndtak og aldri en intern id.
+ */
+export const MONOGRAPH_PATH = '/monografi' as const
+export const MONOGRAPH_EDITION_PATH = '/monografi/:reference' as const
+
+/**
  * Den tekniske problemoversikten: driftens egen side.
  *
  * Krever admin-mandat, og sier bare hvilket område som har problemer, når det
@@ -101,6 +114,15 @@ export function fullTextRequestPath(): string {
 
 export function technicalProblemsPath(): string {
   return TECHNICAL_PROBLEMS_PATH
+}
+
+export function monographPath(): string {
+  return MONOGRAPH_PATH
+}
+
+/** Adressen til én monografiutgave. Håndtaket URL-kodes: det er data, ikke en sti. */
+export function monographEditionPath(reference: string): string {
+  return `${MONOGRAPH_PATH}/${encodeURIComponent(reference)}`
 }
 
 export function claimRevisionQueuePath(): string {

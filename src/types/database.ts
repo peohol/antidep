@@ -687,6 +687,278 @@ export type Database = {
         }
         Returns: unknown
       }
+      // ----------------------------------------------------------------
+      // Monografien (migrasjon 013d–013k)
+      //
+      // Alle svarer jsonb eller setof jsonb, lest av `lib/monograph.ts` og av
+      // ops-verktøyene. Formen håndheves av leseren og ikke av typen her: en
+      // jsonb-form har ingen kolonnetyper PostgREST kan gå god for.
+      //
+      // Argumentlistene speiler migrasjonene. `p_result_count`,
+      // `p_response_digest`, `p_truncation_note` og `p_limitation_note` er
+      // nullbare uten å ha en default: et søk som aldri nådde fram, har verken
+      // treffantall eller avtrykk, og det er noe annet enn null treff.
+      // ----------------------------------------------------------------
+      build_monograph_candidate: {
+        Args: {
+          p_edition_reference: string
+        }
+        Returns: unknown
+      }
+      close_monograph_search_plan: {
+        Args: {
+          p_plan_reference: string
+          p_note: string
+        }
+        Returns: unknown
+      }
+      decide_monograph_candidate: {
+        Args: {
+          p_candidate_reference: string
+          p_decision: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      decide_monograph_revision_proposal: {
+        Args: {
+          p_reference: string
+          p_accept: boolean
+          p_note?: string | null
+        }
+        Returns: unknown
+      }
+      decide_monograph_term: {
+        Args: {
+          p_reference: string
+          p_accept: boolean
+          p_note?: string | null
+        }
+        Returns: unknown
+      }
+      discard_monograph_source: {
+        Args: {
+          p_need_reference: string
+          p_source_title: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      edit_monograph_answer: {
+        Args: {
+          p_need_reference: string
+          p_statement: string
+          p_uncertainty_summary?: string | null
+          p_limitation_note?: string | null
+          p_structured_value?: Record<string, unknown> | null
+          p_change_reason?: string | null
+        }
+        Returns: unknown
+      }
+      lock_monograph_answer: {
+        Args: {
+          p_need_reference: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      monograph_candidate: {
+        Args: {
+          p_candidate_reference: string
+        }
+        Returns: unknown
+      }
+      monograph_coverage: {
+        Args: {
+          p_reference: string
+        }
+        Returns: unknown
+      }
+      monograph_discovery_work: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+        }
+        Returns: unknown
+      }
+      monograph_draft: {
+        Args: {
+          p_edition_reference: string
+        }
+        Returns: unknown
+      }
+      monograph_order_options: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      monograph_orders: {
+        Args: Record<string, never>
+        Returns: unknown
+      }
+      monograph_revision_proposals: {
+        Args: {
+          p_edition_reference: string
+        }
+        Returns: unknown
+      }
+      monograph_search_plans: {
+        Args: {
+          p_edition_reference: string
+        }
+        Returns: unknown
+      }
+      monograph_source_requests: {
+        Args: {
+          p_edition_reference: string
+        }
+        Returns: unknown
+      }
+      monograph_term_proposals: {
+        Args: {
+          p_edition_reference: string
+        }
+        Returns: unknown
+      }
+      order_monograph: {
+        Args: {
+          p_drug_name: string
+          p_note?: string | null
+        }
+        Returns: unknown
+      }
+      pause_monograph_search_plan: {
+        Args: {
+          p_plan_reference: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      propose_monograph_term: {
+        Args: {
+          p_edition_reference: string
+          p_axis: string
+          p_label: string
+          p_rationale: string
+          p_from_need_reference?: string | null
+        }
+        Returns: unknown
+      }
+      publish_monograph: {
+        Args: {
+          p_candidate_reference: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      record_monograph_final_control: {
+        Args: {
+          p_candidate_reference: string
+          p_seen_content_digest: string
+          p_decision: string
+          p_rationale: string
+        }
+        Returns: unknown
+      }
+      record_monograph_machine_search: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_run_id: string
+          p_plan_reference: string
+          p_platform: string
+          p_query_string: string
+          p_filters: string | null
+          p_endpoint: string
+          p_response_digest: string | null
+          p_outcome: string
+          p_result_count: number | null
+          p_screened_count: number
+          p_truncated: boolean
+          p_truncation_note: string | null
+          p_limitation_note: string | null
+          p_track_codes: readonly string[]
+          p_candidates: readonly unknown[]
+        }
+        Returns: unknown
+      }
+      restrict_monograph_sources: {
+        Args: {
+          p_edition_reference: string
+          p_template_code: string
+          p_source_titles: readonly string[]
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      resume_monograph_search_plan: {
+        Args: {
+          p_plan_reference: string
+        }
+        Returns: unknown
+      }
+      submit_monograph_document: {
+        Args: {
+          p_reference: string
+          p_document_base64: string
+          p_media_type: string
+          p_extracted_text: string
+          p_text_extraction_recipe: string
+          p_retrieved_from?: string | null
+          p_external_version?: string | null
+        }
+        Returns: unknown
+      }
+      unlock_monograph_answer: {
+        Args: {
+          p_need_reference: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      withdraw_monograph_document_request: {
+        Args: {
+          p_reference: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
+      // Migrasjon 013l, utvidet i 013m. Redaktørens vei til å si at en artikkel
+      // er en rapport om en studie: to publikasjoner om det samme
+      // deltakerutvalget skal ikke kunne leses som to uavhengige studier.
+      // Referansen er en identifikator eller en entydig tittel — et
+      // titteloppslag som treffer flere kilder, avvises.
+      register_study_report: {
+        Args: {
+          p_source_reference: string
+          p_registry_kind: string | null
+          p_registry_id: string | null
+          p_study_label: string | null
+          p_report_role: string | null
+          p_linkage_basis: string
+          p_certain?: boolean
+        }
+        Returns: unknown
+      }
+      // Migrasjon 013m. Oversikten og primærstudiene den inkluderer, slik at de
+      // ikke telles som uavhengige kilder (SOURCE_POLICY.md §7, §11).
+      link_review_included_study: {
+        Args: {
+          p_review_reference: string
+          p_registry_kind: string | null
+          p_registry_id: string | null
+          p_study_label: string | null
+          p_inclusion_basis: string
+          p_certain?: boolean
+        }
+        Returns: unknown
+      }
+      withdraw_monograph_publication: {
+        Args: {
+          p_edition_reference: string
+          p_reason: string
+        }
+        Returns: unknown
+      }
     }
   }
 }

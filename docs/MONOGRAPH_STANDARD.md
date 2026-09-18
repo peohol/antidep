@@ -2,7 +2,7 @@
 
 Versjon: **1.0.0**. Utarbeidet: **2026-09-17** av ChatGPT etter repo-eiers startsignal til fase A og B i [monografiplanen](MONOGRAPH_PLAN.md).
 
-Status: **faglig spesifikasjon, ikke implementert og ikke validert på en ferdig monografi**. Spørsmålsregisteret er leveransen i fase A; [Source Policy v1](SOURCE_POLICY.md) er fase B. Kildehenvisningene S01–S14 viser til kildepolitikkens lesegrunnlag. Ingen klinisk monografi, individuell behandlingsplan eller menneskelig faglig godkjenning opprettes av disse dokumentene.
+Status: **faglig spesifikasjon, implementert som versjonert kontrakt i fase C, men ikke validert på en ferdig monografi**. De 80 malene MN01–MN80 med kravtype, betingelse, svarform og kildeprofil ligger i `knowledge.monograph_question_templates`, og `src/monograph/standard.test.ts` leser dette dokumentet på nytt ved hver kjøring og krever at hver rad er den samme — en faglig endring her uten en endring der stopper kontrollene. Den faglige valideringen er fase D ([overleveringen](MONOGRAPH_PHASE_D_HANDOVER.md)). Spørsmålsregisteret er leveransen i fase A; [Source Policy v1](SOURCE_POLICY.md) er fase B. Kildehenvisningene S01–S14 viser til kildepolitikkens lesegrunnlag. Ingen klinisk monografi, individuell behandlingsplan eller menneskelig faglig godkjenning opprettes av disse dokumentene.
 
 ## 1. Produktkontrakten
 

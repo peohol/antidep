@@ -45,9 +45,18 @@ select enum_has_labels(
     -- Migrasjon 009: fulltekstbiblioteket (009a), modellregisteret (009c) og
     -- kandidaten med sin sluttkontroll (009d).
     'source_document_stored', 'role_model_assignment_registered', 'role_model_assignment_closed',
-    'candidate_built', 'candidate_final_control_recorded'
+    'candidate_built', 'candidate_final_control_recorded',
+    -- Migrasjon 013b: monografibestillingen, relevansavgjørelsen, det
+    -- aksepterte fagbegrepet, svarrevisjonen, låsingen, kildebegrensningen,
+    -- den forseglede monografikandidaten, sluttkontrollen, publiseringen og
+    -- tilbaketrekkingen.
+    'monograph_edition_ordered', 'monograph_need_relevance_decided',
+    'monograph_term_accepted', 'monograph_answer_revision_created',
+    'monograph_answer_lock_changed', 'monograph_source_restriction_registered',
+    'monograph_candidate_built', 'monograph_final_control_recorded',
+    'monograph_published', 'monograph_publication_withdrawn'
   ],
-  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt, de to fjerningene av testartefakter og opprettelsen av en påstandsrevisjon, samt fulltekstbiblioteket, modellregisteret og kandidaten med sin sluttkontroll'
+  'audit.event_operation dekker nå også kildeopprettelse, evidensregistrering, agentidentitetenes livssyklus, ekstraksjons- og claim-verifikasjon, kildeversjoner, den menneskelige reviewbeslutningen, kildeforankringen per kontrollfelt, de to fjerningene av testartefakter og opprettelsen av en påstandsrevisjon, samt fulltekstbiblioteket, modellregisteret og kandidaten med sin sluttkontroll, samt monografilaget i fase C (013b)'
 );
 
 select has_function('api', 'create_source', 'api.create_source() finnes');
@@ -312,7 +321,73 @@ select is_empty(
         -- Kontrolleres i 830_claim_revision_review_test.sql.
         'api.claim_revision_queue()',
         'api.claim_revision_for_decision(text)',
-        'api.record_claim_revision_decision(text,text,text,text)'
+        'api.record_claim_revision_decision(text,text,text,text)',
+        -- Migrasjon 013c. Monografibestillingen og dekningskartet. Alle
+        -- authenticated og ingen av dem anon: å avgjøre at Antidep skal si noe
+        -- om et virkestoff er en redaksjonell handling, og et dekningskart er
+        -- internt arbeidsmateriale som krever mandat å lese
+        -- (ANTIDEP_CONSTITUTION.md regel 5). Kontrolleres i
+        -- 850_monograph_order_test.sql.
+        'api.monograph_order_options()',
+        'api.order_monograph(text,text)',
+        'api.monograph_orders()',
+        'api.monograph_coverage(text)',
+        'api.propose_monograph_term(text,text,text,text,text)',
+        'api.decide_monograph_term(text,boolean,text)',
+        'api.monograph_term_proposals(text)',
+        -- Migrasjon 013e. Søkeplanen, den dokumenterte søkeloggen og de tre
+        -- redaksjonelle handlingene krever editor-mandat. De to første er
+        -- kildeleddenes egen vei — identitet og legitimasjon, som de andre
+        -- deterministiske kjøringene — og er derfor åpne for både anon og
+        -- authenticated på funksjonsnivå, med hele autorisasjonen i databasen.
+        -- Kontrolleres i 860_monograph_discovery_test.sql.
+        'api.monograph_discovery_work(text,text)',
+        'api.record_monograph_machine_search(text,text,uuid,text,text,text,text,text,text,text,integer,integer,boolean,text,text,text[],jsonb)',
+        'api.monograph_search_plans(text)',
+        'api.close_monograph_search_plan(text,text)',
+        'api.pause_monograph_search_plan(text,text)',
+        'api.resume_monograph_search_plan(text)',
+        'api.decide_monograph_candidate(text,text,text)',
+        -- Migrasjon 013h. Den samlede forespørselen om originalmateriale,
+        -- registreringen av et myndighetsdokument og tilbaketrekkingen av en
+        -- forespørsel. Alle tre krever editor- eller admin-mandat i databasen.
+        -- Kontrolleres i 890_monograph_acquisition_test.sql.
+        'api.monograph_source_requests(text)',
+        'api.submit_monograph_document(text,text,text,text,text,text,text)',
+        'api.withdraw_monograph_document_request(text,text)',
+        -- Migrasjon 013j. Monografiutkastet, kandidaten, den navngitte
+        -- sluttkontrollen og den separate publiseringen. Kontrolleres i
+        -- 910_monograph_candidate_test.sql.
+        'api.monograph_draft(text)',
+        'api.build_monograph_candidate(text)',
+        'api.monograph_candidate(text)',
+        'api.record_monograph_final_control(text,text,text,text)',
+        'api.publish_monograph(text,text)',
+        'api.withdraw_monograph_publication(text,text)',
+        -- Migrasjon 013k. Den redaksjonelle kontrollen: rettelse, låsing,
+        -- kildebegrensning, avvikslisten og forkasting av en kilde. Alle krever
+        -- editor-mandat. Kontrolleres i 920_monograph_editorial_test.sql.
+        'api.edit_monograph_answer(text,text,text,text,jsonb,text)',
+        'api.lock_monograph_answer(text,text)',
+        'api.unlock_monograph_answer(text,text)',
+        'api.restrict_monograph_sources(text,text,text[],text)',
+        'api.monograph_revision_proposals(text)',
+        'api.decide_monograph_revision_proposal(text,boolean,text)',
+        'api.discard_monograph_source(text,text,text)',
+        -- Migrasjon 013l. Redaktørens vei til å si at en artikkel er en rapport
+        -- om en studie Antidep alt kjenner, slik at hovedartikkel og
+        -- sekundæranalyse ikke telles som to uavhengige deltakerutvalg.
+        -- Kontrolleres i 940_study_identity_test.sql.
+        'api.register_study_report(text,text,text,text,text,text,boolean)',
+        -- Migrasjon 013m. Oversikten og primærstudiene den inkluderer, slik at
+        -- de ikke telles som uavhengige kilder.
+        -- Kontrolleres i 950_review_overlap_test.sql.
+        'api.link_review_included_study(text,text,text,text,text,boolean)',
+        -- Migrasjon 013r. Tilbaketrekkingen av en inklusjonskobling som viste
+        -- seg å være feil. Uten den ville en feilregistrering vært permanent
+        -- virksom i grupperingen.
+        -- Kontrolleres i 950_review_overlap_test.sql.
+        'api.retract_review_included_study(text,text,text,text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

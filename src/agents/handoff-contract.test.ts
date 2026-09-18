@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -13,19 +13,63 @@ import {
 } from './agent-task.ts'
 import { taskPayload, TEST_JOB_ID } from './handoff-test-support.ts'
 
-const MIGRATION = 'supabase/migrations/20260928092000_external_agent_handoff.sql'
+const MIGRATIONS = 'supabase/migrations'
+/** Migrasjonen som innførte oppgaveformen og svarformen. */
+const CONTRACT_MIGRATION = `${MIGRATIONS}/20260928092000_external_agent_handoff.sql`
+
+/**
+ * Den gjeldende definisjonen av `workflow.agent_task_contract`.
+ *
+ * Funksjonen erstattes av den migrasjonen som legger til en rolle, så fasiten er
+ * den *siste* definisjonen og ikke den første. Prøven leter etter den framfor å
+ * navngi en fil: en navngitt fil ville pinnet kontrakten mot en utgave som ikke
+ * gjelder lenger, og da ville den vært stille grønn.
+ */
+async function currentContractFunction(): Promise<string> {
+  const files = (await readdir(MIGRATIONS)).filter((name) => name.endsWith('.sql')).sort()
+  let current: string | null = null
+  for (const name of files) {
+    const sql = await readFile(`${MIGRATIONS}/${name}`, 'utf8')
+    // Både den håndskrevne formen (`$$`) og den som er spleiset fra databasens
+    // egen `pg_get_functiondef` (`$function$`). Uten begge ville prøven lest en
+    // eldre utgave av kontrakten og vært stille grønn.
+    const match =
+      /create or replace function workflow\.agent_task_contract[\s\S]*?\$(?:function)?\$;/i.exec(
+        sql,
+      )
+    if (match !== null) {
+      current = match[0]
+    }
+  }
+  expect(current, 'ingen migrasjon definerer workflow.agent_task_contract').not.toBeNull()
+  return current ?? ''
+}
 
 describe('oppgavekontrakten', () => {
-  it('dekker de tre semantiske leddene og ingen kontrollrolle', () => {
+  it('dekker de semantiske leddene og ingen deterministisk kontrollrolle', () => {
     expect([...HANDOFF_ROLES]).toEqual([
       'evidence_extraction',
       'claim_synthesis',
       'evidence_assessment',
+      // Migrasjon 013f: kildeoppdagelsen og den separate kontrollen av
+      // søkedekningen. Begge er faglige avgjørelser — å planlegge et søk og å
+      // vurdere om dekningen holder — og begge går gjennom den samme
+      // kontrakten.
+      'source_discovery',
+      'source_quality_assessment',
+      // Migrasjon 013i: svaret på et behov som hviler på et myndighets-,
+      // preparat- eller retningslinjedokument. Å lese dokumentet og formulere
+      // opplysningen er en faglig vurdering.
+      'monograph_answer',
     ])
-    // De uavhengige kontrolleddene er Antideps egen deterministiske kode. En
+    // De uavhengige *deterministiske* kontrolleddene er Antideps egen kode. En
     // ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en
     // modellvurdering (ANTIDEP_CONSTITUTION.md regel 3).
-    for (const role of ['extraction_verification', 'citation_support_verification']) {
+    for (const role of [
+      'extraction_verification',
+      'citation_support_verification',
+      'monograph_answer_verification',
+    ]) {
       expect(() => handoffContract(role)).toThrow(new RegExp(role))
     }
   })
@@ -46,17 +90,20 @@ describe('oppgavekontrakten', () => {
 // svarformen; denne prøven sier det med navn før det skjer.
 // ----------------------------------------------------------------------------
 describe('kontrakten er den samme som databasens', () => {
-  it('bruker de samme versjonene som migrasjonen', async () => {
-    const sql = await readFile(MIGRATION, 'utf8')
-
+  it('bruker de samme oppgave- og svarformversjonene som migrasjonen', async () => {
+    const sql = await readFile(CONTRACT_MIGRATION, 'utf8')
     expect(sql).toContain(`select '${AGENT_TASK_VERSION}'::text`)
     expect(sql).toContain(`select '${AGENT_ANSWER_VERSION}'::text`)
+  })
+
+  it('bruker de samme promptmal- og svarformversjonene som den gjeldende kontrakten', async () => {
+    const contractFunction = await currentContractFunction()
 
     for (const role of HANDOFF_ROLES) {
       const contract = HANDOFF_CONTRACTS[role]
       const block = new RegExp(
         `when '${role}' then jsonb_build_object\\(\\s*\\n\\s*'prompt_template_version', '([^']+)',\\s*\\n\\s*'output_schema_version', '([^']+)'`,
-      ).exec(sql)
+      ).exec(contractFunction)
       expect(block, `migrasjonen mangler kontrakten for ${role}`).not.toBeNull()
       expect(block?.[1]).toBe(contract.promptTemplateVersion)
       expect(block?.[2]).toBe(contract.outputSchemaVersion)
@@ -64,12 +111,8 @@ describe('kontrakten er den samme som databasens', () => {
   })
 
   it('setter ut nøyaktig de rollene migrasjonen åpner for', async () => {
-    const sql = await readFile(MIGRATION, 'utf8')
-    const contractFunction = /create function workflow\.agent_task_contract[\s\S]*?\$\$;/.exec(sql)
-    expect(contractFunction).not.toBeNull()
-    const roles = [...(contractFunction?.[0] ?? '').matchAll(/when '([a-z_]+)' then/g)].map(
-      (match) => match[1],
-    )
+    const contractFunction = await currentContractFunction()
+    const roles = [...contractFunction.matchAll(/when '([a-z_]+)' then/g)].map((match) => match[1])
     expect(roles.sort()).toEqual([...HANDOFF_ROLES].sort())
   })
 })

@@ -63,8 +63,12 @@ select enum_has_labels(
   'knowledge.source_status kan uttrykke retracted og withdrawn'
 );
 select enum_has_labels(
-  'knowledge', 'source_identifier_system', array['doi', 'pmid'],
-  'knowledge.source_identifier_system dekker DOI og PMID'
+  'knowledge', 'source_identifier_system',
+  -- Migrasjon 013h-i: kildeoppdagelsen registrerer treff med den
+  -- identifikatoren treffet hadde, og uten de tre siste kunne den samme
+  -- myndighetssiden funnet i to utgaver blitt to kilder.
+  array['doi', 'pmid', 'pmcid', 'url', 'registry_id'],
+  'knowledge.source_identifier_system dekker identifikatorene et søketreff kan ha'
 );
 select enum_has_labels(
   'knowledge', 'date_precision', array['year', 'month', 'day'],

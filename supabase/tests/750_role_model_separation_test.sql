@@ -28,17 +28,19 @@ select plan(24);
 select has_table('provenance', 'role_model_assignments',
                  'provenance.role_model_assignments finnes');
 
+-- Fem ledd fra evidenskjeden, fra migrasjon 013e de to kildeleddene, og fra
+-- 013i den deterministiske svarkontrollen.
 select is(
   (select count(*)::int from provenance.role_model_assignments where valid_to is null),
-  5,
-  'de fem skrivende rollene i kjeden har hver sin gyldige tildeling'
+  8,
+  'de åtte skrivende rollene i kjeden har hver sin gyldige tildeling'
 );
 
--- Separasjonen, sett fra dataene: fem roller, fem forskjellige modeller.
+-- Separasjonen, sett fra dataene: åtte roller, åtte forskjellige modeller.
 select is(
   (select count(distinct (provider, model, model_version))::int
    from provenance.role_model_assignments where valid_to is null),
-  5,
+  8,
   'ingen to av dem deler modellidentitet'
 );
 
@@ -77,7 +79,7 @@ select throws_ok(
 select is(
   (select count(*)::int from audit.events e
    where e.operation = 'role_model_assignment_registered'),
-  5,
+  8,
   'hver tildeling etterlot en auditrad'
 );
 select is(

@@ -183,6 +183,17 @@ select results_eq(
            ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
            ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
            ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
+           -- Og migrasjon 013e de to kildeleddene: hver sin identitet og hver
+           -- sin registreringstildeling.
+           ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
+           ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
+           ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
+           ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
+           -- Og migrasjon 013i de to svarleddene: hver sin identitet, og én
+           -- registreringstildeling for den deterministiske svarkontrollen.
+           ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
+           ('agent_identity_registered', 'provenance', 'agent_identities', 'human:peder-holman', null),
+           ('role_model_assignment_registered', 'provenance', 'role_model_assignments', 'human:peder-holman', null),
            ('role_granted', 'workflow', 'user_roles', 'human:peder-holman', 'reviewer')$$,
   'tildelingen legger igjen én auditrad, attribuert til aktøren som tildelte rollen'
 );
