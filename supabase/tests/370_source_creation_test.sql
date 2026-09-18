@@ -382,7 +382,12 @@ select is_empty(
         -- Migrasjon 013m. Oversikten og primærstudiene den inkluderer, slik at
         -- de ikke telles som uavhengige kilder.
         -- Kontrolleres i 950_review_overlap_test.sql.
-        'api.link_review_included_study(text,text,text,text,text,boolean)'
+        'api.link_review_included_study(text,text,text,text,text,boolean)',
+        -- Migrasjon 013r. Tilbaketrekkingen av en inklusjonskobling som viste
+        -- seg å være feil. Uten den ville en feilregistrering vært permanent
+        -- virksom i grupperingen.
+        -- Kontrolleres i 950_review_overlap_test.sql.
+        'api.retract_review_included_study(text,text,text,text,text)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

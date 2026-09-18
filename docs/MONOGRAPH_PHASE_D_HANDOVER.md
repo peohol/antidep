@@ -84,16 +84,18 @@ at de virker mot de ekte tjenestene.
 | Åpne avvik                           | `api.monograph_revision_proposals(<utgave>)`      |
 | Utestående originalmateriale         | `api.monograph_source_requests(<utgave>)`         |
 
-To redaktørveier finnes for overlapp mellom kilder, og de brukes når piloten
+Tre redaktørveier finnes for overlapp mellom kilder, og de brukes når piloten
 oppdager at to publikasjoner handler om det samme deltakerutvalget:
 `api.register_study_report(<referanse>, …)` sier at en artikkel er en rapport om
-en studie, og `api.link_review_included_study(<oversikt>, …)` sier at en
-systematisk oversikt inkluderer en bestemt studie. Begge navngir kilden med en
-DOI, et PubMed-nummer, et forsøksregisternummer eller en entydig tittel — aldri
-med en intern id. Registreres et overlapp mens en synteseoppgave eller
-evidensvurdering står ute, blir den oppgaven foreldet og må hentes ut på nytt;
-det er tilsiktet, og det er nettopp det som hindrer at et svar bygget på en
-dobbelttelt tilstand kommer inn i ettertid.
+en studie, `api.link_review_included_study(<oversikt>, …)` sier at en
+systematisk oversikt inkluderer en bestemt studie, og
+`api.retract_review_included_study(<oversikt>, …)` trekker tilbake en
+inklusjonskobling som viste seg å være feil. Alle navngir kilden med en DOI, et
+PubMed-nummer, et forsøksregisternummer eller en entydig tittel — aldri med en
+intern id. Registreres eller trekkes et overlapp tilbake mens en synteseoppgave
+eller evidensvurdering står ute, blir den oppgaven foreldet og må hentes ut på
+nytt; det er tilsiktet, og det er nettopp det som hindrer at et svar bygget på
+en dobbelttelt tilstand kommer inn i ettertid.
 
 Utgaven har seks atskilte dimensjoner, og de slås aldri sammen: relevans,
 arbeidstilstand, faglig utfall, evidenssikkerhet, aktualitet og kontrollstatus.
@@ -167,7 +169,7 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
 ## 7. Prøvene som viser at flyten virker
 
 ```
-npm run db:test                       # 79 filer, 2977 databaseprøver
+npm run db:test                       # 79 filer, 2992 databaseprøver
 npm run db:test:monograph             # hele forløpet, fersk base
 npm run db:test:monograph:upgrade     # samme forløp oppå en base med innhold
 npm run test                          # flatene og modulene

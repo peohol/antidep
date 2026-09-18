@@ -26,7 +26,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(80);
+select plan(95);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1354,6 +1354,157 @@ select is(
    where a.review_included_study_id = (select id from fixture_950 where name = 'r3-inklusjon')),
   1,
   'alle fire deler tidsstempel: rekkefølgen kunne ikke vært lest av created_at'
+);
+
+-- ===========================================================================
+-- Del 16 — En feilregistrert inklusjon kan trekkes tilbake
+--
+-- Fram til migrasjon 013r kunne den ikke det. Den eneste etterfølgende
+-- tilstanden sporet bar, var sikkerheten — og både `documented` og `uncertain`
+-- betyr operativt at studien fortsatt regnes som inkludert. Viste en kobling
+-- seg å være feil, ble feilregistreringen permanent virksom i grupperingen, og
+-- et reelt uavhengig bidrag ble undertrykt i syntesen og i GRADE-leddet for
+-- alltid.
+--
+-- Her brukes oversikten R3 og primærstudien P fra Del 12: R3 fører P, så P er
+-- avledet-dekket og oversikten teller ikke som eget utvalg. Trekkes koblingen
+-- tilbake, skal oversikten stå som sitt eget utvalg igjen.
+-- ===========================================================================
+select is(
+  (knowledge.study_units_for_evidence((select funn from usikkert))
+     ->> 'independent_units')::integer,
+  1,
+  'med koblingen i kraft teller oversikten ikke som et eget utvalg'
+);
+
+insert into maalt (label, payload)
+select 'for-tilbaketrekking', to_jsonb(knowledge.study_unit_digest((select funn from usikkert)));
+
+insert into maalt (label, payload)
+select 'oppgave-for-tilbaketrekking', workflow.agent_task(j)
+from workflow.pipeline_jobs j where j.id = '95000000-0000-4000-8000-000000000043';
+
+-- En tilbaketrekking av noe som ikke er registrert, er ingen opplysning.
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+select throws_ok(
+  $$select api.retract_review_included_study(
+      'Syntetisk oversikt R3 for 950', 'clinicaltrials_gov', 'NCT00959999',
+      'En studie Antidep ikke kjenner',
+      'Forsøk på å trekke tilbake noe som ikke finnes.')$$,
+  'P0002', null,
+  'en tilbaketrekking av en kobling som ikke finnes, avvises'
+);
+
+insert into maalt (label, payload)
+select 'tilbaketrukket', api.retract_review_included_study(
+  'Syntetisk oversikt R3 for 950', 'clinicaltrials_gov', 'NCT00950090',
+  'Primærstudie P for 950',
+  'Ved kontroll mot vedlegg B fører R3 ikke denne studien i det hele tatt; koblingen var en feilregistrering.');
+reset role;
+
+select is(
+  (select payload ->> 'active' from maalt where label = 'tilbaketrukket'),
+  'false',
+  'redaktøren kan trekke tilbake en kobling som viste seg å være feil'
+);
+
+select is(
+  (select (payload ->> 'included_studies')::integer from maalt where label = 'tilbaketrukket'),
+  0,
+  'og oversikten fører da ingen gjeldende inklusjoner'
+);
+
+-- Dette er hele poenget: det uavhengige bidraget er ikke undertrykt lenger.
+select is(
+  (knowledge.study_units_for_evidence((select funn from usikkert))
+     ->> 'independent_units')::integer,
+  2,
+  'oversikten står som sitt eget utvalg igjen: en feilregistrering undertrykker ikke et reelt bidrag'
+);
+
+select is(
+  (knowledge.study_units_for_evidence((select funn from usikkert))
+     ->> 'derived_reviews')::integer,
+  0,
+  'og ingen enhet er avledet av en kobling som er trukket tilbake'
+);
+
+select isnt(
+  knowledge.study_unit_digest((select funn from usikkert)),
+  (select payload #>> '{}' from maalt where label = 'for-tilbaketrekking'),
+  'avtrykket er et annet etter tilbaketrekkingen'
+);
+
+insert into maalt (label, payload)
+select 'oppgave-etter-tilbaketrekking', workflow.agent_task(j)
+from workflow.pipeline_jobs j where j.id = '95000000-0000-4000-8000-000000000043';
+
+select isnt(
+  (select payload ->> 'request_digest' from maalt where label = 'oppgave-etter-tilbaketrekking'),
+  (select payload ->> 'request_digest' from maalt where label = 'oppgave-for-tilbaketrekking'),
+  'og et svar avgitt før tilbaketrekkingen avvises som foreldet'
+);
+
+select is(
+  (select payload ->> 'job_key' from maalt where label = 'oppgave-etter-tilbaketrekking'),
+  (select payload ->> 'job_key' from maalt where label = 'oppgave-for-tilbaketrekking'),
+  'mens jobbnøkkelen står: en tilbaketrekking lager ingen ny oppgave'
+);
+
+-- Hele historikken består. Tilbaketrekkingen er en ny rad, ikke en sletting.
+select is(
+  (select a.previous_state::text || '->' || a.state::text
+   from knowledge.review_inclusion_assessments a
+   where a.review_included_study_id = (select id from fixture_950 where name = 'r3-inklusjon')
+   order by a.assessment_number desc limit 1),
+  'included->retracted',
+  'tilbaketrekkingen står i sporet med et før og et etter'
+);
+
+select is(
+  (select count(*)::integer from knowledge.review_inclusion_assessments a
+   where a.review_included_study_id = (select id from fixture_950 where name = 'r3-inklusjon')),
+  5,
+  'og de fire tidligere vurderingene står urørt ved siden av den'
+);
+
+select throws_ok(
+  $$update knowledge.review_inclusion_assessments set state = 'included'$$,
+  '23001', null,
+  'sporet kan fortsatt ikke skrives om'
+);
+
+select throws_ok(
+  $$delete from knowledge.review_inclusion_assessments$$,
+  '23001', null,
+  'og fortsatt ikke slettes'
+);
+
+-- Og en tilbaketrekking som selv var feil, kan gjenopprettes — append-only.
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'gjenopprettet', api.link_review_included_study(
+  'Syntetisk oversikt R3 for 950', 'clinicaltrials_gov', 'NCT00950090',
+  'Primærstudie P for 950',
+  'Vedlegg B ble lest på nytt: R3 fører studien likevel, og tilbaketrekkingen var feil.', true);
+reset role;
+
+select is(
+  (select (payload ->> 'active')::text || '/' || (payload ->> 'certain')::text
+   from maalt where label = 'gjenopprettet'),
+  'true/true',
+  'en tilbaketrekking som selv var feil, kan gjenopprettes uten å slette noe'
+);
+
+select is(
+  (knowledge.study_units_for_evidence((select funn from usikkert))
+     ->> 'derived_reviews')::integer,
+  1,
+  'og grupperingen leser koblingen igjen'
 );
 
 select * from finish();

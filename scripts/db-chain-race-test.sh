@@ -1366,7 +1366,7 @@ SQL
 # er umulig. Låsen serialiserer dem, og kjeden i sporet henger sammen.
 # ----------------------------------------------------------------------------
 proeve9() {
-  local navn='to samtidige avklaringer serialiseres, og sporet henger sammen'
+  local navn='en samtidig avklaring og tilbaketrekking serialiseres, og sporet henger sammen'
   local styr="$arbeid/styr9" a_log="$arbeid/a9.log" b_log="$arbeid/b9.log"
   local studie
 
@@ -1416,15 +1416,17 @@ SQL
   done
   grep -q 'KLAR' "$a_log" 2>/dev/null || feil "$navn" 'Økt A kom ikke i gang.' "$a_log"
 
-  # Økt B vil sette den tilbake til usikker, samtidig.
+  # Økt B vil trekke koblingen tilbake, samtidig. Tilstandsendringen går samme
+  # vei som sikkerhetsendringen, og skal ha det samme vernet.
   psql "$DB_URL" -X -v ON_ERROR_STOP=1 > "$b_log" 2>&1 <<SQL &
 begin;
 set local statement_timeout = '30s';
 select knowledge.link_review_included_study(
   '$oversikt2', '$studie',
-  'Kappløpsprøve: økt B mener inklusjonen fortsatt er usikker.',
+  'Kappløpsprøve: økt B mener oversikten ikke fører studien i det hele tatt.',
   'uncertain'::knowledge.study_link_certainty,
-  (select id from provenance.actors where actor_key = 'human:peder-holman'), null);
+  (select id from provenance.actors where actor_key = 'human:peder-holman'), null,
+  'retracted'::knowledge.review_inclusion_state);
 commit;
 SQL
   okt_b_pid=$!
@@ -1440,26 +1442,27 @@ SQL
   okt_b_pid=""
   rm -f "$styr"
 
-  [ "$b_status" -eq 0 ] || feil "$navn" 'Den andre avklaringen feilet.' "$b_log"
+  [ "$b_status" -eq 0 ] || feil "$navn" 'Den andre endringen feilet.' "$b_log"
 
-  # To vurderinger, nummerert 1 og 2, og kjeden henger sammen: den andre gikk ut
-  # fra det den første landet på.
+  # To vurderinger, nummerert 1 og 2, og kjeden henger sammen på begge aksene:
+  # den andre gikk ut fra det den første landet på.
   local kjede
   kjede=$(les "select string_agg(
-                 a.assessment_number || ':' || a.previous_certainty || '->' || a.certainty,
+                 a.assessment_number || ':' || a.previous_certainty || '->' || a.certainty
+                   || '/' || a.previous_state || '->' || a.state,
                  ' ' order by a.assessment_number)
                from knowledge.review_inclusion_assessments a
                join knowledge.review_included_studies ri on ri.id = a.review_included_study_id
                where ri.review_source_id = '$oversikt2'")
-  [ "$kjede" = "1:uncertain->documented 2:documented->uncertain" ] || feil "$navn" \
-    "Sporet henger ikke sammen: «$kjede»."
+  [ "$kjede" = "1:uncertain->documented/included->included 2:documented->uncertain/included->retracted" ] \
+    || feil "$navn" "Sporet henger ikke sammen: «$kjede»."
 
-  local gjeldende
-  gjeldende=$(les "select knowledge.review_inclusion_certainty(ri.id)
-                   from knowledge.review_included_studies ri
-                   where ri.review_source_id = '$oversikt2'")
-  [ "$gjeldende" = "uncertain" ] || feil "$navn" \
-    "Den gjeldende sikkerheten er «$gjeldende», ikke det den siste avklaringen sa."
+  local aktiv
+  aktiv=$(les "select knowledge.review_inclusion_active(ri.id)
+               from knowledge.review_included_studies ri
+               where ri.review_source_id = '$oversikt2'")
+  [ "$aktiv" = "f" ] || feil "$navn" \
+    'Koblingen gjelder fortsatt, selv om den siste endringen trakk den tilbake.'
 
   printf 'ok       %s\n' "$navn"
 }
