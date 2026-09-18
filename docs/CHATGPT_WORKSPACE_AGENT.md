@@ -136,9 +136,9 @@ opplysninger hver for seg:
 **Hvis plattformen ikke pinner modellen**, sett `platform_model_disclosure` til
 `not_exposed` når du registrerer kjøreren. Antidep hevder da ikke at
 separasjonen er bevist av plattformen. Den hviler på at hvert ledd er sin egen
-Workspace Agent med sin egen instruks, sin egen kontekst og sin egen
-legitimasjon i Antidep — og det er nøyaktig så mye som skal hevdes, hverken mer
-eller mindre.
+rolle med sin egen instruks og sin egen rollebundne legitimasjon, og at arbeidet
+utføres som en egen kjøring — og det er nøyaktig så mye som skal hevdes, hverken
+mer eller mindre.
 
 Oppgi det samme, sanne modellnavnet for de leddene som faktisk kjører den samme
 modellen. Ikke skriv to forskjellige navn på det du vet er den samme modellen:

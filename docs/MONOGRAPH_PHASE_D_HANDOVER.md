@@ -58,16 +58,18 @@ er innført i fase C. Nedlast/opplast-veien (`npm run ops:agents -- export-task`
 
 **ChatGPT kan lede piloten uten å godkjenne sitt eget arbeid.** Det er ikke en
 høflighetsregel, det er en databasegrense: den separate dekningskontrollen er et
-annet ledd med sin egen identitet og sin egen Workspace Agent enn
-kildeoppdagelsen, sluttkontrollen krever et navngitt menneske med
-reviewer-mandat, og publiseringen krever et *annet* menneske med
-publisher-mandat. Ingen agent kan attestere at et menneske har vurdert innhold.
+annet ledd, med sin egen rolle, sin egen instruks og sin egen rollebundne
+legitimasjon, og den kan ikke godta en dekning den ikke selv har søkt etter.
+Sluttkontrollen krever et navngitt menneske med reviewer-mandat, og
+publiseringen krever et *annet* menneske med publisher-mandat. Ingen agent kan
+attestere at et menneske har vurdert innhold.
 
-Grensen er en annen runde under en annen legitimasjon, ikke en annen
-modellvekt — de to leddene kan godt kjøre den samme modellen. Det er en svakere
-påstand enn den forrige utgaven av dette dokumentet gjorde, og den er den sanne:
-plattformen viser normalt ikke hvilken modell en Workspace Agent kjører, så
-Antidep kunne uansett aldri kontrollere at to oppgitte navn var to modeller.
+Grensen er en egen kjøring i en egen rolle — ikke en annen modell, og ikke en
+annen Workspace Agent. De to leddene kan godt kjøre den samme modellen, og godt
+være den samme agentkonfigurasjonen. Det er en svakere påstand enn den forrige
+utgaven av dette dokumentet gjorde, og den er den sanne: plattformen viser
+normalt ikke hvilken modell en Workspace Agent kjører, så Antidep kunne uansett
+aldri kontrollere at to oppgitte navn var to modeller.
 
 De to driftskommandoene som faktisk utfører søk og innhenting:
 
