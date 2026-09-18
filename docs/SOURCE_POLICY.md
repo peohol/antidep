@@ -123,7 +123,12 @@ Modellseparasjon og deterministiske kontroller beholdes som prosjektgrenser, men
 
 En oversikt og de inkluderte primærstudiene er heller ikke uavhengige bekreftelser. Ved bruk av flere oversikter må overlapp i studier vurderes. Velg et begrunnet syntesegrunnlag, og ikke summer deltakere eller gjennomsnittsberegn estimater på tvers av overlappende materiale. Ved oppdatering med nye studier må det skilles mellom en narrativ oppdatering og en ny statistisk metaanalyse. Den siste krever en egen dokumentert analyse, ikke regning gjort i løpende generert tekst.
 
-Kravet er implementert, og på to nivåer. `knowledge.study_reports` bærer rapportene om én studie, og `knowledge.review_included_studies` bærer overlappet gjennom en oversikt — en egen tabell, fordi relasjonen er mange-til-mange og rapportkoblingen med rette håndhever at én kilde hører til høyst én studie. `knowledge.study_units_for_evidence(uuid[])` slår sammen begge, transitivt: inkluderer en oversikt to primærstudier som begge er i grunnlaget, er alle tre én enhet og ikke tre. Sammenslåingen går alltid i retning *færre* uavhengige enheter — et overlapp Antidep ikke kjenner, får grunnlaget til å se sterkere ut enn det er.
+Kravet er implementert, og på to nivåer. `knowledge.study_reports` bærer rapportene om én studie, og `knowledge.review_included_studies` bærer overlappet gjennom en oversikt — en egen tabell, fordi relasjonen er mange-til-mange og rapportkoblingen med rette håndhever at én kilde hører til høyst én studie. `knowledge.study_units_for_evidence(uuid[])` leser begge, og holder to forhold fra hverandre:
+
+- **Avledet oversikt.** Inkluderer en oversikt i grunnlaget en studie som *selv* er i grunnlaget, er oversikten et sammendrag av noe som allerede er lagt fram. Den beholder funnene sine og sier hvilke enheter den er avledet av, men teller ikke som et eget deltakerutvalg. Primærstudiene står fortsatt hver for seg: at en oversikt nevner A og B, gjør ikke A og B til det samme utvalget.
+- **Overlappende oversikter.** To oversikter som deler en inkludert studie, uten at noen rapport om den studien er lagt fram, bærer de samme deltakerne og er derfor én enhet. Det er en nedre grense for uavhengighet og ikke et presist tall, men det er retningen som aldri lar «to oversikter er enige» se ut som to uavhengige bekreftelser.
+
+Sammenslåing brukes altså bare der de samme deltakerne faktisk ville blitt talt to ganger. To primærstudier slås aldri sammen.
 
 Identiteten til en studie er paret (register, nummer), og registeret utledes av nummerets egen form. Uten den utledningen ville kildeoppdagelsens «other» og redaktørens «clinicaltrials_gov» om det samme NCT-nummeret blitt to studier, og vernet uten virkning. Både synteseoppgaven og evidensvurderingen er *bundet* til uavhengighetsstrukturen: registreres et overlapp etter at oppgaven ble hentet ut, blir et svar avgitt på den gamle strukturen avvist som foreldet.
 
@@ -187,7 +192,7 @@ Vanlige faglige uenigheter søkes løst og fremstilt av agentkjeden. Det som esk
 Dette dokumentet implementerer ingen agent, database eller brukerflate. Den neste tekniske leveransen må likevel kunne bevise følgende med kontrollerte testtilfeller og deretter en reell pilot:
 
 1. Én virkestoffbestilling lager relevante kunnskapsbehov og søkeoppgaver uten en menneskevalgt artikkel.
-2. En kilde kan brukes til flere behov, mens samme studie ikke dobbelttelles via flere rapporter/oversikter. Prøvd i `supabase/tests/940_study_identity_test.sql` (flere rapporter om én studie) og `supabase/tests/950_review_overlap_test.sql` (oversikt og primærstudier).
+2. En kilde kan brukes til flere behov, mens samme studie ikke dobbelttelles via flere rapporter/oversikter. Prøvd i `supabase/tests/940_study_identity_test.sql` (flere rapporter om én studie) og `supabase/tests/950_review_overlap_test.sql` (avledet oversikt, to overlappende oversikter, og en studie som først bare hadde et navn).
 3. Feil original, manglende tabell, utilgjengelig avgjørende fulltekst og avkortet søk gir riktig stopp, ikke «ingen evidens».
 4. Norsk regulatorisk faktagrunnlag, forskningssyntese og attribuert faglig råd holdes atskilt; nye representasjonsformer har faktisk kontrollert støtte før bruk.
 5. En motkilde kan endre et foreløpig svar. Ny evidens gir et nytt utkast til eksisterende svar uten skjult publisering.

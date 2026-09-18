@@ -88,8 +88,10 @@ select set_eq(
            ('monograph_source_use_revocations'),
            -- Migrasjon 013m: overlappet mellom en systematisk oversikt og
            -- primærstudiene den inkluderer.
-           ('review_included_studies')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j, 013k og 013m'
+           ('review_included_studies'),
+           -- Migrasjon 013n: da en studie uten registernummer fikk ett.
+           ('study_identity_upgrades')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j, 013k, 013m og 013n'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok

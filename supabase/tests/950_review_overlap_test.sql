@@ -26,7 +26,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(26);
+select plan(41);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -72,6 +72,7 @@ values ('95000000-0000-4000-8000-00000000000a', 'editor', null, now() - interval
         'ac950000-0000-4000-8000-00000000000a', 'Editor-tildeling for 950.');
 
 create temporary table maalt (label text primary key, payload jsonb) on commit drop;
+create temporary table fixture_950 (name text primary key, id uuid not null) on commit drop;
 grant select, insert on maalt to authenticated;
 
 -- Oversikten er en artikkel som alle andre. Kildetypen sier hva dokumentet er,
@@ -330,18 +331,28 @@ select is(
 -- ===========================================================================
 -- Del 6 — Nå ser grunnlaget ut som det er
 -- ===========================================================================
+-- Dette er hele skillet. Oversikten legger ikke til et deltakerutvalg — men den
+-- gjør heller ikke de to primærstudiene til det samme utvalget. At en oversikt
+-- nevner A og B, sier ingenting om at A og B deler deltakere.
 select is(
   (knowledge.study_units_for_evidence((select funn from grunnlag))
      ->> 'independent_units')::integer,
+  2,
+  'oversikten teller ikke som et eget utvalg, og primærstudiene står fortsatt hver for seg: to uavhengige enheter'
+);
+
+select is(
+  (knowledge.study_units_for_evidence((select funn from grunnlag))
+     ->> 'derived_reviews')::integer,
   1,
-  'oversikten og de to primærstudiene er ett deltakerutvalg, og ikke tre'
+  'og oversikten står som avledet av grunnlaget den er et sammendrag av'
 );
 
 select is(
   (knowledge.study_units_for_evidence((select funn from grunnlag))
      ->> 'review_overlaps')::integer,
-  1,
-  'og enheten er merket med at sammenslåingen kom av et oversiktsoverlapp'
+  0,
+  'ingen enheter er slått sammen: sammenslåing brukes bare der de samme deltakerne faktisk telles to ganger'
 );
 
 select is(
@@ -351,13 +362,25 @@ select is(
   'grupperingen sletter ingenting: alle tre funnene står fortsatt i grunnlaget'
 );
 
+-- Den avledede enheten sier hvilke enheter den er et sammendrag av. Uten det
+-- ville leseren sett at den ikke teller, men ikke hvorfor.
 select is(
   (select count(*)::integer
    from jsonb_array_elements(
           knowledge.study_units_for_evidence((select funn from grunnlag)) -> 'units') as u(value),
-        jsonb_array_elements(u.value -> 'studies')),
+        jsonb_array_elements(u.value -> 'derives_from')
+   where u.value ->> 'role' = 'derived_review'),
   2,
-  'og enheten oppgir begge de registrerte studiene den hviler på, framfor å velge ett navn'
+  'og den avledede oversikten navngir begge primærstudiene den bygger på'
+);
+
+select is(
+  (select count(*)::integer
+   from jsonb_array_elements(
+          knowledge.study_units_for_evidence((select funn from grunnlag)) -> 'units') as u(value)
+   where (u.value ->> 'independent')::boolean),
+  2,
+  'nøyaktig to av de tre enhetene er uavhengige, og det er de to primærstudiene'
 );
 
 -- ===========================================================================
@@ -392,14 +415,14 @@ select is(
 select is(
   (select (payload -> 'input' -> 'study_units' ->> 'independent_units')::integer
    from maalt where label = 'syntese-etter'),
-  1,
-  'og den nye oppgaven viser én enhet der den gamle viste tre'
+  2,
+  'og den nye oppgaven viser to uavhengige utvalg der den gamle viste tre'
 );
 
 select is(
   (select (payload -> 'input' -> 'study_units' ->> 'independent_units')::integer
    from maalt where label = 'vurdering-etter'),
-  1,
+  2,
   'også for evidensvurderingen'
 );
 
@@ -446,6 +469,243 @@ select throws_ok(
   'og en oversikt kan ikke inkludere den studien den selv er en rapport om'
 );
 reset role;
+
+-- ===========================================================================
+-- Del 9 — To oversikter som deler en studie ingen har lagt fram
+--
+-- Fram til migrasjon 013n krevde kanten at den delte primærstudien selv var en
+-- enhet i grunnlaget. Hviler grunnlaget på to oversikter som begge inkluderer
+-- studie S, uten at noen rapport om S er valgt, fantes ingen kant — og de to
+-- sto som to uavhengige bekreftelser. SOURCE_POLICY.md §7 sier uttrykkelig at
+-- overlapp må vurderes ved bruk av flere oversikter.
+-- ===========================================================================
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+values
+  ('95000000-0000-4000-8000-000000000004', 'journal_article',
+   'Syntetisk oversikt R1 for 950', 'Testforfatter R1 mfl.',
+   pg_temp.owner_actor_id()),
+  ('95000000-0000-4000-8000-000000000005', 'journal_article',
+   'Syntetisk oversikt R2 for 950', 'Testforfatter R2 mfl.',
+   pg_temp.owner_actor_id()),
+  ('95000000-0000-4000-8000-000000000006', 'journal_article',
+   'Syntetisk hovedartikkel for den navngitte studien 950', 'Testforfatter N mfl.',
+   pg_temp.owner_actor_id());
+
+insert into knowledge.source_versions
+  (id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
+   representation, retrieved_by_actor_id, document_sha256, document_byte_size,
+   document_media_type, text_extraction_tool, text_extraction_tool_version,
+   text_extraction_arguments, text_extraction_transform)
+select v.id::uuid, v.source_id::uuid, now(), v.url,
+       knowledge.source_version_content_hash(v.text),
+       'private://syntetisk-950/' || v.id || '.pdf',
+       'full_text', pg_temp.owner_actor_id(),
+       pg_temp.synthetic_pdf_digest(v.id),
+       octet_length(pg_temp.synthetic_pdf(v.id)),
+       'application/pdf', 'pdftotext', '24.02.0',
+       '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
+from (values
+  ('95000000-0000-4000-8000-000000000024', '95000000-0000-4000-8000-000000000004',
+   'https://example.test/950-r1', 'Oversikt R1 for 950.'),
+  ('95000000-0000-4000-8000-000000000025', '95000000-0000-4000-8000-000000000005',
+   'https://example.test/950-r2', 'Oversikt R2 for 950.'),
+  ('95000000-0000-4000-8000-000000000026', '95000000-0000-4000-8000-000000000006',
+   'https://example.test/950-n', 'Hovedartikkelen for den navngitte studien.')
+) as v(id, source_id, url, text);
+
+insert into knowledge.evidence_items
+  (id, source_id, source_version_id, design_code, population_availability,
+   population_id, population_detail, sample_size_availability, intervention_drug_id,
+   comparator_kind, outcome_concept_id, outcome_detail, timepoint_availability,
+   reported_direction, estimate_availability, confidence_interval_availability,
+   source_locator, extraction_method, created_by_actor_id)
+select v.id::uuid, v.source_id::uuid, v.version_id::uuid,
+       'randomized_controlled_trial', 'reported_value',
+       (select id from catalog.populations
+        where canonical_label = 'voksne med depressiv lidelse'),
+       'Voksne med depressiv lidelse.', 'not_reported',
+       (select id from catalog.drugs where canonical_name = 'sertralin'),
+       'none',
+       (select id from catalog.clinical_concepts where canonical_label = 'vektendring'),
+       'Vektendring ved endepunkt.', 'not_reported', 'no_clear_difference',
+       'not_reported', 'not_reported', 'Tabell 1', 'manual',
+       pg_temp.owner_actor_id()
+from (values
+  ('95000000-0000-4000-8000-000000000034', '95000000-0000-4000-8000-000000000004',
+   '95000000-0000-4000-8000-000000000024'),
+  ('95000000-0000-4000-8000-000000000035', '95000000-0000-4000-8000-000000000005',
+   '95000000-0000-4000-8000-000000000025'),
+  ('95000000-0000-4000-8000-000000000036', '95000000-0000-4000-8000-000000000006',
+   '95000000-0000-4000-8000-000000000026')
+) as v(id, source_id, version_id);
+
+create temporary view oversiktsgrunnlag as
+select array['95000000-0000-4000-8000-000000000034'::uuid,
+             '95000000-0000-4000-8000-000000000035'::uuid] as funn;
+
+-- Før overlappet er registrert, ser de to oversiktene ut som to uavhengige
+-- bekreftelser.
+select is(
+  (knowledge.study_units_for_evidence((select funn from oversiktsgrunnlag))
+     ->> 'independent_units')::integer,
+  2,
+  'to oversikter uten registrert overlapp står som to enheter'
+);
+
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'r1-deler', api.link_review_included_study(
+  'Syntetisk oversikt R1 for 950', 'clinicaltrials_gov', 'NCT00950050',
+  'Den delte primærstudien for 950',
+  'R1 fører NCT00950050 i tabellen over inkluderte studier.', true);
+
+insert into maalt (label, payload)
+select 'r2-deler', api.link_review_included_study(
+  'Syntetisk oversikt R2 for 950', 'clinicaltrials_gov', 'NCT00950050',
+  'Den delte primærstudien for 950',
+  'R2 fører den samme NCT00950050 i tabellen over inkluderte studier.', true);
+reset role;
+
+-- Ingen rapport om NCT00950050 er lagt fram. Overlappet må virke likevel.
+select is(
+  (select count(*)::integer from knowledge.study_reports r
+   join knowledge.studies s on s.id = r.study_id
+   where s.registry_id = 'NCT00950050'),
+  0,
+  'ingen har lagt fram artikkelen om den delte studien'
+);
+
+select is(
+  (knowledge.study_units_for_evidence((select funn from oversiktsgrunnlag))
+     ->> 'independent_units')::integer,
+  1,
+  'men de to oversiktene bærer de samme deltakerne, og er derfor én enhet og ikke to'
+);
+
+select is(
+  (knowledge.study_units_for_evidence((select funn from oversiktsgrunnlag))
+     ->> 'review_overlaps')::integer,
+  1,
+  'og overlappet er synlig som det det er'
+);
+
+select is(
+  (knowledge.study_units_for_evidence((select funn from oversiktsgrunnlag))
+     ->> 'evidence_items')::integer,
+  2,
+  'begge funnene står fortsatt i grunnlaget'
+);
+
+-- ===========================================================================
+-- Del 10 — En studie som først var navngitt, og senere fikk et registernummer
+--
+-- En oversikt kan liste en studie lenge før noen legger fram artikkelen om den.
+-- Kommer artikkelen senere med både navnet og nummeret, må det bli den samme
+-- studien. Fram til migrasjon 013n gikk oppslaget bare på paret
+-- (register, nummer), så det ble en rad til — og da pekte oversiktskoblingen på
+-- den ene og rapporten på den andre, slik at overlappet var uten virkning.
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'navngitt-inklusjon', api.link_review_included_study(
+  'Syntetisk oversikt R1 for 950', null, null,
+  'Studien som bare hadde et navn i 950',
+  'R1 fører studien bare med forfatter og år; oversikten oppgir intet registernummer.', true);
+reset role;
+
+select is(
+  (select count(*)::integer from knowledge.studies s
+   where s.registry_kind is null
+     and s.label = 'Studien som bare hadde et navn i 950'),
+  1,
+  'oversikten kan registrere en inkludert studie som bare har et navn'
+);
+
+insert into fixture_950 (name, id)
+select 'navngitt-studie', ri.study_id
+from knowledge.review_included_studies ri
+join knowledge.studies s on s.id = ri.study_id
+where s.label = 'Studien som bare hadde et navn i 950';
+
+-- Hovedartikkelen kommer, med det samme navnet og et registernummer.
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'navngitt-rapport', api.register_study_report(
+  'Syntetisk hovedartikkel for den navngitte studien 950',
+  'clinicaltrials_gov', 'NCT00950060',
+  'Studien som bare hadde et navn i 950', 'primary_report',
+  'Artikkelen oppgir NCT00950060, og er hovedrapporten om studien oversikten førte med navn.', true);
+reset role;
+
+select is(
+  (select r.study_id from knowledge.study_reports r
+   where r.source_id = '95000000-0000-4000-8000-000000000006'),
+  (select id from fixture_950 where name = 'navngitt-studie'),
+  'artikkelen lander på den studien oversikten alt hadde registrert, og ikke på en ny'
+);
+
+select is(
+  (select s.registry_kind || ':' || s.registry_id from knowledge.studies s
+   where s.id = (select id from fixture_950 where name = 'navngitt-studie')),
+  'clinicaltrials_gov:NCT00950060',
+  'og den navngitte studien bærer nå registernummeret sitt'
+);
+
+select is(
+  (select count(*)::integer from knowledge.study_identity_upgrades u
+   where u.study_id = (select id from fixture_950 where name = 'navngitt-studie')),
+  1,
+  'oppgraderingen er ført som en egen opplysning, med grunnlaget og hvem som sto bak'
+);
+
+select ok(
+  (select num_nonnulls(u.upgraded_by_actor_id, u.upgraded_by_agent_run_id) = 1
+     and length(u.basis) > 20
+   from knowledge.study_identity_upgrades u
+   where u.study_id = (select id from fixture_950 where name = 'navngitt-studie')),
+  'med nøyaktig én proveniens: en sammenslåing ingen står bak, kan ikke etterprøves'
+);
+
+-- Og nå virker overlappet: oversikten er avledet av studien den listet.
+select is(
+  (knowledge.study_units_for_evidence(array[
+     '95000000-0000-4000-8000-000000000034'::uuid,
+     '95000000-0000-4000-8000-000000000036'::uuid])
+     ->> 'derived_reviews')::integer,
+  1,
+  'oversikten er nå avledet av den studien den listet med navn: koblingen virker'
+);
+
+-- Men et navn som ikke er entydig, slås ikke sammen. To studier uten
+-- registernummer kan hete det samme, og da ville en sammenslåing knyttet
+-- nummeret til feil studie.
+insert into knowledge.studies (id, registry_kind, registry_id, label, created_by_actor_id)
+values
+  ('95000000-0000-4000-8000-0000000000e1', null, null,
+   'Tvetydig navn i 950', pg_temp.owner_actor_id()),
+  ('95000000-0000-4000-8000-0000000000e2', null, null,
+   'tvetydig navn i 950', pg_temp.owner_actor_id());
+
+select throws_ok(
+  format($$select knowledge.find_or_create_study(
+    'clinicaltrials_gov', 'NCT00950070', 'Tvetydig navn i 950', %L, null)$$,
+    'ac950000-0000-4000-8000-00000000000a'),
+  '23001', null,
+  'et navn som treffer to studier uten registernummer, slås ikke sammen — det avvises'
+);
+
+select is(
+  (select count(*)::integer from knowledge.studies s
+   where s.registry_id = 'NCT00950070'),
+  0,
+  'og ingen studie ble opprettet på veien ut: avslaget etterlater ingen halv identitet'
+);
 
 select * from finish();
 rollback;
