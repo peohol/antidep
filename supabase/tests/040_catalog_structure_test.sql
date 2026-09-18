@@ -85,8 +85,11 @@ select set_eq(
            ('monograph_edition_candidates'), ('monograph_publication_events'),
            -- Migrasjon 013k: forkastingen av en godkjent kildebruk, bevart som
            -- en ny opplysning framfor som en sletting.
-           ('monograph_source_use_revocations')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j og 013k'
+           ('monograph_source_use_revocations'),
+           -- Migrasjon 013m: overlappet mellom en systematisk oversikt og
+           -- primærstudiene den inkluderer.
+           ('review_included_studies')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j, 013k og 013m'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok

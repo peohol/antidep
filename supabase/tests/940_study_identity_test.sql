@@ -17,7 +17,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(23);
+select plan(27);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -337,6 +337,78 @@ select throws_ok(
   'en kliniker uten redaktørmandat kan ikke koble en rapport til en studie'
 );
 reset role;
+
+-- ===========================================================================
+-- Del 6 — Tittelen er ikke en identitet (migrasjon 013m)
+-- ===========================================================================
+-- Redaktørveien slo opp kilden på tittel og tok den eldste. To artikler med
+-- samme tittel ga da en stille feilkobling, og en feilkobling er nettopp det
+-- som lager en dobbelttelling. Nå avvises det tvetydige oppslaget, og
+-- referansen kan i stedet være identifikatoren kilden faktisk har.
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+values
+  ('94000000-0000-4000-8000-000000000004', 'journal_article',
+   -- Med vilje den samme tittelen som kilde 3.
+   'Syntetisk uavhengig studie for 940', 'Testforfatter C mfl.',
+   (select id from fixture where name = 'owner')),
+  ('94000000-0000-4000-8000-000000000005', 'journal_article',
+   'Syntetisk registeroppføring for 940', 'Testregister',
+   (select id from fixture where name = 'owner'));
+
+insert into knowledge.source_identifiers (source_id, identifier_system, identifier_value)
+values
+  ('94000000-0000-4000-8000-000000000004', 'doi', '10.9400/940-d'),
+  ('94000000-0000-4000-8000-000000000005', 'registry_id', 'NCT00940945');
+
+select set_config('request.jwt.claims',
+                  '{"sub":"94000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+
+select throws_ok(
+  $$select api.register_study_report(
+      'Syntetisk uavhengig studie for 940', null, null, 'Noe nytt',
+      'primary_report', 'To kilder har denne tittelen.', true)$$,
+  '23001', null,
+  'et titteloppslag som treffer to kilder, avvises framfor å gjette på den eldste'
+);
+
+select throws_ok(
+  $$select api.register_study_report(
+      'doi:10.9400/finnes-ikke', null, null, 'Noe nytt',
+      'primary_report', 'En identifikator Antidep ikke har.', true)$$,
+  'P0002', null,
+  'og en identifikator Antidep ikke har, gir et tydelig avslag og ingen kobling'
+);
+
+-- DOI-en skrives med store bokstaver med vilje: normaliseringen er den samme
+-- som kildeoppdagelsen bruker, ellers ville redaktøren ikke funnet igjen det
+-- Antidep alt har registrert.
+insert into svar (label, payload)
+select 'doi-oppslag', api.register_study_report(
+  'doi:10.9400/940-D', null, null, 'Syntetisk studie uten register for 940',
+  'primary_report', 'Artikkelen er hovedrapporten om denne studien.', true);
+
+-- Referansen er et bart forsøksregisternummer: formen sier selv hva det er.
+insert into svar (label, payload)
+select 'register-oppslag', api.register_study_report(
+  'nct00940945', 'other', 'NCT00940945', 'Syntetisk registerstudie for 940',
+  'registry_record', 'Oppføringen er registerets egen post om studien.', true);
+reset role;
+
+select is(
+  (select r.source_id from knowledge.study_reports r
+   where r.source_id = '94000000-0000-4000-8000-000000000004'),
+  '94000000-0000-4000-8000-000000000004'::uuid,
+  'kilden kan navngis med DOI-en sin, uansett skrivemåte'
+);
+
+-- Kalleren sa «other». Formen på nummeret sier «clinicaltrials_gov», og det er
+-- formen som avgjør: ellers ville det samme forsøket blitt to studier.
+select is(
+  (select payload ->> 'registry' from svar where label = 'register-oppslag'),
+  'clinicaltrials_gov:NCT00940945',
+  'og et bart registernummer slår opp kilden og retter registeret nummeret hører til'
+);
 
 select * from finish();
 rollback;

@@ -2,7 +2,7 @@
 # Monografien lagt oppå en base som alt har innhold.
 #
 # Den tomme basen prøves av `npm run db:test` og `npm run db:test:monograph`.
-# Denne prøven svarer på det andre spørsmålet: tåler de tolv monografi-
+# Denne prøven svarer på det andre spørsmålet: tåler monografi-
 # migrasjonene en base der kjeden alt har kjørt, og der det alt står en
 # *publisert* påstand om det samme virkestoffet og det samme temaet monografien
 # skal svare på?
@@ -14,7 +14,7 @@
 #      kildeversjoner, evidens, kontroller, en påstand og en publisering. Den
 #      påstanden er sertralin + vektendring.
 #   3. Alt telles og avtrykkes.
-#   4. De tolv migrasjonene kjøres.
+#   4. Monografimigrasjonene kjøres.
 #   5. Ingenting fra før skal ha flyttet seg: samme rader, samme innholds-
 #      avtrykk, samme publiseringspeker, samme revisjonshistorikk. Den gamle
 #      påstanden skal ha fått `monograph_need_id is null` og ikke en oppdiktet
@@ -150,7 +150,7 @@ assert_ne "$PUBLISHED_CLAIMS_BEFORE" '0' \
 printf '  3/7  avtrykk av %s påstand(er), %s revisjoner, %s evidensfunn, %s revisjonslenker.\n' \
   "$CLAIMS_BEFORE" "$REVISIONS_BEFORE" "$EVIDENCE_BEFORE" "$LINKS_BEFORE"
 
-printf '  4/7  kjører de tolv monografi-migrasjonene …\n'
+printf '  4/7  kjører monografi-migrasjonene …\n'
 if ! npx --no-install supabase migration up --local >"$TMP_DIR/up.log" 2>&1; then
   tail -60 "$TMP_DIR/up.log" >&2
   fail 'monografi-migrasjonene lot seg ikke legge oppå en base med innhold'

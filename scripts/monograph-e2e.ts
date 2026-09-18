@@ -149,6 +149,24 @@ async function call(
   return data
 }
 
+/**
+ * Kaller og forventer et avslag. Returnerer meldingen, eller tom streng når
+ * kallet gikk gjennom — en prøve som ikke kan skille et avslag fra et
+ * gjennomslag, prøver ingenting.
+ */
+async function rejected(
+  actor: Client,
+  name: string,
+  args: Record<string, unknown> = {},
+): Promise<string> {
+  try {
+    await call(actor, name, args)
+    return ''
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -997,7 +1015,7 @@ async function main(): Promise<void> {
 
   const studyLink = record(
     await call(editor, 'register_study_report', {
-      p_source_title: ARTICLE_TITLE,
+      p_source_reference: ARTICLE_TITLE,
       p_registry_kind: 'clinicaltrials_gov',
       p_registry_id: `NCT${RUN.slice(0, 8)}`,
       p_study_label: `Syntetisk studie for kjedeprøven ${RUN}`,
@@ -1024,42 +1042,74 @@ async function main(): Promise<void> {
     'og grunnlaget bærer studien etterpå, uten at funnet er blitt borte',
     Number(unitsAfter['independent_units'] ?? 0) === 1 &&
       Number(unitsAfter['evidence_items'] ?? 0) === 1 &&
-      record(rows(unitsAfter['units'])[0]?.['study'])['registry'] === studyLink['registry'],
+      record(rows(rows(unitsAfter['units'])[0]?.['studies'])[0])['registry'] ===
+        studyLink['registry'],
     JSON.stringify(unitsAfter),
+  )
+
+  // --------------------------------------------------------------------
+  // 9c. Og koblingen gjør det utestående svaret foreldet
+  //
+  // Grupperingen ligger i *bindingen* og ikke bare i materialet. Uten det
+  // kunne et svar bygget på den dobbelttelte tilstanden — to rapporter lest
+  // som to uavhengige utvalg — blitt registrert i ettertid, og grunnlaget
+  // ville sett sterkere ut enn det er (SOURCE_POLICY.md §7).
+  // --------------------------------------------------------------------
+  const synthesisResult = {
+    claim: {
+      statement:
+        'Sertralin er forbundet med en gjennomsnittlig vektøkning på 1,0 % ved endepunkt hos voksne med depressiv lidelse.',
+      scope: 'Voksne med depressiv lidelse, 26–32 uker.',
+      comparator_kind: 'none',
+      population_id: populationId,
+      timeframe_min: '26 weeks',
+      timeframe_max: '32 weeks',
+      direction: 'increase',
+      magnitude_measure: 'mean_change',
+      magnitude_value: '1.0',
+      magnitude_unit: 'percent',
+      uncertainty_summary:
+        'Ett funn fra én syntetisk studie; presisjonen er rapportert som et 95 % konfidensintervall.',
+    },
+    // Hvert funn oppgaven avgrenset, skal ha en relasjon til påstanden —
+    // også et som motsier den. Et utelatt funn ville gjort grunnlaget til
+    // et annet enn det som finnes.
+    evidence_links: synthesisEvidence.map((id) => ({
+      evidence_item_id: id,
+      relationship_type: 'supports',
+      directness: 'direct',
+      relevance_note: 'Funnet måler nøyaktig utfallet påstanden gjelder.',
+    })),
+  }
+
+  const staleAnswer = await rejected(editor, 'import_agent_answer', {
+    p_pipeline_job_id: synthesisJob,
+    p_answer: answerFor(synthesisTask, synthesisResult, serviceFor('claim_synthesis')),
+  })
+  check(
+    'et synteseutkast avgitt før studiekoblingen ble registrert, avvises som foreldet',
+    staleAnswer.length > 0,
+    staleAnswer,
+  )
+
+  const synthesisTaskAfter = parseAgentTask(
+    await call(editor, 'agent_task_payload', { p_pipeline_job_id: synthesisJob }),
+  )
+  check(
+    'og den nye utleveringen er den samme oppgaven med et nytt forespørselsavtrykk',
+    synthesisTaskAfter.jobKey === synthesisTask.jobKey &&
+      synthesisTaskAfter.requestDigest !== synthesisTask.requestDigest,
+  )
+  check(
+    'som bærer den registrerte studien',
+    Number(record(synthesisTaskAfter.input['study_units'])['shared_studies'] ?? -1) === 0 &&
+      rows(record(synthesisTaskAfter.input['study_units'])['units']).length === 1,
+    JSON.stringify(synthesisTaskAfter.input['study_units']),
   )
 
   await call(editor, 'import_agent_answer', {
     p_pipeline_job_id: synthesisJob,
-    p_answer: answerFor(
-      synthesisTask,
-      {
-        claim: {
-          statement:
-            'Sertralin er forbundet med en gjennomsnittlig vektøkning på 1,0 % ved endepunkt hos voksne med depressiv lidelse.',
-          scope: 'Voksne med depressiv lidelse, 26–32 uker.',
-          comparator_kind: 'none',
-          population_id: populationId,
-          timeframe_min: '26 weeks',
-          timeframe_max: '32 weeks',
-          direction: 'increase',
-          magnitude_measure: 'mean_change',
-          magnitude_value: '1.0',
-          magnitude_unit: 'percent',
-          uncertainty_summary:
-            'Ett funn fra én syntetisk studie; presisjonen er rapportert som et 95 % konfidensintervall.',
-        },
-        // Hvert funn oppgaven avgrenset, skal ha en relasjon til påstanden —
-        // også et som motsier den. Et utelatt funn ville gjort grunnlaget til
-        // et annet enn det som finnes.
-        evidence_links: synthesisEvidence.map((id) => ({
-          evidence_item_id: id,
-          relationship_type: 'supports',
-          directness: 'direct',
-          relevance_note: 'Funnet måler nøyaktig utfallet påstanden gjelder.',
-        })),
-      },
-      serviceFor('claim_synthesis'),
-    ),
+    p_answer: answerFor(synthesisTaskAfter, synthesisResult, serviceFor('claim_synthesis')),
   })
 
   const revisionId = psql(

@@ -378,7 +378,11 @@ select is_empty(
         -- om en studie Antidep alt kjenner, slik at hovedartikkel og
         -- sekundæranalyse ikke telles som to uavhengige deltakerutvalg.
         -- Kontrolleres i 940_study_identity_test.sql.
-        'api.register_study_report(text,text,text,text,text,text,boolean)'
+        'api.register_study_report(text,text,text,text,text,text,boolean)',
+        -- Migrasjon 013m. Oversikten og primærstudiene den inkluderer, slik at
+        -- de ikke telles som uavhengige kilder.
+        -- Kontrolleres i 950_review_overlap_test.sql.
+        'api.link_review_included_study(text,text,text,text,text,boolean)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

@@ -30,7 +30,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(56);
+select plan(58);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -773,8 +773,8 @@ select is(
    from knowledge.studies s
    join knowledge.study_reports r on r.study_id = s.id
    where r.source_id = (select id from fixture where name = 'kilde-register')),
-  'other:NCT00890890',
-  'kildeoppdagelsen registrerer studien av seg selv når treffet kom på et registernummer'
+  'clinicaltrials_gov:NCT00890890',
+  'kildeoppdagelsen registrerer studien av seg selv når treffet kom på et registernummer, og i det registeret nummerets egen form peker på'
 );
 
 select is(
@@ -808,6 +808,36 @@ select is(
                         where c.id = (select id from fixture where name = 'kandidat-1'))),
   0,
   'mens et treff funnet på DOI ikke får en oppdiktet studiekobling'
+);
+
+-- Og det avgjørende: den manuelle veien lander på den samme studien.
+--
+-- Fram til migrasjon 013m sendte kildeoppdagelsen alltid «other», mens en
+-- redaktør ville sagt «clinicaltrials_gov» om det samme nummeret. Unikheten
+-- står på paret (register, nummer), så det samme forsøket ble to studier — og
+-- da var vernet mot dobbelttelling uten virkning igjen. Nummeret skrives her
+-- med små bokstaver med vilje: heller ikke skrivemåten skal lage en studie til.
+insert into fixture (name, id)
+select 'studie-manuell', knowledge.register_study_report(
+  (select c.source_id from workflow.monograph_candidate_sources c
+   where c.id = (select id from fixture where name = 'kandidat-1')),
+  'clinicaltrials_gov', 'nct00890890', 'Vektendring under sertralin',
+  'primary_report',
+  'Artikkelen oppgir nct00890890 i metodeavsnittet, og det er den samme oppføringen kildeoppdagelsen fant.',
+  'documented', (select id from fixture where name = 'redaktor'), null);
+
+select is(
+  (select id from fixture where name = 'studie-manuell'),
+  (select r.study_id from knowledge.study_reports r
+   where r.source_id = (select id from fixture where name = 'kilde-register')),
+  'den manuelle koblingen med samme registernummer lander på den samme studien som kildeoppdagelsen opprettet'
+);
+
+select is(
+  (select count(*)::integer from knowledge.studies s
+   where s.registry_id = 'NCT00890890'),
+  1,
+  'og det finnes bare én studie med det nummeret: registeret utledes, det gjettes ikke'
 );
 
 select * from finish();

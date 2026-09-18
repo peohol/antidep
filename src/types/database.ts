@@ -922,17 +922,32 @@ export type Database = {
         }
         Returns: unknown
       }
-      // Migrasjon 013l. Redaktørens vei til å si at en artikkel er en rapport
-      // om en studie: to publikasjoner om det samme deltakerutvalget skal ikke
-      // kunne leses som to uavhengige studier.
+      // Migrasjon 013l, utvidet i 013m. Redaktørens vei til å si at en artikkel
+      // er en rapport om en studie: to publikasjoner om det samme
+      // deltakerutvalget skal ikke kunne leses som to uavhengige studier.
+      // Referansen er en identifikator eller en entydig tittel — et
+      // titteloppslag som treffer flere kilder, avvises.
       register_study_report: {
         Args: {
-          p_source_title: string
+          p_source_reference: string
           p_registry_kind: string | null
           p_registry_id: string | null
           p_study_label: string | null
           p_report_role: string | null
           p_linkage_basis: string
+          p_certain?: boolean
+        }
+        Returns: unknown
+      }
+      // Migrasjon 013m. Oversikten og primærstudiene den inkluderer, slik at de
+      // ikke telles som uavhengige kilder (SOURCE_POLICY.md §7, §11).
+      link_review_included_study: {
+        Args: {
+          p_review_reference: string
+          p_registry_kind: string | null
+          p_registry_id: string | null
+          p_study_label: string | null
+          p_inclusion_basis: string
           p_certain?: boolean
         }
         Returns: unknown

@@ -75,7 +75,7 @@ Omfanget skal dekke:
 - versjonert, maskinlesbar monografistandard og monografibestilling;
 - automatisk opprettede/relevansvurderte behov og et ærlig dekningskart;
 - agentstyrt søk, kildeutvalg, motprøving og dokumentert utvalgs-/søkehistorikk;
-- gjenbruk av kilder på tvers av behov og studie-/rapportkobling som hindrer dobbelttelling;
+- gjenbruk av kilder på tvers av behov og studie-/rapport-/oversiktskobling som hindrer dobbelttelling, bundet til oppgaven slik at et overlapp registrert i ettertid gjør et utestående svar foreldet;
 - kontrollert innhenting og tilknytning til eksisterende evidenskjede, også en korrekt løsning for regulatoriske fakta og preparatdata;
 - forslag til revisjon av eksisterende svar ved ny evidens, uten automatisk publisering;
 - monografipresentasjon/kandidat med konsistente avhengigheter og bevart menneskelig redaksjonell kontroll;
