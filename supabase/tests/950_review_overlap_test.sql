@@ -26,7 +26,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(48);
+select plan(64);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -813,6 +813,266 @@ select throws_ok(
     'ac950000-0000-4000-8000-00000000000a'),
   '23001', null,
   'og et navn som treffer flere studier, avvises framfor å knytte grunnlaget til feil studie'
+);
+
+-- ===========================================================================
+-- Del 12 — En usikker inklusjon er synlig, bundet, og kan avklares
+--
+-- SOURCE_POLICY.md §7: en usikker kobling skal være synlig og aldri løses ved
+-- en udokumentert sammenslåing, men den hindrer at rapportene regnes som
+-- uavhengige. Fram til migrasjon 013p fulgte `ri.certainty` ikke med inn i
+-- grupperingen, så en oversikt som bare *kanskje* inkluderte studien, kunne stå
+-- som avledet med `uncertain_linkage = false` — og avtrykket bandt det ikke, så
+-- en senere avklaring gjorde ikke et utestående svar foreldet. Skriveveien
+-- kunne heller ikke avklare: `on conflict do nothing` lot den usikre raden
+-- stå, mens redaktørsvaret speilet det innsendte og svarte «sikker».
+-- ===========================================================================
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+values
+  ('95000000-0000-4000-8000-000000000008', 'journal_article',
+   'Syntetisk oversikt R3 for 950', 'Testforfatter R3 mfl.',
+   pg_temp.owner_actor_id()),
+  ('95000000-0000-4000-8000-000000000009', 'journal_article',
+   'Syntetisk primærstudie P for 950', 'Testforfatter P mfl.',
+   pg_temp.owner_actor_id());
+
+insert into knowledge.source_versions
+  (id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
+   representation, retrieved_by_actor_id, document_sha256, document_byte_size,
+   document_media_type, text_extraction_tool, text_extraction_tool_version,
+   text_extraction_arguments, text_extraction_transform)
+select v.id::uuid, v.source_id::uuid, now(), v.url,
+       knowledge.source_version_content_hash(v.text),
+       'private://syntetisk-950/' || v.id || '.pdf',
+       'full_text', pg_temp.owner_actor_id(),
+       pg_temp.synthetic_pdf_digest(v.id),
+       octet_length(pg_temp.synthetic_pdf(v.id)),
+       'application/pdf', 'pdftotext', '24.02.0',
+       '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
+from (values
+  ('95000000-0000-4000-8000-000000000027', '95000000-0000-4000-8000-000000000008',
+   'https://example.test/950-r3', 'Oversikt R3 for 950.'),
+  ('95000000-0000-4000-8000-000000000028', '95000000-0000-4000-8000-000000000009',
+   'https://example.test/950-p', 'Primærstudie P for 950.')
+) as v(id, source_id, url, text);
+
+insert into knowledge.evidence_items
+  (id, source_id, source_version_id, design_code, population_availability,
+   population_id, population_detail, sample_size_availability, intervention_drug_id,
+   comparator_kind, outcome_concept_id, outcome_detail, timepoint_availability,
+   reported_direction, estimate_availability, confidence_interval_availability,
+   source_locator, extraction_method, created_by_actor_id)
+select v.id::uuid, v.source_id::uuid, v.version_id::uuid,
+       'randomized_controlled_trial', 'reported_value',
+       (select id from catalog.populations
+        where canonical_label = 'voksne med depressiv lidelse'),
+       'Voksne med depressiv lidelse.', 'not_reported',
+       (select id from catalog.drugs where canonical_name = 'sertralin'),
+       'none',
+       (select id from catalog.clinical_concepts where canonical_label = 'vektendring'),
+       'Vektendring ved endepunkt.', 'not_reported', 'no_clear_difference',
+       'not_reported', 'not_reported', 'Tabell 1', 'manual',
+       pg_temp.owner_actor_id()
+from (values
+  ('95000000-0000-4000-8000-000000000037', '95000000-0000-4000-8000-000000000008',
+   '95000000-0000-4000-8000-000000000027'),
+  ('95000000-0000-4000-8000-000000000038', '95000000-0000-4000-8000-000000000009',
+   '95000000-0000-4000-8000-000000000028')
+) as v(id, source_id, version_id);
+
+select knowledge.register_study_report(
+  '95000000-0000-4000-8000-000000000009', 'clinicaltrials_gov', 'NCT00950090',
+  'Primærstudie P for 950', 'primary_report',
+  'Artikkelen oppgir NCT00950090 i metodeavsnittet.', 'documented',
+  'ac950000-0000-4000-8000-00000000000a', null);
+
+create temporary view usikkert as
+select array['95000000-0000-4000-8000-000000000037'::uuid,
+             '95000000-0000-4000-8000-000000000038'::uuid] as funn;
+
+-- Oversikten inkluderer primærstudien, men bare usikkert.
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'usikker-inklusjon', api.link_review_included_study(
+  'Syntetisk oversikt R3 for 950', 'clinicaltrials_gov', 'NCT00950090',
+  'Primærstudie P for 950',
+  'R3 viser til «Testforfatter P» uten å oppgi registernummeret; det kan være den samme studien.',
+  false);
+reset role;
+
+select is(
+  (select payload ->> 'certain' from maalt where label = 'usikker-inklusjon'),
+  'false',
+  'redaktøren kan registrere en inklusjon som usikker'
+);
+
+insert into fixture_950 (name, id)
+select 'r3-inklusjon', ri.id
+from knowledge.review_included_studies ri
+join knowledge.studies s on s.id = ri.study_id
+where ri.review_source_id = '95000000-0000-4000-8000-000000000008'
+  and s.registry_id = 'NCT00950090';
+
+-- Den forsiktige lesningen står: materialet behandles som overlappende.
+select is(
+  (knowledge.study_units_for_evidence((select funn from usikkert))
+     ->> 'derived_reviews')::integer,
+  1,
+  'en usikker inklusjon dedupliserer som en dokumentert: den forsiktige lesningen står'
+);
+
+-- Men usikkerheten er synlig der den betyr noe.
+select is(
+  (knowledge.study_units_for_evidence((select funn from usikkert))
+     ->> 'uncertain_linkage')::integer,
+  1,
+  'og enheten sier at sammenslåingen hviler på en usikker relasjon'
+);
+
+select is(
+  (select count(*)::integer
+   from jsonb_array_elements(
+          knowledge.study_units_for_evidence((select funn from usikkert)) -> 'units') as u(value),
+        jsonb_array_elements(u.value -> 'uncertain_inclusions')
+   where u.value ->> 'role' = 'derived_review'),
+  1,
+  'og navngir hvilken studie det er sammenslåingen bare antar'
+);
+
+-- Oppgaven utstedes mens grunnlaget er usikkert.
+insert into workflow.pipeline_jobs
+  (id, agent_role, job_key, input_manifest, enqueued_by_actor_id)
+select '95000000-0000-4000-8000-000000000043', 'claim_synthesis',
+       workflow.agent_task_job_key('claim_synthesis', m.manifest), m.manifest,
+       'ac950000-0000-4000-8000-00000000000a'
+from (select jsonb_build_object(
+        'topic_concept_id', (select id from catalog.clinical_concepts
+                             where canonical_label = 'vektendring'),
+        'subject_drug_id', (select id from catalog.drugs
+                            where canonical_name = 'sertralin'),
+        'evidence_item_ids', jsonb_build_array(
+          '95000000-0000-4000-8000-000000000037',
+          '95000000-0000-4000-8000-000000000038')) as manifest) m;
+
+insert into maalt (label, payload)
+select 'usikker-oppgave', workflow.agent_task(j)
+from workflow.pipeline_jobs j where j.id = '95000000-0000-4000-8000-000000000043';
+
+insert into maalt (label, payload)
+select 'usikkert-avtrykk',
+       to_jsonb(knowledge.study_unit_digest((select funn from usikkert)));
+
+-- Så avklares koblingen.
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'avklart-inklusjon', api.link_review_included_study(
+  'Syntetisk oversikt R3 for 950', 'clinicaltrials_gov', 'NCT00950090',
+  'Primærstudie P for 950',
+  'R3 sitt vedlegg B oppgir NCT00950090 for den studien; inklusjonen er dokumentert.',
+  true);
+reset role;
+
+select is(
+  (select payload ->> 'certain' from maalt where label = 'avklart-inklusjon')
+    || '/' || (select payload ->> 'clarified' from maalt where label = 'avklart-inklusjon'),
+  'true/true',
+  'svaret sier at koblingen nå er dokumentert, og at det var en avklaring'
+);
+
+select is(
+  knowledge.review_inclusion_certainty(
+    (select id from fixture_950 where name = 'r3-inklusjon'))::text,
+  'documented',
+  'og den gjeldende sikkerheten i databasen er den samme som svaret oppgir'
+);
+
+-- Den første vurderingen står urørt: avklaringen er en ny rad.
+select is(
+  (select ri.certainty::text from knowledge.review_included_studies ri
+   where ri.id = (select id from fixture_950 where name = 'r3-inklusjon')),
+  'uncertain',
+  'den første vurderingen står urørt: avklaringen overskriver ingen proveniens'
+);
+
+select is(
+  (select a.previous_certainty::text || '->' || a.certainty::text
+   from knowledge.review_inclusion_assessments a
+   where a.review_included_study_id = (select id from fixture_950 where name = 'r3-inklusjon')),
+  'uncertain->documented',
+  'avklaringen er ført som sin egen opplysning, med et før og et etter'
+);
+
+select ok(
+  (select num_nonnulls(a.assessed_by_actor_id, a.assessed_by_agent_run_id) = 1
+     and length(a.basis) > 20
+   from knowledge.review_inclusion_assessments a
+   where a.review_included_study_id = (select id from fixture_950 where name = 'r3-inklusjon')),
+  'med nøyaktig én proveniens og sitt eget grunnlag'
+);
+
+select is(
+  (knowledge.study_units_for_evidence((select funn from usikkert))
+     ->> 'uncertain_linkage')::integer,
+  0,
+  'og grupperingen sier ikke lenger at sammenslåingen er usikker'
+);
+
+select is(
+  (knowledge.study_units_for_evidence((select funn from usikkert))
+     ->> 'derived_reviews')::integer,
+  1,
+  'mens dedupliseringen står som før: avklaringen endret sikkerheten, ikke tellingen'
+);
+
+-- Og avklaringen gjør et utestående svar foreldet.
+select isnt(
+  knowledge.study_unit_digest((select funn from usikkert)),
+  (select payload #>> '{}' from maalt where label = 'usikkert-avtrykk'),
+  'avtrykket av uavhengighetsstrukturen er et annet etter avklaringen'
+);
+
+insert into maalt (label, payload)
+select 'avklart-oppgave', workflow.agent_task(j)
+from workflow.pipeline_jobs j where j.id = '95000000-0000-4000-8000-000000000043';
+
+select isnt(
+  (select payload ->> 'request_digest' from maalt where label = 'avklart-oppgave'),
+  (select payload ->> 'request_digest' from maalt where label = 'usikker-oppgave'),
+  'og et svar avgitt da grunnlaget var usikkert, avvises som foreldet'
+);
+
+select is(
+  (select payload ->> 'job_key' from maalt where label = 'avklart-oppgave'),
+  (select payload ->> 'job_key' from maalt where label = 'usikker-oppgave'),
+  'men jobbnøkkelen står: en avklaring lager ingen ny oppgave'
+);
+
+-- Den samme vurderingen på nytt er ingen ny opplysning.
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'avklart-igjen', api.link_review_included_study(
+  'Syntetisk oversikt R3 for 950', 'clinicaltrials_gov', 'NCT00950090',
+  'Primærstudie P for 950',
+  'Den samme dokumenterte inklusjonen registrert på nytt.', true);
+reset role;
+
+select is(
+  (select payload ->> 'clarified' from maalt where label = 'avklart-igjen'),
+  'false',
+  'den samme vurderingen på nytt er ingen avklaring'
+);
+
+select is(
+  (select count(*)::integer from knowledge.review_inclusion_assessments a
+   where a.review_included_study_id = (select id from fixture_950 where name = 'r3-inklusjon')),
+  1,
+  'og den legger ingen rad til: sporet bærer vurderinger, ikke gjentakelser'
 );
 
 select * from finish();

@@ -90,8 +90,11 @@ select set_eq(
            -- primærstudiene den inkluderer.
            ('review_included_studies'),
            -- Migrasjon 013n: da en studie uten registernummer fikk ett.
-           ('study_identity_upgrades')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j, 013k, 013m og 013n'
+           ('study_identity_upgrades'),
+           -- Migrasjon 013p: senere vurderinger av hvor sikker en oversikts
+           -- inklusjon av en studie er.
+           ('review_inclusion_assessments')$$,
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j, 013k, 013m, 013n og 013p'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
