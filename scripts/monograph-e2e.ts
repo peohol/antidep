@@ -382,8 +382,11 @@ async function main(): Promise<void> {
          .map((role) => q(role))
          .join(', ')}])`,
   )
+  // Prøvens eget oppsett, ikke en regel: fra migrasjon 013t *kan* flere ledd
+  // dele modell. Denne kjøringen gir dem hver sin, slik at en feil binding
+  // mellom ledd og svar blir synlig i akkurat denne prøven.
   check(
-    'hvert semantisk ledd har sin egen, forskjellige KI-tjeneste',
+    'monografiprøven gir hvert semantisk ledd sin egen tjeneste',
     distinct === `${String(Object.keys(models).length)}/${String(Object.keys(models).length)}`,
   )
 

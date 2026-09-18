@@ -388,27 +388,25 @@ begin
       message = 'Søkeplanen finnes ikke.';
   end if;
 
-  -- Kontrollen skal ikke kunne være den samme *kjøringen* som søkte. Den kan
-  -- godt være den samme modellen: dekningskontrollen er et eget ledd med sin
-  -- egen rolle, sin egen instruks og sin egen kjøring, og det er den
-  -- separasjonen som gjelder fra migrasjon 013t. Sammenligningen av de to
-  -- semantiske *tildelingene* er derfor borte — den krevde to forskjellige
-  -- modeller, og det er ikke lenger en regel Antidep kan eller skal hevde.
+  -- Sammenligningen av de to kildeleddenes semantiske *tildelinger* er borte:
+  -- den krevde to forskjellige modeller, og det er ikke lenger en regel Antidep
+  -- kan eller skal hevde. Dekningskontrollen er et eget ledd med sin egen rolle,
+  -- sin egen instruks og sin egen kjøring, og den kan godt kjøre den samme
+  -- modellen som kildeoppdagelsen.
   --
-  -- Det som faktisk bærer uavhengigheten her, står uendret ved siden av: porten
-  -- krever at kontrollen søkte selv (`searched_independently`) og vurderte
-  -- vesentligheten før en dekning kan godtas. Det er en faglig forskjell en
-  -- delt modell ikke kan gå rundt.
-  perform provenance.assert_distinct_model_identity(
-    p_agent_run_id,
-    (select s.agent_run_id
-     from workflow.monograph_searches s
-     where s.plan_id = p_plan_id and s.agent_run_id is not null
-     order by s.registration_ordinal desc
-     limit 1),
-    'Dekningskontrollen'
-  );
-
+  -- Her kommer ingen kjøringssammenligning i stedet, og det er en avlesning og
+  -- ikke en forglemmelse. Kontrollen *skal* søke selv, og de motsøkene
+  -- registreres på den samme planen, med kontrollens egen kjøring. Den siste
+  -- kjøringen som søkte på planen, er derfor som regel kontrollens egen — en
+  -- sammenligning der ville avvist nettopp den kontrollen som gjorde arbeidet
+  -- riktig. Og det finnes ingen ett-til-ett «kjøringen som laget det som
+  -- kontrolleres» å peke på: en plan bærer søk fra flere kjøringer.
+  --
+  -- Uavhengigheten her bæres av porten ved siden av, uendret siden 013e: en
+  -- dekning kan bare godtas av en kontroll som søkte selv
+  -- (`searched_independently`) og vurderte vesentligheten. Det er en faglig
+  -- forskjell en delt modell ikke kan gå rundt, og den er sterkere enn noen
+  -- sammenligning av identiteter ville vært.
   insert into workflow.monograph_coverage_controls (
     plan_id, plan_version, outcome, note,
     searched_independently, missed_candidates, exclusions_checked,
@@ -435,7 +433,7 @@ end;
 $$;
 
 comment on function workflow.record_monograph_coverage_control(uuid, workflow.monograph_coverage_outcome, text, boolean, integer, integer, boolean, uuid, uuid) is
-  'Registrerer én dekningskontroll av én søkeplan, i den versjonen planen har nå (SOURCE_POLICY.md §4.4, ANTIDEP_CONSTITUTION.md regel 3). Kontrollen kan ikke være den samme kjøringen som utførte søkene; fra migrasjon 013t er det ikke lenger et krav at den er en annen modell, fordi dekningskontrollen er et eget ledd med sin egen rolle, sin egen instruks og sin egen kjøring. Uavhengigheten som betyr noe faglig, ligger i porten ved siden av: en dekning kan bare godtas av en kontroll som søkte selv og vurderte vesentligheten. Én kontroll per plan og planversjon.';
+  'Registrerer én dekningskontroll av én søkeplan, i den versjonen planen har nå (SOURCE_POLICY.md §4.4, ANTIDEP_CONSTITUTION.md regel 3). Fra migrasjon 013t er det ikke lenger et krav at kontrollen er en annen modell enn kildeoppdagelsen: den er et eget ledd med sin egen rolle, sin egen instruks og sin egen kjøring. Ingen kjøringssammenligning tok plassen, fordi kontrollen selv skal søke og registrerer de motsøkene på den samme planen — den siste kjøringen som søkte, er som regel kontrollens egen. Uavhengigheten ligger derfor i porten: en dekning kan bare godtas av en kontroll som søkte selv og vurderte vesentligheten. Én kontroll per plan og planversjon.';
 
 -- ----------------------------------------------------------------------------
 -- 8. Registreringsveien for kjørere
