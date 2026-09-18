@@ -1519,36 +1519,29 @@ async function main(): Promise<void> {
     })
     check('et svar avgitt på et annet grunnlag avvises', stale.error !== null)
 
-    // Separasjonen ligger i rollen og i kjøringen, ikke i modellnavnet: den
-    // samme eksterne modellen kan gjøre arbeidet i flere agentledd, som
-    // atskilte kjøringer med hver sin instruks (migrasjon 013t,
-    // ANTIDEP_CONSTITUTION.md regel 3).
-    const sameModel = await editor.rpc('assign_agent_role_model', {
-      p_agent_role: 'claim_synthesis',
-      p_provider: 'antidep-test',
-      p_model: 'ekstern-kjedeagent',
-      p_model_version_disclosure: 'not_exposed',
-      p_reason: 'Kjedeprøven: synteseleddet kjører den samme modellen som ekstraksjonen.',
-    })
-    check(
-      'den samme eksterne modellen kan tildeles to agentledd',
-      sameModel.error === null,
-      sameModel.error?.message ?? '',
-    )
-
-    // Og et bytte krever fortsatt en begrunnelse: tildelingen skrives aldri om.
-    const otherModel = await editor.rpc('assign_agent_role_model', {
+    // Synteseleddet trenger sin egen tildeling før det kan ta imot et svar.
+    //
+    // Om *flere* ledd kan dele den samme modellen, prøves ikke her, og det er
+    // med vilje: denne filen kjøres også av `db-upgrade-monograph.sh` mot en
+    // base satt til siste migrasjon før monografien — altså før 013t, der den
+    // gamle regelen fortsatt gjelder. En påstand om modelldeling ville hatt to
+    // forskjellige riktige svar avhengig av hvor langt basen er migrert, og en
+    // prøve som måtte spørre om det først, prøver ikke en regel.
+    //
+    // Regelen prøves der den alltid gjelder: i pgTAP mot en ferdig migrert base
+    // (750 på registeret, 780 gjennom `api.assign_agent_role_model`, 860 på de
+    // to kildeleddene).
+    const synthesisModel = await editor.rpc('assign_agent_role_model', {
       p_agent_role: 'claim_synthesis',
       p_provider: 'antidep-test',
       p_model: 'ekstern-kjedeagent-to',
       p_model_version_disclosure: 'not_exposed',
-      p_reason: 'Kjedeprøven: en annen tjeneste for synteseleddet.',
-      p_replaces_reason: 'Kjedeprøven: synteseleddet bytter bort fra den delte modellen.',
+      p_reason: 'Kjedeprøven: en egen tjeneste for synteseleddet.',
     })
     check(
-      'et ledd kan bytte tjeneste når byttet er begrunnet',
-      otherModel.error === null,
-      otherModel.error?.message ?? '',
+      'synteseleddet kan tildeles sin egen tjeneste',
+      synthesisModel.error === null,
+      synthesisModel.error?.message ?? '',
     )
 
     // Og identiteten kan ikke lånes: et svar som utgir seg for å være det andre
