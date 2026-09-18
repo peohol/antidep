@@ -373,7 +373,12 @@ select is_empty(
         'api.restrict_monograph_sources(text,text,text[],text)',
         'api.monograph_revision_proposals(text)',
         'api.decide_monograph_revision_proposal(text,boolean,text)',
-        'api.discard_monograph_source(text,text,text)'
+        'api.discard_monograph_source(text,text,text)',
+        -- Migrasjon 013l. Redaktørens vei til å si at en artikkel er en rapport
+        -- om en studie Antidep alt kjenner, slik at hovedartikkel og
+        -- sekundæranalyse ikke telles som to uavhengige deltakerutvalg.
+        -- Kontrolleres i 940_study_identity_test.sql.
+        'api.register_study_report(text,text,text,text,text,text,boolean)'
       )
   $$,
   'ingen annen funksjon i knowledge eller api enn de kontrollerte inngangspunktene er kjørbar for noen klientrolle'

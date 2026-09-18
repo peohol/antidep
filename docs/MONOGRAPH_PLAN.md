@@ -50,8 +50,8 @@ Dagens krav om navngitt faglig sluttkontroll og separat menneskelig publisering 
 | --- | --- | --- |
 | A | Monograph Standard v1 | Utarbeidet av ChatGPT; 80 spørsmålsmaler med betingelser, svarformer, sammenligningsregler og akseptansegrunnlag |
 | B | Source Policy v1 | Utarbeidet av ChatGPT; spørsmålsspesifikke kildeprofiler, søk/utvalg, integritet, kvalitetsvurdering, stopp og vedlikehold |
-| C | Implementer monografibestilling, dekningskart og autonom kildeoppdagelse | Ikke startet; neste tekniske leveranse etter egen bestilling |
-| D | Valider hele arbeidsformen på en reell sertralinmonografi | Ikke startet; ingen kliniske sertralinsvar er produsert som del av fase A/B |
+| C | Implementer monografibestilling, dekningskart og autonom kildeoppdagelse | Levert og teknisk prøvd ende til ende; ikke faglig validert |
+| D | Valider hele arbeidsformen på en reell sertralinmonografi | Ikke startet; ingen kliniske sertralinsvar er produsert |
 | E | Skaler til øvrige antidepressiver og bygg videre sammenlignings-/behandlingsstøtte | Ikke startet |
 
 ### Fase A — faglig spesifikasjon

@@ -30,6 +30,8 @@ Katalogdata er begreper og legemiddelidentiteter, ikke kliniske konklusjoner. Ki
 
 `knowledge.studies` og `study_reports` skiller studien fra publikasjonen om den, med dokumentert grunnlag. En usikker kobling er lagret som usikker framfor å bli løst ved en sammenslåing, og én kilde hører til høyst én studie — ellers ville dobbelttellingsvernet vært uten virkning.
 
+Koblingen er virksom og ikke bare et skjema. `knowledge.register_study_report(...)` er den kontrollerte skriveveien, med grunnlaget påkrevd og proveniensen enten et menneske eller en agentkjøring; `api.register_study_report(...)` er redaktørens vei inn, der kilden navngis med tittelen sin. Kildeoppdagelsen fyller koblingen av seg selv når treffet kom på et forsøksregisternummer: det nummeret *er* studiens identitet, og å kaste det ville gjort hovedartikkel og langtidsoppfølging til to uavhengige deltakerutvalg senere. `knowledge.study_units_for_evidence(uuid[])` sier hvor mange uavhengige studier et evidensgrunnlag faktisk hviler på, og synteseoppgaven bærer den grupperingen — den sletter ingenting, men et grunnlag med tre funn fra to studier står som to enheter og ikke som tre.
+
 ## Planlagt, ikke implementert
 
 Individuell nedtrapping og bytte, og en full sammenlikningsfunksjon. Datamodellen bærer dem: en rettet relasjon er rettet, og A→B er ikke den samme raden som B→A.

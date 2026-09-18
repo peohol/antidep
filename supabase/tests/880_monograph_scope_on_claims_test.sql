@@ -28,7 +28,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(53);
+select plan(59);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -600,6 +600,119 @@ select isnt(
     null),
   '88000000-0000-4000-8000-000000000031'::uuid,
   'og den er ikke den samme som den uavgrensede påstanden om paret'
+);
+
+-- ===========================================================================
+-- Del 5b — Et blandet evidenssett er ingen avgrensning
+--
+-- Del 5 viste at ett rent funn setter avgrensningen. Dette er den andre
+-- halvparten, og den viktigere: et sett der *noen* av funnene hører til et
+-- behov og andre ikke hører til noe monografibehov i det hele tatt, skal ikke
+-- gi en avgrensning. Filtrerte utledningen bort de behovsløse funnene før den
+-- talte, ville «ett av funnene passer» blitt til «alle funnene passer», og et
+-- legacy-funn ville dratt hele påstanden inn under et spørsmål det aldri ble
+-- kontrollert for.
+-- ===========================================================================
+select is(
+  knowledge.monograph_need_for_evidence_set(
+    array['88000000-0000-4000-8000-000000000011'::uuid]),
+  (select id from fixture where name = 'behov-a'),
+  'et rent sett gir behovet alle funnene svarer på'
+);
+
+select is(
+  knowledge.monograph_need_for_evidence_set(
+    array['88000000-0000-4000-8000-000000000011'::uuid,
+          'f2000000-0000-4000-8000-000000000011'::uuid]),
+  null,
+  'et blandet sett — ett funn i behovet, ett uten noe behov — gir ingen avgrensning'
+);
+
+select is(
+  knowledge.monograph_need_for_evidence_set(
+    array['f2000000-0000-4000-8000-000000000011'::uuid]),
+  null,
+  'og et sett der ingen av funnene hører til et behov, gir ingen'
+);
+
+select is(
+  knowledge.monograph_need_for_evidence_set(array[]::uuid[]),
+  null,
+  'et tomt sett gir ingen avgrensning'
+);
+
+-- Og avgrensningen settes bare når påstanden etableres.
+--
+-- En påstand som har stått uavgrenset siden den ble laget, skal ikke kunne bli
+-- permanent omklassifisert til ett monografibehov den dagen en senere revisjon
+-- tilfeldigvis bare lenker monografievidens. Avgrensningen er en del av
+-- identiteten, og en identitet etableres én gang.
+insert into knowledge.claims
+  (id, knowledge_type, topic_concept_id, subject_drug_id, created_by_actor_id)
+values ('88000000-0000-4000-8000-000000000032', 'evidence_synthesis',
+        (select id from fixture where name = 'vektendring'),
+        (select id from fixture where name = 'sertralin'),
+        pg_temp.synthesis_actor_id());
+
+insert into knowledge.claim_revisions (
+  id, claim_id, revision_number, knowledge_type, subject_drug_id, statement, scope,
+  population_id, comparator_kind, direction, uncertainty_summary, created_by_actor_id
+)
+values ('88000000-0000-4000-8000-000000000042',
+        '88000000-0000-4000-8000-000000000032', 1, 'evidence_synthesis',
+        (select id from fixture where name = 'sertralin'),
+        'Prøve i 880: en artikkelbasert påstand, bygget av evidens uten et monografibehov.',
+        'Voksne, uten monografiavgrensning.',
+        (select id from fixture where name = 'adults'), 'none', 'increase',
+        'Prøve i 880: ett funn.',
+        pg_temp.synthesis_actor_id());
+
+insert into knowledge.claim_evidence_links (
+  claim_revision_id, evidence_item_id, relationship_type, directness,
+  relevance_note, created_by_actor_id
+)
+values ('88000000-0000-4000-8000-000000000042',
+        'f2000000-0000-4000-8000-000000000011', 'supports', 'direct',
+        'Prøve i 880: funnet hører ikke til noe monografibehov.',
+        pg_temp.synthesis_actor_id());
+
+select is(
+  (select c.monograph_need_id from knowledge.claims c
+   where c.id = '88000000-0000-4000-8000-000000000032'),
+  null,
+  'en påstand bygget av evidens uten et behov, står uavgrenset'
+);
+
+-- En senere revisjon, denne gangen med evidens som *entydig* hører til behov A.
+insert into knowledge.claim_revisions (
+  id, claim_id, revision_number, knowledge_type, subject_drug_id,
+  supersedes_revision_id, statement, scope,
+  population_id, comparator_kind, direction, uncertainty_summary, created_by_actor_id
+)
+values ('88000000-0000-4000-8000-000000000043',
+        '88000000-0000-4000-8000-000000000032', 2, 'evidence_synthesis',
+        (select id from fixture where name = 'sertralin'),
+        '88000000-0000-4000-8000-000000000042',
+        'Prøve i 880: samme påstand, skrevet om på monografievidens.',
+        'Voksne med depressiv lidelse, 8 uker.',
+        (select id from fixture where name = 'adults'), 'none', 'increase',
+        'Prøve i 880: ett funn.',
+        pg_temp.synthesis_actor_id());
+
+insert into knowledge.claim_evidence_links (
+  claim_revision_id, evidence_item_id, relationship_type, directness,
+  relevance_note, created_by_actor_id
+)
+values ('88000000-0000-4000-8000-000000000043',
+        '88000000-0000-4000-8000-000000000011', 'supports', 'direct',
+        'Prøve i 880: dette funnet hører entydig til behov A.',
+        pg_temp.synthesis_actor_id());
+
+select is(
+  (select c.monograph_need_id from knowledge.claims c
+   where c.id = '88000000-0000-4000-8000-000000000032'),
+  null,
+  'og en senere revisjon omklassifiserer den ikke: identiteten ble etablert én gang'
 );
 
 -- ===========================================================================

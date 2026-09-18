@@ -922,6 +922,21 @@ export type Database = {
         }
         Returns: unknown
       }
+      // Migrasjon 013l. Redaktørens vei til å si at en artikkel er en rapport
+      // om en studie: to publikasjoner om det samme deltakerutvalget skal ikke
+      // kunne leses som to uavhengige studier.
+      register_study_report: {
+        Args: {
+          p_source_title: string
+          p_registry_kind: string | null
+          p_registry_id: string | null
+          p_study_label: string | null
+          p_report_role: string | null
+          p_linkage_basis: string
+          p_certain?: boolean
+        }
+        Returns: unknown
+      }
       withdraw_monograph_publication: {
         Args: {
           p_edition_reference: string

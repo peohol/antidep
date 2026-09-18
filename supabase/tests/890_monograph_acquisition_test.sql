@@ -30,7 +30,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(51);
+select plan(56);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -741,6 +741,74 @@ select throws_ok(
   'og kan ikke registrere et myndighetsdokument'
 );
 reset role;
+
+-- ===========================================================================
+-- Del 9 — Forsøksregisternummeret er studiens identitet, ikke bare kildens
+--
+-- Fant kildeoppdagelsen treffet på et registernummer, vet Antidep i det samme
+-- øyeblikket hvilken studie rapporten handler om. Uten at koblingen ble
+-- registrert der, ville opplysningen vært kastet — og hovedartikkel og
+-- langtidsoppfølging fra den samme studien ville senere sett ut som to
+-- uavhengige deltakerutvalg (SOURCE_POLICY.md §7, migrasjon 013l).
+--
+-- Kildeopprettelsen kalles her direkte. Den er leddet som gjør en kandidat til
+-- en kilde, og det er der registernummeret finnes; hele innhentingsforløpet
+-- rundt den er prøvd i Del 3 til Del 8.
+-- ===========================================================================
+insert into fixture (name, id)
+select 'kandidat-register', workflow.record_monograph_candidate_source(
+  (select id from fixture where name = 'forskningsplan'), null,
+  'registry_id', 'NCT00890890', 'Vektendring under sertralin: forsøksregisteroppføring',
+  'Testforfatter 890', null, 2023,
+  'Forsøksregister, søk i prøve 890', false, null, true,
+  'Registeroppføringen kan bære utfallet behovet spør om.',
+  null, (select id from fixture where name = 'redaktor'));
+
+insert into fixture (name, id)
+select 'kilde-register', workflow.ensure_monograph_candidate_source(
+  (select id from fixture where name = 'kandidat-register'));
+
+select is(
+  (select s.registry_kind::text || ':' || s.registry_id
+   from knowledge.studies s
+   join knowledge.study_reports r on r.study_id = s.id
+   where r.source_id = (select id from fixture where name = 'kilde-register')),
+  'other:NCT00890890',
+  'kildeoppdagelsen registrerer studien av seg selv når treffet kom på et registernummer'
+);
+
+select is(
+  (select r.report_role::text || '/' || r.certainty::text
+   from knowledge.study_reports r
+   where r.source_id = (select id from fixture where name = 'kilde-register')),
+  'registry_record/documented',
+  'og koblingen står som den registeroppføringen den er'
+);
+
+select ok(
+  (select length(r.linkage_basis) > 20
+   from knowledge.study_reports r
+   where r.source_id = (select id from fixture where name = 'kilde-register')),
+  'med grunnlaget skrevet ut: en kobling uten dokumentasjon kan slå sammen to studier'
+);
+
+select is(
+  (select num_nonnulls(r.linked_by_actor_id, r.linked_by_agent_run_id)
+   from knowledge.study_reports r
+   where r.source_id = (select id from fixture where name = 'kilde-register')),
+  1,
+  'og med nøyaktig én proveniens: en kobling ingen står bak, kan ikke etterprøves'
+);
+
+-- Et treff funnet på DOI bærer ingen studieidentitet, og da registreres ingen
+-- kobling. Et fravær er ikke en gjetning.
+select is(
+  (select count(*)::integer from knowledge.study_reports r
+   where r.source_id = (select c.source_id from workflow.monograph_candidate_sources c
+                        where c.id = (select id from fixture where name = 'kandidat-1'))),
+  0,
+  'mens et treff funnet på DOI ikke får en oppdiktet studiekobling'
+);
 
 select * from finish();
 rollback;

@@ -970,6 +970,64 @@ async function main(): Promise<void> {
       String(brief['template_code'] ?? '').startsWith('MN'),
   )
 
+  // --------------------------------------------------------------------
+  // 9b. Studien, atskilt fra rapportene om den
+  //
+  // Grunnlaget kan ikke leses som flere uavhengige deltakerutvalg enn det
+  // faktisk hviler på (SOURCE_POLICY.md §7). Oppgaven bærer derfor
+  // grupperingen, og her prøves den gjennom den ekte oppgaveflaten: først uten
+  // en registrert kobling, så etter at redaktøren har registrert at artikkelen
+  // er en rapport om en navngitt studie.
+  //
+  // At *to* rapporter om den samme studien teller som én enhet, prøves for seg
+  // i `supabase/tests/940_study_identity_test.sql`, der tre evidensfunn fra to
+  // studier gir to enheter og ikke tre.
+  // --------------------------------------------------------------------
+  const unitsBefore = record(synthesisTask.input['study_units'])
+  check(
+    'synteseoppgaven bærer hvor mange uavhengige studier grunnlaget hviler på',
+    Number(unitsBefore['independent_units'] ?? 0) === 1 &&
+      Number(unitsBefore['evidence_items'] ?? 0) === 1,
+    JSON.stringify(unitsBefore),
+  )
+  check(
+    'og en kilde uten registrert studiekobling står som sin egen enhet',
+    Number(unitsBefore['shared_studies'] ?? -1) === 0,
+  )
+
+  const studyLink = record(
+    await call(editor, 'register_study_report', {
+      p_source_title: ARTICLE_TITLE,
+      p_registry_kind: 'clinicaltrials_gov',
+      p_registry_id: `NCT${RUN.slice(0, 8)}`,
+      p_study_label: `Syntetisk studie for kjedeprøven ${RUN}`,
+      p_report_role: 'primary_report',
+      p_linkage_basis: 'Artikkelen oppgir forsøksregisternummeret i metodeavsnittet.',
+      p_certain: true,
+    }),
+  )
+  check(
+    'redaktøren kan registrere at artikkelen er en rapport om en navngitt studie',
+    String(studyLink['registry'] ?? '').startsWith('clinicaltrials_gov:NCT'),
+    String(studyLink['registry'] ?? ''),
+  )
+
+  const unitsAfter = record(
+    JSON.parse(
+      psql(
+        config,
+        `select knowledge.study_units_for_evidence(array[${q(evidenceItemId)}::uuid])::text`,
+      ),
+    ),
+  )
+  check(
+    'og grunnlaget bærer studien etterpå, uten at funnet er blitt borte',
+    Number(unitsAfter['independent_units'] ?? 0) === 1 &&
+      Number(unitsAfter['evidence_items'] ?? 0) === 1 &&
+      record(rows(unitsAfter['units'])[0]?.['study'])['registry'] === studyLink['registry'],
+    JSON.stringify(unitsAfter),
+  )
+
   await call(editor, 'import_agent_answer', {
     p_pipeline_job_id: synthesisJob,
     p_answer: answerFor(

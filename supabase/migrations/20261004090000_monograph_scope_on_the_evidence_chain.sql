@@ -330,20 +330,26 @@ create function knowledge.monograph_need_for_evidence_set(p_evidence_item_ids uu
   stable
   set search_path = ''
 as $$
+  -- Alle funnene, også de som ikke hører til noe behov.
+  --
+  -- NULL-treffene *skal* telles med. Et sett der ett funn entydig hører til
+  -- behov X og et annet ikke hører til noe monografibehov i det hele tatt, er
+  -- et blandet sett, og da er svaret NULL. Å filtrere bort NULL-ene før
+  -- tellingen ville gjort «ett av funnene passer» til «alle funnene passer» —
+  -- og et legacy-funn ville dratt hele påstanden inn under et spørsmål det
+  -- aldri ble kontrollert for.
   with kandidater as (
     select distinct knowledge.monograph_need_for_evidence_item(i.id) as need_id
     from unnest(coalesce(p_evidence_item_ids, array[]::uuid[])) as i(id)
-  ),
-  navngitte as (
-    select k.need_id from kandidater k where k.need_id is not null
   )
-  select n.need_id
-  from navngitte n
-  where (select count(*) from navngitte) = 1;
+  select k.need_id
+  from kandidater k
+  where k.need_id is not null
+    and (select count(*) from kandidater) = 1;
 $$;
 
 comment on function knowledge.monograph_need_for_evidence_set(uuid[]) is
-  'Det ene kunnskapsbehovet alle funnene i et evidenssett svarer på, eller NULL når de svarer på flere eller ingen. Brukes til å sette avgrensningen på påstanden: er settet blandet, er påstanden ikke monografiavgrenset, og den gamle forsiktige oppførselen gjelder.';
+  'Det ene kunnskapsbehovet *alle* funnene i et evidenssett svarer på, eller NULL når de svarer på flere, på ingen, eller når bare noen av dem hører til et behov. NULL-treffene telles med i tvetydigheten: et sett der ett funn hører til behov X og et annet ikke hører til noe monografibehov, er blandet, og da er påstanden ikke monografiavgrenset. Brukes til å sette avgrensningen på påstanden, og den gamle forsiktige oppførselen gjelder for alt annet.';
 
 revoke execute on function knowledge.monograph_need_for_evidence_set(uuid[]) from public;
 
@@ -360,15 +366,28 @@ create function knowledge.set_claim_monograph_need()
 as $$
 declare
   v_claim_id uuid;
+  v_revision_number integer;
   v_current uuid;
   v_ids uuid[];
   v_need uuid;
 begin
-  select r.claim_id into v_claim_id
+  select r.claim_id, r.revision_number into v_claim_id, v_revision_number
   from knowledge.claim_revisions r
   where r.id = new.claim_revision_id;
 
   if v_claim_id is null then
+    return null;
+  end if;
+
+  -- Bare den første revisjonen kan sette avgrensningen.
+  --
+  -- Avgrensningen er en del av påstandens *identitet*, og en identitet
+  -- etableres når påstanden etableres. Uten denne grensen kunne en eksisterende
+  -- artikkelbasert påstand — som har stått uavgrenset siden den ble laget —
+  -- blitt permanent omklassifisert til ett monografibehov den dagen en senere
+  -- revisjon tilfeldigvis bare lenket monografievidens. Da ville et spørsmål
+  -- ingen stilte, fått et svar ingen skrev for det.
+  if v_revision_number <> 1 then
     return null;
   end if;
 
@@ -394,7 +413,7 @@ end;
 $$;
 
 comment on function knowledge.set_claim_monograph_need() is
-  'Setter kunnskapsbehovet påstanden svarer på, utledet av evidenslenkene. Ligger på lenkene og ikke på påstanden fordi lenkene finnes først: påstanden opprettes før grunnlaget er knyttet til den. Idempotent, og gjør ingenting når settet er blandet eller ikke monografidrevet — da er påstanden ikke monografiavgrenset, og den artikkelbaserte oppførselen gjelder presis som før.';
+  'Setter kunnskapsbehovet påstanden svarer på, utledet av evidenslenkene. Ligger på lenkene og ikke på påstanden fordi lenkene finnes først: påstanden opprettes før grunnlaget er knyttet til den. Bare fra påstandens *første* revisjon: avgrensningen er en del av identiteten, og en eksisterende uavgrenset påstand skal ikke kunne omklassifiseres av en senere revisjon. Idempotent, og gjør ingenting når settet er blandet eller ikke monografidrevet — da er påstanden ikke monografiavgrenset, og den artikkelbaserte oppførselen gjelder presis som før.';
 
 revoke execute on function knowledge.set_claim_monograph_need() from public;
 

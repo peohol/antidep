@@ -129,6 +129,13 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
   ([SOURCE_POLICY.md](SOURCE_POLICY.md) §4.1), og treffene inneholder derfor
   mye som ikke er relevant. Å skille dem er kildeoppdagelsens faglige arbeid,
   ikke søkeutførelsens. Piloten bør se på om utvalget faktisk blir godt nok.
+- **Studieidentitet må fylles for eldre kilder.** Kildeoppdagelsen registrerer
+  koblingen av seg selv når treffet kom på et forsøksregisternummer, men et
+  treff funnet på DOI bærer den ikke. Ser piloten to publikasjoner som kan være
+  rapporter om den samme studien, registreres det med `api.register_study_report`
+  — med grunnlaget skrevet ut, og som `usikker` når det er usikkert.
+  Synteseoppgaven viser da at grunnlaget hviler på færre uavhengige studier enn
+  antall funn.
 - **Norske produktopplysninger.** Preparatomtaler registreres gjennom
   myndighetsveien (HTML, XML eller JSON med sin egen integritetskontroll).
   PDF avvises der med vilje: forskningsfulltekstens PDF-vei har sin egen
