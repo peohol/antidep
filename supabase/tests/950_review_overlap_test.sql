@@ -26,7 +26,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(64);
+select plan(80);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -1073,6 +1073,287 @@ select is(
    where a.review_included_study_id = (select id from fixture_950 where name = 'r3-inklusjon')),
   1,
   'og den legger ingen rad til: sporet bærer vurderinger, ikke gjentakelser'
+);
+
+-- ===========================================================================
+-- Del 13 — Usikkerheten følger dekningen, uansett lesningsrekkefølge
+--
+-- Fram til migrasjon 013q husket dekningen *hvilke* studier som var dekket, men
+-- ikke hvor sikkert. Inkluderte R usikkert studie S og R' den samme S
+-- dokumentert, uten at noen rapport om S var lagt fram, og R ble lest først,
+-- ble R uavhengig uten overlapp — og R' avledet mot en dekning R bare antok.
+-- Hele grunnlaget endte med uncertain_linkage = 0. I motsatt rekkefølge kom
+-- usikkerheten fram. Et svar som avhenger av lesningsrekkefølgen, er ikke et
+-- svar, så begge rekkefølgene prøves.
+--
+-- Rekkefølgen avgjøres av enhetsnøkkelen, som for en oversikt uten egen
+-- studierapport er «kilde:<kilde-id>». Kilde-id-ene under er valgt slik at den
+-- usikre leses først i det første paret, og den dokumenterte først i det andre.
+-- ===========================================================================
+insert into knowledge.sources (id, source_type, title, authors_or_issuer, created_by_actor_id)
+select v.id::uuid, 'journal_article', v.tittel, 'Testforfatter mfl.',
+       pg_temp.owner_actor_id()
+from (values
+  ('95000000-0000-4000-8000-00000000000a', 'Syntetisk oversikt R4 for 950 (usikker, leses først)'),
+  ('95000000-0000-4000-8000-00000000000b', 'Syntetisk oversikt R5 for 950 (dokumentert, leses sist)'),
+  ('95000000-0000-4000-8000-00000000000c', 'Syntetisk oversikt R6 for 950 (dokumentert, leses først)'),
+  ('95000000-0000-4000-8000-00000000000d', 'Syntetisk oversikt R7 for 950 (usikker, leses sist)')
+) as v(id, tittel);
+
+insert into knowledge.source_versions
+  (id, source_id, retrieved_at, retrieved_from, content_hash, storage_reference,
+   representation, retrieved_by_actor_id, document_sha256, document_byte_size,
+   document_media_type, text_extraction_tool, text_extraction_tool_version,
+   text_extraction_arguments, text_extraction_transform)
+select v.id::uuid, v.source_id::uuid, now(), 'https://example.test/' || v.id,
+       knowledge.source_version_content_hash('Oversikt ' || v.id || ' for 950.'),
+       'private://syntetisk-950/' || v.id || '.pdf',
+       'full_text', pg_temp.owner_actor_id(),
+       pg_temp.synthetic_pdf_digest(v.id),
+       octet_length(pg_temp.synthetic_pdf(v.id)),
+       'application/pdf', 'pdftotext', '24.02.0',
+       '-bbox-layout -enc UTF-8 -eol unix', 'antidep-reading-order@2'
+from (values
+  ('95000000-0000-4000-8000-00000000002a', '95000000-0000-4000-8000-00000000000a'),
+  ('95000000-0000-4000-8000-00000000002b', '95000000-0000-4000-8000-00000000000b'),
+  ('95000000-0000-4000-8000-00000000002c', '95000000-0000-4000-8000-00000000000c'),
+  ('95000000-0000-4000-8000-00000000002d', '95000000-0000-4000-8000-00000000000d')
+) as v(id, source_id);
+
+insert into knowledge.evidence_items
+  (id, source_id, source_version_id, design_code, population_availability,
+   population_id, population_detail, sample_size_availability, intervention_drug_id,
+   comparator_kind, outcome_concept_id, outcome_detail, timepoint_availability,
+   reported_direction, estimate_availability, confidence_interval_availability,
+   source_locator, extraction_method, created_by_actor_id)
+select v.id::uuid, v.source_id::uuid, v.version_id::uuid,
+       'randomized_controlled_trial', 'reported_value',
+       (select id from catalog.populations
+        where canonical_label = 'voksne med depressiv lidelse'),
+       'Voksne med depressiv lidelse.', 'not_reported',
+       (select id from catalog.drugs where canonical_name = 'sertralin'),
+       'none',
+       (select id from catalog.clinical_concepts where canonical_label = 'vektendring'),
+       'Vektendring ved endepunkt.', 'not_reported', 'no_clear_difference',
+       'not_reported', 'not_reported', 'Tabell 1', 'manual',
+       pg_temp.owner_actor_id()
+from (values
+  ('95000000-0000-4000-8000-00000000003a', '95000000-0000-4000-8000-00000000000a',
+   '95000000-0000-4000-8000-00000000002a'),
+  ('95000000-0000-4000-8000-00000000003b', '95000000-0000-4000-8000-00000000000b',
+   '95000000-0000-4000-8000-00000000002b'),
+  ('95000000-0000-4000-8000-00000000003c', '95000000-0000-4000-8000-00000000000c',
+   '95000000-0000-4000-8000-00000000002c'),
+  ('95000000-0000-4000-8000-00000000003d', '95000000-0000-4000-8000-00000000000d',
+   '95000000-0000-4000-8000-00000000002d')
+) as v(id, source_id, version_id);
+
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+-- Par 1: den usikre leses først.
+insert into maalt (label, payload)
+select 'r4-usikker', api.link_review_included_study(
+  'Syntetisk oversikt R4 for 950 (usikker, leses først)',
+  'clinicaltrials_gov', 'NCT00950100', 'Den delte studien S for 950',
+  'R4 viser til studien uten å oppgi registernummeret; det kan være S.', false);
+insert into maalt (label, payload)
+select 'r5-dokumentert', api.link_review_included_study(
+  'Syntetisk oversikt R5 for 950 (dokumentert, leses sist)',
+  'clinicaltrials_gov', 'NCT00950100', 'Den delte studien S for 950',
+  'R5 fører NCT00950100 i tabellen over inkluderte studier.', true);
+-- Par 2: den dokumenterte leses først.
+insert into maalt (label, payload)
+select 'r6-dokumentert', api.link_review_included_study(
+  'Syntetisk oversikt R6 for 950 (dokumentert, leses først)',
+  'clinicaltrials_gov', 'NCT00950110', 'Den delte studien T for 950',
+  'R6 fører NCT00950110 i tabellen over inkluderte studier.', true);
+insert into maalt (label, payload)
+select 'r7-usikker', api.link_review_included_study(
+  'Syntetisk oversikt R7 for 950 (usikker, leses sist)',
+  'clinicaltrials_gov', 'NCT00950110', 'Den delte studien T for 950',
+  'R7 viser til studien uten å oppgi registernummeret; det kan være T.', false);
+reset role;
+
+insert into maalt (label, payload)
+select 'par1-avtrykk', to_jsonb(knowledge.study_unit_digest(array[
+  '95000000-0000-4000-8000-00000000003a'::uuid,
+  '95000000-0000-4000-8000-00000000003b'::uuid]));
+
+select is(
+  (knowledge.study_units_for_evidence(array[
+     '95000000-0000-4000-8000-00000000003a'::uuid,
+     '95000000-0000-4000-8000-00000000003b'::uuid]) ->> 'uncertain_linkage')::integer,
+  1,
+  'usikkerheten kommer fram også når den usikre oversikten leses først: dekningen bærer hvor sikkert studien er dekket'
+);
+
+select is(
+  (select count(*)::integer
+   from jsonb_array_elements(
+          knowledge.study_units_for_evidence(array[
+            '95000000-0000-4000-8000-00000000003a'::uuid,
+            '95000000-0000-4000-8000-00000000003b'::uuid]) -> 'units') as u(value),
+        jsonb_array_elements(u.value -> 'uncertain_inclusions')),
+  1,
+  'og den navngir studien dedupliseringen bare antar'
+);
+
+-- Rekkefølgen prøven hviler på, festet: er det den *dokumenterte* oversikten som
+-- blir avledet, ble den usikre lest først. Uten denne kontrollen kunne prøven
+-- stille slutte å dekke tilfellet den er skrevet for.
+select is(
+  (select u.value -> 'evidence_item_ids' ->> 0
+   from jsonb_array_elements(
+          knowledge.study_units_for_evidence(array[
+            '95000000-0000-4000-8000-00000000003a'::uuid,
+            '95000000-0000-4000-8000-00000000003b'::uuid]) -> 'units') as u(value)
+   where u.value ->> 'role' = 'derived_review'),
+  '95000000-0000-4000-8000-00000000003b',
+  'og det er den dokumenterte oversikten som ble avledet: den usikre ble lest først'
+);
+
+select is(
+  (knowledge.study_units_for_evidence(array[
+     '95000000-0000-4000-8000-00000000003c'::uuid,
+     '95000000-0000-4000-8000-00000000003d'::uuid]) ->> 'uncertain_linkage')::integer,
+  1,
+  'og i motsatt rekkefølge gir lesningen det samme svaret'
+);
+
+select is(
+  (select u.value -> 'evidence_item_ids' ->> 0
+   from jsonb_array_elements(
+          knowledge.study_units_for_evidence(array[
+            '95000000-0000-4000-8000-00000000003c'::uuid,
+            '95000000-0000-4000-8000-00000000003d'::uuid]) -> 'units') as u(value)
+   where u.value ->> 'role' = 'derived_review'),
+  '95000000-0000-4000-8000-00000000003d',
+  'der det er den usikre oversikten som ble avledet'
+);
+
+-- Avklares den usikre siden, forsvinner usikkerheten — og avtrykket endres.
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'r4-avklart', api.link_review_included_study(
+  'Syntetisk oversikt R4 for 950 (usikker, leses først)',
+  'clinicaltrials_gov', 'NCT00950100', 'Den delte studien S for 950',
+  'R4 sitt vedlegg oppgir NCT00950100; inklusjonen er dokumentert.', true);
+reset role;
+
+select is(
+  (knowledge.study_units_for_evidence(array[
+     '95000000-0000-4000-8000-00000000003a'::uuid,
+     '95000000-0000-4000-8000-00000000003b'::uuid]) ->> 'uncertain_linkage')::integer,
+  0,
+  'en avklaring på den siden som dekket studien først, fjerner usikkerheten'
+);
+
+select isnt(
+  knowledge.study_unit_digest(array[
+    '95000000-0000-4000-8000-00000000003a'::uuid,
+    '95000000-0000-4000-8000-00000000003b'::uuid]),
+  (select payload #>> '{}' from maalt where label = 'par1-avtrykk'),
+  'og avtrykket er et annet, også i den rekkefølgen der usikkerheten før forsvant'
+);
+
+-- ===========================================================================
+-- Del 14 — Sporet er uforanderlig, ikke bare kalt uforanderlig
+-- ===========================================================================
+select throws_ok(
+  format($$update knowledge.review_included_studies set certainty = 'documented' where id = %L$$,
+         (select id from fixture_950 where name = 'r3-inklusjon')),
+  '23001', null,
+  'en inklusjonskobling kan ikke skrives om: den første vurderingen står'
+);
+
+select throws_ok(
+  format($$delete from knowledge.review_included_studies where id = %L$$,
+         (select id from fixture_950 where name = 'r3-inklusjon')),
+  '23001', null,
+  'og den kan ikke slettes'
+);
+
+select throws_ok(
+  $$update knowledge.review_inclusion_assessments set certainty = 'uncertain'$$,
+  '23001', null,
+  'en avklaring kan ikke skrives om i ettertid: da er den ikke et spor'
+);
+
+select throws_ok(
+  $$delete from knowledge.review_inclusion_assessments$$,
+  '23001', null,
+  'og den kan ikke slettes'
+);
+
+select throws_ok(
+  $$update knowledge.study_identity_upgrades set registry_id = 'NCT99999999'$$,
+  '23001', null,
+  'en oppgradering av en studieidentitet kan ikke skrives om'
+);
+
+select throws_ok(
+  $$delete from knowledge.study_identity_upgrades$$,
+  '23001', null,
+  'og den kan ikke slettes'
+);
+
+-- ===========================================================================
+-- Del 15 — To motsatte avklaringer i samme transaksjon
+--
+-- `created_at` er transaksjonens starttid, så alle vurderinger i den samme
+-- transaksjonen deler tidsstempel. Fram til migrasjon 013q avgjorde tilfeldig
+-- UUID-rekkefølge hvilken som var «den siste», og usikker → dokumentert →
+-- usikker kunne etterpå leses som dokumentert. Løpenummeret avgjør nå.
+-- ===========================================================================
+select set_config('request.jwt.claims',
+                  '{"sub":"95000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into maalt (label, payload)
+select 'r3-tilbake-usikker', api.link_review_included_study(
+  'Syntetisk oversikt R3 for 950', 'clinicaltrials_gov', 'NCT00950090',
+  'Primærstudie P for 950',
+  'Ved ny gjennomlesing er det likevel ikke sikkert at R3 fører nettopp denne studien.', false);
+insert into maalt (label, payload)
+select 'r3-dokumentert-igjen', api.link_review_included_study(
+  'Syntetisk oversikt R3 for 950', 'clinicaltrials_gov', 'NCT00950090',
+  'Primærstudie P for 950',
+  'Vedlegg B ble hentet fram igjen, og der står NCT00950090 oppført.', true);
+insert into maalt (label, payload)
+select 'r3-usikker-til-slutt', api.link_review_included_study(
+  'Syntetisk oversikt R3 for 950', 'clinicaltrials_gov', 'NCT00950090',
+  'Primærstudie P for 950',
+  'Vedlegg B viste seg å gjelde en annen oversikt; inklusjonen er usikker igjen.', false);
+reset role;
+
+select is(
+  knowledge.review_inclusion_certainty(
+    (select id from fixture_950 where name = 'r3-inklusjon'))::text,
+  'uncertain',
+  'den siste vurderingen gjelder, også når tre avklaringer skjer i samme transaksjon'
+);
+
+select results_eq(
+  format($$select a.assessment_number, a.previous_certainty::text, a.certainty::text
+           from knowledge.review_inclusion_assessments a
+           where a.review_included_study_id = %L
+           order by a.assessment_number$$,
+         (select id from fixture_950 where name = 'r3-inklusjon')),
+  $$values (1, 'uncertain', 'documented'),
+          (2, 'documented', 'uncertain'),
+          (3, 'uncertain', 'documented'),
+          (4, 'documented', 'uncertain')$$,
+  'og sporet leser kjeden i den rekkefølgen den faktisk skjedde'
+);
+
+select is(
+  (select count(distinct a.created_at)::integer
+   from knowledge.review_inclusion_assessments a
+   where a.review_included_study_id = (select id from fixture_950 where name = 'r3-inklusjon')),
+  1,
+  'alle fire deler tidsstempel: rekkefølgen kunne ikke vært lest av created_at'
 );
 
 select * from finish();
