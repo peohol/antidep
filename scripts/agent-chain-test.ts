@@ -1519,30 +1519,34 @@ async function main(): Promise<void> {
     })
     check('et svar avgitt på et annet grunnlag avvises', stale.error !== null)
 
-    // Separasjonen: den samme eksterne modellen kan ikke gjøre arbeidet i to
-    // agentledd, og avvisningen kommer der avgjørelsen tas — før noen har brukt
-    // en økt i en KI-tjeneste (ANTIDEP_CONSTITUTION.md regel 3).
+    // Separasjonen ligger i rollen og i kjøringen, ikke i modellnavnet: den
+    // samme eksterne modellen kan gjøre arbeidet i flere agentledd, som
+    // atskilte kjøringer med hver sin instruks (migrasjon 013t,
+    // ANTIDEP_CONSTITUTION.md regel 3).
     const sameModel = await editor.rpc('assign_agent_role_model', {
       p_agent_role: 'claim_synthesis',
       p_provider: 'antidep-test',
       p_model: 'ekstern-kjedeagent',
       p_model_version_disclosure: 'not_exposed',
+      p_reason: 'Kjedeprøven: synteseleddet kjører den samme modellen som ekstraksjonen.',
     })
     check(
-      'den samme eksterne modellen kan ikke tildeles to agentledd',
-      sameModel.error !== null,
-      'separasjonen slo ikke til',
+      'den samme eksterne modellen kan tildeles to agentledd',
+      sameModel.error === null,
+      sameModel.error?.message ?? '',
     )
 
+    // Og et bytte krever fortsatt en begrunnelse: tildelingen skrives aldri om.
     const otherModel = await editor.rpc('assign_agent_role_model', {
       p_agent_role: 'claim_synthesis',
       p_provider: 'antidep-test',
       p_model: 'ekstern-kjedeagent-to',
       p_model_version_disclosure: 'not_exposed',
       p_reason: 'Kjedeprøven: en annen tjeneste for synteseleddet.',
+      p_replaces_reason: 'Kjedeprøven: synteseleddet bytter bort fra den delte modellen.',
     })
     check(
-      'et annet ledd kan tildeles en annen tjeneste',
+      'et ledd kan bytte tjeneste når byttet er begrunnet',
       otherModel.error === null,
       otherModel.error?.message ?? '',
     )

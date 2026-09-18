@@ -1,4 +1,4 @@
--- Migrasjon 013t — separasjonen hviler på agentidentiteten, ikke på modellnavnet
+-- Migrasjon 013t — separasjonen hviler på rollen og kjøringen, ikke på modellnavnet
 --
 -- Fram til nå har regel 3 vært håndhevet på *modellidentitet*: ingen to
 -- agentledd kunne dele leverandør, modell og modellversjon i overlappende tid,
@@ -23,20 +23,26 @@
 -- navn — og kunne ikke kontrollere at de var det.
 --
 -- Det som *er* kontrollerbart, og som denne migrasjonen flytter regelen over
--- på, er agentidentiteten:
+-- på, er rollen og kjøringen:
 --
---   * Hvert ledd har sin egen agentidentitet med sin egen legitimasjon
---     (migrasjon 005e). `provenance.authenticate_agent_identity(...)` binder
---     identiteten til rollen, så en kjøring kan ikke opptre i et annet ledd.
---   * Hver autonome kjører er bundet til nøyaktig ett ledd, og den samme
---     Workspace Agent-en kan ikke kjøre to
---     (`agent_runners_platform_agent_reference_excl`, migrasjon 011a).
+--   * Hvert ledd er sin egen rolle med sin egen agentidentitet og sin egen
+--     legitimasjon (migrasjon 005e). `provenance.authenticate_agent_identity(...)`
+--     binder identiteten til rollen, så en kjøring kan ikke opptre i et annet
+--     ledd.
+--   * Hver kontroll er en *ny kjøring* under kontrollrollens egen instruks og
+--     egne premisser. Et svar kan ikke attestere sitt eget resultat.
 --
 -- Det er en svakere påstand enn «to forskjellige modeller», og den skal stå
--- som det den er: kontrollen er en *annen runde, med en annen instruks, i en
--- annen kontekst, under en annen legitimasjon* — ikke en annen modellvekt.
--- Antidep hevder ikke lenger mer enn det. Å hevde to modeller uten å kunne se
--- dem var en sterkere påstand enn systemet noen gang kunne innfri.
+-- som det den er: kontrollen er en annen kjøring, i en annen rolle, med en
+-- annen instruks — ikke en annen modellvekt. Å hevde to modeller uten å kunne
+-- se dem var en sterkere påstand enn systemet noen gang kunne innfri.
+--
+-- Det motsatte er like galt, og migrasjonen gjør ikke det heller: separasjonen
+-- bygges *ikke* opp igjen som et krav om to forskjellige Workspace
+-- Agent-konfigurasjoner. Én konfigurasjon som utfører to ledd som to atskilte,
+-- riktig rollemerkede kjøringer, er nøyaktig den arbeidsformen dette skal
+-- tillate. En regel som forbød det, ville vært den gamle modellregelen i ny
+-- drakt — en faglig uavhengighetspåstand forkledd som en teknisk grense.
 --
 -- ----------------------------------------------------------------------------
 -- 1. Registeret: flere ledd kan bruke den samme modellen
@@ -49,38 +55,32 @@ alter table provenance.role_model_assignments
   drop constraint role_model_assignments_no_shared_model_excl;
 
 comment on table provenance.role_model_assignments is
-  'Hvilken modellidentitet hver agentrolle handler som (ANTIDEP_CONSTITUTION.md regel 3, EVIDENCE_PIPELINE.md). Én exclusion constraint gjør erklæringen til en regel: én gyldig tildeling per rolle og kapasitet om gangen, slik at «hvilken modell handler denne rollen som nå» har ett svar. Flere ledd kan dele modell, og det er tilsiktet fra migrasjon 013t: den samme modellen utfører leddene i atskilte runder med hver sin instruks, sin egen kontekst og sin egen legitimasjon. Separasjonen mellom generator, kildestøttekontroll og evidensvurdering håndheves derfor på agentidentitet — hvert ledd har sin egen identitet, og den samme Workspace Agent-en kan ikke kjøre to. api.begin_agent_run krever fortsatt at kjøringens premisser er nøyaktig den registrerte tildelingen, og en rolle uten gyldig tildeling kan ikke åpne en kjøring i det hele tatt.';
+  'Hvilken modellidentitet hver agentrolle handler som (ANTIDEP_CONSTITUTION.md regel 3, EVIDENCE_PIPELINE.md). Én exclusion constraint gjør erklæringen til en regel: én gyldig tildeling per rolle og kapasitet om gangen, slik at «hvilken modell handler denne rollen som nå» har ett svar. Flere ledd kan dele modell, og det er tilsiktet fra migrasjon 013t: den samme modellen utfører leddene som atskilte kjøringer, hver under sin egen rolle og sin egen instruks. Separasjonen mellom generator, kildestøttekontroll og evidensvurdering ligger derfor i rollen og i kjøringen — ikke i modellnavnet, og ikke i et krav om to agentkonfigurasjoner. api.begin_agent_run krever fortsatt at kjøringens premisser er nøyaktig den registrerte tildelingen, og en rolle uten gyldig tildeling kan ikke åpne en kjøring i det hele tatt.';
 
 -- ----------------------------------------------------------------------------
--- 2. Forbudet mot egenverifikasjon, sagt om det som faktisk skiller leddene
+-- 2. Forbudet mot egenverifikasjon, sagt om det som faktisk skiller kjøringene
 --
 -- Funksjonen beholder navn og signatur, så de tre triggerne fra 009c står
 -- urørt. Det som endres, er hva den sammenligner.
 --
--- Den semantiske modellsammenligningen fra 013b fjernes: den var nettopp
--- regelen om at to ledd ikke kan hvile på det samme eksterne modellsvaret, og
--- det er den arbeidsformen som nå er tillatt. Registreringsidentiteten
--- sammenlignes fortsatt — den er Antideps egen kode per ledd, og et sammenfall
--- der ville betydd at det samme kodeleddet både skrev og kontrollerte.
+-- Den semantiske modellsammenligningen fra 013b fjernes: den var regelen om at
+-- to ledd ikke kan hvile på det samme eksterne modellsvaret, og det er den
+-- arbeidsformen som nå er tillatt.
 --
--- I stedet kommer sammenligningen av *agentidentitet*: to kjøringer på den
--- samme identiteten er det samme leddet med den samme legitimasjonen, og en
--- kontroll derfra er ingen kontroll.
+-- Igjen står det egenverifikasjon faktisk er:
 --
--- Det skal sies rett ut hva den kontrollen er verdt i dag: den kan ikke utløses
--- gjennom de tre triggerne. `agent_runs_identity_role_fkey` binder kjøringens
--- identitet til kjøringens rolle, og de to sidene i en kontroll er alltid to
--- forskjellige roller — altså alltid to forskjellige identiteter. Det samme
--- gjelder registreringsidentiteten, som er seedet per ledd.
+--   1. **Den samme kjøringen.** Et svar kan ikke attestere sitt eget resultat.
+--      Dette er regelen i sin reneste form, og den eneste som er sann uansett
+--      hvordan modeller, agentkonfigurasjoner og transport er satt opp.
+--   2. **Det samme registreringsleddet.** Registreringsidentiteten er Antideps
+--      egen deterministiske kode for leddet, og den er én per ledd. Et
+--      sammenfall betyr at det samme kodeleddet både skrev innholdet og
+--      kontrollerte det.
 --
--- Etter denne migrasjonen filtrerer de tre triggerne derfor ingenting i normal
--- drift. De står som en påstand ved skrivestedet om hva som gjør en kontroll
--- uavhengig, og de blir virksomme igjen den dagen en identitet eller en
--- registreringsmodell blir gjenbrukt på tvers av ledd. Det som faktisk holder
--- leddene fra hverandre nå, er strukturen rundt: én rolle per identitet, én
--- identitet per legitimasjon, ett ledd per Workspace Agent — og de faglige
--- kravene som ikke handler om modell i det hele tatt, som at en dekningskontroll
--- må ha søkt selv før den kan godta dekningen (migrasjon 013e).
+-- Agentidentiteten sammenlignes ikke, og det er med vilje: den er bundet til
+-- rollen av `agent_runs_identity_role_fkey`, så to forskjellige roller har
+-- alltid to forskjellige identiteter. En sammenligning der ville vært sann uten
+-- å bety noe, og ville lest som en uavhengighetsgaranti den ikke er.
 -- ----------------------------------------------------------------------------
 create or replace function provenance.assert_distinct_model_identity(
   p_checking_run_id uuid,
@@ -93,7 +93,6 @@ create or replace function provenance.assert_distinct_model_identity(
 as $$
 declare
   v_same_registration boolean;
-  v_same_identity boolean;
 begin
   if p_checking_run_id is null or p_checked_run_id is null then
     -- Et menneskes registrering har ingen kjøring, og et objekt laget av et
@@ -101,11 +100,21 @@ begin
     return;
   end if;
 
+  -- Regelen i sin reneste form: et svar kan ikke attestere sitt eget resultat.
+  if p_checking_run_id = p_checked_run_id then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = format(
+        '%s er den samme kjøringen som laget det som kontrolleres.',
+        p_what
+      ),
+      hint = 'En kontroll er en ny kjøring under kontrollrollens egen instruks. Et svar som attesterer sitt eget resultat, er ikke en kontroll — det er den samme vurderingen lest to ganger (ANTIDEP_CONSTITUTION.md regel 3).';
+  end if;
+
   select a.provider = b.provider
      and a.model = b.model
-     and a.model_version = b.model_version,
-       a.agent_identity_id = b.agent_identity_id
-    into v_same_registration, v_same_identity
+     and a.model_version = b.model_version
+    into v_same_registration
   from provenance.agent_runs a, provenance.agent_runs b
   where a.id = p_checking_run_id and b.id = p_checked_run_id;
 
@@ -119,31 +128,22 @@ begin
       hint = 'Registreringsidentiteten er Antideps egen kode for hvert ledd, og den er én per ledd. Et sammenfall betyr at det samme kodeleddet både skrev innholdet og kontrollerte det, og det er egenverifikasjon uansett hvilken modell som gjorde det semantiske arbeidet (ANTIDEP_CONSTITUTION.md regel 3).';
   end if;
 
-  if coalesce(v_same_identity, false) then
-    raise exception using
-      errcode = 'restrict_violation',
-      message = format(
-        '%s ble gjort av den samme agentidentiteten som laget det som kontrolleres.',
-        p_what
-      ),
-      hint = 'Hvert agentledd har sin egen identitet med sin egen legitimasjon (migrasjon 005e). To kjøringer på den samme identiteten er det samme leddet, ikke to uavhengige runder — og en kontroll derfra er den samme vurderingen gjort to ganger (ANTIDEP_CONSTITUTION.md regel 3).';
-  end if;
 end;
 $$;
 
 comment on function provenance.assert_distinct_model_identity(uuid, uuid, text) is
-  'Avviser en kontroll som ikke er en uavhengig runde (ANTIDEP_CONSTITUTION.md regel 3). Sammenligner to ting per kjøring: registreringsidentiteten, som er Antideps egen kode for leddet, og agentidentiteten, som er legitimasjonen runden ble utført under. Sammenligner fra migrasjon 013t IKKE lenger den semantiske modellen: flere ledd kan dele modell, fordi den samme modellen utfører dem i atskilte runder med hver sin instruks og sin egen kontekst. Det Antidep da hevder, er at kontrollen var en annen runde under en annen legitimasjon — ikke at den var en annen modellvekt, og flaten skal ikke si noe annet. NULL på en av sidene er ikke et sammenfall: et menneskes registrering har ingen agentkjøring.';
+  'Avviser en kontroll som ikke er en egen kjøring (ANTIDEP_CONSTITUTION.md regel 3). Sammenligner to ting: om det er den samme kjøringen — et svar kan ikke attestere sitt eget resultat — og registreringsidentiteten, som er Antideps egen kode for leddet og én per ledd. Sammenligner fra migrasjon 013t IKKE lenger den semantiske modellen: flere ledd kan dele modell, fordi den samme modellen utfører dem som atskilte kjøringer under hver sin rolle og hver sin instruks. Det Antidep da hevder, er at kontrollen var en egen kjøring i en egen rolle — ikke at den var en annen modell, og ingen flate skal si noe sterkere. NULL på en av sidene er ikke et sammenfall: et menneskes registrering har ingen agentkjøring.';
 
 -- ----------------------------------------------------------------------------
--- 3. Kildeleddene: dekningskontrollen er fortsatt et annet ledd
+-- 3. Kildeleddene: dekningskontrollen er fortsatt en egen kjøring
 --
 -- 013e ga kildeoppdagelsen og dekningskontrollen hver sin registreringsidentitet
 -- nettopp slik at kontrollen ikke kunne være det samme leddet som søkte. Den
--- delingen står, og den er nå den som bærer kravet — sammen med at de to har
--- hver sin agentidentitet.
+-- delingen står. Det som faller bort, er kravet om at de to måtte ha
+-- forskjellige *eksterne modeller* — se seksjon 7.
 -- ----------------------------------------------------------------------------
 comment on function provenance.current_semantic_model(provenance.agent_role) is
-  'Den eksterne KI-agenten rollen er registrert med for det semantiske arbeidet akkurat nå, eller ingen rad. Ingen rad er en reell tilstand og ikke en feil i seg selv: en rolle uten registrert semantisk modell kan ikke ta imot et eksternt agentsvar, og det er riktig utfall — alternativet ville vært å ta imot et svar fra en modell ingen har tatt stilling til (ANTIDEP_CONSTITUTION.md regel 3). Fra migrasjon 013t kan flere roller være registrert med den samme modellen: det er den samme modellen i atskilte runder, og separasjonen ligger i agentidentiteten og i at én Workspace Agent bare kjører ett ledd.';
+  'Den eksterne KI-agenten rollen er registrert med for det semantiske arbeidet akkurat nå, eller ingen rad. Ingen rad er en reell tilstand og ikke en feil i seg selv: en rolle uten registrert semantisk modell kan ikke ta imot et eksternt agentsvar, og det er riktig utfall — alternativet ville vært å ta imot et svar fra en modell ingen har tatt stilling til (ANTIDEP_CONSTITUTION.md regel 3). Fra migrasjon 013t kan flere roller være registrert med den samme modellen: det er den samme modellen i atskilte kjøringer, og separasjonen ligger i rollen og i kjøringen.';
 
 -- ----------------------------------------------------------------------------
 -- 4. Kommentarene som beskrev den gamle regelen
@@ -316,3 +316,262 @@ begin
   );
 end;
 $$;
+
+-- ----------------------------------------------------------------------------
+-- 6. Én Workspace Agent kan kjøre flere ledd
+--
+-- `agent_runner_connections_one_role_per_agent_excl` forbød den samme
+-- `platform_agent_reference` å ha to gjeldende tilkoblinger. Begrunnelsen som
+-- sto i 011a, var «én konfigurasjon er én modellruntime» — altså den samme
+-- faglige uavhengighetspåstanden som modellregelen, ett hakk lenger ut.
+--
+-- Den påstanden er det denne migrasjonen fjerner, og da skal den ikke bli
+-- stående i en annen kolonne. Regelen er ikke teknisk nødvendig: hver
+-- tilkobling har sin egen nøkkel, sitt eget token og sin egen rolle, og en
+-- kjøring er rollemerket av tilkoblingen den kom gjennom. Den samme Workspace
+-- Agent-en kan derfor utføre to ledd som to atskilte, korrekt rollemerkede
+-- kjøringer — med hver sin instruks — og datamodellen skal ikke forby det.
+--
+-- `agent_runner_connections_one_live_per_role_excl` står urørt. Den er en
+-- transportregel og ikke en uavhengighetspåstand: «hvem henter arbeidet i dette
+-- leddet» skal ha ett svar.
+-- ----------------------------------------------------------------------------
+alter table workflow.agent_runner_connections
+  drop constraint agent_runner_connections_one_role_per_agent_excl;
+
+comment on table workflow.agent_runner_connections is
+  'Én registrert autonom kjører av eksternt agentarbeid — i praksis én planlagt ChatGPT Workspace Agent koblet til Antideps private MCP-app (ANTIDEP_CONSTITUTION.md regel 3, 7). Registreres av et menneske med editor-mandat og aldri av et agentsvar: en kjører som kunne registrere seg selv, ville etablert premisset som autoriserte den. Bundet til nøyaktig ett agentledd, slik at tokenet aldri kan få annet arbeid enn det leddet. Fra migrasjon 013t kan den samme Workspace Agent-en ha tilkoblinger til flere ledd: hver tilkobling har sin egen nøkkel, sitt eget token og sin egen rolle, og arbeidet utføres som atskilte, rollemerkede kjøringer. Ett ledd har fortsatt høyst én gjeldende kjører — det er en transportregel, ikke en uavhengighetspåstand.';
+
+comment on column workflow.agent_runner_connections.platform_agent_reference is
+  'Plattformens eget navn på agentkonfigurasjonen, slik et menneske kjenner den igjen i ChatGPT. En opplysning for gjenfinning og feilsøking, og fra migrasjon 013t ikke en uavhengighetsgaranti: den samme konfigurasjonen kan kjøre flere ledd, som atskilte kjøringer under hver sin rolle.';
+
+-- ----------------------------------------------------------------------------
+-- 7. Dekningskontrollen: en egen kjøring, ikke en annen modell
+--
+-- 013e la en egen sperre i `workflow.record_monograph_coverage_control(...)`:
+-- den slo opp de to kildeleddenes semantiske tildelinger og avviste kontrollen
+-- dersom de var den samme modellen. Det er den samme regelen denne migrasjonen
+-- fjerner, og den kan ikke bli stående her.
+--
+-- I stedet gjelder den regelen som er sann: kontrollen kan ikke være den samme
+-- *kjøringen* som søkte. Uavhengigheten som betyr noe faglig, ligger uendret i
+-- porten ved siden av — en dekningskontroll må ha søkt selv og vurdert
+-- vesentligheten før en dekning kan godtas.
+-- ----------------------------------------------------------------------------
+create or replace function workflow.record_monograph_coverage_control(
+  p_plan_id uuid,
+  p_outcome workflow.monograph_coverage_outcome,
+  p_note text,
+  p_searched_independently boolean,
+  p_missed_candidates integer,
+  p_exclusions_checked integer,
+  p_materiality_assessed boolean,
+  p_agent_run_id uuid,
+  p_actor_id uuid
+)
+  returns uuid
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_plan workflow.monograph_search_plans;
+  v_id uuid;
+begin
+  select p.* into v_plan
+  from workflow.monograph_search_plans p
+  where p.id = p_plan_id
+  for update;
+
+  if not found then
+    raise exception using
+      errcode = 'no_data_found',
+      message = 'Søkeplanen finnes ikke.';
+  end if;
+
+  -- Kontrollen skal ikke kunne være den samme *kjøringen* som søkte. Den kan
+  -- godt være den samme modellen: dekningskontrollen er et eget ledd med sin
+  -- egen rolle, sin egen instruks og sin egen kjøring, og det er den
+  -- separasjonen som gjelder fra migrasjon 013t. Sammenligningen av de to
+  -- semantiske *tildelingene* er derfor borte — den krevde to forskjellige
+  -- modeller, og det er ikke lenger en regel Antidep kan eller skal hevde.
+  --
+  -- Det som faktisk bærer uavhengigheten her, står uendret ved siden av: porten
+  -- krever at kontrollen søkte selv (`searched_independently`) og vurderte
+  -- vesentligheten før en dekning kan godtas. Det er en faglig forskjell en
+  -- delt modell ikke kan gå rundt.
+  perform provenance.assert_distinct_model_identity(
+    p_agent_run_id,
+    (select s.agent_run_id
+     from workflow.monograph_searches s
+     where s.plan_id = p_plan_id and s.agent_run_id is not null
+     order by s.registration_ordinal desc
+     limit 1),
+    'Dekningskontrollen'
+  );
+
+  insert into workflow.monograph_coverage_controls (
+    plan_id, plan_version, outcome, note,
+    searched_independently, missed_candidates, exclusions_checked,
+    materiality_assessed, agent_run_id, recorded_by_actor_id
+  )
+  values (
+    p_plan_id, v_plan.plan_version, p_outcome, btrim(p_note),
+    coalesce(p_searched_independently, false),
+    coalesce(p_missed_candidates, 0), coalesce(p_exclusions_checked, 0),
+    coalesce(p_materiality_assessed, false), p_agent_run_id, p_actor_id
+  )
+  on conflict (plan_id, plan_version) do nothing
+  returning id into v_id;
+
+  if v_id is null then
+    raise exception using
+      errcode = 'unique_violation',
+      message = 'Denne planversjonen har allerede en dekningskontroll.',
+      hint = 'Én kontroll per planversjon. Skal dekningen kontrolleres på nytt, er planen blitt en annen, og det er en ny planversjon.';
+  end if;
+
+  return v_id;
+end;
+$$;
+
+comment on function workflow.record_monograph_coverage_control(uuid, workflow.monograph_coverage_outcome, text, boolean, integer, integer, boolean, uuid, uuid) is
+  'Registrerer én dekningskontroll av én søkeplan, i den versjonen planen har nå (SOURCE_POLICY.md §4.4, ANTIDEP_CONSTITUTION.md regel 3). Kontrollen kan ikke være den samme kjøringen som utførte søkene; fra migrasjon 013t er det ikke lenger et krav at den er en annen modell, fordi dekningskontrollen er et eget ledd med sin egen rolle, sin egen instruks og sin egen kjøring. Uavhengigheten som betyr noe faglig, ligger i porten ved siden av: en dekning kan bare godtas av en kontroll som søkte selv og vurderte vesentligheten. Én kontroll per plan og planversjon.';
+
+-- ----------------------------------------------------------------------------
+-- 8. Registreringsveien for kjørere
+--
+-- `api.register_agent_runner(...)` fanget `exclusion_violation` og slo opp
+-- hvilket annet ledd den samme Workspace Agent-en kjørte. Etter seksjon 6 er
+-- det lovlig, og grenen ville gitt en usann feilmelding. Den er fjernet, og
+-- periodeberegningen viker ikke lenger for agentens andre tilkoblinger.
+-- ----------------------------------------------------------------------------
+create or replace function api.register_agent_runner(
+  p_connection_key text,
+  p_display_name text,
+  p_agent_role text,
+  p_platform_agent_reference text,
+  p_platform_model_disclosure text,
+  p_reason text default null
+)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+  v_role provenance.agent_role;
+  v_disclosure workflow.runner_model_disclosure;
+  v_connection workflow.agent_runner_connections;
+  v_valid_from timestamptz;
+begin
+  v_actor_id := knowledge.assert_editor_authorized();
+
+  begin
+    v_role := p_agent_role::provenance.agent_role;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format('%L er ikke en kjent agentrolle.', p_agent_role);
+  end;
+
+  -- En kjører kan bare få arbeid i et ledd som faktisk kan settes ut. De
+  -- uavhengige kontrolleddene er Antideps egen deterministiske kode, og en
+  -- ekstern modell som fikk utføre dem, ville gjort kontrollen til nok en
+  -- modellvurdering (ANTIDEP_CONSTITUTION.md regel 3).
+  if workflow.agent_task_contract(v_role) is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format(
+        'Rollen %L utføres av Antideps egen deterministiske kode, og kan ikke settes ut til en autonom kjører.',
+        p_agent_role);
+  end if;
+
+  begin
+    v_disclosure := p_platform_model_disclosure::workflow.runner_model_disclosure;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format(
+          '%L sier ikke om plattformen pinner modellen. Gyldige verdier er platform_pinned og not_exposed.',
+          p_platform_model_disclosure),
+        hint = 'Pinner Workspace Agent-en en bestemt modell som plattformen viser, er verdien platform_pinned. Gjør den ikke det, er den not_exposed — og det er en sann opplysning framfor en mangel: separasjonen hviler da på modelltildelingen, ikke på plattformen (ANTIDEP_CONSTITUTION.md regel 3, 4).';
+  end;
+
+  -- Perioden begynner der den forrige sluttet, og aldri før.
+  --
+  -- Standardverdien for valid_from er now(), altså transaksjonens starttid. En
+  -- tilbaketrekking og en ny registrering i den samme transaksjonen ville derfor
+  -- fått overlappende perioder, og exclusion-reglene ville avvist en
+  -- registrering som er helt legitim. Samme regning, og samme begrunnelse, som i
+  -- api.assign_agent_role_model.
+  -- Fra 013t teller bare de to reglene som står igjen: ett gjeldende ledd, og
+  -- én gjeldende nøkkel. Den samme Workspace Agent-en kan være registrert på
+  -- flere ledd samtidig, så dens perioder er ikke lenger noe denne
+  -- registreringen må vike for.
+  select greatest(
+           statement_timestamp(),
+           coalesce(max(c.valid_to), statement_timestamp()))
+    into v_valid_from
+  from workflow.agent_runner_connections c
+  where c.agent_role = v_role
+     or c.connection_key = btrim(coalesce(p_connection_key, ''));
+
+  begin
+    insert into workflow.agent_runner_connections (
+      connection_key, display_name, agent_role,
+      platform_agent_reference, platform_model_disclosure,
+      valid_from, registered_by_actor_id, registration_reason
+    )
+    values (
+      btrim(coalesce(p_connection_key, '')),
+      btrim(coalesce(p_display_name, '')),
+      v_role,
+      btrim(coalesce(p_platform_agent_reference, '')),
+      v_disclosure,
+      coalesce(v_valid_from, statement_timestamp()),
+      v_actor_id,
+      coalesce(
+        nullif(btrim(coalesce(p_reason, '')), ''),
+        'Registrert av en redaktør med mandat som den planlagte eksterne kjøreren av dette agentleddet.')
+    )
+    returning * into v_connection;
+  exception
+    when exclusion_violation then
+      -- Etter 013t finnes to exclusion-regler på tilkoblingene, og begge er
+      -- transportregler: én gjeldende kjører per ledd, og én gjeldende
+      -- tilkobling per nøkkel. Grenen som slo opp hvilket *annet* ledd den
+      -- samme Workspace Agent-en kjørte, er borte sammen med regelen den
+      -- forklarte — at den samme agenten kjører flere ledd, er tillatt.
+      if exists (
+        select 1 from workflow.agent_runner_connections c
+        where c.connection_key = btrim(coalesce(p_connection_key, ''))
+          and c.valid_to is null
+      ) then
+        raise exception using
+          errcode = 'restrict_violation',
+          message = format('Nøkkelen %L tilhører allerede en gjeldende kjører.', p_connection_key),
+          hint = 'Trekk den gjeldende tilbake med api.revoke_agent_runner(text, text) først. Den samme nøkkelen kan brukes på nytt etterpå: unikheten gjelder de gjeldende tilkoblingene, ikke historikken.';
+      end if;
+
+      raise exception using
+        errcode = 'restrict_violation',
+        message = format('Agentleddet %L har allerede en gjeldende autonom kjører.', p_agent_role),
+        hint = 'Trekk den gjeldende tilbake med api.revoke_agent_runner(text, text) før en ny registreres. Ett ledd med to kjørere ville gjort «hvem henter arbeidet her» til et spørsmål med to svar.';
+  end;
+
+  return jsonb_build_object(
+    'registered', true,
+    'connection_key', v_connection.connection_key,
+    'display_name', v_connection.display_name,
+    'agent_role', v_connection.agent_role::text,
+    'platform_agent_reference', v_connection.platform_agent_reference,
+    'platform_model_disclosure', v_connection.platform_model_disclosure::text
+  );
+end;
+$$;
+
+comment on function api.register_agent_runner(text, text, text, text, text, text) is
+  'Registrerer én autonom kjører av eksternt agentarbeid — i praksis én planlagt ChatGPT Workspace Agent (ANTIDEP_CONSTITUTION.md regel 3, 7). Tilkoblingen bindes til nøyaktig ett agentledd, slik at tokenet aldri kan få annet arbeid enn det leddet. Fra migrasjon 013t kan den samme Workspace Agent-en registreres på flere ledd: arbeidet utføres da som atskilte, rollemerkede kjøringer med hver sin instruks, og det er den separasjonen Antidep hevder — ikke at leddene kjører hver sin modell. Ett ledd har fortsatt høyst én gjeldende kjører, og én nøkkel høyst én gjeldende tilkobling; begge er transportregler. Gir ingen tilgang i seg selv — den kommer først når en tilkoblingskode innløses. Krever editor-mandat. SECURITY DEFINER fordi workflow har RLS med default deny; kalleren valideres på funksjonens eget kall.';

@@ -1119,12 +1119,13 @@ select is(
   'en semantisk modelltildeling kan avsluttes'
 );
 
--- To avslutninger i denne filen: synteseleddet byttet tjeneste i del 6c, og
+-- Tre avslutninger i denne filen: synteseleddet fikk først den modellen
+-- ekstraksjonsleddet også bruker, byttet så til sin egen i del 6c, og
 -- ekstraksjonsleddet avsluttes her.
 select is(
   (select count(*) from audit.events e
    where e.operation = 'role_model_assignment_closed'),
-  2::bigint,
+  3::bigint,
   'hver avslutning etterlater sin egen auditrad'
 );
 

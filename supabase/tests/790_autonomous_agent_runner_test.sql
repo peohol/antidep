@@ -212,15 +212,15 @@ select throws_ok(
   'et agentledd kan ikke ha to gjeldende autonome kjørere'
 );
 
--- Og den samme Workspace Agent-en kan ikke kjøre to ledd. Én konfigurasjon er
--- én modellruntime, og en kjede der den samme agenten både laget innholdet og
--- vurderte det, ville vært egenverifikasjon med et ekstra ledd.
-select throws_ok(
+-- Og fra migrasjon 013t kan den samme Workspace Agent-en kjøre flere ledd.
+-- Hver tilkobling har sin egen nøkkel, sitt eget token og sin egen rolle, så
+-- arbeidet blir atskilte, rollemerkede kjøringer med hver sin instruks. Å kreve
+-- to agentkonfigurasjoner ville vært en faglig uavhengighetspåstand forkledd
+-- som en teknisk grense.
+select lives_ok(
   $$ select api.register_agent_runner('agent-runner:claim-synthesis', 'Syntese',
                                       'claim_synthesis', 'Antidep Ekstraksjon (ChatGPT)', 'not_exposed') $$,
-  '23001',
-  null,
-  'den samme Workspace Agent-en kan ikke kjøre to agentledd'
+  'den samme Workspace Agent-en kan kjøre flere agentledd'
 );
 
 -- ===========================================================================

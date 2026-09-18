@@ -99,18 +99,23 @@ oppgir ingen opprinnelse, og den merker ingenting.
 Dette er det ene stedet plattformen setter en grense Antidep ikke kan flytte.
 
 Antidep krever at generator, kildestøttekontroll og evidensvurdering er reelt
-separate, håndhevet på agentidentitet (`ANTIDEP_CONSTITUTION.md` regel 3). I
-databasen er det en exclusion constraint: den samme Workspace Agent-en kan ikke
-kjøre to agentledd i overlappende tid, og hvert ledd har sin egen identitet med
-sin egen legitimasjon.
+separate, håndhevet på **rolle og kjøring** (`ANTIDEP_CONSTITUTION.md` regel 3).
+Hvert ledd er sin egen rolle med sin egen identitet og sin egen legitimasjon, og
+hver kontroll er en ny kjøring under kontrollrollens egen instruks. Et svar kan
+ikke attestere sitt eget resultat.
 
-**Den samme modellen kan derimot utføre alle leddene.** Det er den normale
-oppsettet i et ChatGPT Business-workspace, som har én modellmeny: du oppretter
-én Workspace Agent per ledd, gir hver sin instruks, og lar dem kjøre den samme
-modellen. Hvert ledd blir da en atskilt runde med sin egen kontekst. Fram til
-migrasjon 013t krevde databasen seks forskjellige modeller, og det var et krav
-plattformen ikke kunne innfri — regelen er flyttet dit den faktisk kan
-kontrolleres.
+**Den samme modellen kan utføre alle leddene.** Det er det normale oppsettet i
+et ChatGPT Business-workspace, som har én modellmeny: du gir hvert ledd sin egen
+instruks og lar dem kjøre den samme modellen. Hvert ledd blir da en atskilt
+kjøring. Fram til migrasjon 013t krevde databasen seks forskjellige modeller, og
+det var et krav plattformen ikke kunne innfri.
+
+**Det er heller ikke et krav at hvert ledd har sin egen Workspace Agent.** Én
+agent per ledd er ryddig og gjør instruksene lettere å holde fra hverandre, men
+databasen krever det ikke: den samme agenten kan ha tilkoblinger til flere ledd,
+og hver tilkobling har sin egen nøkkel, sitt eget token og sin egen rolle. Å
+gjøre to agentkonfigurasjoner til et absolutt krav ville vært den gamle
+modellregelen i ny drakt.
 
 En Workspace Agent er ikke en modell. Den er en konfigurasjon som kjører *en*
 modell, og plattformen viser ikke nødvendigvis hvilken. Antidep fører derfor tre
@@ -119,10 +124,10 @@ opplysninger hver for seg:
 1. **Antideps semantiske rolle** — `evidence_extraction`, `claim_synthesis`,
    `evidence_assessment`. Databasens eget begrep.
 2. **Workspace Agent-identiteten** — `platform_agent_reference` på tilkoblingen.
-   Den samme agenten kan ikke kjøre to ledd: én konfigurasjon er én
-   modellruntime, og en kjede der den samme agenten både laget innholdet og
-   vurderte det, ville vært egenverifikasjon med et ekstra ledd. Regelen er en
-   exclusion constraint, ikke en anbefaling.
+   En opplysning for gjenfinning og feilsøking, og ikke en uavhengighetsgaranti:
+   den samme agenten kan kjøre flere ledd, som atskilte kjøringer under hver sin
+   rolle og hver sin instruks. Ett ledd har derimot høyst én gjeldende kjører —
+   det er en transportregel, slik at «hvem henter arbeidet her» har ett svar.
 3. **Den faktiske modellen** — `provenance.role_model_assignments`, tildelt på
    forhånd av en redaktør, og kontrollert mot svaret ved import. Oppgir
    plattformen en eksakt modell og versjon, registreres den; gjør den ikke det,

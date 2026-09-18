@@ -30,10 +30,10 @@ p_note)` med redaktørmandat.
 
 Seks semantiske ledd har hver sin tildelte KI-tjeneste
 (`provenance.role_model_assignments`). Flere ledd kan bruke den samme modellen:
-den utfører dem i atskilte runder, med hver sin Workspace Agent, sin egen
-instruks og sin egen kontekst. Det som ikke kan deles, er agentidentiteten —
-hvert ledd har sin egen legitimasjon, og én Workspace Agent kjører bare ett ledd
-(eksklusjonsbegrensning, migrasjon 013t):
+den utfører dem som atskilte kjøringer, hver under sin egen rolle og sin egen
+instruks. Det som ikke kan deles, er kjøringen — et svar kan ikke attestere sitt
+eget resultat — og registreringsleddet, som er Antideps egen kode per ledd
+(migrasjon 013t):
 
 | Ledd                        | Hva det avgjør                                        |
 | --------------------------- | ----------------------------------------------------- |
