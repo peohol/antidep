@@ -62,6 +62,27 @@ reject_grep_matches \
   '(register_agent_runner|issue_agent_runner_pairing_code|revoke_agent_runner|agent_runner_connections|assign_agent_role_model|agent_task_payload|import_agent_answer|agent_work_queue)' \
   src/app
 
+# Separasjonen skal ikke hevdes sterkere enn den er (migrasjon 013t).
+#
+# Regel 3 er håndhevet på rolle og kjøring: et svar kan ikke attestere sitt eget
+# resultat, og det samme registreringsleddet kan ikke både skrive innholdet og
+# kontrollere det. Den samme modellen *kan* utføre alle leddene, og den samme
+# Workspace Agent-en kan kjøre flere av dem.
+#
+# Formuleringene under er de påstandene systemet ikke lenger gjør, og de har
+# drevet tilbake i dokumentene én gang allerede. Søket går på dem ordrett.
+# Grunnen til at det er et repo-søk og ikke en prøve, er at det er tekst og ikke
+# oppførsel: ingen database kan si fra om at et dokument lover for mye.
+#
+# Bare `docs/` søkes. En migrasjon forteller sin egen historie og siterer med
+# vilje regelen den fjerner; et søk som traff den, ville tvunget fram en
+# migrasjon som ikke kunne forklare seg.
+reject_grep_matches \
+  'Et dokument hevder en separasjon systemet ikke har (migrasjon 013t).' \
+  -R -n -E --include='*.md' \
+  '(modellruntime|ikke dele modell|kan ikke kjøre to|hå(ndhevet|ndheves) på (modellidentitet|agentidentitet)|to (roller|ledd|agentledd) kan ikke dele)' \
+  docs
+
 # Rå feiltekst skal aldri rendres til et menneske.
 #
 # Gatewayene formulerer setningen selv (`src/app/gateway.ts`), og sidene leser

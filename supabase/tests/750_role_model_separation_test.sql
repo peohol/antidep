@@ -5,13 +5,19 @@
 -- Fram til 009c var den regelen håndhevet på aktør, men ikke på modell: to
 -- roller kunne oppgi nøyaktig den samme modellen, og kjeden godtok det.
 --
--- Filen dekker de tre lagene som nå står i veien:
+-- Migrasjon 013t flyttet regelen: flere ledd *kan* dele modell, fordi den samme
+-- modellen utfører dem i atskilte runder med hver sin instruks og sin egen
+-- kontekst. Det som ikke kan deles, er leddet selv — én tildeling per rolle, én
+-- rolle per agentidentitet.
 --
---   * registeret lar ingen to roller dele modellidentitet,
+-- Filen dekker de tre lagene som står i veien:
+--
+--   * registeret gir hvert ledd én gyldig tildeling om gangen, og lar flere
+--     ledd bruke den samme modellen,
 --   * api.begin_agent_run krever at premissene er den registrerte
 --     tildelingen, og avviser en rolle uten tildeling, og
---   * kontrollradene avviser en kontroll gjort av den samme modellen som
---     laget det som kontrolleres.
+--   * kontrollradene avviser en kontroll gjort av den samme registrerings-
+--     eller agentidentiteten som laget det som kontrolleres.
 --
 -- SQLSTATE 22023 = invalid_parameter_value, 23001 = restrict_violation,
 -- 23P01 = exclusion_violation.
@@ -20,7 +26,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(24);
+select plan(25);
 
 -- ===========================================================================
 -- Del 1 — Registeret
@@ -36,30 +42,21 @@ select is(
   'de åtte skrivende rollene i kjeden har hver sin gyldige tildeling'
 );
 
--- Separasjonen, sett fra dataene: åtte roller, åtte forskjellige modeller.
+-- Registreringsidentitetene er fortsatt én per ledd. Det er ingen
+-- databaseregel etter 013t, men det er Antideps egen kode, og hvert ledd har
+-- sin egen: et sammenfall der ville betydd at det samme kodeleddet både skrev
+-- innholdet og kontrollerte det.
 select is(
   (select count(distinct (provider, model, model_version))::int
    from provenance.role_model_assignments where valid_to is null),
   8,
-  'ingen to av dem deler modellidentitet'
+  'de åtte registreringsidentitetene er forskjellige'
 );
 
 select is(
   (select a.model from provenance.current_role_model('evidence_extraction') a),
   'proposal-grounded-extraction',
   'oppslaget gir rollens gjeldende modell'
-);
-
--- Regelen er strukturell, ikke en konvensjon: et forsøk på å gi to ledd den
--- samme modellen avvises av databasen.
-select throws_ok(
-  $$insert into provenance.role_model_assignments
-      (agent_role, provider, model, model_version, registered_by_actor_id, reason)
-    select 'claim_synthesis', 'antidep', 'deterministic-extraction-check', '1.0.0',
-           (select id from provenance.actors where actor_key = 'human:peder-holman'),
-           'Prøve i 750: to roller med samme modell.'$$,
-  '23P01', null,
-  'to roller kan ikke dele modellidentitet i overlappende tid'
 );
 
 -- Og én rolle kan ikke ha to samtidige modeller: «hvilken modell handler denne
@@ -87,6 +84,33 @@ select is(
    where e.operation = 'role_model_assignment_registered'),
   'provenance.role_model_assignments',
   'auditraden peker på registeret'
+);
+
+-- Og fra 013t: to ledd kan dele modell. Den samme modellen utfører dem i
+-- atskilte runder, med hver sin instruks og sin egen kontekst, og registeret
+-- står ikke lenger i veien for å si det sant.
+--
+-- Tildelingen er semantisk: det er den kapasiteten en ekstern modell tildeles i,
+-- og leddet har allerede sin egen registreringsidentitet ved siden av. Paret er
+-- de to kildeleddene, fordi det er der delingen er lettest å lese — søket og
+-- kontrollen av søkedekningen er to runder, ikke to modellvekter. Radene legges
+-- inn etter auditkontrollene over, slik at de teller de åtte seedede
+-- tildelingene og ikke prøvens egne.
+select lives_ok(
+  $$insert into provenance.role_model_assignments
+      (agent_role, capacity, provider, model, model_version, registered_by_actor_id, reason)
+    select 'source_discovery', 'semantic', 'openai', 'prøve-750-delt-modell', '1',
+           (select id from provenance.actors where actor_key = 'human:peder-holman'),
+           'Prøve i 750: kildeoppdagelsen får den delte modellen.'$$,
+  'et ledd kan tildeles en ekstern modell i tillegg til registreringsidentiteten'
+);
+select lives_ok(
+  $$insert into provenance.role_model_assignments
+      (agent_role, capacity, provider, model, model_version, registered_by_actor_id, reason)
+    select 'source_quality_assessment', 'semantic', 'openai', 'prøve-750-delt-modell', '1',
+           (select id from provenance.actors where actor_key = 'human:peder-holman'),
+           'Prøve i 750: dekningskontrollen kjører den samme modellen i sin egen runde.'$$,
+  'to ledd kan dele den samme modellen i overlappende tid'
 );
 
 -- Historikken er uforanderlig. Hvilken modell en rolle handlet som i en
@@ -165,8 +189,7 @@ select is(
   'auditraden over avslutningen peker på registeret'
 );
 
--- Og når den er avsluttet, kan rollen få en ny modell — men ikke en modell en
--- annen rolle allerede handler som.
+-- Og når den er avsluttet, kan rollen få en ny modell.
 select lives_ok(
   $$insert into provenance.role_model_assignments
       (agent_role, provider, model, model_version, registered_by_actor_id, reason)

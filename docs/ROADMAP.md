@@ -203,10 +203,11 @@ skrivefullmakter enn den manuelle.
 Tilkoblingen er OAuth 2.1 med PKCE, og hele tilstanden ligger hashet i Antideps
 egen database. MCP-serveren holder ingen databasehemmelighet av egen kraft: den
 videresender tokenet kalleren la ved, og databasen avgjør hva det får gjøre. En
-tilkobling er bundet til nøyaktig ett agentledd, og den samme Workspace Agent-en
-kan ikke kjøre to ledd — én konfigurasjon er én modellruntime, og en kjede der
-den samme agenten både laget innholdet og vurderte det, ville vært
-egenverifikasjon med et ekstra ledd.
+tilkobling er bundet til nøyaktig ett agentledd, og ett ledd har høyst én
+gjeldende kjører. Den samme Workspace Agent-en kan derimot kjøre flere ledd, som
+atskilte kjøringer under hver sin rolle og hver sin instruks: uavhengigheten
+ligger i rollen og i kjøringen, ikke i antallet agentkonfigurasjoner
+(migrasjon 013t).
 
 Engangsoppsettet står i [Antidep som privat app i ChatGPT Business](CHATGPT_WORKSPACE_AGENT.md),
 og det er et **teknisk deploy-/driftssteg** — ikke en redaksjonell beslutning.

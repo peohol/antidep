@@ -26,7 +26,7 @@ describe('premisesForRole', () => {
 })
 
 describe('separasjonen', () => {
-  it('lar ingen to roller dele modellidentitet', () => {
+  it('lar ingen to roller dele registreringsidentitet', () => {
     expect(rolesSharingModelIdentity()).toEqual([])
   })
 

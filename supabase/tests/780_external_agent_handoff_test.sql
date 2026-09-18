@@ -6,7 +6,7 @@
 --   * avtrykket er stabilt for et uendret grunnlag, og et svar avgitt på et
 --     annet grunnlag kan ikke importeres,
 --   * svaret er data: ukjente felter avvises, og verdiene hentes ut av svaret,
---   * modellidentiteten registreres, og to agentledd kan ikke dele modell,
+--   * modellidentiteten registreres, og to agentledd kan dele modell (013t),
 --   * en ikke-eksponert versjon er kanonisk, slik at to ukjente er én modell,
 --   * det samme svaret sendt inn igjen lager ingen doble kliniske artefakter,
 --   * og kildeteksten er like privat som originalfilen.
@@ -535,25 +535,26 @@ select set_config('request.jwt.claims',
                   '{"sub":"78000000-0000-4000-8000-00000000000e"}', true);
 set local role authenticated;
 
--- Den samme modellen kan ikke både lage innholdet og gjøre et annet semantisk
--- ledd. Avvisningen kommer der avgjørelsen tas — før noen har brukt en økt i en
--- KI-tjeneste på et svar som uansett ikke kunne registreres (regel 3).
-select throws_ok(
+-- Den samme modellen kan gjøre flere semantiske ledd fra migrasjon 013t: den
+-- utfører dem i atskilte runder, med hver sin instruks og sin egen kontekst.
+-- Ekstraksjonsleddet har allerede denne modellen.
+select lives_ok(
   $$ select api.assign_agent_role_model('claim_synthesis', 'openai', 'GPT-5 Thinking') $$,
-  '23001',
-  null,
-  'den samme eksterne modellen kan ikke tildeles to agentledd'
+  'den samme eksterne modellen kan tildeles to agentledd'
 );
 
+-- Resten av filen trenger at synteseleddet har sin egen modell, så den byttes.
+-- Et bytte krever en begrunnelse, og avslutter den gjeldende i samme transaksjon.
 insert into res
 select 'assigned_synthesis', api.assign_agent_role_model(
   'claim_synthesis', 'anthropic', 'Claude Opus', null, 'not_exposed',
-  'Prøve 780: en annen tjeneste for synteseleddet.');
+  'Prøve 780: en annen tjeneste for synteseleddet.',
+  'Prøve 780: byttet bort fra den modellen ekstraksjonsleddet også bruker.');
 
 -- Og identiteten kan ikke lånes: et ekstraksjonssvar som utgir seg for å være
 -- den modellen synteseleddet er tildelt, avvises. Uten tildelingen på forhånd
--- var dette nettopp hullet — en oppgitt identitet kunne gått klar av regelen om
--- at to ledd ikke deler modell, fordi svaret selv etablerte premisset.
+-- var dette nettopp hullet — et svar kunne oppgitt hvilken modell som helst, og
+-- proveniensen ville sagt det på modellens eget ord.
 select throws_ok(
   format(
     $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
@@ -951,11 +952,13 @@ select throws_ok(
 );
 reset role;
 
--- Regelen gjentas der den gjelder, på selve kontrollradene. Registeret gjør
--- allerede to roller ute av stand til å dele modell; denne prøven omgår
--- registeret med vilje og skriver kjøringene direkte, fordi regelen skal holde
--- også den dagen registeret er feilkonfigurert — og det er nettopp da den betyr
--- noe (ANTIDEP_CONSTITUTION.md regel 3).
+-- Regelen gjentas der den gjelder, på selve kontrollradene. Etter 013t er det
+-- ikke lenger den semantiske modellen som sammenlignes — flere ledd kan dele
+-- den — men registreringsidentiteten: Antideps egen kode for leddet, én per
+-- ledd. Et sammenfall der betyr at det samme kodeleddet både skrev innholdet og
+-- vurderte det. Prøven omgår registeret med vilje og skriver kjøringene direkte,
+-- fordi regelen skal holde også den dagen registeret er feilkonfigurert — og det
+-- er nettopp da den betyr noe (ANTIDEP_CONSTITUTION.md regel 3).
 insert into provenance.agent_runs
   (id, agent_identity_id, actor_id, agent_role, provider, model, model_version,
    semantic_provider, semantic_model, semantic_model_version,
@@ -975,7 +978,7 @@ insert into provenance.agent_runs
    semantic_model_version_disclosure,
    prompt_template_version, pipeline_version, input_manifest)
 select '78000000-0000-4000-8000-0000000000c2', ai.id, ai.actor_id, 'evidence_assessment',
-       'antidep', 'proposal-registered-assessment', '1.0.0',
+       'antidep', 'proposal-registered-synthesis', '1.0.0',
        'samme-leverandør', 'samme-modell', 'ikke-eksponert', 'not_exposed',
        'evidence-assessment/proposal/1', 'antidep-evidence/1', '{"mode":"780"}'::jsonb
 from provenance.agent_identities ai where ai.identity_key = 'agent-identity:evidence-assessment-01';
@@ -1009,14 +1012,14 @@ select throws_ok(
        rationale, assessed_at, created_by_actor_id, agent_run_id)
     values ('78000000-0000-4000-8000-0000000000c4', 'evidence_synthesis', 'grade', 'low',
             'serious', 'not_assessable', 'not_serious', 'serious', 'not_assessable',
-            'Prøve 780: samme eksterne modell på begge ledd.', now(),
+            'Prøve 780: samme registreringsidentitet på begge ledd.', now(),
             (select actor_id from provenance.agent_runs
              where id = '78000000-0000-4000-8000-0000000000c2'),
             '78000000-0000-4000-8000-0000000000c2')
   $$,
   '23001',
   null,
-  'en vurdering som hviler på det samme eksterne modellsvaret som innholdet, avvises'
+  'en vurdering skrevet av det samme registreringsleddet som innholdet, avvises'
 );
 
 -- ===========================================================================
@@ -1116,12 +1119,13 @@ select is(
   'en semantisk modelltildeling kan avsluttes'
 );
 
--- To avslutninger i denne filen: synteseleddet byttet tjeneste i del 6c, og
+-- Tre avslutninger i denne filen: synteseleddet fikk først den modellen
+-- ekstraksjonsleddet også bruker, byttet så til sin egen i del 6c, og
 -- ekstraksjonsleddet avsluttes her.
 select is(
   (select count(*) from audit.events e
    where e.operation = 'role_model_assignment_closed'),
-  2::bigint,
+  3::bigint,
   'hver avslutning etterlater sin egen auditrad'
 );
 

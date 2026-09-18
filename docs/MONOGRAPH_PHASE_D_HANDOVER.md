@@ -28,8 +28,12 @@ p_note)` med redaktørmandat.
 
 ## 2. Hvordan ChatGPT og de andre agentrollene arbeider i flyten
 
-Seks semantiske ledd har hver sin tildelte KI-tjeneste, og ingen to ledd kan
-dele en modell (`provenance.role_model_assignments`, eksklusjonsbegrensning):
+Seks semantiske ledd har hver sin tildelte KI-tjeneste
+(`provenance.role_model_assignments`). Flere ledd kan bruke den samme modellen:
+den utfører dem som atskilte kjøringer, hver under sin egen rolle og sin egen
+instruks. Det som ikke kan deles, er kjøringen — et svar kan ikke attestere sitt
+eget resultat — og registreringsleddet, som er Antideps egen kode per ledd
+(migrasjon 013t):
 
 | Ledd                        | Hva det avgjør                                        |
 | --------------------------- | ----------------------------------------------------- |
@@ -53,11 +57,19 @@ er innført i fase C. Nedlast/opplast-veien (`npm run ops:agents -- export-task`
 `import-answer`) består som teknisk recovery.
 
 **ChatGPT kan lede piloten uten å godkjenne sitt eget arbeid.** Det er ikke en
-høflighetsregel, det er en databasegrense: den separate dekningskontrollen kan
-ikke tildeles den samme modellen som kildeoppdagelsen, sluttkontrollen krever et
-navngitt menneske med reviewer-mandat, og publiseringen krever et *annet*
-menneske med publisher-mandat. Ingen agent kan attestere at et menneske har
-vurdert innhold.
+høflighetsregel, det er en databasegrense: den separate dekningskontrollen er et
+annet ledd, med sin egen rolle, sin egen instruks og sin egen rollebundne
+legitimasjon, og den kan ikke godta en dekning den ikke selv har søkt etter.
+Sluttkontrollen krever et navngitt menneske med reviewer-mandat, og
+publiseringen krever et *annet* menneske med publisher-mandat. Ingen agent kan
+attestere at et menneske har vurdert innhold.
+
+Grensen er en egen kjøring i en egen rolle — ikke en annen modell, og ikke en
+annen Workspace Agent. De to leddene kan godt kjøre den samme modellen, og godt
+være den samme agentkonfigurasjonen. Det er en svakere påstand enn den forrige
+utgaven av dette dokumentet gjorde, og den er den sanne: plattformen viser
+normalt ikke hvilken modell en Workspace Agent kjører, så Antidep kunne uansett
+aldri kontrollere at to oppgitte navn var to modeller.
 
 De to driftskommandoene som faktisk utfører søk og innhenting:
 
@@ -128,7 +140,11 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
 - **Modelltildeling.** De seks semantiske leddene må ha en tildelt tjeneste før
   databasen legger ut arbeid til dem. Gjøres med `npm run ops:agents`, eller av
   en redaktør gjennom `api.assign_agent_role_model`. Uten tildeling stopper
-  flyten med en tydelig avvisning framfor å gjette.
+  flyten med en tydelig avvisning framfor å gjette. Fra migrasjon 013t kan alle
+  seks få **den samme** modellen: ett sant modellnavn er nok, og det er det
+  sanne svaret når workspacet har én modellmeny. De maskinelt utførte søkene
+  (`npm run ops:discovery`) trenger ingen semantisk tildeling i det hele tatt —
+  de kjører på kildeoppdagelsens registreringsidentitet, som migrasjonen seedet.
 - **Agentlegitimasjon.** Hvert kontrolledd har en egen identitet som er *inert*
   til legitimasjonen utstedes i det miljøet kjøreren leser hemmeligheten fra
   (`scripts/issue-agent-credential.sh`).
