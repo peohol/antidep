@@ -99,9 +99,18 @@ oppgir ingen opprinnelse, og den merker ingenting.
 Dette er det ene stedet plattformen setter en grense Antidep ikke kan flytte.
 
 Antidep krever at generator, kildestøttekontroll og evidensvurdering er reelt
-separate, håndhevet på modellidentitet (`ANTIDEP_CONSTITUTION.md` regel 3). I
-databasen er det en exclusion constraint: to agentledd kan ikke dele leverandør,
-modell og modellversjon i overlappende tid.
+separate, håndhevet på agentidentitet (`ANTIDEP_CONSTITUTION.md` regel 3). I
+databasen er det en exclusion constraint: den samme Workspace Agent-en kan ikke
+kjøre to agentledd i overlappende tid, og hvert ledd har sin egen identitet med
+sin egen legitimasjon.
+
+**Den samme modellen kan derimot utføre alle leddene.** Det er den normale
+oppsettet i et ChatGPT Business-workspace, som har én modellmeny: du oppretter
+én Workspace Agent per ledd, gir hver sin instruks, og lar dem kjøre den samme
+modellen. Hvert ledd blir da en atskilt runde med sin egen kontekst. Fram til
+migrasjon 013t krevde databasen seks forskjellige modeller, og det var et krav
+plattformen ikke kunne innfri — regelen er flyttet dit den faktisk kan
+kontrolleres.
 
 En Workspace Agent er ikke en modell. Den er en konfigurasjon som kjører *en*
 modell, og plattformen viser ikke nødvendigvis hvilken. Antidep fører derfor tre
@@ -121,12 +130,15 @@ opplysninger hver for seg:
 
 **Hvis plattformen ikke pinner modellen**, sett `platform_model_disclosure` til
 `not_exposed` når du registrerer kjøreren. Antidep hevder da ikke at
-separasjonen er bevist av plattformen. Den hviler på redaktørens egen tildeling,
-akkurat som i den manuelle handoffen — og fordi to ledd ikke kan dele
-modellidentitet, må du fortsatt oppgi to forskjellige, sanne identiteter for to
-ledd. Finnes det ikke to, skal kjeden stoppe der framfor å registrere en
-kontroll som ikke er uavhengig. Ikke skriv to forskjellige navn på det du vet er
-den samme modellen.
+separasjonen er bevist av plattformen. Den hviler på at hvert ledd er sin egen
+Workspace Agent med sin egen instruks, sin egen kontekst og sin egen
+legitimasjon i Antidep — og det er nøyaktig så mye som skal hevdes, hverken mer
+eller mindre.
+
+Oppgi det samme, sanne modellnavnet for de leddene som faktisk kjører den samme
+modellen. Ikke skriv to forskjellige navn på det du vet er den samme modellen:
+det var den ene feilen den gamle regelen framprovoserte, og den er verre enn å
+si sannheten om at modellen er delt.
 
 Antidep kan ikke oppdage en usann tildeling. Det er derfor tildelingen er en
 attestert avgjørelse med hvem og hvorfor, og ikke noe et svar kan etablere.
@@ -200,10 +212,11 @@ du ingen enkeltoppgaver.
 1. Velg **Agents** i ChatGPT-sidemenyen, og opprett en ny agent.
 2. Gi den et navn som er **nøyaktig** det du skrev i «Agentens navn i
    plattformen» i steg 1.
-3. Velg modell for agenten dersom plattformen lar deg gjøre det. Gjør den det,
-   pass på at to Antidep-agenter ikke får den samme modellen — og registrer
-   modellen i Antidep med
+3. Velg modell for agenten dersom plattformen lar deg gjøre det, og registrer
+   den i Antidep med
    `npm run ops:agents -- assign-model --role <ledd> --provider openai --model <navn> --reason "…"`.
+   Flere ledd kan ha den samme modellen; oppgi da det samme navnet for dem, og
+   aldri et oppdiktet navn for å få dem til å se forskjellige ut.
    Tildelingen inngår i oppgavens avtrykk, og den må gjøres **før** agenten
    henter sin første oppgave: et svar kan bekrefte identiteten sin, men aldri
    bestemme den (ANTIDEP_CONSTITUTION.md regel 3).

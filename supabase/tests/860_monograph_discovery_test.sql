@@ -17,7 +17,8 @@
 --   * en betalingsmur er en tilgangsbegrensning og ikke en eksklusjonsgrunn,
 --   * en uavklart kilde som kan endre hovedkonklusjonen, hindrer avslutning,
 --   * en godtatt dekningskontroll krever at kontrollen søkte selv og vurderte
---     vesentligheten, og den kan ikke være den samme modellen som søkte,
+--     vesentligheten — den kan godt kjøre den samme modellen som søkte, men da
+--     i sin egen runde som sitt eget agentledd (migrasjon 013t),
 --   * et oppbrukt arbeidsbudsjett setter planen på pause og lukker den aldri, og
 --   * når alle kravene er oppfylt, kan dekningen erklæres ferdig — og behovene
 --     går videre til kildevurdering.
@@ -578,26 +579,27 @@ select throws_ok(
   'en dekningskontroll som ikke søkte selv, kan ikke godta dekningen'
 );
 
--- Og de to kildeleddene kan ikke dele modellidentitet i det hele tatt: regelen
--- er en exclusion constraint i databasen, ikke en konvensjon i en skrivevei.
+-- De to kildeleddene *kan* dele modellidentitet fra migrasjon 013t: den samme
+-- modellen utfører dem i atskilte runder, med hver sin instruks og sin egen
+-- kontekst. Det som bærer uavhengigheten her, er kravet over — en
+-- dekningskontroll som ikke søkte selv, kan ikke godta dekningen — og at de to
+-- leddene er hver sin agentidentitet.
 insert into provenance.role_model_assignments
   (agent_role, capacity, provider, model, model_version, registered_by_actor_id, reason)
 values
   ('source_discovery', 'semantic', 'prøve-860', 'samme-modell', '1',
    'ac860000-0000-4000-8000-00000000000a', 'Prøve i 860: generatorens modell.');
 
-select throws_ok(
+select lives_ok(
   $$
     insert into provenance.role_model_assignments
       (agent_role, capacity, provider, model, model_version, registered_by_actor_id, reason)
     values
       ('source_quality_assessment', 'semantic', 'prøve-860', 'samme-modell', '1',
        'ac860000-0000-4000-8000-00000000000a',
-       'Prøve i 860: kontrollen får samme modellidentitet som generatoren.')
+       'Prøve i 860: kontrollen kjører den samme modellen i en egen runde.')
   $$,
-  '23P01',
-  null,
-  'kontrollen av søkedekningen kan ikke tildeles den samme modellen som kildeoppdagelsen'
+  'kontrollen av søkedekningen kan kjøre den samme modellen som kildeoppdagelsen'
 );
 
 -- Den faktiske kontrollen: den søkte selv og vurderte vesentligheten.
