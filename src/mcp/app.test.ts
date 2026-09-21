@@ -1653,6 +1653,16 @@ describe('opprinnelsen', () => {
       expect((await logOf('null'))[0]?.origin).toBe('ugyldig')
     })
 
+    // Feltet står foran autentiseringen, og en vert kan være tusenvis av tegn
+    // lang. Uten et tak kunne hvem som helst fylt driftsloggen med sine egne
+    // tegn, og det er ikke observability.
+    it('er bundet i lengde, uansett hvor lang adressen kalleren oppgir er', async () => {
+      const lang = `https://${'a'.repeat(4000)}.example`
+      const lines = await logOf(lang)
+      expect(lines[0]?.status).toBe(403)
+      expect(lines[0]?.origin).toBe('for-lang')
+    })
+
     it('navngir ingen opprinnelse der forespørselen slapp gjennom', async () => {
       expect((await logOf(BASE))[0]?.origin).toBeUndefined()
       expect((await logOf(null))[0]?.origin).toBeUndefined()

@@ -151,18 +151,38 @@ export function judgeOrigin(raw: string | null, policy: OriginPolicy): OriginVer
 }
 
 /**
+ * Lengste opprinnelse loggen skriver av.
+ *
+ * Grensen er strukturell og ikke en smaksdom: en vert kan være tusenvis av tegn
+ * lang, og feltet står FØR autentiseringen. Uten et tak kunne hvem som helst
+ * fylt driftsloggen med sine egne tegn, og det er ikke observability
+ * (AGENTS.md). Hundre tegn er romslig for en adresse noen faktisk kunne listet
+ * opp — `https://chatgpt.com` er nitten.
+ */
+const MAX_LOGGED_ORIGIN = 100
+
+/**
  * Den avviste opprinnelsen, på en form driftsloggen trygt kan bære.
  *
  * En avvisning uten navnet på det som ble avvist, er ikke til å feilsøke: den
  * eneste måten å skille «klienten står på en adresse ingen har listet opp» fra
  * «noen prøver seg» på, er å se adressen. Verdien går derfor gjennom den samme
  * normaliseringen som dommen, slik at loggen bærer en kanonisk opprinnelse og
- * aldri en fritekst kalleren valgte. Det som ikke er en opprinnelse, blir det
- * ene ordet `ugyldig`.
+ * aldri en fritekst kalleren valgte.
+ *
+ * To utfall er faste ord framfor kallerens tegn, og til sammen gjør de feltet
+ * bundet: det som ikke er en opprinnelse, blir `ugyldig`, og det som er lengre
+ * enn en adresse noen kunne listet opp, blir `for-lang`. Ingen av delene taper
+ * noe å feilsøke etter: en adresse på over hundre tegn er uansett ikke den
+ * klienten står på.
  */
 export function loggableOrigin(verdict: OriginVerdict): string | undefined {
   if (verdict.kind === 'absent') {
     return undefined
   }
-  return normalizeOrigin(verdict.origin) ?? 'ugyldig'
+  const origin = normalizeOrigin(verdict.origin)
+  if (origin === null) {
+    return 'ugyldig'
+  }
+  return origin.length > MAX_LOGGED_ORIGIN ? 'for-lang' : origin
 }

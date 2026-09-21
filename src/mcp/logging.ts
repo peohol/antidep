@@ -25,9 +25,9 @@ export interface RunnerLogRecord {
    *
    * En 403 uten navnet på det som ble avvist, er ikke til å feilsøke: det er
    * nettopp adressen som skiller en klient ingen har listet opp fra et forsøk
-   * utenfra. Verdien er kanonisk og kommer fra `loggableOrigin`, ikke fra
-   * headeren slik den sto — en logg skal ikke kunne fylles med kallerens egen
-   * tekst.
+   * utenfra. Verdien er kanonisk og bundet i lengde, og kommer fra
+   * `loggableOrigin` — ikke fra headeren slik den sto. En logg som står foran
+   * autentiseringen, skal ikke kunne fylles med kallerens egne tegn.
    */
   readonly origin?: string | undefined
   readonly tool?: string | undefined
