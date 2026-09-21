@@ -193,6 +193,9 @@ først i steg 4.
    registrerer seg selv (RFC 7591) og bruker PKCE.
 5. Appen legger seg under **Drafts** i appinnstillingene.
 
+Utrullingen må ha `ANTIDEP_MCP_ALLOWED_ORIGINS=https://chatgpt.com` satt før
+dette steget, ellers avvises tilkoblingen med 403. Se «Drift» nederst.
+
 Developer mode er stedet du *prøver* tilkoblingen. Den er ikke den autonome
 veien: der krever hver ny samtale en ny godkjenning av skrivehandlinger. Se
 avsnittet «Godkjenning av skrivehandlinger» under.
@@ -389,6 +392,14 @@ Ser du ingen rader i det hele tatt, har ingen planlagt kjøring nådd fram. Prø
 appen i developer mode først; da ser du om det er tilkoblingen eller tidsplanen
 som mangler.
 
+**«Forespørselen kom fra en opprinnelse Antidep ikke slipper inn» (403).**
+Opprinnelseskontrollen avviste forespørselen før autentiseringen. Utrullingen
+mangler da `ANTIDEP_MCP_ALLOWED_ORIGINS=https://chatgpt.com`, eller den er satt
+uten at utrullingen er gjort på nytt etterpå. Serverloggen navngir adressen som
+ble avvist, i feltet `origin` på linjen med `"outcome":"bad_request"` — står det
+noe annet enn `https://chatgpt.com` der, er det den adressen klienten faktisk
+står på, og den som skal listes opp. Se «Drift».
+
 ## Drift
 
 MCP-appen deployes med resten av Antidep og trenger to verdier: adressen til
@@ -409,14 +420,37 @@ mangler. Det er med vilje: det er der en MCP-klient leser hvor den skal
 autentisere seg, og en utrulling som svarte «500» på alt, ville ikke fortalt
 noen hvorfor.
 
-`ANTIDEP_MCP_ALLOWED_ORIGINS` er også valgfri, og er tom i det vanlige
-oppsettet. Tre ting slipper gjennom opprinnelseskontrollen uten at noen setter
-den: en forespørsel uten `Origin` (som er den planlagte kjøringen), appens egen
-adresse over https (som er tilkoblingssiden som poster skjemaet sitt til seg
-selv) og loopback (som er utviklingsoppsettet og MCP-inspektøren). Skal en
-nettleserklient på en annen adresse kalle appen, listes den opp der, atskilt med
-komma. En ugyldig verdi stopper appen ved oppstart framfor å bli et hull ingen
-oppdager.
+`ANTIDEP_MCP_ALLOWED_ORIGINS` **må navngi ChatGPT** i en utrulling som skal
+kobles til fra ChatGPT web:
+
+```
+ANTIDEP_MCP_ALLOWED_ORIGINS=https://chatgpt.com
+```
+
+Tre ting slipper gjennom opprinnelseskontrollen uten at noen setter den: en
+forespørsel uten `Origin` (som er den planlagte kjøringen), appens egen adresse
+over https og loopback (som er utviklingsoppsettet og MCP-inspektøren). Den
+listen dekker **drift**, men ikke **oppsettet**: selve tilkoblingen gjøres fra
+ChatGPT web, og de forespørslene bærer `https://chatgpt.com` som opprinnelse.
+De er dermed på tvers av opprinnelser, og avvises med 403 så lenge adressen
+ikke er listet opp — også når mennesket ser Antideps egen tilkoblingsside i
+vinduet foran seg. Er variabelen tom, stopper OAuth-oppsettet på
+`POST /oauth/authorize` med
+
+```json
+{ "error": "access_denied", "error_description": "Forespørselen kom fra en opprinnelse Antidep ikke slipper inn. …" }
+```
+
+Verdien er ikke et unntak fra kontrollen: den er nøyaktig den ene adressen
+klienten faktisk står på. Et jokertegn finnes ikke, og skal ikke lages —
+kontrollen er der for å hindre at en hvilken som helst annen nettside kan få
+nettleseren til å kalle appen på vegne av den som var innlogget. Flere
+opprinnelser listes opp atskilt med komma, og en ugyldig verdi stopper appen ved
+oppstart framfor å bli et hull ingen oppdager. Variabelen settes per miljø: en
+preview-utrulling som skal prøves fra ChatGPT, trenger den samme verdien.
+
+Verdien leses ved oppstart, så en utrulling må gjøres på nytt etter at den er
+satt — det er ikke nok å lagre den i plattformens oppsett.
 
 Se [evidenskjeden](EVIDENCE_PIPELINE.md), [databasearkitekturen](DATABASE_ARCHITECTURE.md)
 og [styringsreglene](ANTIDEP_CONSTITUTION.md).

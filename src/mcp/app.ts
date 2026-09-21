@@ -46,7 +46,7 @@ import {
   type JsonRpcRequest,
 } from './json-rpc.ts'
 import { consoleRunnerLogger, type RunnerLogger } from './logging.ts'
-import { judgeOrigin, originPolicy, type OriginVerdict } from './origin.ts'
+import { judgeOrigin, loggableOrigin, originPolicy, type OriginVerdict } from './origin.ts'
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   META_CLIENT_CAPABILITIES,
@@ -966,6 +966,9 @@ export async function handleMcpRequest(
 
   logger({
     route,
+    // Bare avvisningen navngir opprinnelsen. En tillatt opprinnelse er ikke
+    // noe å feilsøke, og loggen bærer ikke et felt den ikke trenger.
+    origin: verdict.kind === 'forbidden' ? loggableOrigin(verdict) : undefined,
     tool,
     outcome,
     status: response.status,
