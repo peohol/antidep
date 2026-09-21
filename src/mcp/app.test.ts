@@ -16,7 +16,7 @@ import {
   FAKE_TASK_REF,
   type FakeGateway,
 } from './fake-gateway.ts'
-import { silentRunnerLogger } from './logging.ts'
+import { silentRunnerLogger, type RunnerLogRecord } from './logging.ts'
 
 // ============================================================================
 // MCP-endepunktet prøvd som det det er: et protokollendepunkt
@@ -1569,6 +1569,94 @@ describe('opprinnelsen', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
     expect(response.headers.get('vary')?.toLowerCase()).toContain('origin')
+  })
+
+  // Selve oppsettet er det som avvises her, ikke driften. Tilkoblingen gjøres
+  // fra ChatGPT web, og den posterer skjemaet på tvers av opprinnelser — så
+  // ruten må slippe inn den adressen miljøet har navngitt, og bare den.
+  describe('autorisasjonsruten under oppsettet fra en nettleserklient', () => {
+    const CLIENT_ORIGIN = 'https://chatgpt.example'
+
+    function authorizePost(origin: string): Request {
+      return new Request(`${BASE}/oauth/authorize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', origin },
+        body: new URLSearchParams({
+          client_id: FAKE_CLIENT_ID,
+          redirect_uri: FAKE_REDIRECT_URI,
+          code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+          code_challenge_method: 'S256',
+          resource: FAKE_RESOURCE,
+          pairing_code: FAKE_PAIRING_CODE,
+        }).toString(),
+      })
+    }
+
+    it('avviser klientopprinnelsen med 403 når miljøet ikke har navngitt den', async () => {
+      const gateway = createFakeGateway()
+      const response = await send('authorize', authorizePost(CLIENT_ORIGIN), gateway)
+      expect(response.status).toBe(403)
+      expect(((await response.json()) as Record<string, unknown>)['error']).toBe('access_denied')
+      expect(response.headers.get('location')).toBeNull()
+    })
+
+    it('slipper den gjennom når den er navngitt, og ekkoer nøyaktig den', async () => {
+      const gateway = createFakeGateway()
+      const response = await handleMcpRequest('authorize', authorizePost(CLIENT_ORIGIN), {
+        gateway,
+        baseUrl: BASE,
+        allowedOrigins: [CLIENT_ORIGIN],
+        logger: silentRunnerLogger,
+      })
+      expect(response.status).toBe(302)
+      expect(response.headers.get('access-control-allow-origin')).toBe(CLIENT_ORIGIN)
+    })
+
+    // En navngitt opprinnelse er ett navn, aldri en åpning for de andre.
+    it('avviser fortsatt en fremmed opprinnelse når en annen er navngitt', async () => {
+      const gateway = createFakeGateway()
+      const response = await handleMcpRequest('authorize', authorizePost(FOREIGN_ORIGIN), {
+        gateway,
+        baseUrl: BASE,
+        allowedOrigins: [CLIENT_ORIGIN],
+        logger: silentRunnerLogger,
+      })
+      expect(response.status).toBe(403)
+      expect(response.headers.get('access-control-allow-origin')).toBeNull()
+      expect(response.headers.get('location')).toBeNull()
+    })
+  })
+
+  // Uten navnet på det som ble avvist, er en 403 ikke til å feilsøke: det er
+  // adressen som skiller en klient ingen har listet opp fra et forsøk utenfra.
+  describe('avvisningen i driftsloggen', () => {
+    async function logOf(origin: string | null): Promise<RunnerLogRecord[]> {
+      const lines: RunnerLogRecord[] = []
+      await handleMcpRequest('mcp', originRequest(origin), {
+        gateway: createFakeGateway(),
+        baseUrl: BASE,
+        logger: (record) => lines.push({ ...record }),
+      })
+      return lines
+    }
+
+    it('navngir opprinnelsen som ble avvist', async () => {
+      const lines = await logOf(FOREIGN_ORIGIN)
+      expect(lines[0]?.outcome).toBe('bad_request')
+      expect(lines[0]?.origin).toBe(FOREIGN_ORIGIN)
+    })
+
+    // Loggen bærer den kanoniske formen, ikke headeren slik den sto: en
+    // driftslogg skal ikke kunne fylles med kallerens egen tekst.
+    it('bærer den kanoniske formen, og ett fast ord for det som ikke er en adresse', async () => {
+      expect((await logOf('HTTPS://ANGRIPER.EXAMPLE:443/noe'))[0]?.origin).toBe(FOREIGN_ORIGIN)
+      expect((await logOf('null'))[0]?.origin).toBe('ugyldig')
+    })
+
+    it('navngir ingen opprinnelse der forespørselen slapp gjennom', async () => {
+      expect((await logOf(BASE))[0]?.origin).toBeUndefined()
+      expect((await logOf(null))[0]?.origin).toBeUndefined()
+    })
   })
 })
 

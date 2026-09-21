@@ -20,6 +20,16 @@ import type { RunnerOutcome } from './errors.ts'
 
 export interface RunnerLogRecord {
   readonly route: string
+  /**
+   * Opprinnelsen forespørselen oppga, og bare der den ble avvist.
+   *
+   * En 403 uten navnet på det som ble avvist, er ikke til å feilsøke: det er
+   * nettopp adressen som skiller en klient ingen har listet opp fra et forsøk
+   * utenfra. Verdien er kanonisk og kommer fra `loggableOrigin`, ikke fra
+   * headeren slik den sto — en logg skal ikke kunne fylles med kallerens egen
+   * tekst.
+   */
+  readonly origin?: string | undefined
   readonly tool?: string | undefined
   readonly outcome: RunnerOutcome | 'auth_failed' | 'bad_request'
   readonly status: number
@@ -35,6 +45,7 @@ export const consoleRunnerLogger: RunnerLogger = (record) => {
       at: new Date().toISOString(),
       component: 'antidep-mcp',
       route: record.route,
+      origin: record.origin ?? null,
       tool: record.tool ?? null,
       outcome: record.outcome,
       status: record.status,

@@ -149,3 +149,20 @@ export function judgeOrigin(raw: string | null, policy: OriginPolicy): OriginVer
   }
   return { kind: 'forbidden', origin }
 }
+
+/**
+ * Den avviste opprinnelsen, på en form driftsloggen trygt kan bære.
+ *
+ * En avvisning uten navnet på det som ble avvist, er ikke til å feilsøke: den
+ * eneste måten å skille «klienten står på en adresse ingen har listet opp» fra
+ * «noen prøver seg» på, er å se adressen. Verdien går derfor gjennom den samme
+ * normaliseringen som dommen, slik at loggen bærer en kanonisk opprinnelse og
+ * aldri en fritekst kalleren valgte. Det som ikke er en opprinnelse, blir det
+ * ene ordet `ugyldig`.
+ */
+export function loggableOrigin(verdict: OriginVerdict): string | undefined {
+  if (verdict.kind === 'absent') {
+    return undefined
+  }
+  return normalizeOrigin(verdict.origin) ?? 'ugyldig'
+}
