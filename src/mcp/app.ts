@@ -122,7 +122,7 @@ function publicJson(body: unknown): Response {
   return json(body, 200, { 'cache-control': 'public, max-age=300' })
 }
 
-function html(body: string, status = 200): Response {
+function html(body: string, status = 200, formAction = "'self'"): Response {
   return new Response(body, {
     status,
     headers: {
@@ -130,8 +130,22 @@ function html(body: string, status = 200): Response {
       'cache-control': 'no-store',
       // Siden har ingen skript og skal ikke kunne rammes inn.
       'content-security-policy':
-        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
-      'referrer-policy': 'no-referrer',
+        `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; ` +
+        "frame-ancestors 'none'",
+      // `same-origin` og ikke `no-referrer`, og det er ikke en oppmykning.
+      //
+      // Nettleseren utleder `Origin` på en skjemainnsending av referrer-policyen:
+      // under `no-referrer` sender Chromium `Origin: null`, også når siden
+      // poster til seg selv. Opprinnelseskontrollen avviser «null» med vilje —
+      // det er nettopp det en sandkasset kontekst sender — og tilkoblingssidens
+      // egen innsending ble derfor møtt med 403 av Antideps egen grense.
+      //
+      // `same-origin` sender opprinnelsen på den innsendingen, som ER samme
+      // opprinnelse, og ingenting på veien videre: viderekoblingen til klienten
+      // er kryss-opprinnelse, og får fortsatt ingen referrer. Autorisasjons-
+      // parameterne lekker altså like lite som før, mens nettleseren slutter å
+      // skjule hvem som spør fra den kontrollen som skal vite det.
+      'referrer-policy': 'same-origin',
       'x-frame-options': 'DENY',
     },
   })
@@ -281,6 +295,39 @@ function parseableRedirectUri(value: string): URL | null {
     return null
   }
   return url.protocol === 'https:' || url.protocol === 'http:' ? url : null
+}
+
+/**
+ * Kildene `form-action` tillater på tilkoblingssiden.
+ *
+ * Siden poster til seg selv, så `'self'` er den ene kilden selve innsendingen
+ * trenger. Men svaret på en vellykket innsending er en 302 tilbake til
+ * klientens returadresse — og Chromium og WebKit håndhever `form-action` også
+ * på viderekoblingen som FØLGER av en skjemainnsending, ikke bare på adressen
+ * skjemaet peker på. Med bare `'self'` stanset nettleseren derfor den siste
+ * halvdelen av flyten: engangskoden var brukt opp i databasen,
+ * autorisasjonskoden var utstedt, og den kom aldri fram til klienten. Ingen
+ * navigasjon, ingen feilmelding — knappen så ut som om den ikke gjorde noe, og
+ * hver nye kode gikk den samme veien.
+ *
+ * Grensen består, den blir bare sann: siden navngir opprinnelsen til
+ * returadressen forespørselen faktisk oppgir, og ingen andre. Det utvider ingen
+ * fullmakt. Hvem som får en autorisasjonskode, avgjøres av
+ * `api.authorize_agent_runner(...)`, som krever at adressen er registrert på
+ * klienten før noe utstedes — en oppdiktet returadresse her får en CSP som
+ * tillater en viderekobling som aldri blir svart med.
+ *
+ * `URL.origin` er `scheme://vert[:port]` og kan hverken bære mellomrom eller
+ * semikolon, så en uleselig eller fiendtlig adresse kan ikke skjøte på et
+ * direktiv til — og en adresse som ikke lar seg lese, får ingen kilde i det
+ * hele tatt.
+ */
+function formActionSources(redirectUri: string): string {
+  const target = parseableRedirectUri(redirectUri)
+  if (target === null || target.origin === 'null' || target.origin.length === 0) {
+    return "'self'"
+  }
+  return `'self' ${target.origin}`
 }
 
 function missingConnectField(fields: ConnectPageFields, baseUrl: string): string | null {
@@ -541,19 +588,26 @@ async function authorize(
 
   if (request.method === 'GET') {
     const fields = connectFields(url.searchParams)
-    return html(renderConnectPage(fields, missingConnectField(fields, baseUrl)))
+    // Det er NETTOPP denne siden som sendes inn, så den må bære kildene
+    // innsendingen får lov til å ende hos.
+    return html(
+      renderConnectPage(fields, missingConnectField(fields, baseUrl)),
+      200,
+      formActionSources(fields.redirectUri),
+    )
   }
 
   const form = await formOrJsonBody(request)
   const fields = connectFields(form)
+  const formAction = formActionSources(fields.redirectUri)
   const missing = missingConnectField(fields, baseUrl)
   if (missing !== null) {
-    return html(renderConnectPage(fields, missing), 400)
+    return html(renderConnectPage(fields, missing), 400, formAction)
   }
 
   const pairingCode = (form['pairing_code'] ?? '').trim()
   if (pairingCode.length === 0) {
-    return html(renderConnectPage(fields, 'Du må lime inn tilkoblingskoden.'), 400)
+    return html(renderConnectPage(fields, 'Du må lime inn tilkoblingskoden.'), 400, formAction)
   }
 
   let grant
@@ -573,7 +627,7 @@ async function authorize(
       error instanceof GatewayError
         ? error.message
         : 'Tilkoblingen kunne ikke fullføres. Prøv med en ny kode.'
-    return html(renderConnectPage(fields, problem), 400)
+    return html(renderConnectPage(fields, problem), 400, formAction)
   }
 
   // Først her er adressen bevist å tilhøre en registrert klient. En omdirigering

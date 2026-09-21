@@ -418,5 +418,29 @@ nettleserklient på en annen adresse kalle appen, listes den opp der, atskilt me
 komma. En ugyldig verdi stopper appen ved oppstart framfor å bli et hull ingen
 oppdager.
 
+**Tilkoblingssiden har to grenser som bare finnes i nettleseren, og begge må
+være sanne om den ene veien siden faktisk skal ta.** Ingen av dem kan prøves av
+`npm run db:test:mcp`, som går gjennom det ekte protokollendepunktet uten en
+nettleser — de prøves på headerne i `src/mcp/app.test.ts`, og de er verdt å
+kjenne fordi svikten de ga, ikke lignet en svikt.
+
+- `form-action` navngir `'self'` **og** opprinnelsen til returadressen klienten
+  oppga. Chromium og WebKit håndhever direktivet også på viderekoblingen som
+  følger av en skjemainnsending, ikke bare på adressen skjemaet peker på. Med
+  bare `'self'` ble 302-en tilbake til klienten stanset av nettleseren etter at
+  engangskoden var brukt opp og autorisasjonskoden utstedt: ingen navigasjon,
+  ingen feilmelding, og en ny kode gikk nøyaktig samme vei. Grensen er ikke
+  myknet opp — den navngir den ene veien innsendingen har lov til å ta, og
+  hvem som faktisk får en kode, avgjør databasen som før.
+- `referrer-policy` er `same-origin` og ikke `no-referrer`. Nettleseren utleder
+  `Origin` på en skjemainnsending av referrer-policyen, og under `no-referrer`
+  sender Chromium `Origin: null` — også når siden poster til seg selv.
+  Opprinnelseskontrollen avviser «null» med vilje, siden det er verdien en
+  sandkasset kontekst sender, og tilkoblingssidens egen innsending ble derfor
+  møtt med 403 av Antideps egen grense. `same-origin` oppgir opprinnelsen på
+  den ene samme-opprinnelse-innsendingen og ingenting på veien videre:
+  viderekoblingen til klienten er kryss-opprinnelse og får fortsatt ingen
+  referrer, så autorisasjonsparameterne lekker like lite som før.
+
 Se [evidenskjeden](EVIDENCE_PIPELINE.md), [databasearkitekturen](DATABASE_ARCHITECTURE.md)
 og [styringsreglene](ANTIDEP_CONSTITUTION.md).

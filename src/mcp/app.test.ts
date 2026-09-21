@@ -257,6 +257,101 @@ describe('tilkoblingen', () => {
     expect(response.headers.get('location')).toBeNull()
   })
 
+  // --------------------------------------------------------------------------
+  // Viderekoblingen tilbake til klienten må overleve sidens egen CSP
+  //
+  // Chromium og WebKit håndhever `form-action` også på viderekoblingen som
+  // FØLGER av en skjemainnsending. Med bare `'self'` ble 302-en tilbake til
+  // klienten stanset i nettleseren — uten en feilmelding og uten en navigasjon,
+  // mens engangskoden var brukt opp og autorisasjonskoden utstedt. Prøvene her
+  // går på headeren, fordi det er den eneste delen av svikten som finnes på
+  // serversiden: resten skjedde i nettleseren, der ingen prøve her kan se.
+  // --------------------------------------------------------------------------
+  function formActionOf(response: Response): string {
+    const policy = response.headers.get('content-security-policy') ?? ''
+    return (
+      policy
+        .split(';')
+        .map((directive) => directive.trim())
+        .find((directive) => directive.startsWith('form-action')) ?? ''
+    )
+  }
+
+  function connectPage(redirectUri: string, gateway: FakeGateway): Promise<Response> {
+    return send(
+      'authorize',
+      new Request(
+        `${BASE}/oauth/authorize?client_id=${FAKE_CLIENT_ID}` +
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&code_challenge=${challenge}&code_challenge_method=S256&state=xyz`,
+      ),
+      gateway,
+    )
+  }
+
+  it('lar siden sende skjemaet videre til returadressen klienten oppga', async () => {
+    const response = await connectPage(FAKE_REDIRECT_URI, createFakeGateway())
+    expect(formActionOf(response)).toBe(`form-action 'self' ${new URL(FAKE_REDIRECT_URI).origin}`)
+  })
+
+  it('bærer den samme kilden på siden som vises etter en avvist kode', async () => {
+    const response = await send(
+      'authorize',
+      authorizeForm({
+        client_id: FAKE_CLIENT_ID,
+        redirect_uri: FAKE_REDIRECT_URI,
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        resource: FAKE_RESOURCE,
+        pairing_code: 'feil'.repeat(16),
+      }),
+      createFakeGateway(),
+    )
+    expect(response.status).toBe(400)
+    expect(formActionOf(response)).toBe(`form-action 'self' ${new URL(FAKE_REDIRECT_URI).origin}`)
+  })
+
+  it('navngir bare opprinnelsen, og aldri stien klienten oppga', async () => {
+    const response = await connectPage(
+      'https://chatgpt.example/callback?retur=1#frag',
+      createFakeGateway(),
+    )
+    expect(formActionOf(response)).toBe("form-action 'self' https://chatgpt.example")
+  })
+
+  it('gir ingen ekstra kilde når returadressen ikke lar seg lese', async () => {
+    const response = await connectPage('ikke en adresse', createFakeGateway())
+    expect(formActionOf(response)).toBe("form-action 'self'")
+  })
+
+  it('lar ikke en oppdiktet returadresse skjøte på et direktiv til', async () => {
+    const response = await connectPage(
+      "https://ond.example/cb; default-src 'unsafe-inline'",
+      createFakeGateway(),
+    )
+    const policy = response.headers.get('content-security-policy') ?? ''
+    expect(formActionOf(response)).toBe("form-action 'self' https://ond.example")
+    // Fire direktiver, og ikke et femte klienten skrev selv.
+    expect(policy.split(';').filter((part) => part.trim().length > 0)).toHaveLength(4)
+    expect(policy).toContain("default-src 'none'")
+    expect(policy).not.toContain("default-src 'unsafe-inline'")
+  })
+
+  it('lar nettleseren oppgi opprinnelsen på sin egen innsending', async () => {
+    // Under `no-referrer` sender Chromium `Origin: null` på skjemaet siden
+    // poster til seg selv, og opprinnelseskontrollen avviser «null» — med
+    // vilje, for det er verdien en sandkasset kontekst sender. Da ble
+    // tilkoblingssidens egen innsending møtt med 403 av Antideps egen grense.
+    const response = await connectPage(FAKE_REDIRECT_URI, createFakeGateway())
+    expect(response.headers.get('referrer-policy')).toBe('same-origin')
+  })
+
+  it('rammer fortsatt inn ingen steder, uansett returadresse', async () => {
+    const response = await connectPage(FAKE_REDIRECT_URI, createFakeGateway())
+    expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'")
+    expect(response.headers.get('x-frame-options')).toBe('DENY')
+  })
+
   it('bytter koden i et token-par, og fornyer mot refresh-tokenet', async () => {
     const gateway = createFakeGateway()
     const exchanged = await send(
