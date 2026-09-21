@@ -1494,7 +1494,7 @@ describe('opprinnelsen', () => {
   })
 
   // «null» er en lovlig Origin-verdi fra en sandkasset kontekst, og den er
-  // ingen adresse å slippe inn.
+  // ingen adresse å slippe inn på verktøyflaten.
   it('avviser en opprinnelse som ikke er en adresse', async () => {
     const response = await send('mcp', originRequest('null'), createFakeGateway())
     expect(response.status).toBe(403)
@@ -1627,6 +1627,85 @@ describe('opprinnelsen', () => {
     })
   })
 
+  // Den ugjennomsiktige opprinnelsen er den ene som avgjøres av ruten framfor
+  // av mengden: ChatGPT viser tilkoblingssiden i en sandkasset kontekst, og en
+  // slik kontekst har ingen adresse å oppgi. Den kan ikke listes opp — den er
+  // ikke en adresse, og ville vært den samme for enhver sandkasse på ethvert
+  // nettsted. Se `opaqueIsAllowed` for hvorfor unntaket ikke legger til noe.
+  describe('den ugjennomsiktige opprinnelsen', () => {
+    function opaqueAuthorize(): Request {
+      return new Request(`${BASE}/oauth/authorize`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'null' },
+        body: new URLSearchParams({
+          client_id: FAKE_CLIENT_ID,
+          redirect_uri: FAKE_REDIRECT_URI,
+          code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+          code_challenge_method: 'S256',
+          resource: FAKE_RESOURCE,
+          pairing_code: FAKE_PAIRING_CODE,
+        }).toString(),
+      })
+    }
+
+    it('slipper tilkoblingssiden gjennom, uten at noen har satt en variabel', async () => {
+      const response = await send('authorize', opaqueAuthorize(), createFakeGateway())
+      expect(response.status).toBe(302)
+    })
+
+    // Ingenting ekkoes tilbake. Skjemaet er en navigering og trenger ingen
+    // CORS-tillatelse, og «null» er ikke en adresse å gi en tillatelse til.
+    it('ekkoer ingen opprinnelse tilbake', async () => {
+      const response = await send('authorize', opaqueAuthorize(), createFakeGateway())
+      expect(response.headers.get('access-control-allow-origin')).toBeNull()
+      expect(response.headers.get('vary')?.toLowerCase()).toContain('origin')
+    })
+
+    // Unntaket er tilkoblingssidens, og ingen andres.
+    it('når ikke verktøyflaten, tokenruten eller registreringen', async () => {
+      for (const route of ['mcp', 'token', 'register'] as const) {
+        const gateway = createFakeGateway()
+        const response = await handleMcpRequest(
+          route,
+          new Request(`${BASE}/${route}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', origin: 'null' },
+            body: '{}',
+          }),
+          { gateway, baseUrl: BASE, logger: silentRunnerLogger },
+        )
+        expect(response.status).toBe(403)
+        expect(gateway.claims).toBe(0)
+      }
+    })
+
+    // Unntaket gjelder det ene ordet «null», og ikke alt som ikke lar seg lese
+    // som en adresse.
+    it('gjelder ikke en vilkårlig verdi som ikke er en adresse', async () => {
+      const response = await send(
+        'authorize',
+        new Request(`${BASE}/oauth/authorize`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'nullish' },
+          body: '',
+        }),
+        createFakeGateway(),
+      )
+      expect(response.status).toBe(403)
+    })
+
+    it('står i loggen med sitt eget ord', async () => {
+      const lines: RunnerLogRecord[] = []
+      await handleMcpRequest('authorize', opaqueAuthorize(), {
+        gateway: createFakeGateway(),
+        baseUrl: BASE,
+        logger: (record) => lines.push({ ...record }),
+      })
+      expect(lines[0]?.origin).toBe('ugjennomsiktig')
+      expect(lines[0]?.status).toBe(302)
+    })
+  })
+
   // Uten navnet på det som ble avvist, er en 403 ikke til å feilsøke: det er
   // adressen som skiller en klient ingen har listet opp fra et forsøk utenfra.
   describe('avvisningen i driftsloggen', () => {
@@ -1650,7 +1729,7 @@ describe('opprinnelsen', () => {
     // driftslogg skal ikke kunne fylles med kallerens egen tekst.
     it('bærer den kanoniske formen, og ett fast ord for det som ikke er en adresse', async () => {
       expect((await logOf('HTTPS://ANGRIPER.EXAMPLE:443/noe'))[0]?.origin).toBe(FOREIGN_ORIGIN)
-      expect((await logOf('null'))[0]?.origin).toBe('ugyldig')
+      expect((await logOf('«ikke en adresse»'))[0]?.origin).toBe('ugyldig')
     })
 
     // Feltet står foran autentiseringen, og en vert kan være tusenvis av tegn
