@@ -138,19 +138,25 @@ function html(body: string, status = 200, formAction = "'self'"): Response {
       'content-security-policy':
         `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; ` +
         "frame-ancestors 'none'",
-      // `same-origin` og ikke `no-referrer`, og det er ikke en oppmykning.
+      // `same-origin` og ikke `no-referrer`, og det avgjør hvilken vei inn
+      // sidens egen innsending tar — ikke om den kommer inn.
       //
       // Nettleseren utleder `Origin` på en skjemainnsending av referrer-policyen:
-      // under `no-referrer` sender Chromium `Origin: null`, også når siden
-      // poster til seg selv. Opprinnelseskontrollen avviser «null» med vilje —
-      // det er nettopp det en sandkasset kontekst sender — og tilkoblingssidens
-      // egen innsending ble derfor møtt med 403 av Antideps egen grense.
+      // under `no-referrer` sender Chromium `Origin: null` selv når siden poster
+      // til seg selv. Den verdien er ingen adresse, og den avgjøres av ruten
+      // framfor av mengden: den slipper inn på tilkoblingssiden og ingen andre
+      // steder (`opaqueIsAllowed`). Innsendingen kommer altså fram uansett.
       //
-      // `same-origin` sender opprinnelsen på den innsendingen, som ER samme
-      // opprinnelse, og ingenting på veien videre: viderekoblingen til klienten
-      // er kryss-opprinnelse, og får fortsatt ingen referrer. Autorisasjons-
-      // parameterne lekker altså like lite som før, mens nettleseren slutter å
-      // skjule hvem som spør fra den kontrollen som skal vite det.
+      // Men den kommer fram gjennom det unntaket, og den trenger ikke det: en
+      // vanlig, usandkasset nettleser står på appens egen adresse og KAN navngi
+      // den. `same-origin` lar den gjøre nettopp det, slik at normalveien går
+      // gjennom den strenge grenen, og unntaket blir stående for det ene
+      // tilfellet det er til for — den sandkassede konteksten, som ikke har en
+      // adresse å oppgi, og som ingen policy her kan gi den.
+      //
+      // Ingenting lekker av det: viderekoblingen til klienten er
+      // kryss-opprinnelse og får fortsatt ingen referrer, så
+      // autorisasjonsparameterne går like lite videre som under `no-referrer`.
       'referrer-policy': 'same-origin',
       'x-frame-options': 'DENY',
     },

@@ -465,11 +465,12 @@ ugyldig verdi stopper appen ved oppstart framfor å bli et hull ingen oppdager,
 og verdien leses ved oppstart, så en utrulling må gjøres på nytt etter at den er
 endret.
 
-**Tilkoblingssiden har to grenser som bare finnes i nettleseren, og begge må
-være sanne om den ene veien siden faktisk skal ta.** Ingen av dem kan prøves av
-`npm run db:test:mcp`, som går gjennom det ekte protokollendepunktet uten en
-nettleser — de prøves på headerne i `src/mcp/app.test.ts`, og de er verdt å
-kjenne fordi svikten de ga, ikke lignet en svikt.
+**Tilkoblingssiden har to grenser som bare finnes i nettleseren.** Ingen av dem
+kan prøves av `npm run db:test:mcp`, som går gjennom det ekte
+protokollendepunktet uten en nettleser — de prøves på headerne i
+`src/mcp/app.test.ts`. Den første er en rettelse: uten den stanset nettleseren
+halve flyten uten å si fra. Den andre avgjør bare hvilken av de fire veiene over
+sidens egen innsending kommer inn på.
 
 - `form-action` navngir `'self'` **og** opprinnelsen til returadressen klienten
   oppga. Chromium og WebKit håndhever direktivet også på viderekoblingen som
@@ -481,13 +482,15 @@ kjenne fordi svikten de ga, ikke lignet en svikt.
   hvem som faktisk får en kode, avgjør databasen som før.
 - `referrer-policy` er `same-origin` og ikke `no-referrer`. Nettleseren utleder
   `Origin` på en skjemainnsending av referrer-policyen, og under `no-referrer`
-  sender Chromium `Origin: null` — også når siden poster til seg selv.
-  Opprinnelseskontrollen avviser «null» med vilje, siden det er verdien en
-  sandkasset kontekst sender, og tilkoblingssidens egen innsending ble derfor
-  møtt med 403 av Antideps egen grense. `same-origin` oppgir opprinnelsen på
-  den ene samme-opprinnelse-innsendingen og ingenting på veien videre:
-  viderekoblingen til klienten er kryss-opprinnelse og får fortsatt ingen
-  referrer, så autorisasjonsparameterne lekker like lite som før.
+  sender Chromium `Origin: null` selv når siden poster til seg selv — altså
+  punkt 4 over, unntaket som er der for den sandkassede konteksten.
+  Innsendingen kommer fram begge veier; forskjellen er at en vanlig,
+  usandkasset nettleser står på appens egen adresse og **kan** navngi den.
+  `same-origin` lar den gjøre det, slik at normalveien går på punkt 2 og
+  unntaket blir stående for det ene tilfellet som ikke *har* en adresse å
+  oppgi. Ingenting lekker av det: viderekoblingen til klienten er
+  kryss-opprinnelse og får fortsatt ingen referrer, så
+  autorisasjonsparameterne går like lite videre som før.
 
 Se [evidenskjeden](EVIDENCE_PIPELINE.md), [databasearkitekturen](DATABASE_ARCHITECTURE.md)
 og [styringsreglene](ANTIDEP_CONSTITUTION.md).

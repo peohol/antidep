@@ -339,9 +339,10 @@ describe('tilkoblingen', () => {
 
   it('lar nettleseren oppgi opprinnelsen på sin egen innsending', async () => {
     // Under `no-referrer` sender Chromium `Origin: null` på skjemaet siden
-    // poster til seg selv, og opprinnelseskontrollen avviser «null» — med
-    // vilje, for det er verdien en sandkasset kontekst sender. Da ble
-    // tilkoblingssidens egen innsending møtt med 403 av Antideps egen grense.
+    // poster til seg selv. Den verdien kommer fram på denne ruten — den er
+    // unntaket for den sandkassede konteksten (`opaqueIsAllowed`) — men en
+    // usandkasset nettleser har en adresse og skal navngi den, slik at
+    // normalveien ikke lener seg på et unntak den ikke trenger.
     const response = await connectPage(FAKE_REDIRECT_URI, createFakeGateway())
     expect(response.headers.get('referrer-policy')).toBe('same-origin')
   })
