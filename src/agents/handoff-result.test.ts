@@ -245,7 +245,6 @@ describe('vurderingsutkastet', () => {
   })
 })
 
-
 describe('roller med autoritativ databasevalidering', () => {
   for (const role of [
     'source_discovery',
