@@ -129,6 +129,7 @@ declare
   v_existing workflow.agent_handoff_imports;
   v_identity jsonb;
   v_self_identity jsonb;
+  v_hashed_answer jsonb;
   v_provider text;
   v_model text;
   v_model_version text;
@@ -173,8 +174,22 @@ begin
   -- økt — skal svare med det som allerede ble registrert, framfor å lage
   -- et nytt klinisk objekt. Et *annet* svar på en jobb som allerede er
   -- besvart, er ikke en gjentakelse, og avvises.
-  -- ------------------------------------------------------------------
-  v_answer_digest := 'sha256:' || encode(sha256(convert_to(p_answer::text, 'UTF8')), 'hex');
+  --
+  -- Avtrykket tas av svaret slik kontrakten leser det, og ikke slik det tilfeldig
+  -- ble serialisert. Kontrakten sier at et utelatt `identity` og `identity: null`
+  -- er den samme opplysningen (se «Hvem som svarte» under), og da må de være det
+  -- samme svaret også her. Ellers ville et nytt forsøk som skrev den andre av de
+  -- to formene, blitt lest som «et annet svar på en besvart oppgave» og avvist —
+  -- og gjentakelsesregelen ville sviktet nøyaktig der den finnes for å holde:
+  -- ved et nytt forsøk fra en modell som ikke gjentar seg ordrett.
+  --
+  -- Bare den ene likheten kanoniseres. Et selvutsagn som *finnes*, er en del av
+  -- svaret, og to forskjellige selvutsagn er to forskjellige svar.
+  v_hashed_answer := case
+    when jsonb_typeof(p_answer -> 'identity') = 'null' then p_answer - 'identity'
+    else p_answer
+  end;
+  v_answer_digest := 'sha256:' || encode(sha256(convert_to(v_hashed_answer::text, 'UTF8')), 'hex');
 
   select i.* into v_existing
   from workflow.agent_handoff_imports i

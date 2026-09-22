@@ -23,7 +23,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(29);
+select plan(30);
 
 -- ===========================================================================
 -- Del 1 — Kontoene, bestillingen og modelltildelingene
@@ -166,9 +166,10 @@ select matches(
 select set_config('request.jwt.claims',
                   '{"sub":"87000000-0000-4000-8000-00000000000a"}', true);
 set local role authenticated;
+-- Svaret lagres for seg, slik at det nye forsøket under kan være nøyaktig det
+-- samme svaret med bare den ene forskjellen prøven handler om.
 insert into svar (label, payload)
-select 'import', api.import_agent_answer(
-  (select id from jobs where label = 'discovery'),
+select 'discovery_answer',
   jsonb_build_object(
     'answer_version', 'antidep/agent-answer@1',
     'task_version', 'antidep/agent-task@1',
@@ -202,7 +203,23 @@ select 'import', api.import_agent_answer(
           'need_reference', (select payload -> 'input' -> 'needs' -> 0 ->> 'need_reference'
                              from svar where label = 'oppgave'),
           'proposed_use', 'Kan dokumentere endringen i symptomskår for den avgrensede populasjonen.')))),
-      'term_proposals', jsonb_build_array())));
+      'term_proposals', jsonb_build_array()));
+
+insert into svar (label, payload)
+select 'import', api.import_agent_answer(
+  (select id from jobs where label = 'discovery'),
+  (select payload from svar where label = 'discovery_answer'));
+
+-- Regresjon (013u): et nytt forsøk som skriver den andre av de to formene for
+-- taushet, er det samme svaret. Kontrakten sier at et utelatt `identity` og
+-- `identity: null` er den samme opplysningen, og da må avtrykket si det samme —
+-- ellers ville et nytt forsøk fra en modell som ikke gjentar seg ordrett, blitt
+-- lest som «et annet svar på en besvart oppgave» og avvist.
+insert into svar (label, payload)
+select 'import_igjen', api.import_agent_answer(
+  (select id from jobs where label = 'discovery'),
+  (select payload || jsonb_build_object('identity', null)
+   from svar where label = 'discovery_answer'));
 reset role;
 
 select is(
@@ -250,6 +267,11 @@ select is(
    where r.id = (select (payload ->> 'agent_run_id')::uuid from svar where label = 'import')),
   'null'::jsonb,
   'og «ingen selvrapportert modell» står som nettopp det, framfor å bli gjettet'
+);
+select is(
+  (select (payload -> 'already_imported')::boolean from svar where label = 'import_igjen'),
+  true,
+  'et utelatt identity og «identity: null» er det samme svaret, ikke to'
 );
 
 -- ===========================================================================
