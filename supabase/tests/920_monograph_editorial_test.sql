@@ -151,7 +151,7 @@ insert into provenance.agent_runs
    model_version_disclosure, prompt_template_version, pipeline_version, input_manifest)
 select '92000000-0000-4000-8000-000000000051', ai.id, ai.actor_id, 'monograph_answer',
        'openai', 'GPT-5 Thinking', 'ikke-eksponert', 'not_exposed',
-       'monograph-answer/handoff-fact/1', 'antidep-evidence/1',
+       'monograph-answer/handoff-fact/2', 'antidep-evidence/1',
        '{"mode": "test-920"}'::jsonb
 from provenance.agent_identities ai
 where ai.identity_key = 'agent-identity:monograph-answer-01';

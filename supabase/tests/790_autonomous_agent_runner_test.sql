@@ -647,7 +647,7 @@ grant select, insert on answers to anon, authenticated;
 
 insert into answers
 select 'runner', jsonb_build_object(
-  'answer_version', 'antidep/agent-answer@1',
+  'answer_version', 'antidep/agent-answer@2',
   'task_version', 'antidep/agent-task@1',
   'role', 'evidence_extraction',
   'job_key', t.payload -> 'task' ->> 'job_key',

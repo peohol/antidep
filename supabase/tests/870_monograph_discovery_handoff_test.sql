@@ -171,7 +171,7 @@ set local role authenticated;
 insert into svar (label, payload)
 select 'discovery_answer',
   jsonb_build_object(
-    'answer_version', 'antidep/agent-answer@1',
+    'answer_version', 'antidep/agent-answer@2',
     'task_version', 'antidep/agent-task@1',
     'role', 'source_discovery',
     'job_key', (select payload ->> 'job_key' from svar where label = 'oppgave'),
@@ -314,7 +314,7 @@ set local role authenticated;
 select throws_ok(
   format($$
     select api.import_agent_answer(%L, jsonb_build_object(
-      'answer_version', 'antidep/agent-answer@1',
+      'answer_version', 'antidep/agent-answer@2',
       'task_version', 'antidep/agent-task@1',
       'role', 'source_quality_assessment',
       'job_key', %L,
@@ -343,7 +343,7 @@ select throws_ok(
 select throws_ok(
   format($$
     select api.import_agent_answer(%L, jsonb_build_object(
-      'answer_version', 'antidep/agent-answer@1',
+      'answer_version', 'antidep/agent-answer@2',
       'task_version', 'antidep/agent-task@1',
       'role', 'source_quality_assessment',
       'job_key', %L,
@@ -410,7 +410,7 @@ set local role authenticated;
 select throws_like(
   format($$
     select api.import_agent_answer(%L, jsonb_build_object(
-      'answer_version', 'antidep/agent-answer@1',
+      'answer_version', 'antidep/agent-answer@2',
       'task_version', 'antidep/agent-task@1',
       'role', 'source_quality_assessment',
       'job_key', %L,
@@ -451,7 +451,7 @@ insert into svar (label, payload)
 select 'kontrollimport', api.import_agent_answer(
   (select id from jobs where label = 'kontroll'),
   jsonb_build_object(
-    'answer_version', 'antidep/agent-answer@1',
+    'answer_version', 'antidep/agent-answer@2',
     'task_version', 'antidep/agent-task@1',
     'role', 'source_quality_assessment',
     'job_key', (select payload ->> 'job_key' from svar where label = 'fersk'),

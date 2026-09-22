@@ -259,7 +259,7 @@ grant select on answers to authenticated;
 
 insert into answers
 select 'chatgpt', jsonb_build_object(
-  'answer_version', 'antidep/agent-answer@1',
+  'answer_version', 'antidep/agent-answer@2',
   'task_version', 'antidep/agent-task@1',
   'role', 'evidence_extraction',
   'job_key', t.payload ->> 'job_key',
@@ -677,7 +677,7 @@ select throws_ok(
     $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
     (select payload ->> 'pipeline_job_id' from res where label = 'synthesis_job2'),
     (select jsonb_build_object(
-       'answer_version', 'antidep/agent-answer@1',
+       'answer_version', 'antidep/agent-answer@2',
        'task_version', 'antidep/agent-task@1',
        'role', 'claim_synthesis',
        'job_key', t.payload ->> 'job_key',
@@ -703,7 +703,7 @@ select throws_ok(
     $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
     (select payload ->> 'pipeline_job_id' from res where label = 'synthesis_job2'),
     (select jsonb_build_object(
-       'answer_version', 'antidep/agent-answer@1',
+       'answer_version', 'antidep/agent-answer@2',
        'task_version', 'antidep/agent-task@1',
        'role', 'claim_synthesis',
        'job_key', t.payload ->> 'job_key',
@@ -783,7 +783,7 @@ select throws_ok(
     $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
     (select payload ->> 'pipeline_job_id' from res where label = 'synthesis_job2'),
     (select jsonb_build_object(
-       'answer_version', 'antidep/agent-answer@1',
+       'answer_version', 'antidep/agent-answer@2',
        'task_version', 'antidep/agent-task@1',
        'role', 'claim_synthesis',
        'job_key', t.payload ->> 'job_key',

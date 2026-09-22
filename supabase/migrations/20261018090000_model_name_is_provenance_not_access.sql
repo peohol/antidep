@@ -183,12 +183,55 @@ begin
   -- og gjentakelsesregelen ville sviktet nøyaktig der den finnes for å holde:
   -- ved et nytt forsøk fra en modell som ikke gjentar seg ordrett.
   --
-  -- Bare den ene likheten kanoniseres. Et selvutsagn som *finnes*, er en del av
-  -- svaret, og to forskjellige selvutsagn er to forskjellige svar.
-  v_hashed_answer := case
-    when jsonb_typeof(p_answer -> 'identity') = 'null' then p_answer - 'identity'
-    else p_answer
-  end;
+  -- Kanoniseringen dekker de likhetene kontrakten selv erklærer, og bare dem.
+  -- Et selvutsagn som *finnes*, er en del av svaret: to forskjellige selvutsagn
+  -- er to forskjellige svar.
+  --
+  -- Ett tilfelle holdes bevisst utenfor: `answered_at` leses som et tidspunkt,
+  -- så «...Z» og «...+00:00» er det samme øyeblikket — men å normalisere dem
+  -- ville måttet rendre en timestamptz tilbake til tekst, og den rendringen
+  -- følger sesjonens TimeZone. Da ville det samme svaret fått forskjellig
+  -- avtrykk i to sesjoner, som er verre enn det dette retter.
+  v_hashed_answer := p_answer;
+
+  -- Et utelatt felt og et felt som er JSON null, er den samme opplysningen for
+  -- begge de to valgfrie feltene. Parseren på flaten leser dem likt, og da må
+  -- avtrykket gjøre det også.
+  if jsonb_typeof(v_hashed_answer -> 'identity') = 'null' then
+    v_hashed_answer := v_hashed_answer - 'identity';
+  end if;
+  if jsonb_typeof(v_hashed_answer -> 'answered_at') = 'null' then
+    v_hashed_answer := v_hashed_answer - 'answered_at';
+  end if;
+
+  -- Inne i et selvutsagn erklærer kontrakten to likheter til: en utelatt
+  -- eksponeringsgrad er «exact», og en utelatt versjon under «not_exposed» er
+  -- den kanoniske verdien. Begge går gjennom den ene funksjonen som eier den
+  -- lesningen, slik at avtrykket og kontrollen ikke kan bli uenige om hva som
+  -- er det samme selvutsagnet.
+  --
+  -- Et selvutsagn som ikke lar seg kanonisere, hashes som det er. Det er
+  -- ugyldig og blir avvist av kontrollen lenger nede, med den setningen som
+  -- forklarer hva som er galt — og den feilen skal meldes der, ikke som en
+  -- avvikende gjentakelse her.
+  if jsonb_typeof(v_hashed_answer -> 'identity') = 'object' then
+    begin
+      v_hashed_answer := jsonb_set(
+        v_hashed_answer,
+        '{identity}',
+        provenance.canonical_model_identity(
+          v_hashed_answer -> 'identity' ->> 'provider',
+          v_hashed_answer -> 'identity' ->> 'model',
+          v_hashed_answer -> 'identity' ->> 'model_version',
+          coalesce(v_hashed_answer -> 'identity' ->> 'model_version_disclosure', 'exact')
+        )
+      );
+    exception
+      when others then
+        null;
+    end;
+  end if;
+
   v_answer_digest := 'sha256:' || encode(sha256(convert_to(v_hashed_answer::text, 'UTF8')), 'hex');
 
   select i.* into v_existing
@@ -389,11 +432,16 @@ begin
 
     -- Den samme lesningen tildelingen ble gjort med, slik at et selvutsagn og
     -- en tildeling står på den samme formen og kan leses ved siden av hverandre.
+    -- Standardverdien er «exact», som på flaten (`model-identity.ts`): et
+    -- selvutsagn skrevet før eksponeringsgraden fantes, leses som det det var —
+    -- en erklæring om en versjon noen faktisk oppga. Uten coalesce her ville
+    -- databasen lest et utelatt felt som ingen eksponeringsgrad i det hele tatt,
+    -- og de to sidene vært uenige om den samme filen.
     v_self_identity := provenance.canonical_model_identity(
       v_identity ->> 'provider',
       v_identity ->> 'model',
       v_identity ->> 'model_version',
-      v_identity ->> 'model_version_disclosure'
+      coalesce(v_identity ->> 'model_version_disclosure', 'exact')
     );
   end if;
 
@@ -811,3 +859,81 @@ comment on function api.import_agent_answer(uuid, jsonb) is
 
 comment on function api.assign_agent_role_model(text, text, text, text, text, text, text) is
   'Velger hvilken ekstern KI-tjeneste et semantisk agentledd skal utføres av (ANTIDEP_CONSTITUTION.md regel 3). Tildelingen er en attestert avgjørelse tatt av en redaktør med mandat, FØR oppgaven hentes ut, og den inngår i oppgavens binding og dermed i request_digest. Registrerer aldri en modell på grunnlag av et agentsvar: en identitet som fikk registrere seg selv, ville etablert sitt eget premiss, og proveniensen sagt hvilken modell som arbeidet på modellens eget ord. Skriver aldri om en gjeldende tildeling: et bytte krever en begrunnelse, og avslutter da den gjeldende med hvem og hvorfor og registrerer den nye i den samme transaksjonen, slik at leddet aldri står uten modell fordi den nye viste seg å tilhøre et annet ledd. Fra migrasjon 013t kan to ledd godt ha den samme modellen: den utfører dem som atskilte kjøringer under hver sin rolle, og separasjonen ligger i rollen og i kjøringen framfor i modellnavnet. Fra migrasjon 013u er tildelingen proveniens og ikke adgangskontroll: den sier hvor arbeidet ble satt ut, og et agentsvar kontrolleres ikke mot den — plattformen viser sjelden modellen, og et navn modellen selv skriver, er ingen grense. Krever editor-mandat. SECURITY DEFINER fordi provenance har RLS med default deny; kalleren valideres på funksjonens eget kall.';
+
+-- ----------------------------------------------------------------------------
+-- 4. Kontraktversjonene: svarformen og promptmalene er blitt andre
+--
+-- To ting i denne migrasjonen endrer det agenten faktisk ser og får levere, og
+-- begge har en versjon som finnes nettopp for å si at de er endret.
+--
+-- **Svarformen.** `identity` gikk fra påkrevd til valgfri. Det er ikke en
+-- presisering: et `@1`-svar uten `identity` *var* en feil, mens et `@2`-svar
+-- uten er den sanne formen. Versjonen er det som hindrer at en annen svarform
+-- leses med de samme standardene — sto de to under det samme navnet, ville
+-- navnet sluttet å si noe.
+--
+-- **Promptmalene.** Den delte delen av oppgaveteksten er skrevet om for alle
+-- seks rollene: svarmalen har ikke lenger et `identity`-felt, og teksten sier nå
+-- at feltet skal utelates med mindre plattformen faktisk viser modellen. En
+-- `prompt_template_version` som dekket både den gamle og den nye instruksen,
+-- ville ikke kunnet si hvilken av dem en registrert kjøring faktisk fikk — og
+-- den strengen er det eneste proveniensen har å svare med.
+--
+-- Svarstrukturene (`output_schema_version`) står urørt. `result` er nøyaktig det
+-- samme som før, og en versjon som beveget seg uten at formen gjorde det, ville
+-- vært like misvisende som en som sto stille mens formen endret seg.
+--
+-- Utestående oppgaver får et nytt `request_digest`, fordi promptmalversjonen er
+-- en del av bindingen. Det er riktig utfall: en oppgave hentet ut under den
+-- gamle instruksen skal ikke kunne besvares som om den var hentet under den nye.
+-- ----------------------------------------------------------------------------
+create or replace function workflow.agent_handoff_answer_version()
+  returns text language sql immutable set search_path = ''
+as $$ select 'antidep/agent-answer@2'::text $$;
+
+comment on function workflow.agent_handoff_answer_version() is
+  'Versjonen av svarformen den eksterne agent-handoffen tar imot. Et svar med en annen versjon avvises framfor å bli lest med standardverdier. @2 fra migrasjon 013u: identity gikk fra påkrevd til valgfri, fordi plattformen sjelden lar en agent vite hvilken modell den kjører — og et @1-svar uten identity var en feil, mens et @2-svar uten er den sanne formen.';
+
+create or replace function workflow.agent_task_contract(p_agent_role provenance.agent_role)
+  returns jsonb
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select case p_agent_role
+    -- Promptmalene står på /2 fra migrasjon 013u: den delte delen av
+    -- oppgaveteksten ble skrevet om for alle seks rollene i den samme
+    -- endringen. Svarformene er uendret — `result` er det samme som før.
+    when 'evidence_extraction' then jsonb_build_object(
+      'prompt_template_version', 'evidence-extraction/handoff-drafting/2',
+      'output_schema_version', 'antidep/extraction-draft@1'
+    )
+    when 'claim_synthesis' then jsonb_build_object(
+      'prompt_template_version', 'claim-synthesis/handoff-drafting/2',
+      'output_schema_version', 'antidep/claim-synthesis-draft@1'
+    )
+    when 'evidence_assessment' then jsonb_build_object(
+      'prompt_template_version', 'evidence-assessment/handoff-drafting/2',
+      'output_schema_version', 'antidep/evidence-assessment-draft@1'
+    )
+    -- Migrasjon 013i hever svarformen til @2: et begrepsforslag kan navngi
+    -- behovet verdien ble dokumentert under, slik at aksepten forgrener
+    -- nettopp det behovet framfor å utvide utgaven på malenes hovedakse.
+    when 'source_discovery' then jsonb_build_object(
+      'prompt_template_version', 'source-discovery/handoff-search/2',
+      'output_schema_version', 'antidep/source-discovery-draft@2'
+    )
+    when 'source_quality_assessment' then jsonb_build_object(
+      'prompt_template_version', 'source-coverage/handoff-control/2',
+      'output_schema_version', 'antidep/source-coverage-control-draft@1'
+    )
+    -- Migrasjon 013i: svaret på et behov som hviler på et myndighets-,
+    -- preparat- eller retningslinjedokument. Den deterministiske
+    -- svarkontrollen står bevisst ikke her: den er Antideps egen kode.
+    when 'monograph_answer' then jsonb_build_object(
+      'prompt_template_version', 'monograph-answer/handoff-fact/2',
+      'output_schema_version', 'antidep/monograph-answer-draft@1'
+    )
+    else null
+  end;
+$$;

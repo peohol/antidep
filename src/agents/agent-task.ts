@@ -74,8 +74,19 @@ const TASK_SUBJECT = 'Agentoppgaven'
 /** Versjonen av oppgaveformen. Den samme for alle roller. */
 export const AGENT_TASK_VERSION = 'antidep/agent-task@1'
 
-/** Versjonen av svarformen oppgaven ber om. */
-export const AGENT_ANSWER_VERSION = 'antidep/agent-answer@1'
+/**
+ * Versjonen av svarformen oppgaven ber om.
+ *
+ * `@2` fra migrasjon 013u: `identity` gikk fra påkrevd til valgfri. Versjonen er
+ * mekanismen som hindrer at en annen svarform leses med de samme standardene —
+ * og et `@1`-svar uten `identity` *var* en feil, mens et `@2`-svar uten er den
+ * sanne formen. Å la de to bære det samme navnet ville gjort versjonen til en
+ * opplysning som ikke sier noe.
+ *
+ * Ingen `result`-form er rørt: svarstrukturen per rolle har sin egen versjon
+ * (`outputSchemaVersion`), og den skal ikke bevege seg av denne grunnen.
+ */
+export const AGENT_ANSWER_VERSION = 'antidep/agent-answer@2'
 
 /**
  * Rollene som kan settes ut til en ekstern KI-agent.
@@ -110,7 +121,14 @@ export function isHandoffRole(role: string): role is HandoffRole {
 /** Det denne siden må vite om en rolle for å kunne skrive oppgavefilen. */
 export interface HandoffRoleContract {
   readonly role: HandoffRole
-  /** Versjonen av promptmalen. Inngår i avtrykket, og eies av databasen. */
+  /**
+   * Versjonen av promptmalen. Inngår i avtrykket, og eies av databasen.
+   *
+   * Alle seks står på `/2` fra migrasjon 013u. Den delte delen av oppgaveteksten
+   * — hvordan svaret leveres, og hva `identity` er — ble skrevet om for alle
+   * rollene i den samme endringen, og en versjon som dekket to forskjellige
+   * instrukser ville ikke kunnet si hvilken en kjøring fikk.
+   */
   readonly promptTemplateVersion: string
   /** Versjonen av svarformen rollen krever. Inngår i avtrykket. */
   readonly outputSchemaVersion: string
@@ -123,7 +141,7 @@ export interface HandoffRoleContract {
 export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract>> = {
   evidence_extraction: {
     role: 'evidence_extraction',
-    promptTemplateVersion: 'evidence-extraction/handoff-drafting/1',
+    promptTemplateVersion: 'evidence-extraction/handoff-drafting/2',
     outputSchemaVersion: 'antidep/extraction-draft@1',
     label: 'Ekstraksjonsutkast',
     summary:
@@ -131,7 +149,7 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
   },
   claim_synthesis: {
     role: 'claim_synthesis',
-    promptTemplateVersion: 'claim-synthesis/handoff-drafting/1',
+    promptTemplateVersion: 'claim-synthesis/handoff-drafting/2',
     outputSchemaVersion: 'antidep/claim-synthesis-draft@1',
     label: 'Synteseutkast',
     summary:
@@ -139,7 +157,7 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
   },
   evidence_assessment: {
     role: 'evidence_assessment',
-    promptTemplateVersion: 'evidence-assessment/handoff-drafting/1',
+    promptTemplateVersion: 'evidence-assessment/handoff-drafting/2',
     outputSchemaVersion: 'antidep/evidence-assessment-draft@1',
     label: 'Evidensvurdering',
     summary:
@@ -147,7 +165,7 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
   },
   source_discovery: {
     role: 'source_discovery',
-    promptTemplateVersion: 'source-discovery/handoff-search/1',
+    promptTemplateVersion: 'source-discovery/handoff-search/2',
     // @2 fra migrasjon 013i: et begrepsforslag kan navngi behovet verdien ble
     // dokumentert under, slik at aksepten forgrener nettopp det behovet.
     outputSchemaVersion: 'antidep/source-discovery-draft@2',
@@ -157,7 +175,7 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
   },
   source_quality_assessment: {
     role: 'source_quality_assessment',
-    promptTemplateVersion: 'source-coverage/handoff-control/1',
+    promptTemplateVersion: 'source-coverage/handoff-control/2',
     outputSchemaVersion: 'antidep/source-coverage-control-draft@1',
     label: 'Kontroll av søkedekning',
     summary:
@@ -165,7 +183,7 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
   },
   monograph_answer: {
     role: 'monograph_answer',
-    promptTemplateVersion: 'monograph-answer/handoff-fact/1',
+    promptTemplateVersion: 'monograph-answer/handoff-fact/2',
     outputSchemaVersion: 'antidep/monograph-answer-draft@1',
     label: 'Monografisvar',
     summary:

@@ -239,8 +239,33 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
   }
 }
 
+/**
+ * Bygg innholdet, men prøv ikke den versjonerte handoff-kontrakten.
+ *
+ * `scripts/db-upgrade-monograph.sh` kjører denne filen mot en base som med
+ * vilje er satt tilbake til siste migrasjon før monografien, for å bygge det
+ * innholdet oppgraderingen skal prøves mot. Handoff-kontrakten er versjonert og
+ * pinnet mot *denne* utgaven av koden: `parseAgentTask` avviser en oppgave der
+ * databasens `answer_version` eller `prompt_template_version` er en annen enn
+ * flatens. Mot en base som er pinnet til en eldre migrasjon, er de forskjellige
+ * — og da sier pinningen sannheten: flaten og databasen *er* i utakt der.
+ *
+ * En prøve som kjøres mot to skjemaer, kan ikke påstå noe som gjelder bare det
+ * ene (migrasjon 013t). Kontraktleddet hører derfor til en ferdig migrert base,
+ * og prøves der: av denne filen uten flagget (`npm run db:test:chain`), av
+ * `npm run db:test:mcp`, og av pgTAP 780, 790 og 870. Steget i
+ * oppgraderingsprøven heter «bygger innhold gjennom de autoriserte veiene», og
+ * det er nøyaktig det som blir igjen når flagget er satt.
+ */
+const SKIP_HANDOFF_FLAG = '--skip-handoff'
+
 async function main(): Promise<void> {
-  const config = readLocalStackConfig(process.argv.slice(2))
+  // `--skip-handoff` er ikke en stack-innstilling, og skal ikke leses som et
+  // flagg med verdi. Den filtreres bort før argumentene tolkes.
+  const skipHandoff = process.argv.includes(SKIP_HANDOFF_FLAG)
+  const config = readLocalStackConfig(
+    process.argv.slice(2).filter((argument) => argument !== SKIP_HANDOFF_FLAG),
+  )
   console.log(
     'Antidep 2: PDF → oppdrag → agentekstraksjon → uavhengig verifikasjon → forseglet ' +
       'kandidat → sluttkontroll → publisering → klinikervisning → withdraw → rollback.\n',
@@ -1270,6 +1295,14 @@ async function main(): Promise<void> {
     // oppgavekontrakten i TypeScript og de api-funksjonene som faktisk tar imot
     // den.
     // ------------------------------------------------------------------
+    if (skipHandoff) {
+      console.log(
+        '\nHopper over den versjonerte handoff-kontrakten (--skip-handoff): basen er ' +
+          'pinnet til en eldre migrasjon, og kontraktversjonene er derfor ikke flatens.',
+      )
+      return
+    }
+
     const otherDrugId = psql(
       config,
       `select id from catalog.drugs where canonical_name = 'mirtazapin'`,
@@ -1707,12 +1740,16 @@ async function main(): Promise<void> {
   } finally {
     rmSync(work, { recursive: true, force: true })
   }
-
-  if (process.exitCode === 1) {
-    console.error('\nMinst én Antidep 2-kjedekontroll slo feil.')
-  } else {
-    console.log('\nAntidep 2-kjeden gikk gjennom.')
-  }
 }
 
 await main()
+
+// Oppsummeringen står utenfor `main()`, slik at den også skrives når kjøringen
+// avslutter tidlig — for eksempel under `--skip-handoff`. En kjøring som gikk i
+// stykker før det punktet, skal ikke kunne ende uten den ene linjen som sier at
+// noe slo feil: oppgraderingsprøven leser nettopp denne loggen.
+if (process.exitCode === 1) {
+  console.error('\nMinst én Antidep 2-kjedekontroll slo feil.')
+} else {
+  console.log('\nAntidep 2-kjeden gikk gjennom.')
+}
