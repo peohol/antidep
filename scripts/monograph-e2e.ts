@@ -728,7 +728,7 @@ async function main(): Promise<void> {
     'vesentligheten er registrert som den semantiske vurderingen den er',
     psql(
       config,
-      `select could_change_conclusion::text from workflow.monograph_candidate_sources c
+      `select could_change_conclusion from workflow.monograph_candidate_sources c
        where c.identifier_value = ${q(DOI)}`,
     ) === 't',
   )
@@ -857,10 +857,7 @@ async function main(): Promise<void> {
   )
   check(
     'og raden bærer at kontrollen faktisk søkte selv — utledet av søkeloggen',
-    psql(
-      config,
-      `select searched_independently::text from workflow.monograph_coverage_controls`,
-    ) === 't',
+    psql(config, `select searched_independently from workflow.monograph_coverage_controls`) === 't',
   )
 
   // --------------------------------------------------------------------
