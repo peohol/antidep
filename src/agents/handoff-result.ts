@@ -270,14 +270,25 @@ function discoveryCandidates(fields: Fields): void {
   const candidates = optionalArray(fields, 'candidates')
   candidates.forEach((value, index) => {
     const candidate = nestedFields(fields, value, `candidates[${String(index)}]`)
-    asVocabulary(candidate, 'identifier_kind', ['doi', 'pmid', 'pmcid', 'url', 'title', 'registry_id'])
+    asVocabulary(candidate, 'identifier_kind', [
+      'doi',
+      'pmid',
+      'pmcid',
+      'url',
+      'title',
+      'registry_id',
+    ])
     asText(candidate, 'identifier_value')
     asText(candidate, 'title')
     asOptionalText(candidate, 'authors_or_issuer')
     asOptionalText(candidate, 'publisher_or_journal')
     const year = nonNegativeInteger(candidate, 'publication_year')
     if (year !== null && (year < 1800 || year > 2200)) {
-      problem(candidate.subject, `${candidate.where}.publication_year`, 'ligger utenfor 1800–2200')
+      problem(
+        candidate.subject,
+        `${candidate.where}.publication_year`,
+        'ligger utenfor 1800–2200',
+      )
     }
     asText(candidate, 'discovery_path')
     optionalBoolean(candidate, 'access_limited')
@@ -289,7 +300,11 @@ function discoveryCandidates(fields: Fields): void {
 
     const uses = optionalArray(candidate, 'uses')
     uses.forEach((useValue, useIndex) => {
-      const use = nestedFields(candidate, useValue, `${candidate.where}.uses[${String(useIndex)}]`)
+      const use = nestedFields(
+        candidate,
+        useValue,
+        `${candidate.where}.uses[${String(useIndex)}]`,
+      )
       asText(use, 'need_reference')
       asText(use, 'proposed_use')
       rejectUnknown(use)
