@@ -57,8 +57,11 @@ et søk kan ikke erklære et spor søkeveien ikke står oppført for. De øvrige
 obligatoriske sporene per kildeprofil har derfor ingen maskinell utfører: de
 føres som `no_machine_path` når planen lages, teller aldri som dekning, og
 navngis av stoppkravet framfor å bli stående som «ikke forsøkt ennå». En
-redaktør utfører søket og registrerer utfallet med
-`api.record_monograph_track_by_editor(...)`; raden bærer hvem som gjorde det.
+redaktør utfører søket og registrerer passeringen med
+`api.record_monograph_track_by_editor(...)`: hvor det ble søkt, med hvilken
+streng, når og hvor mange treff det ga, som en egen rad i søkeloggen med
+`editor_recorded` som utførelsesbevis. Sporet knyttes til nøyaktig den raden, og
+begge bærer hvem som gjorde det.
 Ingen av de tre leddene kan gjøre den andres arbeid, og ingen av dem kan late
 som (migrasjon 013x).
 

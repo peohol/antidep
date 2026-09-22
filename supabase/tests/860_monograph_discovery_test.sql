@@ -531,7 +531,8 @@ select throws_ok(
 select throws_ok(
   format($$select api.record_monograph_track_by_editor(
             %L, 'bibliographic_database', 'covered',
-            'Forsøk på å overta et spor maskinen allerede dekker.')$$,
+            'Forsøk på å overta et spor maskinen allerede dekker.',
+            'Epistemonikos', '"sertralin"', null, now() - interval '1 hour', 2, 2, false, null)$$,
          (select value from refs where label = 'eff')),
   '23001',
   null,
@@ -543,9 +544,12 @@ select 'redaktorspor', api.record_monograph_track_by_editor(
   (select value from refs where label = 'eff'), 'trial_registries', 'unavailable',
   'Søkt manuelt i ClinicalTrials.gov 2026-09-22. Registeret svarte ikke innenfor tidsrammen.');
 insert into svar (label, payload)
+-- Her står sporet som en begrensning. Den dokumenterte passeringen — der
+-- redaktøren faktisk søkte og registrerte hva det ga — prøves i 970, sammen med
+-- at den teller som en supplerende søkepassering i metningssignalet.
 select 'redaktorspor2', api.record_monograph_track_by_editor(
-  (select value from refs where label = 'eff'), 'systematic_review_search', 'covered',
-  'Oversiktssøk gjort manuelt i Epistemonikos 2026-09-22; treffene er gjennomgått og de relevante er registrert.');
+  (select value from refs where label = 'eff'), 'systematic_review_search', 'unavailable',
+  'Epistemonikos krever abonnement Antidep ikke har i denne kjøringen. Begrensningen står i utkastet.');
 select 'redaktorspor3', api.record_monograph_track_by_editor(
   (select value from refs where label = 'eff'), 'independent_second_database', 'unavailable',
   'CENTRAL krever abonnement Antidep ikke har. Begrensningen står i utkastet.');

@@ -76,7 +76,7 @@ Tre tilstander holdes fra hverandre, fordi de utløser forskjellig arbeid:
 | Tilstand | Hva den betyr | Hva som løser den |
 | --- | --- | --- |
 | Utilgjengelig | Søkeveien ble forsøkt, men svarte ikke. | Et nytt forsøk. Antidep prøver inntil tre ganger. |
-| Ingen maskinell søkevei | Ingen av søkeveiene Antidep faktisk kaller, dekker sporet. Sporet blir ikke forsøkt maskinelt uansett hvor lenge man venter. | En redaktør utfører søket og registrerer utfallet. |
+| Ingen maskinell søkevei | Ingen av søkeveiene Antidep faktisk kaller, dekker sporet. Sporet blir ikke forsøkt maskinelt uansett hvor lenge man venter. | En redaktør utfører søket og registrerer passeringen i søkeloggen. |
 | Dekket | Et dokumentert søk dekker sporet. | Ingenting. |
 
 Hvilke søkespor Antidep faktisk kan dekke maskinelt, er et registrert faktum (`knowledge.monograph_search_platforms`) og ikke en antakelse. Et søk kan ikke erklære et spor søkeveien ikke står oppført for: et bibliografisk søk som erklærte forsøksregistre dekket, ville gjort stoppkravet blindt for et spor ingen hadde søkt i. Et obligatorisk spor uten maskinell søkevei teller derfor aldri som dekning — men det blir heller ikke stående som «ikke forsøkt ennå», der det ville ventet for alltid. Stoppkravet navngir sporet og sier hva som løser det.
@@ -101,7 +101,11 @@ Et modellrapportert søk og et maskinelt utført søk er fortsatt to forskjellig
 
 En søkeforespørsel kan bare be om det den deterministiske søkeveien faktisk gjør: en navngitt søketjeneste av dem systemet allerede kaller, en søkestrategi og noen termer. En adresse kan ikke oppgis. Antall runder per planversjon er begrenset; er budsjettet brukt opp, er arbeidet åpent og ventende (§8.2) og aldri en konklusjon om evidensen.
 
-Og det tredje leddet: mennesket. De søkeveiene Antidep faktisk kaller, dekker i dag bare det bibliografiske sporet. De øvrige obligatoriske sporene i §4.2 — myndighetskilden, preparatomtalen, forsøksregistrene, referanselistene, de siterende arbeidene, den regulatoriske veiledningen — har ingen maskinell utfører, og de får ikke en ved at noen venter. Slike spor føres derfor som *ingen maskinell søkevei* med én gang planen lages, de teller aldri som dekning, og stoppkravet navngir dem. En redaktør utfører søket og registrerer utfallet; raden bærer hvem som gjorde det, slik at «et menneske har håndtert dette» og «en tjeneste svarte ikke» forblir to forskjellige fakta. Får Antidep siden en søkevei for et slikt spor, flyttes sporet tilbake til den maskinelle køen av seg selv.
+Og det tredje leddet: mennesket. De søkeveiene Antidep faktisk kaller, dekker i dag bare det bibliografiske sporet. De øvrige obligatoriske sporene i §4.2 — myndighetskilden, preparatomtalen, forsøksregistrene, referanselistene, de siterende arbeidene, den regulatoriske veiledningen — har ingen maskinell utfører, og de får ikke en ved at noen venter. Slike spor føres derfor som *ingen maskinell søkevei* med én gang planen lages, de teller aldri som dekning, og stoppkravet navngir dem.
+
+Redaktøren utfører da søket og registrerer **selve passeringen**: hvor det ble søkt, med hvilken streng, med hvilke filtre, når, hvor mange treff det ga og hvor mye som ble gjennomgått — de samme opplysningene §4.3 krever om ethvert utført søk. Passeringen blir en egen rad i søkeloggen med utførelsesbeviset *redaktørregistrert*, og sporet knyttes til nøyaktig den raden. En dekning som bare pekte på en tidligere passering som gjaldt noe annet, ville vært en misvisende proveniens, og for profilene uten ett eneste maskinelt utførbart spor — REG, PROD og SYN — ville det dessuten aldri finnes et søk som faktisk hadde gått.
+
+Utførelsesbeviset har derfor tre verdier, og de blandes ikke: *agentrapportert* (en agents beretning om et verktøykall), *maskinelt utført* (Antideps eget kall, med endepunkt og responsavtrykk) og *redaktørregistrert* (et menneskes dokumenterte arbeid, uten endepunkt og uten kjøring). Registeret over søkeveier begrenser maskinen, og bare maskinen: et menneske kan søke der Antidep ikke kan, og står oppført på raden for det. Får Antidep siden en søkevei for et slikt spor, flyttes sporet tilbake til den maskinelle køen av seg selv.
 
 ## 5. Innhenting og kildeintegritet
 
@@ -179,6 +183,8 @@ Et spørsmål kan få ferdig søkedekning først når alle følgende er oppfylt:
 For en autoritativ regulatorisk opplysning kan én riktig, gjeldende kilde være tilstrekkelig. Ikke krev en ekstra artikkel for å bekrefte en norsk godkjent styrke. For forskningsspørsmål er verken «tre kilder», «to enige modeller» eller «ingen nye topp-ti-treff» et tilstrekkelig kriterium.
 
 Etter at minimumssporene er dekket, brukes **to ulike supplerende søkepasseringer** uten nye potensielt konklusjonsendrende kilder som praktisk metningssignal: for eksempel et utvidet term-/synonymsøk og et nyere siteringssøk. Dette er Antideps v1-heuristikk, ikke bevis på uttømmende dekning. Kjente hull eller en svak grunnsøking overstyres aldri av dette signalet.
+
+Metningssignalet gjelder de profilene som faktisk søker i litteraturen, utledet av om et bibliografisk søk er et av profilens obligatoriske spor. De autoritative regulatoriske profilene kan klare seg med én riktig, gjeldende kilde, og sammendragsleddet gjør ingen selvstendig litteraturjakt (§4.2) — å kreve to søkepasseringer av et ledd som ikke søker, er et krav som aldri kan oppfylles.
 
 ### 8.2 Ressursgrense er ikke evidenskonklusjon
 

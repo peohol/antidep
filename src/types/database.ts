@@ -868,12 +868,26 @@ export type Database = {
         }
         Returns: unknown
       }
+      // Redaktørens vei ut for et obligatorisk søkespor ingen registrert
+      // søkevei dekker (migrasjon 013z). `covered` fører selve passeringen inn
+      // i søkeloggen, så søket er dokumentert der og ikke bare påstått: derfor
+      // er plattform, streng, tidspunkt og treffantall parametre og ikke
+      // valgfrie tillegg. Tallene er `string` av samme grunn som ellers —
+      // PostgREST lar PostgreSQL gjøre casten.
       record_monograph_track_by_editor: {
         Args: {
           p_plan_reference: string
           p_track_code: string
           p_outcome: string
           p_note: string
+          p_platform?: string | null
+          p_query_string?: string | null
+          p_filters?: string | null
+          p_executed_at?: string | null
+          p_result_count?: string | null
+          p_screened_count?: string | null
+          p_truncated?: boolean | null
+          p_truncation_note?: string | null
         }
         Returns: unknown
       }

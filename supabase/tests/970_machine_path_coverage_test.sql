@@ -31,7 +31,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(19);
+select plan(29);
 
 insert into auth.users (id, email)
 values ('97000000-0000-4000-8000-00000000000a', 'redaktor-970@test.invalid');
@@ -226,16 +226,12 @@ select alike(
 );
 
 -- ===========================================================================
--- Del 5 — Redaktørens vei ut, og grensene den har
+-- Del 5 — Redaktørens vei ut dokumenterer søket den bygger på
 -- ===========================================================================
-insert into refs (label, value)
-select 'reg', p.reference
-from workflow.monograph_search_plans p
-join knowledge.monograph_source_profiles sp on sp.id = p.profile_id
-where sp.code = 'REG'
-order by p.created_at
-limit 1;
-
+-- Før 013z knyttet `covered` sporet til den *siste* passeringen på planen,
+-- uansett hvilket spor den raden gjaldt: et manuelt oversiktssøk kunne bli ført
+-- som dekket ved å peke på et tidligere Europe PMC-søk. Nå er passeringen en
+-- egen rad, og sporet peker på nøyaktig den.
 select set_config('request.jwt.claims',
                   '{"sub":"97000000-0000-4000-8000-00000000000a"}', true);
 set local role authenticated;
@@ -257,36 +253,57 @@ select throws_ok(
   'og det krever en begrunnelse, ikke et ord: begrunnelsen er det eneste sporet av hva mennesket gjorde'
 );
 
--- Den regulatoriske planen har ingen søkepassering: ingen av dens tre
--- obligatoriske spor kan dekkes maskinelt, og ingen søkevei har gått for den.
+-- De fire opplysningene SOURCE_POLICY.md §4.3 krever om et utført søk.
 select throws_ok(
-  format($$select api.record_monograph_track_by_editor(%L, 'norwegian_authority_source', 'covered',
-            'Kontrollert direkte i myndighetskilden, og versjonen er ikke avløst.')$$,
-         (select value from refs where label = 'reg')),
-  '23001',
+  format($$select api.record_monograph_track_by_editor(%L, 'trial_registries', 'covered',
+            'Søkt manuelt i forsøksregisteret; treffene er gjennomgått.',
+            null, '"sertralin"', null, now() - interval '1 hour', 4, 4, false, null)$$,
+         (select value from refs where label = 'eff')),
+  '22023',
   null,
-  'et spor kan ikke erklæres dekket på en plan uten en registrert søkepassering å knytte det til'
+  'et dekket spor kan ikke registreres uten søkeveien passeringen gikk mot'
+);
+select throws_ok(
+  format($$select api.record_monograph_track_by_editor(%L, 'trial_registries', 'covered',
+            'Søkt manuelt i forsøksregisteret; treffene er gjennomgått.',
+            'ClinicalTrials.gov', null, null, now() - interval '1 hour', 4, 4, false, null)$$,
+         (select value from refs where label = 'eff')),
+  '22023',
+  null,
+  'og ikke uten den eksakte søkestrengen: en beskrivelse av et søk er ikke et søk'
+);
+select throws_ok(
+  format($$select api.record_monograph_track_by_editor(%L, 'trial_registries', 'covered',
+            'Søkt manuelt i forsøksregisteret; treffene er gjennomgått.',
+            'ClinicalTrials.gov', '"sertralin"', null, now() + interval '1 day', 4, 4, false, null)$$,
+         (select value from refs where label = 'eff')),
+  '22023',
+  null,
+  'og ikke med et tidspunkt i framtiden: det er ikke et utført søk'
+);
+select throws_ok(
+  format($$select api.record_monograph_track_by_editor(%L, 'trial_registries', 'covered',
+            'Søkt manuelt i forsøksregisteret; treffene er gjennomgått.',
+            'ClinicalTrials.gov', '"sertralin"', null, now() - interval '1 hour', null, 4, false, null)$$,
+         (select value from refs where label = 'eff')),
+  '22023',
+  null,
+  'og ikke uten treffantall: null treff er 0, og ingen verdi er ikke null treff'
 );
 
 select lives_ok(
-  format($$select api.record_monograph_track_by_editor(%L, 'trial_registries', 'unavailable',
-            'Søkt manuelt i ClinicalTrials.gov 2026-09-22. Registeret svarte ikke innenfor tidsrammen.')$$,
+  format($$select api.record_monograph_track_by_editor(%L, 'trial_registries', 'covered',
+            'Søkt manuelt i ClinicalTrials.gov 2026-09-22; de fire treffene er gjennomgått.',
+            'ClinicalTrials.gov', 'sertraline AND depressive disorder', 'status=all',
+            now() - interval '1 hour', 4, 4, false, null)$$,
          (select value from refs where label = 'eff')),
-  'redaktøren kan registrere utfallet av et spor maskinen ikke har en vei til'
-);
-
-select throws_ok(
-  format($$select api.record_monograph_track_by_editor(%L, 'trial_registries', 'unavailable',
-            'Forsøk på å føre det samme sporet en gang til, etter at det er avklart.')$$,
-         (select value from refs where label = 'eff')),
-  '23001',
-  null,
-  'et avklart spor kan ikke føres på nytt: utfallet er ført, og veien er ikke en redigeringsflate'
+  'redaktøren kan registrere passeringen hun faktisk gjorde'
 );
 
 select throws_ok(
   format($$select api.record_monograph_track_by_editor(%L, 'bibliographic_database', 'covered',
-            'Forsøk på å overta et spor maskinen allerede dekker.')$$,
+            'Forsøk på å overta et spor maskinen allerede dekker.',
+            'Epistemonikos', '"sertralin"', null, now() - interval '1 hour', 2, 2, false, null)$$,
          (select value from refs where label = 'eff')),
   '23001',
   null,
@@ -294,6 +311,33 @@ select throws_ok(
 );
 
 reset role;
+
+-- Selve poenget i funn 2: sporet peker på passeringen som gjaldt det, ikke på
+-- en tilfeldig tidligere rad.
+select is(
+  (select s.platform
+   from workflow.monograph_search_track_attempts a
+   join workflow.monograph_searches s on s.id = a.search_id
+   join knowledge.monograph_search_tracks k on k.id = a.track_id
+   join workflow.monograph_search_plans p on p.id = a.plan_id
+   where p.reference = (select value from refs where label = 'eff')
+     and k.code = 'trial_registries'),
+  'ClinicalTrials.gov',
+  'sporet peker på passeringen som faktisk gjaldt det, ikke på det forrige Europe PMC-søket'
+);
+
+select is(
+  (select array[s.execution_evidence::text, s.evidence_endpoint, s.response_digest,
+                array_to_string(s.track_codes, ',')]
+   from workflow.monograph_search_track_attempts a
+   join workflow.monograph_searches s on s.id = a.search_id
+   join knowledge.monograph_search_tracks k on k.id = a.track_id
+   join workflow.monograph_search_plans p on p.id = a.plan_id
+   where p.reference = (select value from refs where label = 'eff')
+     and k.code = 'trial_registries'),
+  array['editor_recorded', null, null, 'trial_registries'],
+  'og raden er et menneskes dokumenterte arbeid: verken endepunkt eller responsavtrykk, og den bærer sporet den gjaldt'
+);
 
 select is(
   (select a.resolved_by_actor_id
@@ -304,6 +348,23 @@ select is(
      and k.code = 'trial_registries'),
   'ac970000-0000-4000-8000-00000000000a'::uuid,
   'og raden bærer hvem: «et menneske har håndtert dette» er ikke samme faktum som «en tjeneste svarte ikke»'
+);
+
+-- En agent kan ikke skrive et slikt søk. Uten grensen hadde editor_recorded
+-- vært en vei til å erklære et søk uten hverken kjøring eller endepunkt.
+select throws_ok(
+  format($$
+    insert into workflow.monograph_searches
+      (plan_id, plan_version, platform, query_string, executed_at, result_count,
+       screened_count, outcome, execution_evidence, track_codes, recorded_by_actor_id)
+    values ((select id from workflow.monograph_search_plans where reference = %L),
+            1, 'Epistemonikos', 'sertralin', now(), 2, 2, 'executed',
+            'editor_recorded', array['citing_works'],
+            (select id from provenance.actors where actor_type = 'agent' limit 1))
+  $$, (select value from refs where label = 'eff')),
+  '22023',
+  null,
+  'en agent kan ikke registrere en menneskelig søkepassering'
 );
 
 -- ===========================================================================
@@ -329,6 +390,140 @@ select is(
      and k.code = 'systematic_review_search'),
   'pending',
   'og sporet venter nå på maskinen framfor på et menneske — uten at noen måtte rydde'
+);
+
+-- ===========================================================================
+-- Del 7 — Og hele veien fram: fra registeret til closure_problem = NULL
+-- ===========================================================================
+-- Det holder ikke at manglende spor får en synlig tilstand. Spørsmålet er om
+-- kjeden *kommer fram* — med bare reelle, dokumenterte søkeveier. REG, PROD og
+-- SYN har ikke ett eneste maskinelt utførbart spor, og var derfor de som ikke
+-- kom noen vei i det hele tatt.
+insert into refs (label, value)
+select 'p_' || lower(sp.code), p.reference
+from (select distinct on (profile_id) id, profile_id, reference
+      from workflow.monograph_search_plans order by profile_id, created_at) p
+join knowledge.monograph_source_profiles sp on sp.id = p.profile_id
+where sp.code in ('REG', 'PROD', 'SYN', 'SAFE');
+
+-- Redaktøren fører hvert spor uten maskinell vei, med sin egen passering.
+create temporary table manuelt on commit drop as
+  select r.value as plan_ref, k.code as track_code
+  from refs r
+  join workflow.monograph_search_plans p on p.reference = r.value
+  join workflow.monograph_search_track_attempts a on a.plan_id = p.id
+  join knowledge.monograph_search_tracks k on k.id = a.track_id
+  where r.label like 'p\_%' and a.state = 'no_machine_path';
+grant select on manuelt to authenticated;
+
+select set_config('request.jwt.claims',
+                  '{"sub":"97000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+do $$
+declare r record;
+begin
+  for r in select * from manuelt loop
+    perform api.record_monograph_track_by_editor(
+      r.plan_ref, r.track_code, 'covered',
+      'Søkt manuelt for sporet ' || r.track_code || '; treffene er gjennomgått og registrert.',
+      'Manuell søkevei for ' || r.track_code, '"sertralin" AND ' || r.track_code, null,
+      now() - interval '1 hour', 3, 3, false, null);
+  end loop;
+end $$;
+reset role;
+
+-- Og det bibliografiske sporet dekkes maskinelt, med de to passeringene
+-- metningssignalet ber om for profilene som faktisk søker i litteraturen.
+insert into workflow.monograph_searches
+  (plan_id, plan_version, platform, query_string, executed_at, result_count,
+   screened_count, outcome, execution_evidence, evidence_endpoint, response_digest,
+   track_codes, recorded_by_actor_id)
+select p.id, 1, t.plat, '"sertralin" AND ("depressiv lidelse")', now(), 6, 6,
+       'executed', 'machine_executed',
+       'https://www.ebi.ac.uk/europepmc/webservices/rest/search',
+       'sha256:' || repeat('f', 64),
+       array['bibliographic_database'], 'ac970000-0000-4000-8000-00000000000a'
+from refs r
+join workflow.monograph_search_plans p on p.reference = r.value
+cross join (values ('Europe PMC'), ('PubMed')) as t(plat)
+where r.label like 'p\_%'
+  and exists (
+    select 1 from workflow.monograph_search_track_attempts a
+    join knowledge.monograph_search_tracks k on k.id = a.track_id
+    where a.plan_id = p.id and k.code = 'bibliographic_database');
+
+update workflow.monograph_search_track_attempts a
+set state = 'covered',
+    search_id = (select s.id from workflow.monograph_searches s
+                 where s.plan_id = a.plan_id
+                   and s.execution_evidence = 'machine_executed'
+                 order by s.registration_ordinal desc limit 1)
+where a.state = 'pending'
+  and a.plan_id in (select p.id from refs r
+                    join workflow.monograph_search_plans p on p.reference = r.value
+                    where r.label like 'p\_%');
+
+-- Den separate dekningskontrollen er det normale siste steget.
+do $$
+declare v_plan record;
+begin
+  for v_plan in
+    select p.id from refs ref
+    join workflow.monograph_search_plans p on p.reference = ref.value
+    where ref.label like 'p\_%'
+  loop
+    perform workflow.record_monograph_coverage_control(
+      v_plan.id, 'accepted',
+      'Prøve i 970: dekningen er kontrollert separat og begrunnelsen for å stoppe godtas.',
+      true, 0, 0, true, null, 'ac970000-0000-4000-8000-00000000000a');
+  end loop;
+end $$;
+
+select is(
+  workflow.monograph_search_closure_problem(
+    (select p.id from workflow.monograph_search_plans p
+     where p.reference = (select value from refs where label = 'p_reg'))),
+  null,
+  'REG kommer helt fram: ingen maskinelt utførbare spor, og likevel ferdig dekning på redaktørens egne dokumenterte passeringer'
+);
+select is(
+  workflow.monograph_search_closure_problem(
+    (select p.id from workflow.monograph_search_plans p
+     where p.reference = (select value from refs where label = 'p_prod'))),
+  null,
+  'PROD kommer helt fram'
+);
+select is(
+  workflow.monograph_search_closure_problem(
+    (select p.id from workflow.monograph_search_plans p
+     where p.reference = (select value from refs where label = 'p_syn'))),
+  null,
+  'SYN kommer helt fram: metningssignalet stilles ikke lenger til et ledd som ikke søker i litteraturen (§4.2, §8.1)'
+);
+select is(
+  workflow.monograph_search_closure_problem(
+    (select p.id from workflow.monograph_search_plans p
+     where p.reference = (select value from refs where label = 'p_safe'))),
+  null,
+  'og en forskningsprofil kommer fram på maskinens søk pluss redaktørens for sporene maskinen ikke har'
+);
+
+-- Og ingen av dem kom fram på noe oppdiktet: hver dekning peker på en
+-- passering, og hver passering er enten Antideps eget kall eller et menneskes
+-- dokumenterte arbeid.
+select is_empty(
+  $$
+    select a.id
+    from refs r
+    join workflow.monograph_search_plans p on p.reference = r.value
+    join workflow.monograph_search_track_attempts a on a.plan_id = p.id
+    left join workflow.monograph_searches s on s.id = a.search_id
+    where r.label like 'p\_%'
+      and a.state = 'covered'
+      and (s.id is null
+           or s.execution_evidence not in ('machine_executed', 'editor_recorded'))
+  $$,
+  'hvert dekket spor peker på en passering som enten Antidep utførte eller et menneske registrerte'
 );
 
 select * from finish();
