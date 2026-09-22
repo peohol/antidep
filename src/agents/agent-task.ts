@@ -168,7 +168,7 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
     // @3 fra migrasjon 013v: leddet utfører ikke lenger søk. Antideps egen kode
     // søker og registrerer med endepunkt og responsavtrykk; leddet vurderer det
     // som ble hentet, og ber om flere søk som strukturerte søkeforespørsler.
-    promptTemplateVersion: 'source-discovery/machine-search-appraisal/3',
+    promptTemplateVersion: 'source-discovery/machine-search-appraisal/4',
     outputSchemaVersion: 'antidep/source-discovery-draft@3',
     label: 'Kildeoppdagelse',
     summary:
@@ -179,7 +179,7 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
     // @2 fra migrasjon 013v: kontrollens motsøk utføres maskinelt under dens
     // egen rolle og kjøring, og uavhengigheten utledes av søkeloggen framfor å
     // erklæres i svaret.
-    promptTemplateVersion: 'source-coverage/machine-countersearch-control/3',
+    promptTemplateVersion: 'source-coverage/machine-countersearch-control/4',
     outputSchemaVersion: 'antidep/source-coverage-control-draft@2',
     label: 'Kontroll av søkedekning',
     summary:

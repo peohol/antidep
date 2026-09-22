@@ -530,6 +530,17 @@ rapportere dem som dine egne.
 
 ${bullets(task.input['machine_searches'], (row) => `${String(row['platform'] ?? '')} [${String(row['run_role'] ?? '')}]: ${String(row['query'] ?? '')} — ${String(row['outcome'] ?? '')}, treff: ${String(row['result_count'] ?? 'ukjent')}, gjennomgått: ${String(row['screened_count'] ?? 0)}${row['truncated'] === true ? ', AVKORTET' : ''}\n    endepunkt: ${String(row['endpoint'] ?? 'ikke registrert')}\n    responsavtrykk: ${String(row['response_digest'] ?? 'ingen — tjenesten svarte ikke')}`)}
 
+### Søkepasseringene en redaktør utførte
+
+Disse er ikke maskinelt utførte, og de skal ikke leses som om de var. Et
+menneske har søkt der Antidep ikke har en maskinell søkevei — i et
+forsøksregister, en myndighetskilde, en preparatomtale — og registrert hva
+passeringen ga. De har derfor verken endepunkt, responsavtrykk eller kjøring,
+og det er ikke en mangel: det er hva de er. Du har ikke utført dem, og du skal
+ikke rapportere dem som dine egne.
+
+${bullets(task.input['editor_searches'], (row) => `${String(row['platform'] ?? '')}: ${String(row['query'] ?? '')} — ${String(row['outcome'] ?? '')}, treff: ${String(row['result_count'] ?? 'ukjent')}, gjennomgått: ${String(row['screened_count'] ?? 0)}${row['truncated'] === true ? ', AVKORTET' : ''}\n    utført av et menneske, registrert som ${String(row['execution_evidence'] ?? 'editor_recorded')} — kandidater registrert: ${String(row['candidates_recorded'] ?? 0)}${row['screening_note'] === null || row['screening_note'] === undefined ? '' : `\n    gjennomgangen ga: ${String(row['screening_note'])}`}`)}
+
 ### Søkeveier som ikke svarte
 
 En registrert begrensning er ikke null treff, og den er aldri en konklusjon om

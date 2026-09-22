@@ -151,3 +151,47 @@ describe('kontrolloppgaven', () => {
     expect(file).toContain('maskinelt utført og ikke erklært')
   })
 })
+
+// ============================================================================
+// Proveniensen agenten faktisk får se
+//
+// 013z ga redaktøren en vei til å registrere søkepasseringen hun selv utførte.
+// Men oppgavematerialet la alle søkeradene i det samme feltet, og oppgavefilen
+// renderer det feltet under «Søkene Antidep har utført» med setningen «Antideps
+// egen kode kalte endepunktet, leste svaret og registrerte et fingeravtrykk av
+// det». Et menneskes arbeid ble dermed presentert som maskinelt bekreftet
+// utførelse — med «endepunkt: ikke registrert» rett under påstanden om at
+// endepunktet ble kalt.
+//
+// Det er den samme proveniensvaskingen 013v ble skrevet for å fjerne, med
+// rollene byttet om. Denne prøven holder de to fra hverandre.
+// ============================================================================
+describe.each(KILDELEDD)('proveniensen i oppgaven til %s', (role) => {
+  const file = renderAgentTaskFile(parseAgentTask(taskPayload(role)))
+
+  it('holder redaktørens passeringer utenfor Antideps egne kall', () => {
+    const maskinelt = file.indexOf('### Søkene Antidep har utført')
+    const redaktør = file.indexOf('### Søkepasseringene en redaktør utførte')
+    expect(maskinelt).toBeGreaterThan(-1)
+    expect(redaktør).toBeGreaterThan(maskinelt)
+
+    // Søkeveien mennesket brukte, står under menneskets overskrift — og ikke
+    // under maskinens, der den ville arvet en påstand om endepunkt og avtrykk.
+    const maskinbolk = file.slice(maskinelt, redaktør)
+    expect(maskinbolk).toContain('Europe PMC')
+    expect(maskinbolk).not.toContain('ClinicalTrials.gov')
+  })
+
+  it('sier om redaktørens passeringer hva de er, og hva de ikke er', () => {
+    const redaktør = file.slice(file.indexOf('### Søkepasseringene en redaktør utførte'))
+    expect(redaktør).toContain('ikke maskinelt utførte')
+    expect(redaktør).toContain('ClinicalTrials.gov')
+    expect(redaktør).toContain('utført av et menneske')
+    expect(redaktør).toContain('editor_recorded')
+  })
+
+  it('og ber agenten om ikke å rapportere noen av dem som sine egne', () => {
+    const redaktør = file.slice(file.indexOf('### Søkepasseringene en redaktør utførte'))
+    expect(redaktør).toMatch(/skal\s+ikke\s+rapportere dem som dine egne/)
+  })
+})

@@ -133,6 +133,25 @@ export function taskPayload(
     run_role: 'source_discovery',
   }
 
+  // En passering et menneske utførte, for et søkespor Antidep ikke har en
+  // maskinell vei til. Den hører ikke sammen med maskinens egne kall, og
+  // oppgaven skal si hva den er (migrasjon 014a).
+  const editorSearch = {
+    platform: 'ClinicalTrials.gov',
+    query: 'testmiddel AND depressive disorder',
+    filters: 'status=all',
+    outcome: 'executed',
+    result_count: 3,
+    screened_count: 3,
+    truncated: false,
+    truncation_note: null,
+    execution_evidence: 'editor_recorded',
+    tracks: ['trial_registries'],
+    executed_at: '2026-09-16T11:00:00Z',
+    screening_note: null,
+    candidates_recorded: 1,
+  }
+
   const machineCandidate = {
     identifier_kind: 'doi',
     identifier_value: TEST_CANDIDATE_DOI,
@@ -185,6 +204,7 @@ export function taskPayload(
       },
     ],
     machine_searches: [machineSearch],
+    editor_searches: [editorSearch],
     search_limitations: [],
     candidates: [machineCandidate],
     search_request_options: {

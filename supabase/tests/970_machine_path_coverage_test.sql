@@ -31,7 +31,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(29);
+select plan(31);
 
 insert into auth.users (id, email)
 values ('97000000-0000-4000-8000-00000000000a', 'redaktor-970@test.invalid');
@@ -291,13 +291,33 @@ select throws_ok(
   'og ikke uten treffantall: null treff er 0, og ingen verdi er ikke null treff'
 );
 
+-- En passering med treff må enten gi kandidatene den fant, eller si hva
+-- gjennomgangen ga. Ellers er treffene sett av én person og forsvunnet.
+select throws_ok(
+  format($$select api.record_monograph_track_by_editor(%L, 'trial_registries', 'covered',
+            'Søkt manuelt i ClinicalTrials.gov 2026-09-22; de fire treffene er gjennomgått.',
+            'ClinicalTrials.gov', 'sertraline AND depressive disorder', 'status=all',
+            now() - interval '1 hour', 4, 4, false, null, null, null)$$,
+         (select value from refs where label = 'eff')),
+  '22023',
+  null,
+  'fire treff og fire gjennomgått uten én kandidat og uten et ord om hvorfor, avvises'
+);
+
 select lives_ok(
   format($$select api.record_monograph_track_by_editor(%L, 'trial_registries', 'covered',
             'Søkt manuelt i ClinicalTrials.gov 2026-09-22; de fire treffene er gjennomgått.',
             'ClinicalTrials.gov', 'sertraline AND depressive disorder', 'status=all',
-            now() - interval '1 hour', 4, 4, false, null)$$,
+            now() - interval '1 hour', 4, 4, false, null,
+            jsonb_build_array(jsonb_build_object(
+              'identifier_kind', 'registry_id',
+              'identifier_value', 'NCT00970-01',
+              'title', 'Uavsluttet forsøk med sertralin ved depressiv lidelse (prøve 970)',
+              'could_change_conclusion', true,
+              'materiality_reason', 'Et uavsluttet forsøk kan endre bildet av effektstørrelsen.')),
+            null)$$,
          (select value from refs where label = 'eff')),
-  'redaktøren kan registrere passeringen hun faktisk gjorde'
+  'redaktøren kan registrere passeringen hun faktisk gjorde, med kildene den ga'
 );
 
 select throws_ok(
@@ -311,6 +331,17 @@ select throws_ok(
 );
 
 reset role;
+
+select is(
+  (select count(*)::integer
+   from workflow.monograph_candidate_sources c
+   join workflow.monograph_searches s on s.id = c.search_id
+   join workflow.monograph_search_plans p on p.id = c.plan_id
+   where p.reference = (select value from refs where label = 'eff')
+     and s.execution_evidence = 'editor_recorded'),
+  1,
+  'og treffet er bundet til nøyaktig den passeringen, ikke til et maskinelt søk'
+);
 
 -- Selve poenget i funn 2: sporet peker på passeringen som gjaldt det, ikke på
 -- en tilfeldig tidligere rad.
@@ -427,7 +458,10 @@ begin
       r.plan_ref, r.track_code, 'covered',
       'Søkt manuelt for sporet ' || r.track_code || '; treffene er gjennomgått og registrert.',
       'Manuell søkevei for ' || r.track_code, '"sertralin" AND ' || r.track_code, null,
-      now() - interval '1 hour', 3, 3, false, null);
+      now() - interval '1 hour', 3, 3, false, null, null,
+      -- Den andre tillatte formen: gjennomgangen ga ingen kandidater, og det
+      -- er registrert framfor å være et fravær.
+      'De tre treffene er gjennomgått; ingen av dem gjelder denne avgrensningen, og ingen er derfor registrert som kandidat.');
   end loop;
 end $$;
 reset role;
