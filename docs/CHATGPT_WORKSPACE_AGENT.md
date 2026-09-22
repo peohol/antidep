@@ -465,5 +465,32 @@ ugyldig verdi stopper appen ved oppstart framfor å bli et hull ingen oppdager,
 og verdien leses ved oppstart, så en utrulling må gjøres på nytt etter at den er
 endret.
 
+**Tilkoblingssiden har to grenser som bare finnes i nettleseren.** Ingen av dem
+kan prøves av `npm run db:test:mcp`, som går gjennom det ekte
+protokollendepunktet uten en nettleser — de prøves på headerne i
+`src/mcp/app.test.ts`. Den første er en rettelse: uten den stanset nettleseren
+halve flyten uten å si fra. Den andre avgjør bare hvilken av de fire veiene over
+sidens egen innsending kommer inn på.
+
+- `form-action` navngir `'self'` **og** opprinnelsen til returadressen klienten
+  oppga. Chromium og WebKit håndhever direktivet også på viderekoblingen som
+  følger av en skjemainnsending, ikke bare på adressen skjemaet peker på. Med
+  bare `'self'` ble 302-en tilbake til klienten stanset av nettleseren etter at
+  engangskoden var brukt opp og autorisasjonskoden utstedt: ingen navigasjon,
+  ingen feilmelding, og en ny kode gikk nøyaktig samme vei. Grensen er ikke
+  myknet opp — den navngir den ene veien innsendingen har lov til å ta, og
+  hvem som faktisk får en kode, avgjør databasen som før.
+- `referrer-policy` er `same-origin` og ikke `no-referrer`. Nettleseren utleder
+  `Origin` på en skjemainnsending av referrer-policyen, og under `no-referrer`
+  sender Chromium `Origin: null` selv når siden poster til seg selv — altså
+  punkt 4 over, unntaket som er der for den sandkassede konteksten.
+  Innsendingen kommer fram begge veier; forskjellen er at en vanlig,
+  usandkasset nettleser står på appens egen adresse og **kan** navngi den.
+  `same-origin` lar den gjøre det, slik at normalveien går på punkt 2 og
+  unntaket blir stående for det ene tilfellet som ikke *har* en adresse å
+  oppgi. Ingenting lekker av det: viderekoblingen til klienten er
+  kryss-opprinnelse og får fortsatt ingen referrer, så
+  autorisasjonsparameterne går like lite videre som før.
+
 Se [evidenskjeden](EVIDENCE_PIPELINE.md), [databasearkitekturen](DATABASE_ARCHITECTURE.md)
 og [styringsreglene](ANTIDEP_CONSTITUTION.md).
