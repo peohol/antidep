@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseAgentTask } from './agent-task.ts'
+import { parseAgentTask, type HandoffRole } from './agent-task.ts'
 import { handoffResultProblem } from './handoff-result.ts'
 import {
   resultFor,
@@ -10,7 +10,7 @@ import {
   TEST_OUTCOME_ID,
 } from './handoff-test-support.ts'
 
-type Role = 'evidence_extraction' | 'claim_synthesis' | 'evidence_assessment'
+type Role = HandoffRole
 
 function task(role: Role) {
   return parseAgentTask(taskPayload(role))
@@ -243,4 +243,17 @@ describe('vurderingsutkastet', () => {
       }),
     ).toMatch(/evidence_gap/)
   })
+})
+
+
+describe('roller med autoritativ databasevalidering', () => {
+  for (const role of [
+    'source_discovery',
+    'source_quality_assessment',
+    'monograph_answer',
+  ] as const) {
+    it(`sender et gyldig ${role}-resultat videre uten å lese det som en evidensvurdering`, () => {
+      expect(handoffResultProblem(task(role), resultFor(role))).toBeNull()
+    })
+  }
 })
