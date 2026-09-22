@@ -1,10 +1,20 @@
 // ============================================================================
 // Kjøringen som faktisk søker
 //
-// Henter det arbeidet kildeoppdagelsen har åpent, kjører de maskinelle søkene
-// mot de tre offentlige plattformene, og registrerer hvert søk gjennom den
+// Henter de maskinelle søkerundene kildeleddene har åpne, kjører søkene mot de
+// navngitte offentlige plattformene, og registrerer hvert søk gjennom den
 // kontrollerte skriveveien — med endepunktet og et fingeravtrykk av svaret,
 // slik at utførelsen er maskinelt bekreftet og ikke en beretning.
+//
+// ----------------------------------------------------------------------------
+// Hvorfor kjøringen henter *runder* og ikke bare planer
+//
+// Fordi arbeidsdelingen går begge veier. Fram til migrasjon 013v kjørte denne
+// kommandoen de samme tre søkene mot hver åpne plan, hver gang, og den
+// semantiske agenten ble samtidig bedt om å utføre sine egne søk — noe den
+// ikke har verktøy til. Nå er det ett kretsløp: Antidep søker, agenten vurderer
+// og ber om flere søk, Antidep søker igjen. Runden er bestillingen, og den sier
+// hvilken strategi, hvilke termer og hvilken plattform søket gjelder.
 //
 // ----------------------------------------------------------------------------
 // Hva kjøringen ikke gjør
@@ -21,40 +31,114 @@
 // ----------------------------------------------------------------------------
 // Loggen er offentlig
 //
-// Kommandoen kan kjøres planlagt i et offentlig repo. Den skriver derfor bare
+// Kommandoen kjøres planlagt i et offentlig repo. Den skriver derfor bare
 // stabile driftssetninger og aldri en videreformidlet feiltekst: en avvisning
 // fra databasen kan navngi en kilde eller en avgrensning, og en offentlig logg
 // skal ikke bli et sted slikt samler seg (AGENTS.md).
 // ============================================================================
 
 import type { Fetcher, MachineSearch, SearchScope } from './monograph-search.ts'
-import { runSearch, SEARCH_PLATFORMS, type SearchPlatform } from './monograph-search.ts'
+import {
+  buildQueries,
+  platformsFor,
+  runSearch,
+  SEARCH_PLATFORMS,
+  type SearchPlatform,
+} from './monograph-search.ts'
+
+/**
+ * De to leddene kjøringen kan utføre søk for.
+ *
+ * De er atskilte med vilje, og de kjører med hver sin legitimasjon: et motsøk
+ * registrert under generatorens identitet ville ikke vært et motsøk, og
+ * databasen utleder kontrollens uavhengighet av nettopp hvilken rolle kjøringen
+ * gikk under (SOURCE_POLICY.md §6).
+ */
+export type DiscoveryLeg = 'discovery' | 'coverage'
 
 /** Premissene registreringsleddet kjører under (provenance.role_model_assignments). */
 export const DISCOVERY_REGISTRATION_PREMISES = {
   provider: 'antidep',
   model: 'search-execution-and-registration',
   modelVersion: '1.0.0',
-  promptTemplateVersion: 'source-discovery/machine-execution/1',
+  promptTemplateVersion: 'source-discovery/machine-execution/2',
   pipelineVersion: 'antidep-evidence/1',
 } as const
 
-/** Én søkeplan, slik `api.monograph_discovery_work` gir den. */
+/** Og premissene dekningskontrollens egne motsøk kjøres under. Egen tildeling. */
+export const COVERAGE_REGISTRATION_PREMISES = {
+  provider: 'antidep',
+  model: 'coverage-control-registration',
+  modelVersion: '1.0.0',
+  promptTemplateVersion: 'source-coverage/machine-countersearch/1',
+  pipelineVersion: 'antidep-evidence/1',
+} as const
+
+/** Hvilken agentrolle og hvilke premisser hvert ledd kjører under. */
+export const LEGS: Readonly<
+  Record<
+    DiscoveryLeg,
+    {
+      readonly agentRole: 'source_discovery' | 'source_quality_assessment'
+      readonly premises:
+        typeof DISCOVERY_REGISTRATION_PREMISES | typeof COVERAGE_REGISTRATION_PREMISES
+      readonly label: string
+    }
+  >
+> = {
+  discovery: {
+    agentRole: 'source_discovery',
+    premises: DISCOVERY_REGISTRATION_PREMISES,
+    label: 'kildeoppdagelsen',
+  },
+  coverage: {
+    agentRole: 'source_quality_assessment',
+    premises: COVERAGE_REGISTRATION_PREMISES,
+    label: 'dekningskontrollens motsøk',
+  },
+}
+
+/** Én bestilt søkerunde, slik `api.monograph_discovery_work` gir den. */
+export interface SearchRequest {
+  readonly requestReference: string
+  readonly searchRound: number
+  readonly origin: string
+  readonly strategy: 'broad' | 'targeted'
+  readonly rationale: string
+  /** Plattformen runden gjelder, eller null for alle tre. */
+  readonly platform: string | null
+  /**
+   * Virkestoffnavn som skal søkes som ALTERNATIVER til det kanoniske.
+   *
+   * Egen liste og ikke en term: et synonym lagt til som et ekstra påkrevd
+   * begrep gir «"sertralin" AND "sertraline"», og da kan ikke en artikkel som
+   * bare bruker det engelske navnet, treffe i det hele tatt.
+   */
+  readonly drugAliases: readonly string[]
+  readonly queryTerms: readonly string[]
+  readonly filtersNote: string | null
+  /**
+   * De obligatoriske søkesporene runden kan erklære å dekke.
+   *
+   * Listen kommer fra databasen og ikke fra plattformdefinisjonene: hvilke spor
+   * som er obligatoriske, er en kildepolitisk avgjørelse, og en kjører som
+   * avgjorde det selv, kunne fått porten til å se dekket ut (SOURCE_POLICY.md
+   * §4.2). Dekningskontrollens motsøk har alltid ingen.
+   */
+  readonly trackCodes: readonly string[]
+  readonly attempts: number
+  readonly state: string
+}
+
+/** Én søkeplan med de rundene som står åpne for kallerens eget ledd. */
 export interface DiscoveryPlan {
   readonly planReference: string
   readonly drug: string
   readonly editionReference: string
   readonly scope: SearchScope
   readonly profileCode: string
-  /**
-   * De søkesporene kildeprofilen krever for denne planen.
-   *
-   * Et søk kan bare erklære å dekke et spor som står her (SOURCE_POLICY.md
-   * §4.2). Listen kommer fra databasen og ikke fra plattformdefinisjonene:
-   * hvilke spor som er obligatoriske, er en kildepolitisk avgjørelse, og en
-   * kjører som avgjorde det selv, kunne fått porten til å se dekket ut.
-   */
-  readonly requiredTracks: readonly string[]
+  readonly searchRound: number
+  readonly requests: readonly SearchRequest[]
 }
 
 /** Databasegrensen kjøringen bruker. Et smalt grensesnitt, av to grunner:
@@ -65,8 +149,14 @@ export interface DiscoveryApi {
   readonly recordSearch: (
     agentRunId: string,
     planReference: string,
+    requestReference: string,
     search: MachineSearch,
   ) => Promise<void>
+  /** Lukker runden, og lar databasen avgjøre hva den ble. */
+  readonly closeRequest: (
+    agentRunId: string,
+    requestReference: string,
+  ) => Promise<{ readonly state: string; readonly enqueuedJob: boolean }>
   readonly completeRun: (
     agentRunId: string,
     status: 'succeeded' | 'failed',
@@ -76,12 +166,16 @@ export interface DiscoveryApi {
 
 export interface DiscoveryReport {
   readonly plans: number
+  readonly requests: number
   readonly searches: number
   readonly executed: number
   readonly zeroResults: number
   readonly unavailable: number
   readonly failed: number
   readonly candidates: number
+  readonly fulfilled: number
+  readonly stillUnavailable: number
+  readonly tasksOpened: number
   readonly problems: readonly string[]
 }
 
@@ -98,9 +192,9 @@ export const DISCOVERY_DEFAULTS = {
 } as const
 
 /**
- * Kjører søkene for de åpne søkeplanene.
+ * Kjører de åpne søkerundene.
  *
- * Feiler aldri på én plan: en plan som ikke lot seg registrere, telles som et
+ * Feiler aldri på én plan: en runde som ikke lot seg registrere, telles som et
  * problem og resten kjøres. En kjøring som stoppet på den første avvisningen,
  * ville latt resten av monografien stå.
  */
@@ -111,15 +205,23 @@ export async function runMonographDiscovery(
   const settings: DiscoveryOptions = { ...DISCOVERY_DEFAULTS, ...options }
   const plans = (await api.work()).slice(0, settings.maxPlans)
 
+  let requests = 0
   let searches = 0
   let executed = 0
   let zeroResults = 0
   let unavailable = 0
   let failed = 0
   let candidates = 0
+  let fulfilled = 0
+  let stillUnavailable = 0
+  let tasksOpened = 0
   const problems: string[] = []
 
   for (const plan of plans) {
+    if (plan.requests.length === 0) {
+      continue
+    }
+
     let agentRunId: string
     try {
       agentRunId = await api.beginRun(plan.planReference)
@@ -129,22 +231,50 @@ export async function runMonographDiscovery(
     }
 
     let recorded = 0
-    for (const platform of settings.platforms) {
-      const search = await runSearch(platform, plan.scope, settings.fetcher, plan.requiredTracks)
-      searches += 1
-      if (search.outcome === 'executed') executed += 1
-      if (search.outcome === 'zero_results') zeroResults += 1
-      if (search.outcome === 'unavailable') unavailable += 1
-      if (search.outcome === 'failed') failed += 1
-      candidates += search.candidates.length
+    let closed = 0
 
+    for (const request of plan.requests) {
+      requests += 1
+      const platforms = platformsFor(settings.platforms, request.platform)
+      const queries = buildQueries(
+        plan.scope,
+        request.strategy,
+        request.queryTerms,
+        request.drugAliases,
+      )
+
+      for (const platform of platforms) {
+        for (const query of queries) {
+          const search = await runSearch(platform, query, settings.fetcher, request.trackCodes)
+          searches += 1
+          if (search.outcome === 'executed') executed += 1
+          if (search.outcome === 'zero_results') zeroResults += 1
+          if (search.outcome === 'unavailable') unavailable += 1
+          if (search.outcome === 'failed') failed += 1
+          candidates += search.candidates.length
+
+          try {
+            await api.recordSearch(agentRunId, plan.planReference, request.requestReference, search)
+            recorded += 1
+          } catch {
+            problems.push(
+              `Et søk mot ${platform.name} lot seg ikke registrere for én søkerunde (${plan.profileCode}).`,
+            )
+          }
+        }
+      }
+
+      // Runden lukkes uansett hva søkene ga. Det er lukkingen som avgjør om den
+      // semantiske oppgaven finnes nå — og en runde som aldri ble lukket, ville
+      // latt planen stå uten at noe sa hvorfor.
       try {
-        await api.recordSearch(agentRunId, plan.planReference, search)
-        recorded += 1
+        const outcome = await api.closeRequest(agentRunId, request.requestReference)
+        closed += 1
+        if (outcome.state === 'fulfilled') fulfilled += 1
+        if (outcome.state === 'unavailable' || outcome.state === 'abandoned') stillUnavailable += 1
+        if (outcome.enqueuedJob) tasksOpened += 1
       } catch {
-        problems.push(
-          `Et søk mot ${platform.name} lot seg ikke registrere for én søkeplan (${plan.profileCode}).`,
-        )
+        problems.push(`En søkerunde lot seg ikke lukkes for én søkeplan (${plan.profileCode}).`)
       }
     }
 
@@ -152,6 +282,7 @@ export async function runMonographDiscovery(
       await api.completeRun(agentRunId, 'succeeded', {
         plan_reference: plan.planReference,
         searches_recorded: recorded,
+        requests_closed: closed,
       })
     } catch {
       problems.push(`Kjøringen for én søkeplan (${plan.profileCode}) lot seg ikke lukkes.`)
@@ -160,12 +291,16 @@ export async function runMonographDiscovery(
 
   return {
     plans: plans.length,
+    requests,
     searches,
     executed,
     zeroResults,
     unavailable,
     failed,
     candidates,
+    fulfilled,
+    stillUnavailable,
+    tasksOpened,
     problems,
   }
 }
@@ -174,10 +309,13 @@ export async function runMonographDiscovery(
 export function describeDiscoveryReport(report: DiscoveryReport): string {
   const lines = [
     `Søkeplaner tatt: ${report.plans}`,
+    `Søkerunder utført: ${report.requests} ` +
+      `(${report.fulfilled} gjennomført, ${report.stillUnavailable} uten en søkevei som svarte)`,
     `Søk utført: ${report.searches} ` +
       `(${report.executed} med treff, ${report.zeroResults} uten treff, ` +
       `${report.unavailable} utilgjengelige, ${report.failed} uleselige svar)`,
     `Kandidatkilder registrert: ${report.candidates}`,
+    `Vurderingsoppgaver åpnet: ${report.tasksOpened}`,
   ]
   if (report.problems.length > 0) {
     lines.push('Problemer:')

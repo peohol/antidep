@@ -30,7 +30,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(59);
+select plan(69);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -140,12 +140,25 @@ select is_empty(
   $$,
   'hver plan har sine obligatoriske søkespor'
 );
+-- Ingen spor er dekket eller begrenset før noe er gjort. Men et spor ingen
+-- registrert søkevei dekker, står som det fra første stund framfor å si «ikke
+-- forsøkt ennå» om noe som aldri blir forsøkt maskinelt (migrasjon 013x).
 select is_empty(
   $$
     select a.id from workflow.monograph_search_track_attempts a
-    where a.state <> 'pending'
+    where a.state not in ('pending', 'no_machine_path')
   $$,
-  'alle spor står som «ikke forsøkt» før noe er gjort'
+  'ingen spor er dekket eller begrenset før noe er gjort'
+);
+select is_empty(
+  $$
+    select a.id
+    from workflow.monograph_search_track_attempts a
+    join knowledge.monograph_search_tracks k on k.id = a.track_id
+    where a.state = 'pending'
+      and not (k.code = any (knowledge.monograph_executable_track_codes()))
+  $$,
+  'og ingen spor venter på en maskinell søkevei som ikke finnes'
 );
 
 -- Behov med uavklart relevans får ingen plan. De forsvinner ikke: de står som
@@ -187,6 +200,15 @@ limit 1;
 insert into refs (label, value)
 select 'eff', p.reference from workflow.monograph_search_plans p
 where p.id = (select id from plans where label = 'eff');
+
+-- Migrasjon 013v: planen åpner sin egen maskinelle søkerunde, og et søk hører
+-- til nøyaktig én runde. Uten koblingen ville runden aldri blitt lukket, og den
+-- semantiske vurderingsoppgaven ville aldri blitt lagt i køen.
+insert into refs (label, value)
+select 'eff_runde', r.reference from workflow.monograph_search_requests r
+where r.plan_id = (select id from plans where label = 'eff')
+  and r.requested_for_role = 'source_discovery'
+  and r.state = 'pending';
 
 select matches(
   workflow.monograph_search_closure_problem((select id from plans where label = 'eff')),
@@ -286,12 +308,13 @@ select 'sok1', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde'),
   'Europe PMC', 'sertraline AND depressive disorder AND systematic review',
   'ingen språk- eller årsavgrensning',
   'https://www.ebi.ac.uk/europepmc/webservices/rest/search',
   'sha256:' || repeat('a', 64),
   'executed', 42, 42, false, null, null,
-  array['bibliographic_database', 'systematic_review_search'],
+  array['bibliographic_database'],
   jsonb_build_array(jsonb_build_object(
     'identifier_kind', 'doi',
     'identifier_value', '10.1000/860-oversikt',
@@ -318,14 +341,27 @@ select is(
   'machine_executed',
   'raden bærer utførelsesbeviset'
 );
+-- Sporet søket faktisk kunne dekke, står som dekket. Oversiktssøket gjør det
+-- ikke: Europe PMC er ikke registrert for det, og et bibliografisk søk som
+-- erklærte det, ville gjort porten blind for et spor ingen hadde søkt i
+-- (migrasjon 013x).
 select is(
-  (select array_agg(a.state::text order by a.state::text)
+  (select a.state::text
    from workflow.monograph_search_track_attempts a
    join knowledge.monograph_search_tracks k on k.id = a.track_id
    where a.plan_id = (select id from plans where label = 'eff')
-     and k.code in ('bibliographic_database', 'systematic_review_search')),
-  array['covered', 'covered'],
-  'de to sporene søket dekket, står som dekket'
+     and k.code = 'bibliographic_database'),
+  'covered',
+  'sporet søket faktisk dekket, står som dekket'
+);
+select isnt(
+  (select a.state::text
+   from workflow.monograph_search_track_attempts a
+   join knowledge.monograph_search_tracks k on k.id = a.track_id
+   where a.plan_id = (select id from plans where label = 'eff')
+     and k.code = 'systematic_review_search'),
+  'covered',
+  'og et spor Europe PMC ikke er registrert for, ble ikke dekket av det samme søket'
 );
 select is(
   (select n.work_state::text
@@ -392,63 +428,45 @@ set local role anon;
 select throws_ok(
   format($$
     select api.record_monograph_machine_search(
-      'agent-identity:source-discovery-01', %L, %L, %L,
+      'agent-identity:source-discovery-01', %L, %L, %L, %L,
       'Europe PMC', 'sertraline', null, 'https://example.test',
       'sha256:' || repeat('e', 64), 'executed', 3, 3, false, null, null,
       array['norwegian_authority_source'], null)
   $$,
   (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
-  (select value from refs where label = 'eff')),
+  (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde')),
   '22023',
   null,
-  'et søk kan ikke erklære å dekke et spor kildeprofilen ikke krever'
+  'et søk kan ikke erklære å dekke et spor runden ikke fikk'
 );
 reset role;
 
 -- ===========================================================================
--- Del 6 — De gjenstående sporene: en utilgjengelig søkevei er en begrensning
+-- Del 6 — En søkevei som ikke svarte, er en begrensning og ikke null treff
 -- ===========================================================================
--- Sporene som ikke kunne forsøkes, registreres som utilgjengelige gjennom den
--- samme veien som et utført søk. Da er de en synlig begrensning i utkastet
--- framfor null treff (SOURCE_POLICY.md §4.2, §8.2).
+-- Før migrasjon 013x «løste» denne prøven de gjenstående sporene ved å
+-- registrere søk mot plattformer Antidep ikke har — «Referanselister og
+-- siteringsindeks», «ClinicalTrials.gov» — og kalle dem utilgjengelige. Det var
+-- den samme hvitvaskingen som på den andre siden lot et bibliografisk søk
+-- erklære et oversiktssøk dekket: en prøve som besto på noe kjøreren aldri kan
+-- gjøre. Sporene uten maskinell søkevei føres nå i del 9b, der de hører hjemme.
 set local role anon;
 insert into svar (label, payload)
 select 'utilgjengelig1', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
-  'Referanselister og siteringsindeks', 'oppfølging av referanser i oversikten', null,
-  'https://example.test/860-referanser',
+  (select value from refs where label = 'eff_runde'),
+  'Crossref', 'sertraline AND depressive disorder', null,
+  'https://api.crossref.org/works',
   'sha256:' || repeat('6', 64),
   'unavailable', null, 0, false, null,
-  'Antidep har ingen lesetilgang til siteringsindeksen i denne kjøringen.',
-  array['reference_lists', 'citing_works'], null);
-insert into svar (label, payload)
-select 'utilgjengelig2', api.record_monograph_machine_search(
-  'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
-  (select id from runs where label = 'discovery'),
-  (select value from refs where label = 'eff'),
-  'ClinicalTrials.gov', 'sertraline AND depressive disorder', null,
-  'https://clinicaltrials.gov/api/v2/studies',
-  'sha256:' || repeat('7', 64),
-  'unavailable', null, 0, false, null,
-  'Forsøksregisteret svarte ikke i denne kjøringen.',
-  array['trial_registries'], null);
+  'Søkeveien svarte ikke innenfor tidsrammen i denne kjøringen.',
+  null, null);
 reset role;
 
-select is(
-  (select count(*)::integer from workflow.monograph_search_track_attempts a
-   where a.plan_id = (select id from plans where label = 'eff') and a.state = 'unavailable'),
-  3,
-  'de tre sporene som ikke kunne forsøkes, står som utilgjengelige med sin begrensning'
-);
-select is(
-  (select count(*)::integer from workflow.monograph_search_track_attempts a
-   where a.plan_id = (select id from plans where label = 'eff') and a.state = 'pending'),
-  1,
-  'og det siste sporet står fortsatt som ikke forsøkt'
-);
 select is(
   (select s.result_count from workflow.monograph_searches s
    where s.plan_id = (select id from plans where label = 'eff')
@@ -456,6 +474,106 @@ select is(
    limit 1),
   null,
   'en utilgjengelig søkevei har ingen treffantall: den er en begrensning og ikke null treff'
+);
+select is(
+  (select count(*)::integer from workflow.monograph_search_track_attempts a
+   where a.plan_id = (select id from plans where label = 'eff') and a.state = 'pending'),
+  0,
+  'og den rører ingen spor: et søk uten erklærte spor dekker og begrenser ingen av dem'
+);
+
+-- ===========================================================================
+-- Del 6b — Sporene ingen registrert søkevei dekker
+-- ===========================================================================
+-- De obligatoriske sporene ingen av Antideps registrerte søkeveier kan dekke,
+-- er ført som det fra planen ble opprettet. De er dokumentert, men ikke
+-- forsøkt: aldri dekning, og aldri en stillhet (migrasjon 013x).
+
+select is(
+  (select count(*)::integer from workflow.monograph_search_track_attempts a
+   where a.plan_id = (select id from plans where label = 'eff')
+     and a.state = 'no_machine_path'),
+  5,
+  'de fem obligatoriske sporene ingen registrert søkevei dekker, står som det'
+);
+select is(
+  (select count(*)::integer from workflow.monograph_search_track_attempts a
+   where a.plan_id = (select id from plans where label = 'eff') and a.state = 'pending'),
+  0,
+  'og ingen av dem blir stående som «ikke forsøkt ennå», der de ville ventet for alltid'
+);
+select alike(
+  workflow.monograph_search_closure_problem((select id from plans where label = 'eff')),
+  '%registrerte søkeveier dekker%',
+  'porten sier hvilke spor som mangler en maskinell vei, framfor å nekte stille'
+);
+select is(
+  (select bool_and(a.resolved_by_actor_id is null)
+   from workflow.monograph_search_track_attempts a
+   where a.plan_id = (select id from plans where label = 'eff')
+     and a.state = 'no_machine_path'),
+  true,
+  'ingen av dem bærer et menneske ennå: maskinen kan ikke løse dem, og har ikke latet som'
+);
+
+-- Redaktørens vei ut. Hun har gjort søkene, og registrerer hva de ga.
+select set_config('request.jwt.claims',
+                  '{"sub":"86000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+select throws_ok(
+  format($$select api.record_monograph_track_by_editor(
+            %L, 'trial_registries', 'unavailable', 'ok')$$,
+         (select value from refs where label = 'eff')),
+  '22023',
+  null,
+  'et spor avklart for hånd krever en begrunnelse, ikke et ord'
+);
+select throws_ok(
+  format($$select api.record_monograph_track_by_editor(
+            %L, 'bibliographic_database', 'covered',
+            'Forsøk på å overta et spor maskinen allerede dekker.',
+            'Epistemonikos', '"sertralin"', null, now() - interval '1 hour', 2, 2, false, null)$$,
+         (select value from refs where label = 'eff')),
+  '23001',
+  null,
+  'og et spor maskinen dekker, kan ikke overtas for hånd: ellers var hele den maskinelle fasen valgfri'
+);
+
+insert into svar (label, payload)
+select 'redaktorspor', api.record_monograph_track_by_editor(
+  (select value from refs where label = 'eff'), 'trial_registries', 'unavailable',
+  'Søkt manuelt i ClinicalTrials.gov 2026-09-22. Registeret svarte ikke innenfor tidsrammen.');
+insert into svar (label, payload)
+-- Her står sporet som en begrensning. Den dokumenterte passeringen — der
+-- redaktøren faktisk søkte og registrerte hva det ga — prøves i 970, sammen med
+-- at den teller som en supplerende søkepassering i metningssignalet.
+select 'redaktorspor2', api.record_monograph_track_by_editor(
+  (select value from refs where label = 'eff'), 'systematic_review_search', 'unavailable',
+  'Epistemonikos krever abonnement Antidep ikke har i denne kjøringen. Begrensningen står i utkastet.');
+select 'redaktorspor3', api.record_monograph_track_by_editor(
+  (select value from refs where label = 'eff'), 'independent_second_database', 'unavailable',
+  'CENTRAL krever abonnement Antidep ikke har. Begrensningen står i utkastet.');
+select 'redaktorspor4', api.record_monograph_track_by_editor(
+  (select value from refs where label = 'eff'), 'reference_lists', 'unavailable',
+  'Referanselistene er gjennomgått manuelt uten nye potensielt konklusjonsendrende kilder.');
+select 'redaktorspor5', api.record_monograph_track_by_editor(
+  (select value from refs where label = 'eff'), 'citing_works', 'unavailable',
+  'Siteringsindeksen er ikke tilgjengelig for Antidep i denne kjøringen.');
+reset role;
+
+select isnt(
+  (select a.resolved_by_actor_id from workflow.monograph_search_track_attempts a
+   join knowledge.monograph_search_tracks k on k.id = a.track_id
+   where a.plan_id = (select id from plans where label = 'eff')
+     and k.code = 'trial_registries'),
+  null,
+  'raden bærer hvem som gjorde det: «et menneske har håndtert dette» er ikke det samme faktumet som «en tjeneste svarte ikke»'
+);
+select unalike(
+  coalesce(workflow.monograph_search_closure_problem(
+    (select id from plans where label = 'eff')), ''),
+  '%registrerte søkeveier dekker%',
+  'og når redaktøren har ført alle fem, er det ikke lenger sporene som hindrer at dekningen kan erklæres ferdig'
 );
 
 -- ===========================================================================
@@ -467,11 +585,12 @@ select 'sok2', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde'),
   'PubMed', 'sertraline[tiab] AND depression[tiab]', null,
   'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi',
   'sha256:' || repeat('8', 64),
   'executed', 1200, 200, true, 'Bare de 200 første treffene ble hentet.',
-  null, array['independent_second_database'], null);
+  null, array['bibliographic_database'], null);
 reset role;
 
 select alike(
@@ -486,11 +605,12 @@ select 'sok3', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde'),
   'PubMed', 'sertraline[tiab] AND depression[tiab] AND randomized[pt]', null,
   'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi',
   'sha256:' || repeat('9', 64),
   'executed', 96, 96, false, null, null,
-  array['independent_second_database'], null);
+  array['bibliographic_database'], null);
 reset role;
 
 select unalike(
@@ -655,7 +775,8 @@ select 'metning', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
-  'Europe PMC (utvidet synonym- og siteringssøk)',
+  (select value from refs where label = 'eff_runde'),
+  'Europe PMC',
   'CITES:"10.1000/860-oversikt" OR (sertraline OR "Zoloft")', null,
   'https://www.ebi.ac.uk/europepmc/webservices/rest/search',
   'sha256:' || repeat('a', 63) || '1',
@@ -724,14 +845,15 @@ set local role anon;
 select throws_ok(
   format($$
     select api.record_monograph_machine_search(
-      'agent-identity:source-discovery-01', %L, %L, %L,
+      'agent-identity:source-discovery-01', %L, %L, %L, %L,
       'Europe PMC', 'sertraline', null, 'https://example.test',
       'sha256:' || repeat('c', 63) || '3', 'executed', 1, 1, false, null, null,
       array['bibliographic_database'], null)
   $$,
   (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
-  (select value from refs where label = 'eff')),
+  (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde')),
   '23001',
   'Søkedekningen for denne planen er erklært ferdig.',
   'et søk etter at dekningen er erklært, avvises'
@@ -750,10 +872,25 @@ select throws_ok(
 -- ===========================================================================
 -- Del 11 — En regulatorisk plan trenger ikke metningssignalet
 -- ===========================================================================
+-- Den regulatoriske profilen har ingen obligatoriske spor noen registrert
+-- søkevei dekker: myndighetskilden, produktlisten og endringskontrollen er alle
+-- menneskets. Før migrasjon 013x «løste» prøven dem ved å finne opp plattformen
+-- «DMP Legemiddelsøk» og la den erklære myndighetskilden dekket. Nå går de den
+-- veien de faktisk må gå.
+select is(
+  (select count(*)::integer from workflow.monograph_search_track_attempts a
+   where a.plan_id = (select id from plans where label = 'reg')
+     and a.state = 'no_machine_path'),
+  3,
+  'den regulatoriske planens tre obligatoriske spor har ingen maskinell søkevei, og står som det'
+);
+
 update workflow.monograph_search_track_attempts a
 set state = 'unavailable',
-    note = 'Prøve i 860: den norske myndighetskilden var ikke tilgjengelig i kjøringen.'
-where a.plan_id = (select id from plans where label = 'reg') and a.state = 'pending';
+    note = 'Prøve i 860: den norske myndighetskilden er kontrollert manuelt i kjøringen.',
+    resolved_by_actor_id = 'ac860000-0000-4000-8000-00000000000a'
+where a.plan_id = (select id from plans where label = 'reg')
+  and a.state in ('pending', 'no_machine_path');
 
 insert into workflow.monograph_searches
   (plan_id, plan_version, platform, query_string, executed_at, result_count,
@@ -761,10 +898,10 @@ insert into workflow.monograph_searches
    track_codes, recorded_by_actor_id)
 values (
   (select id from plans where label = 'reg'), 1,
-  'DMP Legemiddelsøk', 'sertralin preparatomtale', now(), 4, 4,
-  'executed', 'machine_executed', 'https://www.legemiddelsok.no',
+  'Europe PMC', 'sertralin preparatomtale', now(), 4, 4,
+  'executed', 'machine_executed', 'https://www.ebi.ac.uk/europepmc/webservices/rest/search',
   'sha256:' || repeat('d', 63) || '4',
-  array['norwegian_authority_source'], 'ac860000-0000-4000-8000-00000000000a');
+  array[]::text[], 'ac860000-0000-4000-8000-00000000000a');
 
 select isnt(
   (select workflow.record_monograph_coverage_control(

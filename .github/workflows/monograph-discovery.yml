@@ -1,0 +1,187 @@
+# Antideps egne maskinelle søk, kjørt planlagt.
+#
+# ----------------------------------------------------------------------------
+# Hvorfor denne arbeidsflyten finnes
+#
+# Søkeutførelsen har alltid vært Antideps egen deterministiske kode: å kalle et
+# offentlig søke-API og lese svaret er ikke en faglig vurdering, og
+# `npm run ops:discovery` har gjort nettopp det siden migrasjon 013e. Det som
+# manglet, var at noen kjørte den. Kommandoen sto i dokumentasjonen som en
+# driftskommando, og ingen tidsplan startet den.
+#
+# Konsekvensen var ikke at søkene bare ble forsinket. Den var at den semantiske
+# `source_discovery`-oppgaven kunne bli hentet av en autonom Workspace Agent
+# *før* noe søk var utført — og oppgaven ba da agenten om søke-I/O den ikke har,
+# og ikke skal ha, verktøy til. Agenten frigjorde oppgaven med
+# `could_not_complete`, helt korrekt.
+#
+# Fra migrasjon 013v er rekkefølgen en port i databasen: ingen semantisk oppgave
+# finnes før den maskinelle søkerunden er gjort. Denne jobben er maskinen som
+# gjør runden. Står den, står arbeidet — men det blir aldri borte, og det blir
+# aldri en menneskeoppgave.
+#
+# Samme form som `full-text-extraction.yml` og `deterministic-controls.yml`, og
+# av samme grunn: en tidsplan, en maskin og ingen i transporten.
+#
+# ----------------------------------------------------------------------------
+# Hvorfor den kjører to ledd
+#
+# Fordi dekningskontrollen skal ha sine EGNE motsøk (SOURCE_POLICY.md §6). Et
+# motsøk registrert under kildeoppdagelsens identitet ville ikke vært et motsøk,
+# og databasen utleder kontrollens uavhengighet av hvilken rolle kjøringen
+# faktisk gikk under. De to leddene har derfor hver sin legitimasjon, hver sin
+# registreringstildeling og hver sin søkestrategi — generatoren søker bredt,
+# kontrollen målrettet per akse — og de kjøres som to atskilte steg.
+#
+# ----------------------------------------------------------------------------
+# Hvorfor denne bare har én utløser
+#
+# Jobben har begge kildeleddenes legitimasjon i miljøet og kjører kode fra den
+# branchen kjøringen gjelder. Kode på en branch som ikke er reviewet, skal derfor
+# ikke kunne starte den: legitimasjonen her kan registrere søk og kandidatkilder
+# som senere bærer en publiseringsgate.
+#
+# `pull_request` er den åpenbare: en pull request fra en branch i samme repo kan
+# få repository-secrets. Men `workflow_dispatch` er like ille, og mindre
+# åpenbart: GitHubs «Run workflow» har en branch-meny, og en manuell kjøring mot
+# en valgt branch setter `GITHUB_REF`/`GITHUB_SHA` til nettopp den — så
+# `actions/checkout` henter den branchens kode, med hemmelighetene i miljøet.
+# Derfor finnes bare `schedule` her, som alltid kjører standardbranchen.
+#
+# Kontrollen ligger i `scripts/verify-repo.sh`, slik at den ikke kan glemmes ved
+# neste arbeidsflyt.
+#
+# ----------------------------------------------------------------------------
+# Ingen modellnøkkel
+#
+# Søkene er deterministisk kode og kaller ingen modell. Den *faglige*
+# kildeoppdagelsen — å vurdere treffene og velge kildene — er en ekstern KI-agent
+# med sin egen identitet, og den går gjennom agentarbeidsflaten.
+#
+# ----------------------------------------------------------------------------
+# Før legitimasjonen er lagt inn
+#
+# Mangler en av hemmelighetene, avslutter steget grønt med en advarsel framfor å
+# stå rødt hver halvtime. En rød arbeidsflyt som alltid er rød, er en lampe ingen
+# ser på. De to leddene kontrolleres hver for seg: det ene kan være koblet til
+# før det andre.
+# ----------------------------------------------------------------------------
+
+name: Maskinelle monografisøk
+
+on:
+  schedule:
+    # To ganger i timen. Ventetiden er Antideps og ikke noens arbeidsoppgave:
+    # planen står som «leter etter kilder» i den åpne oversikten til runden er
+    # gjort, og den semantiske vurderingen legges i køen av runden selv.
+    - cron: '12,42 * * * *'
+
+permissions:
+  contents: read
+
+# To kjøringer samtidig ville tatt hver sin runde uten å kollidere — lukkingen
+# i databasen sørger for det. Men de ville også begge stått i kø for de samme
+# radene, og det er ingenting å vinne på. Og de ville kalt de offentlige
+# søketjenestene dobbelt så ofte, uten at noen hadde bedt om det.
+concurrency:
+  group: monograph-discovery
+  cancel-in-progress: false
+
+jobs:
+  search:
+    name: Kjør de maskinelle søkerundene som venter
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # `schedule` kjører alltid standardbranchen, så denne er sann hver gang i
+    # dag. Den står her fordi den ikke er det om noen senere legger til en
+    # utløser som kan velge branch.
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      # Kontrolleres først, slik at en kjøring uten legitimasjon ikke bruker tid
+      # på å sjekke ut koden og installere noe som helst.
+      - name: Kontroller at legitimasjonen finnes
+        id: credentials
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY }}
+          ANTIDEP_DISCOVERY_AGENT_SECRET: ${{ secrets.ANTIDEP_DISCOVERY_AGENT_SECRET }}
+          ANTIDEP_COVERAGE_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_COVERAGE_AGENT_IDENTITY_KEY }}
+          ANTIDEP_COVERAGE_AGENT_SECRET: ${{ secrets.ANTIDEP_COVERAGE_AGENT_SECRET }}
+        run: |
+          shared_missing=()
+          for name in ANTIDEP_SUPABASE_URL ANTIDEP_SUPABASE_PUBLISHABLE_KEY; do
+            if [ -z "${!name}" ]; then
+              shared_missing+=("$name")
+            fi
+          done
+
+          discovery_missing=("${shared_missing[@]}")
+          for name in ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY ANTIDEP_DISCOVERY_AGENT_SECRET; do
+            if [ -z "${!name}" ]; then
+              discovery_missing+=("$name")
+            fi
+          done
+
+          coverage_missing=("${shared_missing[@]}")
+          for name in ANTIDEP_COVERAGE_AGENT_IDENTITY_KEY ANTIDEP_COVERAGE_AGENT_SECRET; do
+            if [ -z "${!name}" ]; then
+              coverage_missing+=("$name")
+            fi
+          done
+
+          if [ ${#discovery_missing[@]} -gt 0 ]; then
+            echo "::warning::Kildeoppdagelsens søk er ikke koblet til ennå. Legg inn ${discovery_missing[*]} som repository secrets, så kjører de av seg selv."
+            echo "discovery=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "discovery=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ ${#coverage_missing[@]} -gt 0 ]; then
+            echo "::warning::Dekningskontrollens motsøk er ikke koblet til ennå. Legg inn ${coverage_missing[*]} som repository secrets, så kjører de av seg selv."
+            echo "coverage=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "coverage=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.credentials.outputs.discovery == 'true' || steps.credentials.outputs.coverage == 'true'
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        if: steps.credentials.outputs.discovery == 'true' || steps.credentials.outputs.coverage == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # Kommandoen bruker bare kjøretidsavhengighetene. Byggverktøyene hører til
+      # CI, ikke til en drift som skal være rask og kjøre ofte.
+      - name: Installer avhengigheter
+        if: steps.credentials.outputs.discovery == 'true' || steps.credentials.outputs.coverage == 'true'
+        run: npm ci --omit=dev
+
+      - name: Kjør kildeoppdagelsens søk
+        if: steps.credentials.outputs.discovery == 'true'
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY }}
+          ANTIDEP_DISCOVERY_AGENT_SECRET: ${{ secrets.ANTIDEP_DISCOVERY_AGENT_SECRET }}
+        run: |
+          npm run ops:discovery -- --leg discovery --max-plans 8 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Kontrollens motsøk kjøres etter generatorens, fordi runden deres åpnes av
+      # et registrert søkesvar. Rekkefølgen er en bekvemmelighet og ikke en
+      # avhengighet: er det ingen motsøkerunde åpen, avslutter steget stille.
+      - name: Kjør dekningskontrollens motsøk
+        if: steps.credentials.outputs.coverage == 'true'
+        env:
+          ANTIDEP_SUPABASE_URL: ${{ secrets.ANTIDEP_SUPABASE_URL }}
+          ANTIDEP_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ANTIDEP_SUPABASE_PUBLISHABLE_KEY }}
+          ANTIDEP_COVERAGE_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_COVERAGE_AGENT_IDENTITY_KEY }}
+          ANTIDEP_COVERAGE_AGENT_SECRET: ${{ secrets.ANTIDEP_COVERAGE_AGENT_SECRET }}
+        run: |
+          npm run ops:discovery -- --leg coverage --max-plans 8 | tee -a "$GITHUB_STEP_SUMMARY"

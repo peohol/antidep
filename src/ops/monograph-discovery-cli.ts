@@ -1,28 +1,42 @@
 // ============================================================================
 // Kjøreren for de maskinelt utførte søkene
 //
-//   npm run ops:discovery
+//   npm run ops:discovery                    # kildeoppdagelsens egne søk
+//   npm run ops:discovery -- --leg coverage  # dekningskontrollens motsøk
 //
-// Teknisk drift, ikke en produktflate. Kommandoen henter det arbeidet
-// kildeoppdagelsen har åpent, kjører søkene mot de tre offentlige plattformene,
-// og registrerer dem gjennom den kontrollerte skriveveien.
+// Teknisk drift, ikke en produktflate. Kommandoen henter de søkerundene som
+// står åpne for det leddet legitimasjonen gjelder, kjører søkene mot de
+// navngitte offentlige plattformene, og registrerer dem gjennom den
+// kontrollerte skriveveien.
 //
 // Ingen modellnøkkel finnes her, og ingen trengs: å kalle et søke-API og lese
-// svaret er deterministisk kode. Den *faglige* kildeoppdagelsen — å planlegge
-// søket og velge kildene — er en ekstern KI-agent med sin egen identitet, og
+// svaret er deterministisk kode. Den *faglige* kildeoppdagelsen — å vurdere
+// treffene og velge kildene — er en ekstern KI-agent med sin egen identitet, og
 // den går gjennom agentarbeidsflaten. De to veiene holdes fra hverandre i
 // databasen, og det er hele poenget.
+//
+// ----------------------------------------------------------------------------
+// Hvorfor kommandoen har to ledd
+//
+// Fordi dekningskontrollen skal ha sine EGNE motsøk (SOURCE_POLICY.md §6), og
+// et motsøk registrert under generatorens identitet ville ikke vært et motsøk.
+// De to leddene har hver sin legitimasjon, hver sin registreringstildeling og
+// hver sin søkestrategi — og databasen utleder kontrollens uavhengighet av
+// hvilken rolle kjøringen faktisk gikk under. Det er derfor `--leg` finnes, og
+// derfor den planlagte kjøringen kjører begge.
 // ============================================================================
 
 import { createAgentClient } from '../agents/agent-api.ts'
-import { readAgentConfig } from '../agents/agent-environment.ts'
+import { readAgentConfig, type AgentCredentialVariables } from '../agents/agent-environment.ts'
 import { guardedGet } from '../agents/guarded-http.ts'
 import {
-  DISCOVERY_REGISTRATION_PREMISES,
   describeDiscoveryReport,
+  LEGS,
   runMonographDiscovery,
   type DiscoveryApi,
+  type DiscoveryLeg,
   type DiscoveryPlan,
+  type SearchRequest,
 } from './monograph-discovery.ts'
 import type { MachineSearch } from './monograph-search.ts'
 
@@ -30,29 +44,50 @@ const USAGE = `Bruk:
   npm run ops:discovery [-- valg]
 
 Valg:
-  --max-plans <n>   Hvor mange søkeplaner kjøringen tar (standard 5)
-  --dry-run         Vis hvilke planer som ville blitt søkt for, uten å søke
-  --help            Vis denne teksten
+  --leg <discovery|coverage>  Hvilket kildeledd søkene utføres for (standard discovery)
+  --max-plans <n>             Hvor mange søkeplaner kjøringen tar (standard 5)
+  --dry-run                   Vis hvilke runder som ville blitt søkt for, uten å søke
+  --help                      Vis denne teksten
 
 Miljø:
   ANTIDEP_SUPABASE_URL
   ANTIDEP_SUPABASE_PUBLISHABLE_KEY
-  ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY
-  ANTIDEP_DISCOVERY_AGENT_SECRET`
+  ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY / ANTIDEP_DISCOVERY_AGENT_SECRET   (--leg discovery)
+  ANTIDEP_COVERAGE_AGENT_IDENTITY_KEY  / ANTIDEP_COVERAGE_AGENT_SECRET    (--leg coverage)`
 
 /** Legitimasjonen kildeoppdagelsen kjører med. Eget par, som hvert annet ledd. */
-export const DISCOVERY_CREDENTIAL = {
+export const DISCOVERY_CREDENTIAL: AgentCredentialVariables = {
   identityKey: 'ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY',
   secret: 'ANTIDEP_DISCOVERY_AGENT_SECRET',
-} as const
+}
+
+/**
+ * Og legitimasjonen dekningskontrollens motsøk kjører med.
+ *
+ * Eget par, og det er ikke ryddighet: identiteten autentiseres for *rollen*
+ * sin, og et motsøk registrert under kildeoppdagelsens nøkkel ville blitt ført
+ * som generatorens eget søk. Da ville kontrollens uavhengighet vært en
+ * formulering framfor en rad (SOURCE_POLICY.md §6).
+ */
+export const COVERAGE_CREDENTIAL: AgentCredentialVariables = {
+  identityKey: 'ANTIDEP_COVERAGE_AGENT_IDENTITY_KEY',
+  secret: 'ANTIDEP_COVERAGE_AGENT_SECRET',
+}
+
+export const LEG_CREDENTIALS: Readonly<Record<DiscoveryLeg, AgentCredentialVariables>> = {
+  discovery: DISCOVERY_CREDENTIAL,
+  coverage: COVERAGE_CREDENTIAL,
+}
 
 interface Arguments {
+  readonly leg: DiscoveryLeg
   readonly maxPlans: number
   readonly dryRun: boolean
   readonly help: boolean
 }
 
 export function parseArguments(argv: readonly string[]): Arguments {
+  let leg: DiscoveryLeg = 'discovery'
   let maxPlans = 5
   let dryRun = false
   let help = false
@@ -63,6 +98,13 @@ export function parseArguments(argv: readonly string[]): Arguments {
       help = true
     } else if (argument === '--dry-run') {
       dryRun = true
+    } else if (argument === '--leg') {
+      const value = argv[index + 1] ?? ''
+      if (value !== 'discovery' && value !== 'coverage') {
+        throw new Error('--leg må være discovery eller coverage.')
+      }
+      leg = value
+      index += 1
     } else if (argument === '--max-plans') {
       const value = Number.parseInt(argv[index + 1] ?? '', 10)
       if (!Number.isInteger(value) || value < 1 || value > 50) {
@@ -75,25 +117,45 @@ export function parseArguments(argv: readonly string[]): Arguments {
     }
   }
 
-  return { maxPlans, dryRun, help }
+  return { leg, maxPlans, dryRun, help }
+}
+
+function asText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
+}
+
+function requestFrom(row: Record<string, unknown>): SearchRequest {
+  const terms = Array.isArray(row['query_terms']) ? (row['query_terms'] as unknown[]) : []
+  const aliases = Array.isArray(row['drug_aliases']) ? (row['drug_aliases'] as unknown[]) : []
+  const tracks = Array.isArray(row['track_codes']) ? (row['track_codes'] as unknown[]) : []
+  return {
+    requestReference: String(row['request_reference'] ?? ''),
+    searchRound: Number(row['search_round'] ?? 1),
+    origin: String(row['origin'] ?? ''),
+    strategy: row['strategy'] === 'broad' ? 'broad' : 'targeted',
+    rationale: String(row['rationale'] ?? ''),
+    platform: asText(row['platform']) ?? null,
+    drugAliases: aliases.map((alias) => String(alias)).filter((alias) => alias.length > 0),
+    queryTerms: terms.map((term) => String(term)).filter((term) => term.length > 0),
+    filtersNote: asText(row['filters_note']) ?? null,
+    trackCodes: tracks.map((track) => String(track)).filter((track) => track.length > 0),
+    attempts: Number(row['attempts'] ?? 0),
+    state: String(row['state'] ?? 'pending'),
+  }
 }
 
 function planFrom(row: Record<string, unknown>): DiscoveryPlan {
   const scope = (row['scope'] ?? {}) as Record<string, unknown>
   const profile = (row['profile'] ?? {}) as Record<string, unknown>
-  const asText = (value: unknown): string | undefined =>
-    typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
-
-  const tracks = Array.isArray(row['tracks']) ? (row['tracks'] as unknown[]) : []
+  const requests = Array.isArray(row['requests']) ? (row['requests'] as unknown[]) : []
 
   return {
     planReference: String(row['plan_reference'] ?? ''),
     drug: String(row['drug'] ?? ''),
     editionReference: String(row['edition_reference'] ?? ''),
     profileCode: String(profile['code'] ?? '?'),
-    requiredTracks: tracks
-      .map((track) => String((track as Record<string, unknown>)['code'] ?? ''))
-      .filter((code) => code.length > 0),
+    searchRound: Number(row['search_round'] ?? 1),
+    requests: requests.map((entry) => requestFrom(entry as Record<string, unknown>)),
     scope: {
       drug: asText(scope['drug']) ?? String(row['drug'] ?? ''),
       indication: asText(scope['indication']),
@@ -120,7 +182,8 @@ async function main(): Promise<void> {
     return
   }
 
-  const config = readAgentConfig(process.env, DISCOVERY_CREDENTIAL)
+  const leg = LEGS[args.leg]
+  const config = readAgentConfig(process.env, LEG_CREDENTIALS[args.leg])
   const client = createAgentClient(config)
   const identity = {
     p_identity_key: config.credential.identityKey,
@@ -148,12 +211,12 @@ async function main(): Promise<void> {
     async beginRun(planReference) {
       const { data, error } = await client.rpc('begin_agent_run', {
         ...identity,
-        p_agent_role: 'source_discovery',
-        p_provider: DISCOVERY_REGISTRATION_PREMISES.provider,
-        p_model: DISCOVERY_REGISTRATION_PREMISES.model,
-        p_model_version: DISCOVERY_REGISTRATION_PREMISES.modelVersion,
-        p_prompt_template_version: DISCOVERY_REGISTRATION_PREMISES.promptTemplateVersion,
-        p_pipeline_version: DISCOVERY_REGISTRATION_PREMISES.pipelineVersion,
+        p_agent_role: leg.agentRole,
+        p_provider: leg.premises.provider,
+        p_model: leg.premises.model,
+        p_model_version: leg.premises.modelVersion,
+        p_prompt_template_version: leg.premises.promptTemplateVersion,
+        p_pipeline_version: leg.premises.pipelineVersion,
         p_input_manifest: { search_plan_reference: planReference, mode: 'machine_executed' },
       })
       if (error !== null || typeof data !== 'string') {
@@ -162,11 +225,12 @@ async function main(): Promise<void> {
       return data
     },
 
-    async recordSearch(agentRunId, planReference, search: MachineSearch) {
+    async recordSearch(agentRunId, planReference, requestReference, search: MachineSearch) {
       const { error } = await client.rpc('record_monograph_machine_search', {
         ...identity,
         p_agent_run_id: agentRunId,
         p_plan_reference: planReference,
+        p_request_reference: requestReference,
         p_platform: search.platform,
         p_query_string: search.queryString,
         p_filters: search.filters,
@@ -186,6 +250,22 @@ async function main(): Promise<void> {
       }
     },
 
+    async closeRequest(agentRunId, requestReference) {
+      const { data, error } = await client.rpc('close_monograph_search_request', {
+        ...identity,
+        p_agent_run_id: agentRunId,
+        p_request_reference: requestReference,
+      })
+      if (error !== null) {
+        throw new Error('Søkerunden kunne ikke lukkes.')
+      }
+      const payload = (data ?? {}) as Record<string, unknown>
+      return {
+        state: String(payload['state'] ?? 'pending'),
+        enqueuedJob: payload['enqueued_job'] === true,
+      }
+    },
+
     async completeRun(agentRunId, status, outcome) {
       const { error } = await client.rpc('complete_agent_run', {
         ...identity,
@@ -202,9 +282,11 @@ async function main(): Promise<void> {
 
   if (args.dryRun) {
     const plans = await api.work()
-    console.log(`Åpne søkeplaner: ${plans.length}`)
+    console.log(`Åpne søkeplaner for ${leg.label}: ${plans.length}`)
     for (const plan of plans.slice(0, args.maxPlans)) {
-      console.log(`  ${plan.profileCode}  ${plan.planReference}`)
+      console.log(
+        `  ${plan.profileCode}  ${plan.planReference}  runder: ${String(plan.requests.length)}`,
+      )
     }
     return
   }
@@ -213,6 +295,7 @@ async function main(): Promise<void> {
     maxPlans: args.maxPlans,
     fetcher: guardedGet,
   })
+  console.log(`Ledd: ${leg.label}`)
   console.log(describeDiscoveryReport(report))
   if (report.problems.length > 0) {
     process.exitCode = 1

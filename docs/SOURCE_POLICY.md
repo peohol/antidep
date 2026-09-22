@@ -71,6 +71,16 @@ Kildene skal kunne oppdages bredere enn den senere analyseavgrensningen: et for 
 
 Ikke alle kilder eller databaser er nødvendigvis tilgjengelige i en agentkjøring. En utilgjengelig obligatorisk søkevei registreres som begrensning, ikke som null treff. En erstattende søkevei må begrunnes og kontrolleres separat. Delvis søk kan gi et tydelig merket delutkast, men ikke status som ferdig søkedekning.
 
+Tre tilstander holdes fra hverandre, fordi de utløser forskjellig arbeid:
+
+| Tilstand | Hva den betyr | Hva som løser den |
+| --- | --- | --- |
+| Utilgjengelig | Søkeveien ble forsøkt, men svarte ikke. | Et nytt forsøk. Antidep prøver inntil tre ganger. |
+| Ingen maskinell søkevei | Ingen av søkeveiene Antidep faktisk kaller, dekker sporet. Sporet blir ikke forsøkt maskinelt uansett hvor lenge man venter. | En redaktør utfører søket og registrerer passeringen i søkeloggen. |
+| Dekket | Et dokumentert søk dekker sporet. | Ingenting. |
+
+Hvilke søkespor Antidep faktisk kan dekke maskinelt, er et registrert faktum (`knowledge.monograph_search_platforms`) og ikke en antakelse. Et søk kan ikke erklære et spor søkeveien ikke står oppført for: et bibliografisk søk som erklærte forsøksregistre dekket, ville gjort stoppkravet blindt for et spor ingen hadde søkt i. Et obligatorisk spor uten maskinell søkevei teller derfor aldri som dekning — men det blir heller ikke stående som «ikke forsøkt ennå», der det ville ventet for alltid. Stoppkravet navngir sporet og sier hva som løser det.
+
 Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater. En avgrensning kan være begrunnet, men må stå i planen og i begrensningene. Søk gjerne først etter en dekkende nyere syntese; eldre originalstudier blir ikke ugyldige fordi de er gamle.
 
 ### 4.3 Søkelogg og utvalgslogg
@@ -80,6 +90,24 @@ Lagre faktisk utført søk: database og plattform, eksakt søkestreng, filtre, d
 For hvert kandidatdokument: identifikatorer, bibliografi, oppdagelsesvei, mulige behov det dekker, beslutning og begrunnelse. Bruk atskilte utfall: valgt til innhenting, inkludert for navngitt bruk, ekskludert med faglig grunn, avventer tilgang, eller avventer avklaring. Betalingsmur er ikke en faglig eksklusjonsgrunn. Registrer også kontrollerte nullsøk.
 
 Søkestrategier og avgrensninger skal være lesbare for en fagperson, men tekniske identifikatorer og transport håndteres av systemet. PRISMA-S er et rapporteringsgrunnlag, ikke en erklæring om at Antidep har gjennomført en PRISMA-kompatibel systematisk oversikt (S06).
+
+### 4.4 Hvem som utfører søket, og hvem som vurderer det
+
+Søke-I/O er systemets egen deterministiske kode. En KI-agent i kildeleddene planlegger ikke et nettverkskall og utfører ikke et: den får de maskinelt utførte søkene med endepunkt, søkestreng, treffantall og et fingeravtrykk av svaret, og gjør den semantiske vurderingen av dem — hva som er relevant, til hvilket behov, hva som med rimelighet kan endre hovedkonklusjonen, og hva som mangler. Trenger den flere eller mer målrettede søk, ber den om dem som en strukturert søkeforespørsel; den deterministiske søkeveien utfører dem og gir leddet neste vurderingsrunde.
+
+Rekkefølgen er en port og ikke en forventning: en semantisk kildeoppgave skal ikke kunne hentes ut før den maskinelle søkerunden for nettopp den planversjonen faktisk er utført. En oppgave som krever søke-I/O agenten ikke har verktøy til, er ikke en oppgave — den er en umulighet, og den skal ikke finnes.
+
+Et modellrapportert søk og et maskinelt utført søk er fortsatt to forskjellige opplysninger (§4.3), og de blandes ikke. Kildeleddene har ingen vei til å rapportere et søk de skulle ha utført, og et svar som gjør det, avvises.
+
+En søkeforespørsel kan bare be om det den deterministiske søkeveien faktisk gjør: en navngitt søketjeneste av dem systemet allerede kaller, en søkestrategi og noen termer. En adresse kan ikke oppgis. Antall runder per planversjon er begrenset; er budsjettet brukt opp, er arbeidet åpent og ventende (§8.2) og aldri en konklusjon om evidensen.
+
+Og det tredje leddet: mennesket. De søkeveiene Antidep faktisk kaller, dekker i dag bare det bibliografiske sporet. De øvrige obligatoriske sporene i §4.2 — myndighetskilden, preparatomtalen, forsøksregistrene, referanselistene, de siterende arbeidene, den regulatoriske veiledningen — har ingen maskinell utfører, og de får ikke en ved at noen venter. Slike spor føres derfor som *ingen maskinell søkevei* med én gang planen lages, de teller aldri som dekning, og stoppkravet navngir dem.
+
+Redaktøren utfører da søket og registrerer **selve passeringen**: hvor det ble søkt, med hvilken streng, med hvilke filtre, når, hvor mange treff det ga og hvor mye som ble gjennomgått — de samme opplysningene §4.3 krever om ethvert utført søk. Passeringen blir en egen rad i søkeloggen med utførelsesbeviset *redaktørregistrert*, og sporet knyttes til nøyaktig den raden. En dekning som bare pekte på en tidligere passering som gjaldt noe annet, ville vært en misvisende proveniens, og for profilene uten ett eneste maskinelt utførbart spor — REG, PROD og SYN — ville det dessuten aldri finnes et søk som faktisk hadde gått.
+
+Ga passeringen treff, må den enten bære kildene den fant, eller si hva gjennomgangen ga. For et maskinelt søk leser den semantiske agenten de registrerte treffene selv; en manuell passering er det bare redaktøren som har sett, og «fire treff, fire gjennomgått, null kandidater» uten et ord om hvorfor er treff som forsvinner stille. Et positivt manuelt søk uten kandidatkilder og uten en registrert gjennomgang holder derfor dekningen åpen.
+
+Utførelsesbeviset har tre verdier, og de blandes ikke: *agentrapportert* (en agents beretning om et verktøykall), *maskinelt utført* (Antideps eget kall, med endepunkt og responsavtrykk) og *redaktørregistrert* (et menneskes dokumenterte arbeid, uten endepunkt og uten kjøring). Oppgavematerialet den semantiske agenten leser, holder dem i hvert sitt felt og sier om hvert søk hvem som utførte det: å legge et menneskes arbeid blant Antideps egne kall ville gitt agenten falsk proveniens om nettopp det skillet resten av kjeden hviler på. Registeret over søkeveier begrenser maskinen, og bare maskinen: et menneske kan søke der Antidep ikke kan, og står oppført på raden for det. Får Antidep siden en søkevei for et slikt spor, flyttes sporet tilbake til den maskinelle køen av seg selv.
 
 ## 5. Innhenting og kildeintegritet
 
@@ -114,6 +142,8 @@ GRADE brukes når egnet til sikkerhet i et samlet effekt-/risikogrunnlag for et 
 Motstridende studier skal undersøkes for ulik dose, populasjon, komparator, oppfølging, målemetode, frafall og analyse. Ikke avgjør ved flertall av artikler eller agenter. Kan faglig motstrid ikke løses, bevar resultatene og konkluder med relevant usikkerhet. Et lavt p-nivå sier ikke alene at en forskjell er klinisk viktig; manglende statistisk signifikans skal ikke omskrives til likeverdighet.
 
 Motprøvingen skal også søke etter kilder som den første agenten overså. Et kontrollledd som bare leser generatorens utvalgte referanser, kan kontrollere sitatene, men ikke alene vurdere søkets dekningsgrad. Kildeutvalg og sentrale eksklusjoner må derfor ha egen separat kontroll før et søk lukkes.
+
+Kontrollens egne søk utføres av den deterministiske søkeveien, under kontrollrollens egen identitet og kjøring, og med en annen søkestrategi enn generatorens — målrettede passeringer der generatoren søkte bredt. At kontrollen faktisk har søkt selv, utledes av søkeloggen og erklæres ikke i svaret: en erklæring om egen uavhengighet som kan bestås ved å skrive den, kontrollerer ingenting. En godtatt dekning uten et eget søk som faktisk gikk, avvises.
 
 Modellseparasjon og deterministiske kontroller beholdes som prosjektgrenser, men enighet mellom modeller er ikke i seg selv fasit. Den senere pilotens faglige kontroll skal prøve originalkilder, utelatelser og klinisk mening, ikke bare om agentene er enige.
 
@@ -155,6 +185,8 @@ Et spørsmål kan få ferdig søkedekning først når alle følgende er oppfylt:
 For en autoritativ regulatorisk opplysning kan én riktig, gjeldende kilde være tilstrekkelig. Ikke krev en ekstra artikkel for å bekrefte en norsk godkjent styrke. For forskningsspørsmål er verken «tre kilder», «to enige modeller» eller «ingen nye topp-ti-treff» et tilstrekkelig kriterium.
 
 Etter at minimumssporene er dekket, brukes **to ulike supplerende søkepasseringer** uten nye potensielt konklusjonsendrende kilder som praktisk metningssignal: for eksempel et utvidet term-/synonymsøk og et nyere siteringssøk. Dette er Antideps v1-heuristikk, ikke bevis på uttømmende dekning. Kjente hull eller en svak grunnsøking overstyres aldri av dette signalet.
+
+Metningssignalet gjelder de profilene som faktisk søker i litteraturen, utledet av om et bibliografisk søk er et av profilens obligatoriske spor. De autoritative regulatoriske profilene kan klare seg med én riktig, gjeldende kilde, og sammendragsleddet gjør ingen selvstendig litteraturjakt (§4.2) — å kreve to søkepasseringer av et ledd som ikke søker, er et krav som aldri kan oppfylles.
 
 ### 8.2 Ressursgrense er ikke evidenskonklusjon
 

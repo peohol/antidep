@@ -859,12 +859,50 @@ export type Database = {
         }
         Returns: unknown
       }
+      close_monograph_search_request: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_run_id: string
+          p_request_reference: string
+        }
+        Returns: unknown
+      }
+      // Redaktørens vei ut for et obligatorisk søkespor ingen registrert
+      // søkevei dekker (migrasjon 013z). `covered` fører selve passeringen inn
+      // i søkeloggen, så søket er dokumentert der og ikke bare påstått: derfor
+      // er plattform, streng, tidspunkt og treffantall parametre og ikke
+      // valgfrie tillegg. Tallene er `string` av samme grunn som ellers —
+      // PostgREST lar PostgreSQL gjøre casten.
+      record_monograph_track_by_editor: {
+        Args: {
+          p_plan_reference: string
+          p_track_code: string
+          p_outcome: string
+          p_note: string
+          p_platform?: string | null
+          p_query_string?: string | null
+          p_filters?: string | null
+          p_executed_at?: string | null
+          p_result_count?: string | null
+          p_screened_count?: string | null
+          p_truncated?: boolean | null
+          p_truncation_note?: string | null
+          // Migrasjon 014a: ga passeringen treff, må den bære kildene den fant
+          // eller si hva gjennomgangen ga. Uten de to her kunne en typesjekket
+          // klient ikke bruke veien basen krever for et positivt manuelt søk.
+          p_candidates?: unknown[] | null
+          p_screening_note?: string | null
+        }
+        Returns: unknown
+      }
       record_monograph_machine_search: {
         Args: {
           p_identity_key: string
           p_secret: string
           p_agent_run_id: string
           p_plan_reference: string
+          p_request_reference: string
           p_platform: string
           p_query_string: string
           p_filters: string | null

@@ -197,15 +197,16 @@ export function buildEvidenceAssessmentDraftSchema(): Schema {
 // ----------------------------------------------------------------------------
 // Kildeoppdagelsen og kontrollen av søkedekningen
 //
-// Formen er kildepolitikkens §4.3 som et skjema: hva som faktisk ble søkt, hvor,
-// med hvilken streng, hvor mange treff som kom, hvor mye som ble gjennomgått, og
-// om trefflisten ble avkortet. Feltene finnes fordi de er de opplysningene som
-// skiller et dokumentert søk fra en påstand om et søk.
+// Fra migrasjon 013v er formen en annen, og forskjellen er hele arbeidsdelingen:
+// søkene er utført av Antideps egen kode og ligger i oppgaven med endepunkt og
+// responsavtrykk. Leddet vurderer dem. Det rapporterer ikke søk, og det legger
+// ikke til kandidatkilder — en kilde uten en oppdagelsesvei er ikke funnet av
+// noe søk (SOURCE_POLICY.md §4.3).
 //
-// Utførelsesbeviset står IKKE i skjemaet. Et rapportert søk er agentens egen
-// beretning, og Antidep setter den verdien selv: et svar som kunne oppgitt
-// «maskinelt bekreftet», ville kunnet gi seg ut for å være noe det ikke er
-// (SOURCE_POLICY.md §4.3).
+// `searches` finnes derfor ikke lenger i noen av de to svarformene, og et svar
+// som fortsatt bærer feltet, avvises av både flaten og databasen med en setning
+// som sier hvorfor. Trengs det flere søk, ber leddet om dem: `search_requests`
+// er den ene veien fra en semantisk vurdering til et nytt maskinelt søk.
 // ----------------------------------------------------------------------------
 
 /** Utfallene ett søk kan ha. De to siste er ikke null treff. */
@@ -221,110 +222,53 @@ export const CANDIDATE_DECISIONS = [
   'awaiting_clarification',
 ] as const
 
-function reportedSearchSchema(): Schema {
-  return {
-    type: 'array',
-    description:
-      'Søkene du faktisk utførte. En foreslått søkestreng er ikke et utført søk: oppgi bare søk du gjennomførte, med den strengen du faktisk brukte.',
-    items: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['platform', 'query_string', 'outcome'],
-      properties: {
-        platform: text('Databasen eller plattformen du faktisk søkte i.'),
-        query_string: text('Den eksakte søkestrengen du faktisk brukte.'),
-        filters: optionalText(
-          'Filtrene du brukte. Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater — en avgrensning kan være begrunnet, men da skal den stå her.',
-        ),
-        outcome: vocabulary(
-          SEARCH_OUTCOMES,
-          'Hva som skjedde: «executed» (søket gikk og ga treff), «zero_results» (søket gikk og ga null treff), «unavailable» (du kom ikke til søkeveien) eller «failed» (verktøyet sviktet). De to siste er ikke null treff, og de skal ikke ha et treffantall.',
-        ),
-        result_count: {
-          type: ['integer', 'null'],
-          minimum: 0,
-          description:
-            'Returnert treffantall når det er kjent. Påkrevd for «executed», og null for «zero_results». Skal være tomt for «unavailable» og «failed».',
-        },
-        screened_count: {
-          type: ['integer', 'null'],
-          minimum: 0,
-          description: 'Hvor mange treff du faktisk gikk gjennom.',
-        },
-        truncated: {
-          type: ['boolean', 'null'],
-          description:
-            'Om paginering eller en resultatgrense avkortet trefflisten. En side med ti treff er ikke et søk uten flere treff.',
-        },
-        truncation_note: optionalText(
-          'Hvordan trefflisten ble avkortet. Påkrevd når truncated er true.',
-        ),
-        limitation_note: optionalText(
-          'Hvorfor søkeveien var utilgjengelig, eller hva som sviktet. Påkrevd for «unavailable» og «failed».',
-        ),
-        track_codes: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            'Kodene til de obligatoriske søkesporene dette søket dekker. Bruk bare koder som står i oppgavens required_tracks.',
-        },
-      },
-    },
-  }
-}
+/**
+ * Plattformene en søkeforespørsel kan navngi.
+ *
+ * Listen er uttømmende, og den er den samme i `workflow.monograph_search_requests`.
+ * En forespørsel kan ikke oppgi en adresse: en tjeneste ingen har vurdert,
+ * finnes ikke å be om (ANTIDEP_CONSTITUTION.md regel 7).
+ */
+export const SEARCH_PLATFORMS = ['Europe PMC', 'PubMed', 'Crossref'] as const
 
-function candidateSchema(): Schema {
+/** Formene en maskinell søkerunde kan ha. */
+export const SEARCH_STRATEGIES = ['broad', 'targeted'] as const
+
+/** Hvor mange termer én søkeforespørsel kan bære. Samme tall som raden. */
+export const SEARCH_REQUEST_MAX_TERMS = 8
+
+function candidateAppraisalSchema(): Schema {
   return {
     type: 'array',
     description:
-      'Kandidatkildene du identifiserte, med hva hver av dem kan brukes til. En kilde godkjennes for en bestemt bruk og avgrensning, ikke universelt.',
+      'Vurderingen din av kandidatkildene de registrerte søkene ga. Søkene er enten Antideps maskinelle kall eller passeringer en redaktør utførte og registrerte; oppgaven sier om hvert av dem hvem som utførte det. Bare kilder som står i oppgaven: en kilde som ikke er funnet av et registrert søk, har ingen oppdagelsesvei, og den skal ikke fylles inn fra hukommelsen. Mangler en kilde du mener bør være der, be om et søk som ville funnet den.',
     items: {
       type: 'object',
       additionalProperties: false,
-      required: ['identifier_kind', 'identifier_value', 'title', 'discovery_path'],
+      required: ['identifier_kind', 'identifier_value'],
       properties: {
         identifier_kind: vocabulary(
           ['doi', 'pmid', 'pmcid', 'url', 'title', 'registry_id'],
-          'Hvilken identifikator du oppgir. En DOI peker på dokumentet; en PMID peker på en omtale av det.',
+          'Identifikatorformen, ordrett fra kandidatlisten i oppgaven.',
         ),
-        identifier_value: text('Selve identifikatoren.'),
-        title: text('Tittelen, ordrett.'),
-        authors_or_issuer: optionalText('Forfattere eller utgivende instans.'),
-        publisher_or_journal: optionalText('Tidsskrift eller utgiver.'),
-        publication_year: {
-          type: ['integer', 'null'],
-          minimum: 1800,
-          maximum: 2200,
-          description: 'Publiseringsår.',
-        },
-        discovery_path: text(
-          'Hvordan du fant kilden: hvilket søk, hvilken referanseliste, hvilket siteringssøk.',
-        ),
-        access_limited: {
-          type: ['boolean', 'null'],
-          description:
-            'Om du ikke kom til fullteksten. En betalingsmur er en tilgangsbegrensning og ikke en faglig eksklusjonsgrunn.',
-        },
-        access_limitation_note: optionalText(
-          'Hva som begrenset tilgangen. Påkrevd når access_limited er true.',
-        ),
+        identifier_value: text('Identifikatoren, ordrett fra kandidatlisten i oppgaven.'),
         could_change_conclusion: {
           type: ['boolean', 'null'],
           description:
-            'Om kilden med rimelighet kan endre hovedkonklusjonen. En uavklart kilde som kan det, hindrer at søket kan avsluttes.',
+            'Om kilden med rimelighet kan endre hovedkonklusjonen. Dette er en vurdering søket ikke kan gjøre — det leser en treffliste — og det er den opplysningen som hindrer at søket avsluttes for tidlig. En uavklart kilde som kan endre konklusjonen, hindrer at dekningen erklæres ferdig.',
         },
         materiality_reason: optionalText(
           'Hvorfor kilden kan endre konklusjonen. Påkrevd når could_change_conclusion er true.',
         ),
         decision: optionalVocabulary(
           CANDIDATE_DECISIONS,
-          'Utvalgsbeslutningen din. «excluded» krever en faglig grunn, og kan ikke brukes på en kilde du bare ikke kom til.',
+          'Utvalgsbeslutningen din. «excluded» krever en faglig grunn, og kan ikke brukes på en kilde Antidep bare ikke kom til: en betalingsmur er en tilgangsbegrensning, og den hører under «awaiting_access».',
         ),
         decision_reason: optionalText('Begrunnelsen for beslutningen.'),
         uses: {
           type: 'array',
           description:
-            'Hva kilden kan brukes til, per kunnskapsbehov. Bruk bare need_reference-verdier som står i oppgaven.',
+            'Hva kilden kan brukes til, per kunnskapsbehov. En kilde godkjennes for en bestemt bruk og avgrensning, ikke universelt. Bruk bare need_reference-verdier som står i oppgaven.',
           items: {
             type: 'object',
             additionalProperties: false,
@@ -342,20 +286,63 @@ function candidateSchema(): Schema {
   }
 }
 
+function searchRequestSchema(): Schema {
+  return {
+    type: 'array',
+    description:
+      'Flere eller mer målrettede søk du ber Antidep utføre. Dette er den ene veien fra din vurdering til et nytt søk: du utfører ingen søk selv, og du trenger ingen nettilgang. Antidep kjører forespørslene, registrerer dem med endepunkt og responsavtrykk, og gir deg en ny vurderingsrunde på resultatet.',
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['rationale'],
+      properties: {
+        rationale: text(
+          'Hvorfor dette søket trengs: hvilket hull i dekningen det skal fylle, eller hvilken kilde du mener kan finnes og ikke er funnet ennå.',
+        ),
+        platform: optionalVocabulary(
+          SEARCH_PLATFORMS,
+          'Plattformen søket skal gå mot, når det gjelder én bestemt. Utelat for alle tre. En annen tjeneste kan ikke oppgis, og en adresse kan ikke oppgis.',
+        ),
+        strategy: optionalVocabulary(
+          SEARCH_STRATEGIES,
+          '«broad» setter avgrensningsaksene som ELLER-ledd; «targeted» gjør én passering per akse eller term. Utelat for «targeted».',
+        ),
+        drug_aliases: {
+          type: 'array',
+          maxItems: SEARCH_REQUEST_MAX_TERMS,
+          items: { type: 'string', minLength: 2, maxLength: 120 },
+          description:
+            'Virkestoffnavn som skal søkes som ALTERNATIVER til det kanoniske: den engelske stavemåten, et handelsnavn, et navn på et annet språk. De hører hjemme her og ikke i query_terms — et synonym lagt til som en term ville blitt et ekstra påkrevd begrep, og da kunne ikke en artikkel som bare bruker det andre navnet, treffe i det hele tatt.',
+        },
+        query_terms: {
+          type: 'array',
+          maxItems: SEARCH_REQUEST_MAX_TERMS,
+          items: { type: 'string', minLength: 2, maxLength: 120 },
+          description:
+            'Begrepene som skal legges til avgrensningen som egne krav — et studiedesign, en aldersgruppe, et utfall. Høyst åtte, uten anførselstegn og uten linjeskift. Et annet navn på virkestoffet hører i drug_aliases.',
+        },
+        filters_note: optionalText(
+          'En avgrensning som er faglig begrunnet. Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater.',
+        ),
+      },
+    },
+  }
+}
+
 /** Formen et kildeoppdagelsessvar skal ha. */
 export function buildSourceDiscoveryDraftSchema(): Schema {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: 'https://antidep.no/schema/source-discovery-draft-2.json',
+    $id: 'https://antidep.no/schema/source-discovery-draft-3.json',
     title: 'Antidep SourceDiscoveryDraft',
     description:
-      'De utførte søkene, kandidatkildene og utvalgsbeslutningene for én søkeplan. Hvilken plan, hvilken avgrensning og hvilke behov det gjelder, står i oppgaven og hører ikke hjemme i svaret. Svaret skal ikke inneholde et klinisk svar på noe av spørsmålene: dette leddet finner grunnlaget, det leser det ikke.',
+      'Vurderingen av de registrerte søkene for én søkeplan: hvilke av kandidatkildene som er relevante og til hva, hvilke flere søk som trengs, og hvilke avgrensningsverdier monografien bør dekke. Hvilken plan, hvilken avgrensning og hvilke behov det gjelder, står i oppgaven og hører ikke hjemme i svaret. Svaret skal ikke inneholde et klinisk svar på noe av spørsmålene: dette leddet finner grunnlaget, det leser det ikke. Det rapporterer heller ikke søk — søkene er utført av andre enn deg: Antideps egen kode, eller en redaktør for de søkesporene Antidep ikke har en maskinell vei til.',
     type: 'object',
     additionalProperties: false,
-    required: ['searches'],
+    required: ['candidate_appraisals'],
     properties: {
-      searches: reportedSearchSchema(),
-      candidates: candidateSchema(),
+      candidate_appraisals: candidateAppraisalSchema(),
+      search_requests: searchRequestSchema(),
       term_proposals: {
         type: 'array',
         description:
@@ -374,7 +361,9 @@ export function buildSourceDiscoveryDraftSchema(): Schema {
           },
         },
       },
-      note: optionalText('Kort merknad om søkearbeidet, om noe trenger å sies.'),
+      note: optionalText(
+        'Kort merknad om søkearbeidet: hva de utførte søkene dekker, og hva de ikke dekker. En søkevei som ikke svarte, står allerede som en begrensning i oppgaven — gjenta den ikke som et resultat.',
+      ),
     },
   }
 }
@@ -383,37 +372,50 @@ export function buildSourceDiscoveryDraftSchema(): Schema {
 export function buildSourceCoverageControlDraftSchema(): Schema {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: 'https://antidep.no/schema/source-coverage-control-draft-1.json',
+    $id: 'https://antidep.no/schema/source-coverage-control-draft-2.json',
     title: 'Antidep SourceCoverageControlDraft',
     description:
-      'Den separate kontrollen av søkedekningen for én søkeplan: dine egne motsøk, de kildene generatoren overså, og avgjørelsen om begrunnelsen for å avslutte holder. Enighet med generatoren er ikke i seg selv fasit.',
+      'Den separate kontrollen av søkedekningen for én søkeplan: vurderingen av dine egne, separat utførte motsøk, av de kildene generatoren overså, og av om begrunnelsen for å avslutte holder. Motsøkene er kjørt av Antideps egen kode under din rolle og din kjøring, og de ligger i oppgaven — du kan verken erklære eller bestride at de ble gjort. Enighet med generatoren er ikke i seg selv fasit.',
     type: 'object',
     additionalProperties: false,
-    required: ['control', 'searches'],
+    required: ['candidate_appraisals'],
+    // En kontrollrunde har nøyaktig ett utfall: den avgjør, eller den ber om
+    // flere motsøk. Alternativene står her og ikke bare i prosaen, fordi det er
+    // dette skjemaet agenten faktisk følger — et svar som var gyldig etter
+    // skjemaet og likevel ble avvist av kontrakten, ville vært vår feil og ikke
+    // agentens.
+    oneOf: [
+      {
+        required: ['control'],
+        description: 'Runden avgjør dekningen.',
+      },
+      {
+        required: ['search_requests'],
+        properties: { search_requests: { minItems: 1 } },
+        description: 'Runden ber om flere motsøk, og avgjør i neste runde.',
+      },
+    ],
     properties: {
-      searches: reportedSearchSchema(),
-      candidates: candidateSchema(),
+      candidate_appraisals: candidateAppraisalSchema(),
+      search_requests: searchRequestSchema(),
       control: {
         type: 'object',
         additionalProperties: false,
-        required: ['outcome', 'note', 'searched_independently', 'materiality_assessed'],
+        required: ['outcome', 'note', 'materiality_assessed'],
+        description:
+          'Avgjørelsen din. Utelat den i en runde der du ber om flere motsøk: en avgjørelse tatt samtidig med at grunnlaget blir bedt om, hviler ikke på det grunnlaget.',
         properties: {
           outcome: vocabulary(
             ['accepted', 'insufficient'],
-            'Om du godtar begrunnelsen for å avslutte søket. «accepted» krever at du faktisk søkte selv og vurderte vesentligheten av de uavklarte kildene.',
+            'Om du godtar begrunnelsen for å avslutte søket. «accepted» krever at et eget motsøk faktisk har gått, og at du vurderte vesentligheten av de uavklarte kildene.',
           ),
           note: text(
             'Hva du kontrollerte, hva du fant, og hvorfor du godtar eller avviser begrunnelsen.',
           ),
-          searched_independently: {
-            type: 'boolean',
-            description:
-              'Om du gjorde dine egne søk. Antidep godtar ikke erklæringen uten at du også rapporterte et eget søk som gikk i «searches».',
-          },
           missed_candidates: {
             type: ['integer', 'null'],
             minimum: 0,
-            description: 'Hvor mange kilder generatoren overså, og som du fant.',
+            description: 'Hvor mange kilder generatoren overså, og som motsøkene dine fant.',
           },
           exclusions_checked: {
             type: ['integer', 'null'],

@@ -165,21 +165,25 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
   },
   source_discovery: {
     role: 'source_discovery',
-    promptTemplateVersion: 'source-discovery/handoff-search/2',
-    // @2 fra migrasjon 013i: et begrepsforslag kan navngi behovet verdien ble
-    // dokumentert under, slik at aksepten forgrener nettopp det behovet.
-    outputSchemaVersion: 'antidep/source-discovery-draft@2',
+    // @3 fra migrasjon 013v: leddet utfører ikke lenger søk. Antideps egen kode
+    // søker og registrerer med endepunkt og responsavtrykk; leddet vurderer det
+    // som ble hentet, og ber om flere søk som strukturerte søkeforespørsler.
+    promptTemplateVersion: 'source-discovery/machine-search-appraisal/4',
+    outputSchemaVersion: 'antidep/source-discovery-draft@3',
     label: 'Kildeoppdagelse',
     summary:
-      'Søk etter grunnlaget de oppgitte kunnskapsbehovene trenger, dokumenter søkene du faktisk utførte, og si hvilke kilder som kan brukes til hva.',
+      'Vurder de registrerte søkene og kandidatkildene de ga — Antideps maskinelle kall og redaktørens dokumenterte passeringer: hva er relevant, til hvilket behov, og hvilke flere søk trengs.',
   },
   source_quality_assessment: {
     role: 'source_quality_assessment',
-    promptTemplateVersion: 'source-coverage/handoff-control/2',
-    outputSchemaVersion: 'antidep/source-coverage-control-draft@1',
+    // @2 fra migrasjon 013v: kontrollens motsøk utføres maskinelt under dens
+    // egen rolle og kjøring, og uavhengigheten utledes av søkeloggen framfor å
+    // erklæres i svaret.
+    promptTemplateVersion: 'source-coverage/machine-countersearch-control/4',
+    outputSchemaVersion: 'antidep/source-coverage-control-draft@2',
     label: 'Kontroll av søkedekning',
     summary:
-      'Let selv etter oversette og motstridende kilder, kontroller de sentrale eksklusjonene, og avgjør om begrunnelsen for å avslutte søket holder.',
+      'Vurder resultatene av dine egne, separat utførte motsøk, kontroller de sentrale eksklusjonene, og avgjør om begrunnelsen for å avslutte søket holder.',
   },
   monograph_answer: {
     role: 'monograph_answer',

@@ -256,14 +256,110 @@ describe('kilde- og monografisvar', () => {
     })
   }
 
-  it('avviser feil type i et rapportert treffantall før databaseskriving', () => {
-    const result = resultFor('source_discovery')
-    const searches = [...(result['searches'] as Record<string, unknown>[])]
-    searches[0] = { ...searches[0], result_count: 'ukjent' }
+  // ------------------------------------------------------------------------
+  // Migrasjon 013v: kildeleddene utfører ikke søk, og kan ikke hevde at de
+  // gjorde det. Dette er den ene regelen hele omleggingen hviler på.
+  // ------------------------------------------------------------------------
+  for (const role of ['source_discovery', 'source_quality_assessment'] as const) {
+    it(`lar ikke et ${role}-svar fremstille et modellrapportert søk som utført`, () => {
+      const problem = handoffResultProblem(task(role), {
+        ...resultFor(role),
+        searches: [
+          {
+            platform: 'PubMed',
+            query_string: 'testmiddel[tiab]',
+            outcome: 'executed',
+            result_count: 12,
+          },
+        ],
+      })
 
-    expect(handoffResultProblem(task('source_discovery'), { ...result, searches })).toMatch(
-      /result_count.*heltall/,
-    )
+      expect(problem).toMatch(/rapporterer utførte søk/)
+      expect(problem).toMatch(/maskinelt bekreftet/)
+    })
+
+    it(`lar ikke et ${role}-svar legge til en kandidatkilde uten oppdagelsesvei`, () => {
+      expect(
+        handoffResultProblem(task(role), {
+          ...resultFor(role),
+          candidates: [
+            {
+              identifier_kind: 'doi',
+              identifier_value: '10.1000/husket-fra-hukommelsen',
+              title: 'En kilde ingen søk fant',
+              discovery_path: 'Hukommelsen',
+            },
+          ],
+        }),
+      ).toMatch(/legger til kandidatkilder/)
+    })
+  }
+
+  it('avviser en vesentlig kilde uten begrunnelse før databaseskriving', () => {
+    const result = resultFor('source_discovery')
+    const appraisals = [...(result['candidate_appraisals'] as Record<string, unknown>[])]
+    appraisals[0] = { ...appraisals[0], could_change_conclusion: true, materiality_reason: null }
+
+    expect(
+      handoffResultProblem(task('source_discovery'), {
+        ...result,
+        candidate_appraisals: appraisals,
+      }),
+    ).toMatch(/materiality_reason/)
+  })
+
+  it('avviser en søkeforespørsel mot en tjeneste Antidep ikke kaller', () => {
+    expect(
+      handoffResultProblem(task('source_discovery'), {
+        ...resultFor('source_discovery'),
+        search_requests: [{ rationale: 'Trenger et bredere søk.', platform: 'Et internt arkiv' }],
+      }),
+    ).toMatch(/platform/)
+  })
+
+  it('avviser en søketerm som ikke har formen en søkestreng kan bære', () => {
+    expect(
+      handoffResultProblem(task('source_discovery'), {
+        ...resultFor('source_discovery'),
+        search_requests: [{ rationale: 'Synonymsøk.', query_terms: ['sertralin" OR alt annet'] }],
+      }),
+    ).toMatch(/query_terms/)
+  })
+
+  it('avviser et virkestoffsynonym som ikke har formen en søkestreng kan bære', () => {
+    expect(
+      handoffResultProblem(task('source_discovery'), {
+        ...resultFor('source_discovery'),
+        search_requests: [{ rationale: 'Engelsk navn.', drug_aliases: ['sertraline" OR alt'] }],
+      }),
+    ).toMatch(/drug_aliases/)
+  })
+
+  it('godtar en søkeforespørsel med virkestoffsynonymer', () => {
+    expect(
+      handoffResultProblem(task('source_discovery'), {
+        ...resultFor('source_discovery'),
+        search_requests: [
+          {
+            rationale: 'Det engelske navnet er ikke søkt ennå.',
+            strategy: 'targeted',
+            drug_aliases: ['sertraline'],
+          },
+        ],
+      }),
+    ).toBeNull()
+  })
+
+  it('lar ikke kontrollen erklære sin egen uavhengighet', () => {
+    const result = resultFor('source_quality_assessment')
+    const control = result['control'] as Record<string, unknown>
+
+    expect(
+      handoffResultProblem(task('source_quality_assessment'), {
+        ...result,
+        control: { ...control, searched_independently: true },
+      }),
+    ).toMatch(/erklærer selv at den søkte uavhengig/)
   })
 
   it('avviser feil type i kontrollens boolske felt før databaseskriving', () => {
@@ -273,9 +369,47 @@ describe('kilde- og monografisvar', () => {
     expect(
       handoffResultProblem(task('source_quality_assessment'), {
         ...result,
-        control: { ...control, searched_independently: 'ja' },
+        control: { ...control, materiality_assessed: 'ja' },
       }),
-    ).toMatch(/searched_independently.*sann\/usann/)
+    ).toMatch(/materiality_assessed.*sann\/usann/)
+  })
+
+  it('lar ikke kontrollen be om flere motsøk og avgjøre i det samme svaret', () => {
+    const result = resultFor('source_quality_assessment')
+
+    expect(
+      handoffResultProblem(task('source_quality_assessment'), {
+        ...result,
+        search_requests: [{ rationale: 'Trenger et motsøk i et forsøksregister.' }],
+      }),
+    ).toMatch(/ber om flere søk og avgjør/)
+  })
+
+  it('krever at en kontrollrunde enten avgjør eller ber om flere motsøk', () => {
+    const result = { ...resultFor('source_quality_assessment') }
+    delete result['control']
+
+    expect(handoffResultProblem(task('source_quality_assessment'), result)).toMatch(
+      /verken avgjør dekningen eller ber om flere motsøk/,
+    )
+  })
+
+  it('godtar en kontrollrunde som bare ber om flere motsøk', () => {
+    const result = { ...resultFor('source_quality_assessment') }
+    delete result['control']
+
+    expect(
+      handoffResultProblem(task('source_quality_assessment'), {
+        ...result,
+        search_requests: [
+          {
+            rationale: 'Et målrettet motsøk mot forsøksregistre mangler.',
+            strategy: 'targeted',
+            query_terms: ['trial registry'],
+          },
+        ],
+      }),
+    ).toBeNull()
   })
 
   it('avviser structured_value som ikke er et objekt', () => {

@@ -12,11 +12,13 @@
 //
 //    1. en redaktør bestiller monografien for ett virkestoff
 //    2. dekningskartet finnes: alle 80 spørsmålsmalene har konkrete behov
-//    3. kildeoppdagelsen henter oppgaven sin, søker og svarer — med utførte
-//       søk, kandidatkilder, hva hver av dem kan brukes til, og et forslag om
-//       en ny utfallsverdi
-//    4. den separate kontrollen av søkedekningen henter *sin* oppgave og
-//       avgjør om begrunnelsen for å avslutte holder
+//    3. Antideps egen kode utfører den maskinelle søkerunden planen åpnet, og
+//       registrerer hvert søk med endepunkt og responsavtrykk — og først da
+//       finnes den semantiske vurderingsoppgaven
+//    4. kildeoppdagelsen henter oppgaven sin, vurderer de maskinelt funne
+//       kandidatene, og foreslår en ny utfallsverdi; deretter utfører Antidep
+//       dekningskontrollens EGNE motsøk, og kontrollen avgjør om begrunnelsen
+//       for å avslutte holder
 //    5. redaktøren aksepterer utfallsverdien, og behovet forgrenes
 //    6. redaktøren velger kilden, og innhentingen går videre av seg selv:
 //       kilden opprettes, og fullteksten etterspørres i én samlet forespørsel
@@ -75,19 +77,32 @@ const SAMPLE = 'Forty-eight sertraline-treated patients completed the trial and 
 const RESULT =
   'Mean percent weight change was 1.0% at endpoint with a 95% confidence interval from 0.5% to 1.5%.'
 
-/** Legitimasjonene de to deterministiske kontrolleddene handler med. */
-function credentials(): { readonly extraction: string; readonly claim: string } {
+/**
+ * Legitimasjonene Antideps egne deterministiske ledd handler med.
+ *
+ * De to kontrolleddene, og — fra migrasjon 013v — de to kildeleddenes
+ * maskinelle søk. Kildeoppdagelsen og dekningskontrollen har hver sin, og det
+ * er ikke ryddighet: identiteten autentiseres for *rollen* sin, og et motsøk
+ * registrert under generatorens nøkkel ville blitt ført som generatorens eget
+ * søk. Da ville kontrollens uavhengighet vært en formulering framfor en rad.
+ */
+function credentials(): {
+  readonly extraction: string
+  readonly claim: string
+  readonly discovery: string
+  readonly coverage: string
+} {
+  const issue = (identity: string): string =>
+    psql(
+      config,
+      `select provenance.issue_agent_identity_credential(
+         ${q(identity)}, 'human:peder-holman')`,
+    )
   return {
-    extraction: psql(
-      config,
-      `select provenance.issue_agent_identity_credential(
-         'agent-identity:extraction-verification-01', 'human:peder-holman')`,
-    ),
-    claim: psql(
-      config,
-      `select provenance.issue_agent_identity_credential(
-         'agent-identity:citation-support-verification-01', 'human:peder-holman')`,
-    ),
+    extraction: issue('agent-identity:extraction-verification-01'),
+    claim: issue('agent-identity:citation-support-verification-01'),
+    discovery: issue('agent-identity:source-discovery-01'),
+    coverage: issue('agent-identity:source-quality-assessment-01'),
   }
 }
 
@@ -260,6 +275,52 @@ function jobForTemplate(role: string, template: string): string {
      order by j.enqueued_at, j.id
      limit 1`,
   )
+}
+
+/** Søkeplanen som dekker en bestemt spørsmålsmal, med sin åpne maskinelle runde. */
+function planForTemplate(template: string): string {
+  return psql(
+    config,
+    `select p.reference
+     from workflow.monograph_search_plans p
+     join workflow.monograph_search_plan_needs pn on pn.plan_id = p.id
+     join knowledge.monograph_needs n on n.id = pn.need_id
+     join knowledge.monograph_question_templates t on t.id = n.template_id
+     where t.code = ${q(template)} and p.closed_at is null and p.paused_at is null
+     order by p.created_at
+     limit 1`,
+  )
+}
+
+/** Den åpne søkerunden for én plan og ett kildeledd. */
+// Sporene runden kan erklære, skåret mot det søkeveien faktisk er registrert
+// for. Runden bærer hele kildeprofilens obligatoriske spor; Europe PMC dekker
+// bare det bibliografiske. Uten skjæringen ville prøveløpet erklært spor den
+// virkelige kjøringen aldri kan produsere — og bestått på det (migrasjon 013x).
+function openSearchRequest(
+  planReference: string,
+  role: string,
+  platform: string,
+): { readonly reference: string; readonly tracks: readonly string[] } {
+  const row = psql(
+    config,
+    `select r.reference || '|' || array_to_string(array(
+       select code from unnest(r.track_codes) as t(code)
+       where code in (select sp.track_code
+                      from knowledge.monograph_search_platforms sp
+                      where sp.platform = ${q(platform)})), ',')
+     from workflow.monograph_search_requests r
+     join workflow.monograph_search_plans p on p.id = r.plan_id
+     where p.reference = ${q(planReference)}
+       and r.requested_for_role = ${q(role)}
+       and r.state in ('pending', 'unavailable')
+     order by r.created_at desc
+     limit 1`,
+  ).split('|')
+  return {
+    reference: row[0] ?? '',
+    tracks: (row[1] ?? '').split(',').filter((code) => code.length > 0),
+  }
 }
 
 async function main(): Promise<void> {
@@ -443,14 +504,152 @@ async function main(): Promise<void> {
   )
 
   // --------------------------------------------------------------------
-  // 3. Kildeoppdagelsen
+  // 3. Den maskinelle søkefasen, som kommer FØR den semantiske vurderingen
   // --------------------------------------------------------------------
   // MN29 spør om vekt og appetitt, og gjentas på utfallsaksen. Planen som
   // dekker den, er derfor den prøven trenger for å gå hele veien til et
   // forskningssvar: et forskningsfunn må ha et navngitt endepunkt å
   // kontrolleres mot.
+  //
+  // Fra migrasjon 013v finnes ingen semantisk oppgave før Antideps egen kode
+  // har søkt. Dette er nettopp den rekkefølgen som manglet i produksjon: den
+  // autonome agenten fikk en oppgave som krevde databasesøk, og frigjorde den
+  // — helt korrekt — fordi ingen av Antideps fem verktøy kan søke.
+  check(
+    'ingen semantisk kildeoppgave finnes før søkene er utført',
+    jobForTemplate('source_discovery', 'MN29').length === 0,
+  )
+
+  const planRef = planForTemplate('MN29')
+  check('søkeplanen for spørsmålet finnes', planRef.length === 32)
+
+  const machineRound = openSearchRequest(planRef, 'source_discovery', 'Europe PMC')
+  check(
+    'og den har åpnet sin egen maskinelle søkerunde',
+    machineRound.reference.length === 32 && machineRound.tracks.length > 0,
+  )
+
+  const discoveryRun = String(
+    await call(control, 'begin_agent_run', {
+      p_identity_key: 'agent-identity:source-discovery-01',
+      p_secret: secrets.discovery,
+      p_agent_role: 'source_discovery',
+      p_provider: 'antidep',
+      p_model: 'search-execution-and-registration',
+      p_model_version: '1.0.0',
+      p_prompt_template_version: 'source-discovery/machine-execution/2',
+      p_pipeline_version: 'antidep-evidence/1',
+      p_input_manifest: { search_plan_reference: planRef, mode: 'machine_executed' },
+    }),
+  )
+
+  // Ett søk som gikk, og ett som ikke nådde fram. De er to forskjellige
+  // opplysninger, og begge skal kunne registreres (SOURCE_POLICY.md §8.2).
+  await call(control, 'record_monograph_machine_search', {
+    p_identity_key: 'agent-identity:source-discovery-01',
+    p_secret: secrets.discovery,
+    p_agent_run_id: discoveryRun,
+    p_plan_reference: planRef,
+    p_request_reference: machineRound.reference,
+    p_platform: 'Europe PMC',
+    p_query_string: '"sertralin" AND ("vektendring")',
+    p_filters: 'pageSize=25',
+    p_endpoint: 'https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=sertralin',
+    p_response_digest: `sha256:${'a'.repeat(64)}`,
+    p_outcome: 'executed',
+    p_result_count: 2,
+    p_screened_count: 2,
+    p_truncated: false,
+    p_truncation_note: null,
+    p_limitation_note: null,
+    p_track_codes: machineRound.tracks,
+    p_candidates: [
+      {
+        identifier_kind: 'doi',
+        identifier_value: DOI,
+        title: ARTICLE_TITLE,
+        authors_or_issuer: 'Testforfatter A, Testforfatter B',
+        publisher_or_journal: 'Journal of Synthetic Trials',
+        publication_year: 2024,
+        discovery_path: 'Europe PMC, søk gjennom det åpne REST-endepunktet',
+        access_limited: false,
+      },
+    ],
+  })
+
+  await call(control, 'record_monograph_machine_search', {
+    p_identity_key: 'agent-identity:source-discovery-01',
+    p_secret: secrets.discovery,
+    p_agent_run_id: discoveryRun,
+    p_plan_reference: planRef,
+    p_request_reference: machineRound.reference,
+    p_platform: 'PubMed',
+    p_query_string: 'sertraline[tiab] AND (weight OR appetite)',
+    p_filters: null,
+    p_endpoint: 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed',
+    // Ingen responsavtrykk: tjenesten svarte ikke i det hele tatt, og et
+    // avtrykk av ingenting ville vært et oppdiktet bevis.
+    p_response_digest: null,
+    p_outcome: 'unavailable',
+    p_result_count: null,
+    p_screened_count: 0,
+    p_truncated: false,
+    p_truncation_note: null,
+    p_limitation_note: 'Søkeveien svarte ikke i denne kjøringen.',
+    p_track_codes: machineRound.tracks,
+    p_candidates: null,
+  })
+
+  const closed = record(
+    await call(control, 'close_monograph_search_request', {
+      p_identity_key: 'agent-identity:source-discovery-01',
+      p_secret: secrets.discovery,
+      p_agent_run_id: discoveryRun,
+      p_request_reference: machineRound.reference,
+    }),
+  )
+  check('runden er utført fordi minst ett søk faktisk gikk', closed['state'] === 'fulfilled')
+  check(
+    'og lukkingen er det som legger den semantiske vurderingsoppgaven i køen',
+    closed['enqueued_job'] === true,
+  )
+  // Avgrenset til søkene en maskinell runde faktisk bestilte. Påstanden «alle
+  // rader i loggen er maskinelt utført» var sann bare fordi dette løpet ikke
+  // registrerer en redaktørpassering — den er ikke lenger en invariant i
+  // systemet, og en prøve som hevder den, ville blitt feil i det øyeblikket
+  // løpet ble utvidet (migrasjon 013y).
+  check(
+    'søkene en maskinell runde bestilte, står i loggen som Antideps egen, maskinelt bekreftede utførelse',
+    psql(
+      config,
+      `select distinct execution_evidence::text from workflow.monograph_searches
+       where search_request_id is not null`,
+    ) === 'machine_executed',
+  )
+  check(
+    'en søkevei som ikke svarte, er lagret som en begrensning og ikke som null treff',
+    psql(
+      config,
+      `select outcome::text || '|' || coalesce(result_count::text, 'ingen')
+       from workflow.monograph_searches where platform = 'PubMed'`,
+    ) === 'unavailable|ingen',
+  )
+
+  const candidateRef = psql(
+    config,
+    `select c.reference from workflow.monograph_candidate_sources c
+     where c.identifier_value = ${q(DOI)}`,
+  )
+  check('kandidatkilden søket ga, er registrert med sin identitet', candidateRef.length === 32)
+
+  // --------------------------------------------------------------------
+  // 4. Den semantiske vurderingen av det maskinen hentet
+  // --------------------------------------------------------------------
   const discoveryJob = jobForTemplate('source_discovery', 'MN29')
-  check('kildeoppdagelsen har fått en oppgave av databasen selv', discoveryJob.length > 0)
+  check(
+    'kildeoppdagelsen har fått vurderingsoppgaven sin av databasen selv',
+    discoveryJob.length > 0,
+  )
   if (discoveryJob.length === 0) return
 
   const discoveryTask = parseAgentTask(
@@ -463,6 +662,14 @@ async function main(): Promise<void> {
       taskFile.includes('### Når søket kan avsluttes') &&
       !taskFile.includes('forventet svar'),
   )
+  check(
+    'den bærer de maskinelt utførte søkene, med endepunkt og responsavtrykk',
+    taskFile.includes('### Søkene Antidep har utført') && taskFile.includes('responsavtrykk'),
+  )
+  check(
+    'og den ber agenten vurdere, ikke søke: dette er hele rettelsen',
+    taskFile.includes('Du utfører ingen søk') && taskFile.includes('### Søk du kan be om'),
+  )
 
   const taskNeeds = rows(discoveryTask.input['needs'])
   check('oppgaven navngir de behovene søket skal dekke', taskNeeds.length > 0)
@@ -471,45 +678,14 @@ async function main(): Promise<void> {
       '',
   )
 
-  // Sporene oppgaven faktisk krever. En kode som ikke står der, er ikke et
-  // obligatorisk spor for denne kildeprofilen, og databasen avviser den.
-  const tracks = rows(discoveryTask.input['required_tracks']).map((row) =>
-    String(row['code'] ?? ''),
-  )
-  check('oppgaven sier hvilke søkespor som er obligatoriske', tracks.length > 0)
-
   const discoveryResult = {
-    searches: [
-      {
-        platform: 'Europe PMC',
-        query_string: '"sertralin" AND ("vektendring" OR "weight")',
-        filters: 'pageSize=25',
-        outcome: 'executed',
-        result_count: 2,
-        screened_count: 2,
-        truncated: false,
-        track_codes: tracks,
-      },
-      {
-        platform: 'PubMed',
-        query_string: 'sertraline[tiab] AND (weight OR appetite)',
-        outcome: 'zero_results',
-        result_count: 0,
-        screened_count: 0,
-        truncated: false,
-        track_codes: tracks,
-      },
-    ],
-    candidates: [
+    candidate_appraisals: [
       {
         identifier_kind: 'doi',
         identifier_value: DOI,
-        title: ARTICLE_TITLE,
-        authors_or_issuer: 'Testforfatter A, Testforfatter B',
-        publisher_or_journal: 'Journal of Synthetic Trials',
-        publication_year: 2024,
-        discovery_path: 'Europe PMC, søk i monografiprøven',
-        access_limited: false,
+        // Ingen `decision` her: kilden står som «proposed» til redaktøren
+        // velger den til innhenting i steg 6. Utvalget er en avgjørelse med sitt
+        // eget opphav, og vurderingen her er vesentligheten og bruken.
         could_change_conclusion: true,
         materiality_reason: 'Rapporterer utfallet behovet spør om, i den avgrensede populasjonen.',
         uses: [
@@ -521,6 +697,7 @@ async function main(): Promise<void> {
         ],
       },
     ],
+    search_requests: [],
     term_proposals: [
       {
         axis: 'outcome',
@@ -529,45 +706,109 @@ async function main(): Promise<void> {
         from_need: firstNeed,
       },
     ],
-    note: null,
+    note: 'PubMed svarte ikke i denne runden; begrensningen står.',
   }
+
+  // Et svar som rapporterer utførte søk, avvises. Det er den ene regelen hele
+  // omleggingen hviler på: et ledd som ikke utfører søk, skal ikke ha en vei
+  // til å hevde at det gjorde det.
+  const påstått = await rejected(editor, 'import_agent_answer', {
+    p_pipeline_job_id: discoveryJob,
+    p_answer: answerFor(
+      discoveryTask,
+      {
+        ...discoveryResult,
+        searches: [
+          {
+            platform: 'PubMed',
+            query_string: 'sertraline[tiab]',
+            outcome: 'executed',
+            result_count: 9,
+          },
+        ],
+      },
+      serviceFor('source_discovery'),
+    ),
+  })
+  check(
+    'et modellrapportert søk kan ikke fremstilles som maskinelt bekreftet utførelse',
+    påstått.includes('rapporterer utførte søk'),
+    påstått,
+  )
 
   await call(editor, 'import_agent_answer', {
     p_pipeline_job_id: discoveryJob,
     p_answer: answerFor(discoveryTask, discoveryResult, serviceFor('source_discovery')),
   })
 
-  const searchCount = psql(
-    config,
-    `select count(*)::text from workflow.monograph_searches s
-     join workflow.monograph_search_plans p on p.id = s.plan_id
-     join knowledge.monograph_editions e on e.id = p.edition_id
-     where e.reference = ${q(edition)}`,
-  )
-  check('søkene står i loggen, med sin egen utførelsesform', searchCount === '2')
   check(
-    'og de er registrert som agentens egen beretning, ikke som maskinelt bekreftet',
-    psql(config, `select distinct execution_evidence::text from workflow.monograph_searches`) ===
-      'agent_reported',
-  )
-  check(
-    'et utført nullsøk er lagret som et nullsøk, ikke som en utilgjengelig søkevei',
+    'vesentligheten er registrert som den semantiske vurderingen den er',
     psql(
       config,
-      `select outcome::text from workflow.monograph_searches where platform = 'PubMed'`,
-    ) === 'zero_results',
+      `select could_change_conclusion from workflow.monograph_candidate_sources c
+       where c.identifier_value = ${q(DOI)}`,
+    ) === 't',
   )
 
-  const candidateRef = psql(
-    config,
-    `select c.reference from workflow.monograph_candidate_sources c
-     where c.identifier_value = ${q(DOI)}`,
+  // --------------------------------------------------------------------
+  // 4b. Dekningskontrollens egne, separat utførte motsøk
+  // --------------------------------------------------------------------
+  const controlRound = openSearchRequest(planRef, 'source_quality_assessment', 'Europe PMC')
+  check(
+    'det registrerte vurderingssvaret åpnet dekningskontrollens egen motsøkerunde',
+    controlRound.reference.length === 32,
   )
-  check('kandidatkilden er registrert med sin identitet', candidateRef.length === 32)
+  check(
+    'og motsøket kan ikke dekke generatorens obligatoriske søkespor',
+    controlRound.tracks.length === 0,
+  )
+  check(
+    'kontrolloppgaven finnes ikke før motsøkene er utført',
+    jobForTemplate('source_quality_assessment', 'MN29').length === 0,
+  )
 
-  // --------------------------------------------------------------------
-  // 4. Den separate kontrollen av søkedekningen
-  // --------------------------------------------------------------------
+  const coverageRun = String(
+    await call(control, 'begin_agent_run', {
+      p_identity_key: 'agent-identity:source-quality-assessment-01',
+      p_secret: secrets.coverage,
+      p_agent_role: 'source_quality_assessment',
+      p_provider: 'antidep',
+      p_model: 'coverage-control-registration',
+      p_model_version: '1.0.0',
+      p_prompt_template_version: 'source-coverage/machine-countersearch/1',
+      p_pipeline_version: 'antidep-evidence/1',
+      p_input_manifest: { search_plan_reference: planRef, mode: 'machine_executed' },
+    }),
+  )
+
+  await call(control, 'record_monograph_machine_search', {
+    p_identity_key: 'agent-identity:source-quality-assessment-01',
+    p_secret: secrets.coverage,
+    p_agent_run_id: coverageRun,
+    p_plan_reference: planRef,
+    p_request_reference: controlRound.reference,
+    p_platform: 'Crossref',
+    p_query_string: '"sertralin" AND "vektendring"',
+    p_filters: 'rows=25',
+    p_endpoint: 'https://api.crossref.org/works?query=sertralin',
+    p_response_digest: `sha256:${'b'.repeat(64)}`,
+    p_outcome: 'zero_results',
+    p_result_count: 0,
+    p_screened_count: 0,
+    p_truncated: false,
+    p_truncation_note: null,
+    p_limitation_note: null,
+    p_track_codes: [],
+    p_candidates: null,
+  })
+
+  await call(control, 'close_monograph_search_request', {
+    p_identity_key: 'agent-identity:source-quality-assessment-01',
+    p_secret: secrets.coverage,
+    p_agent_run_id: coverageRun,
+    p_request_reference: controlRound.reference,
+  })
+
   const controlJob = jobForTemplate('source_quality_assessment', 'MN29')
   check('den separate dekningskontrollen har fått sin egen oppgave', controlJob.length > 0)
   if (controlJob.length === 0) return
@@ -575,9 +816,38 @@ async function main(): Promise<void> {
   const controlTask = parseAgentTask(
     await call(editor, 'agent_task_payload', { p_pipeline_job_id: controlJob }),
   )
+  const controlFile = renderAgentTaskFile(controlTask)
   check(
-    'kontrolloppgaven ber om egne motsøk, ikke bare om generatorens referanser',
-    renderAgentTaskFile(controlTask).includes('Rapporter dine egne motsøk'),
+    'kontrolloppgaven bærer kontrollens egne motsøk, atskilt fra generatorens',
+    controlFile.includes('Dine egne, maskinelt utførte motsøk') &&
+      controlFile.includes('Generatorens egne søk, til sammenligning'),
+  )
+  check(
+    'og uavhengigheten er maskinelt utført framfor erklært',
+    controlFile.includes('maskinelt utført og ikke erklært'),
+  )
+
+  // En erklæring om egen uavhengighet er ikke lenger en opplysning svaret gir.
+  const erklært = await rejected(editor, 'import_agent_answer', {
+    p_pipeline_job_id: controlJob,
+    p_answer: answerFor(
+      controlTask,
+      {
+        candidate_appraisals: [],
+        control: {
+          outcome: 'accepted',
+          note: 'Motsøket ga ingen oversette kilder.',
+          searched_independently: true,
+          materiality_assessed: true,
+        },
+      },
+      serviceFor('source_quality_assessment'),
+    ),
+  })
+  check(
+    'kontrollen kan ikke erklære sin egen uavhengighet',
+    erklært.includes('erklærer selv at den søkte uavhengig'),
+    erklært,
   )
 
   await call(editor, 'import_agent_answer', {
@@ -585,22 +855,10 @@ async function main(): Promise<void> {
     p_answer: answerFor(
       controlTask,
       {
-        searches: [
-          {
-            platform: 'Cochrane Library',
-            query_string: 'sertraline AND weight',
-            outcome: 'executed',
-            result_count: 1,
-            screened_count: 1,
-            truncated: false,
-            track_codes: tracks,
-          },
-        ],
-        candidates: [],
+        candidate_appraisals: [],
         control: {
           outcome: 'accepted',
           note: 'Eget motsøk i et uavhengig spor ga ingen oversette kilder, og eksklusjonene er gjennomgått.',
-          searched_independently: true,
           missed_candidates: 0,
           exclusions_checked: 0,
           materiality_assessed: true,
@@ -613,6 +871,10 @@ async function main(): Promise<void> {
   check(
     'dekningskontrollen er registrert med sitt eget ledd og sin egen modell',
     psql(config, `select count(*)::text from workflow.monograph_coverage_controls`) === '1',
+  )
+  check(
+    'og raden bærer at kontrollen faktisk søkte selv — utledet av søkeloggen',
+    psql(config, `select searched_independently from workflow.monograph_coverage_controls`) === 't',
   )
 
   // --------------------------------------------------------------------

@@ -37,8 +37,8 @@ eget resultat — og registreringsleddet, som er Antideps egen kode per ledd
 
 | Ledd                        | Hva det avgjør                                        |
 | --------------------------- | ----------------------------------------------------- |
-| `source_discovery`          | Planlegger søket og foreslår kilder og utvidelser.    |
-| `source_quality_assessment` | Kontrollerer søkedekningen — med **egne** motsøk.     |
+| `source_discovery`          | Vurderer de maskinelt utførte søkene, velger kilder, og ber om flere søk. |
+| `source_quality_assessment` | Kontrollerer søkedekningen på sine **egne**, separat utførte motsøk. |
 | `evidence_extraction`       | Henter opplysningene ut av fullteksten.               |
 | `claim_synthesis`           | Formulerer påstanden for ett kunnskapsbehov.          |
 | `evidence_assessment`       | Graderer grunnlaget.                                  |
@@ -46,9 +46,52 @@ eget resultat — og registreringsleddet, som er Antideps egen kode per ledd
 
 To ledd er Antideps egen deterministiske kode og kan **ikke** settes ut til en
 modell: `search-execution-and-registration` (som faktisk utfører søkene) og
-svarkontrollen. Det er derfor et søk Antidep utførte selv, bærer et responsavtrykk,
-mens et søk en agent *rapporterer*, er lagret som agentens egen beretning — de to
+svarkontrollen. Et søk Antidep utførte selv, bærer endepunktet og et
+responsavtrykk; en agents beretning om et verktøykall gjør det ikke, og de to
 blandes ikke.
+
+Og et tredje ledd er menneskets. De søkeveiene Antidep faktisk kaller — Europe
+PMC, PubMed og Crossref — dekker bare det bibliografiske søkesporet. Hva hver
+søkevei kan dekke, er registrert i `knowledge.monograph_search_platforms`, og
+et søk kan ikke erklære et spor søkeveien ikke står oppført for. De øvrige
+obligatoriske sporene per kildeprofil har derfor ingen maskinell utfører: de
+føres som `no_machine_path` når planen lages, teller aldri som dekning, og
+navngis av stoppkravet framfor å bli stående som «ikke forsøkt ennå». En
+redaktør utfører søket og registrerer passeringen med
+`api.record_monograph_track_by_editor(...)`: hvor det ble søkt, med hvilken
+streng, når og hvor mange treff det ga, som en egen rad i søkeloggen med
+`editor_recorded` som utførelsesbevis. Sporet knyttes til nøyaktig den raden, og
+begge bærer hvem som gjorde det.
+Ingen av de tre leddene kan gjøre den andres arbeid, og ingen av dem kan late
+som (migrasjon 013x).
+
+**Ingen av de seks leddene utfører nettverkskall, og ingen av dem kan.** Den
+autonome kjøreren har Antidep-appens fem verktøy og ikke ett til, og ingen av
+dem søker. Fram til migrasjon 013v ba `source_discovery`-oppgaven likevel om
+faktiske databasesøk — en motsigelse som ble prøvd i drift, der agenten
+frigjorde oppgaven med `could_not_complete` framfor å dikte opp søk. Den er
+rettet ved å gjøre arbeidsdelingen til én ting:
+
+1. `npm run ops:discovery` utfører søkerunden planen åpnet, og registrerer hvert
+   søk med endepunkt, søkestreng, treffantall og responsavtrykk.
+2. Først da finnes den semantiske oppgaven. Porten er
+   `workflow.monograph_search_phase_problem(...)`, og køen, uttaket og importen
+   leser den samme.
+3. Agenten vurderer de registrerte søkene og kandidatene, og ber om flere eller
+   mer målrettede søk som strukturerte søkeforespørsler.
+4. Kjøringen utfører dem, og agenten får neste vurderingsrunde. Budsjettet er
+   fire runder per planversjon; et oppbrukt budsjett setter planen på pause som
+   åpent, ventende arbeid — aldri som en konklusjon om evidensen.
+
+Dekningskontrollen får sin egen maskinelle motsøkerunde, kjørt under **dens**
+rolle og kjøring og med en annen strategi enn generatorens: målrettede
+passeringer per akse der generatoren søkte bredt. `searched_independently`
+utledes av søkeloggen og kan ikke lenger erklæres i svaret — en erklæring et
+svar kan bestå ved å skrive den, kontrollerer ingenting.
+
+En søkevei som ikke svarte, registreres som den begrensningen den er, prøves på
+nytt, og holder ingenting tilbake: en tjeneste som er nede, skal ikke kunne
+stanse arbeidet for alltid.
 
 ChatGPT henter arbeid gjennom den private MCP-appen
 ([CHATGPT_WORKSPACE_AGENT.md](CHATGPT_WORKSPACE_AGENT.md)): fem verktøy, ingen
@@ -71,16 +114,19 @@ utgaven av dette dokumentet gjorde, og den er den sanne: plattformen viser
 normalt ikke hvilken modell en Workspace Agent kjører, så Antidep kunne uansett
 aldri kontrollere at to oppgitte navn var to modeller.
 
-De to driftskommandoene som faktisk utfører søk og innhenting:
+De driftskommandoene som faktisk utfører søk og innhenting:
 
 ```
-npm run ops:discovery      # kjører søkene mot Europe PMC, PubMed og Crossref
-npm run ops:acquire        # henter originalmateriale der det er åpent tilgjengelig
+npm run ops:discovery                    # kildeoppdagelsens egne søk
+npm run ops:discovery -- --leg coverage  # dekningskontrollens egne motsøk
+npm run ops:acquire                      # henter originalmateriale der det er åpent tilgjengelig
 ```
 
-Begge leser legitimasjonen sin fra miljøet, og begge registrerer gjennom de
-kontrollerte skriveveiene. `ANTIDEP_WEB_SMOKE=1 npm run db:test:web-smoke` viser
-at de virker mot de ekte tjenestene.
+Alle leser legitimasjonen sin fra miljøet, og alle registrerer gjennom de
+kontrollerte skriveveiene. Ingen av dem startes for hånd i drift: søkene kjøres
+planlagt av `.github/workflows/monograph-discovery.yml` to ganger i timen, med
+ett steg per kildeledd. `ANTIDEP_WEB_SMOKE=1 npm run db:test:web-smoke` viser at
+de virker mot de ekte tjenestene.
 
 ## 3. Hvor piloten inspiseres
 
@@ -148,6 +194,11 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
   annet navn om seg selv — eller ingen. De maskinelt utførte søkene
   (`npm run ops:discovery`) trenger ingen semantisk tildeling i det hele tatt —
   de kjører på kildeoppdagelsens registreringsidentitet, som migrasjonen seedet.
+- **Kildeleddenes legitimasjon i drift.** `ANTIDEP_DISCOVERY_AGENT_*` og
+  `ANTIDEP_COVERAGE_AGENT_*` må ligge som repository secrets for at de
+  maskinelle søkene skal gå av seg selv. Mangler de, avslutter det planlagte
+  steget grønt med en advarsel — og da står søkefasen, og den semantiske
+  oppgaven kommer aldri, fordi den ikke skal komme før søkene er gjort.
 - **Agentlegitimasjon.** Hvert kontrolledd har en egen identitet som er *inert*
   til legitimasjonen utstedes i det miljøet kjøreren leser hemmeligheten fra
   (`scripts/issue-agent-credential.sh`).
@@ -188,7 +239,7 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
 ## 7. Prøvene som viser at flyten virker
 
 ```
-npm run db:test                       # 79 filer, 2993 databaseprøver
+npm run db:test                       # 80 filer, databaseprøvene
 npm run db:test:monograph             # hele forløpet, fersk base
 npm run db:test:monograph:upgrade     # samme forløp oppå en base med innhold
 npm run test                          # flatene og modulene

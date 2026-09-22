@@ -342,7 +342,9 @@ select is_empty(
         -- authenticated på funksjonsnivå, med hele autorisasjonen i databasen.
         -- Kontrolleres i 860_monograph_discovery_test.sql.
         'api.monograph_discovery_work(text,text)',
-        'api.record_monograph_machine_search(text,text,uuid,text,text,text,text,text,text,text,integer,integer,boolean,text,text,text[],jsonb)',
+        'api.record_monograph_machine_search(text,text,uuid,text,text,text,text,text,text,text,text,integer,integer,boolean,text,text,text[],jsonb)',
+        'api.close_monograph_search_request(text,text,uuid,text)',
+        'api.record_monograph_track_by_editor(text,text,text,text,text,text,text,timestamp with time zone,integer,integer,boolean,text,jsonb,text)',
         'api.monograph_search_plans(text)',
         'api.close_monograph_search_plan(text,text)',
         'api.pause_monograph_search_plan(text,text)',

@@ -27,6 +27,9 @@ export const TEST_REVISION_ID = '78000000-0000-4000-8000-0000000000c9'
 export const TEST_SEARCH_PLAN_ID = '78000000-0000-4000-8000-0000000000a9'
 export const TEST_NEED_REFERENCE = 'abcdef0123456789abcdef0123456789'
 
+/** Kandidatkilden de maskinelle søkene i prøvematerialet ga. */
+export const TEST_CANDIDATE_DOI = '10.1000/syntetisk-oversikt'
+
 export const TEST_CONTENT_HASH = `sha256:${'9'.repeat(64)}`
 
 /** Den syntetiske «artikkelen» ekstraksjonsoppgaven inneholder. */
@@ -90,20 +93,18 @@ export function taskPayload(
     source_discovery: {
       search_plan_id: TEST_SEARCH_PLAN_ID,
       plan_version: 1,
+      discovery_round: 1,
       profile_code: 'EFF',
       scope_digest: `sha256:${'c'.repeat(64)}`,
       need_ids: [TEST_OUTCOME_ID],
-      searches_seen: 0,
-      candidates_seen: 0,
     },
     source_quality_assessment: {
       search_plan_id: TEST_SEARCH_PLAN_ID,
       plan_version: 1,
+      control_round: 1,
       profile_code: 'EFF',
       scope_digest: `sha256:${'c'.repeat(64)}`,
       need_ids: [TEST_OUTCOME_ID],
-      searches_seen: 1,
-      candidates_seen: 1,
     },
     monograph_answer: {
       monograph_need_id: TEST_OUTCOME_ID,
@@ -114,10 +115,67 @@ export function taskPayload(
     },
   }[role]
 
+  const machineSearch = {
+    platform: 'Europe PMC',
+    query: '"testmiddel" AND ("vektendring")',
+    filters: 'pageSize=25',
+    outcome: 'executed',
+    result_count: 12,
+    screened_count: 12,
+    truncated: false,
+    truncation_note: null,
+    limitation_note: null,
+    endpoint: 'https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=testmiddel',
+    response_digest: `sha256:${'e'.repeat(64)}`,
+    execution_evidence: 'machine_executed',
+    tracks: ['bibliographic_database'],
+    executed_at: '2026-09-15T09:00:00Z',
+    run_role: 'source_discovery',
+  }
+
+  // En passering et menneske utførte, for et søkespor Antidep ikke har en
+  // maskinell vei til. Den hører ikke sammen med maskinens egne kall, og
+  // oppgaven skal si hva den er (migrasjon 014a).
+  const editorSearch = {
+    platform: 'ClinicalTrials.gov',
+    query: 'testmiddel AND depressive disorder',
+    filters: 'status=all',
+    outcome: 'executed',
+    result_count: 3,
+    screened_count: 3,
+    truncated: false,
+    truncation_note: null,
+    execution_evidence: 'editor_recorded',
+    tracks: ['trial_registries'],
+    executed_at: '2026-09-16T11:00:00Z',
+    screening_note: null,
+    candidates_recorded: 1,
+  }
+
+  const machineCandidate = {
+    identifier_kind: 'doi',
+    identifier_value: TEST_CANDIDATE_DOI,
+    title: 'Syntetisk oversikt om testmiddel og vektendring',
+    authors_or_issuer: 'Testforfatter',
+    publisher_or_journal: 'Syntetisk tidsskrift',
+    publication_year: 2025,
+    discovery_path: 'Europe PMC, søk gjennom det åpne REST-endepunktet',
+    found_by_platform: 'Europe PMC',
+    decision: 'proposed',
+    decision_reason: null,
+    access_limited: false,
+    access_limitation_note: null,
+    could_change_conclusion: false,
+    materiality_reason: null,
+    uses: [],
+  }
+
   const discoveryMaterial = {
     search_plan_id: TEST_SEARCH_PLAN_ID,
     plan_reference: 'a'.repeat(32),
     plan_version: 1,
+    search_round: 1,
+    rounds_remaining: 3,
     drug: 'testmiddel',
     standard_version: '1.0.0',
     source_profile: {
@@ -141,18 +199,29 @@ export function taskPayload(
       {
         code: 'bibliographic_database',
         label: 'PubMed/MEDLINE eller et tilsvarende bibliografisk søk',
-        state: 'pending',
+        state: 'covered',
         note: null,
       },
     ],
-    searches_so_far: [],
-    candidates_so_far: [],
+    machine_searches: [machineSearch],
+    editor_searches: [editorSearch],
+    search_limitations: [],
+    candidates: [machineCandidate],
+    search_request_options: {
+      platforms: ['Europe PMC', 'PubMed', 'Crossref'],
+      strategies: ['broad', 'targeted'],
+      max_terms: 8,
+      rounds_remaining: 3,
+    },
     closure_criteria: {
-      outstanding: 'Disse obligatoriske søkesporene er ikke forsøkt ennå: PubMed/MEDLINE.',
+      outstanding:
+        'Den separate kontrollen av søkedekningen er ikke utført for denne planversjonen.',
       requirements: ['Hvert obligatorisk søkespor må være forsøkt og dokumentert.'],
       not_sufficient: ['At tre artikler er funnet.'],
     },
-    rules: ['En foreslått søkestreng er ikke et utført søk.'],
+    rules: [
+      'Søkene i denne oppgaven er utført av Antideps egen kode, mot navngitte offentlige søketjenester.',
+    ],
   }
 
   const material = {
@@ -230,8 +299,23 @@ export function taskPayload(
       ...discoveryMaterial,
       control_task: {
         instruction: 'Kontroller søkedekningen.',
-        own_search_required: true,
-        own_search_rule: 'Rapporter dine egne motsøk i «searches».',
+        own_search_rule:
+          'Uavhengigheten din er maskinelt utført og ikke erklært: Antidep har kjørt motsøkene under din egen rolle og din egen kjøring.',
+        independent_search_confirmed: true,
+        own_countersearches: [
+          {
+            platform: 'Crossref',
+            query: '"testmiddel" AND "vektendring"',
+            outcome: 'executed',
+            result_count: 3,
+            screened_count: 3,
+            truncated: false,
+            limitation_note: null,
+            endpoint: 'https://api.crossref.org/works?query=testmiddel',
+            response_digest: `sha256:${'f'.repeat(64)}`,
+          },
+        ],
+        generator_searches: [machineSearch],
         excluded_candidates: [],
         unresolved_candidates: [],
       },
@@ -392,31 +476,10 @@ export function resultFor(role: HandoffRole): Record<string, unknown> {
   }
   if (role === 'source_discovery') {
     return {
-      searches: [
-        {
-          platform: 'Europe PMC',
-          query_string: 'testmiddel AND weight change AND systematic review',
-          filters: 'ingen språk- eller årsavgrensning',
-          outcome: 'executed',
-          result_count: 12,
-          screened_count: 12,
-          truncated: false,
-          truncation_note: null,
-          limitation_note: null,
-          track_codes: ['bibliographic_database'],
-        },
-      ],
-      candidates: [
+      candidate_appraisals: [
         {
           identifier_kind: 'doi',
-          identifier_value: '10.1000/syntetisk-oversikt',
-          title: 'Syntetisk oversikt om testmiddel og vektendring',
-          authors_or_issuer: 'Testforfatter',
-          publisher_or_journal: 'Syntetisk tidsskrift',
-          publication_year: 2025,
-          discovery_path: 'Oversiktssøk i Europe PMC',
-          access_limited: false,
-          access_limitation_note: null,
+          identifier_value: TEST_CANDIDATE_DOI,
           could_change_conclusion: false,
           materiality_reason: null,
           decision: 'selected_for_retrieval',
@@ -429,8 +492,9 @@ export function resultFor(role: HandoffRole): Record<string, unknown> {
           ],
         },
       ],
+      search_requests: [],
       term_proposals: [],
-      note: null,
+      note: 'De utførte søkene dekker det bibliografiske sporet.',
     }
   }
   if (role === 'monograph_answer') {
@@ -453,25 +517,11 @@ export function resultFor(role: HandoffRole): Record<string, unknown> {
   }
   if (role === 'source_quality_assessment') {
     return {
-      searches: [
-        {
-          platform: 'PubMed',
-          query_string: 'testmiddel[tiab] AND (weight OR appetite)',
-          filters: null,
-          outcome: 'zero_results',
-          result_count: 0,
-          screened_count: 0,
-          truncated: false,
-          truncation_note: null,
-          limitation_note: null,
-          track_codes: ['bibliographic_database'],
-        },
-      ],
-      candidates: [],
+      candidate_appraisals: [],
+      search_requests: [],
       control: {
         outcome: 'accepted',
-        note: 'Eget motsøk i et uavhengig spor ga ingen oversette kilder, og eksklusjonene er gjennomgått.',
-        searched_independently: true,
+        note: 'Motsøkene ga ingen oversette kilder, og eksklusjonene er gjennomgått.',
         missed_candidates: 0,
         exclusions_checked: 1,
         materiality_assessed: true,

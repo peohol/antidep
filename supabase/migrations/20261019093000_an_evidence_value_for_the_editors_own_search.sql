@@ -1,0 +1,39 @@
+-- ---------------------------------------------------------------------------
+-- Migrasjon 013y — utførelsesbeviset for søket redaktøren selv gjorde
+--
+-- Som 013w gjør denne migrasjonen én ting: den legger verdien til. PostgreSQL
+-- nekter å *bruke* en enumverdi i den transaksjonen som la den til, og verdien
+-- brukes av formkontrollen på `workflow.monograph_searches` i 013z. Derfor
+-- ligger den alene, slik den må.
+--
+-- Hvorfor verdien trengs
+--
+-- `workflow.monograph_execution_evidence` hadde to verdier: `agent_reported`
+-- (agentens egen beretning om et verktøykall) og `machine_executed` (Antideps
+-- eget kall, med endepunkt og responsavtrykk som bevis).
+--
+-- 013x ga redaktøren en vei til å avklare de obligatoriske søkesporene ingen
+-- registrert søkevei dekker. Men veien knyttet bare sporet til den *siste*
+-- søkepasseringen på planen, uansett hvilket spor den raden gjaldt. Et manuelt
+-- oversiktssøk i Epistemonikos kunne dermed bli ført som dekket ved å peke på
+-- et tidligere Europe PMC-søk. Søkeloggen ville da sagt at sporet var dekket av
+-- en passering som aldri gjaldt det — og SOURCE_POLICY.md §4.3 krever nettopp
+-- plattform, eksakt søkestreng, filtre, tidspunkt og treffantall for det
+-- utførte søket.
+--
+-- Og for de profilene som ikke har ett eneste maskinelt utførbart spor — REG,
+-- PROD og SYN — fantes det ingen vei i det hele tatt: stoppkravet krever at
+-- minst ett søk faktisk har gått, og ingen maskinell passering kommer noen gang
+-- til å gå for dem.
+--
+-- Begge deler løses av det samme: redaktørens passering må være en egen, sann
+-- rad i søkeloggen. Men den kan ikke være `machine_executed` — Antidep utførte
+-- den ikke, og den har verken endepunkt eller responsavtrykk å vise til. Og den
+-- kan ikke være `agent_reported` — det var ingen agent, og ingen kjøring.
+--
+-- En tredje verdi er derfor ikke en oppmykning av skillet, men en skjerping:
+-- uten den måtte en ærlig menneskelig passering ha lånt et navn som løy om
+-- hvem som utførte den.
+-- ---------------------------------------------------------------------------
+
+alter type workflow.monograph_execution_evidence add value if not exists 'editor_recorded';

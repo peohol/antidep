@@ -80,12 +80,16 @@ Generator, kildestøttekontroll og evidensvurdering er reelt separate — på ro
 ## Drift
 
 ```sh
-npm run ops:full-text   # Antideps eget tekstuttrekk av opplastede fulltekster
-npm run ops:controls    # ekstraksjonskontrollen og kildestøttekontrollen
-npm run ops:agents      # modelltildeling, kjøreroppsett og recovery-handoff
+npm run ops:full-text                    # Antideps eget tekstuttrekk av opplastede fulltekster
+npm run ops:controls                     # ekstraksjonskontrollen og kildestøttekontrollen
+npm run ops:discovery                    # de maskinelle monografisøkene
+npm run ops:discovery -- --leg coverage  # dekningskontrollens egne motsøk
+npm run ops:agents                       # modelltildeling, kjøreroppsett og recovery-handoff
 ```
 
-De to første kjøres planlagt av GitHub Actions hvert kvarter — `.github/workflows/full-text-extraction.yml` på en maskin der `pdftotext` er installert, og `.github/workflows/deterministic-controls.yml` med hvert kontrolledds egen legitimasjon. Ingen starter dem for hånd; kommandoene over er de samme kjøringene, tilgjengelige for feilsøking. `npm run ops:agents` kjøres av Claude Code eller ChatGPT ved behov. Ingen av dem er en klinikeroppgave, og ingen av dem finnes i produkt-UI.
+De tre første kjøres planlagt av GitHub Actions — `.github/workflows/full-text-extraction.yml` hvert kvarter på en maskin der `pdftotext` er installert, `.github/workflows/deterministic-controls.yml` hvert kvarter med hvert kontrolledds egen legitimasjon, og `.github/workflows/monograph-discovery.yml` to ganger i timen med ett steg per kildeledd. Ingen starter dem for hånd; kommandoene over er de samme kjøringene, tilgjengelige for feilsøking. `npm run ops:agents` kjøres av Claude Code eller ChatGPT ved behov. Ingen av dem er en klinikeroppgave, og ingen av dem finnes i produkt-UI.
+
+**Søket er Antideps kode, vurderingen er modellens.** Ingen av de seks agentleddene utfører nettverkskall, og ingen av dem har verktøy til det: den autonome kjøreren har Antidep-appens fem verktøy og ikke ett til. Kildeoppdagelsen og dekningskontrollen får derfor de maskinelt utførte søkene i oppgaven sin — med endepunkt, søkestreng, treffantall og responsavtrykk — og vurderer dem; trenger de flere, ber de om dem som strukturerte søkeforespørsler, og kjøringen utfører dem før neste vurderingsrunde. Rekkefølgen er en port i databasen: en semantisk kildeoppgave finnes ikke før søkene er gjort.
 
 Selve _overgangene_ mellom leddene er databasens egne og ikke kjøreplanens: et registrert evidensfunn legger ekstraksjonskontrollen i køen, en bekreftet kontroll legger neste semantiske ledd i køen, og en registrert evidensvurdering forsegler kandidaten — alt i den samme transaksjonen som skrev raden foran. Står en kjøring, blir arbeidet stående i kø; det blir aldri borte, og det blir aldri en menneskeoppgave.
 

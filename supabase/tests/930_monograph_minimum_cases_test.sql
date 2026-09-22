@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(22);
+select plan(23);
 
 -- ===========================================================================
 -- Del 1 — Bestillingen
@@ -350,12 +350,22 @@ insert into koen (label, antall)
 select 'oppdagelse-for', count(*)::integer from workflow.pipeline_jobs j
 where j.agent_role = 'source_discovery';
 insert into koen (label, antall)
+select 'sokerunder', count(*)::integer from workflow.monograph_search_requests r
+where r.requested_for_role = 'source_discovery' and r.state = 'pending';
+insert into koen (label, antall)
 select 'svar-for', count(*)::integer from workflow.pipeline_jobs j
 where j.agent_role = 'monograph_answer';
 
+-- Migrasjon 013v: bestillingen åpner de maskinelle søkerundene, ikke den
+-- semantiske vurderingsoppgaven. Rekkefølgen er en port: Antideps egen kode
+-- søker først, og vurderingen legges i køen av runden som faktisk ble utført.
 select cmp_ok(
-  (select antall from koen where label = 'oppdagelse-for'), '>', 0,
-  'bestillingen la søkeoppgaver i køen av seg selv'
+  (select antall from koen where label = 'sokerunder'), '>', 0,
+  'bestillingen åpnet de maskinelle søkerundene av seg selv'
+);
+select is(
+  (select antall from koen where label = 'oppdagelse-for'), 0,
+  'og ingen semantisk kildeoppgave finnes før søkene er utført: den ville krevd søke-I/O agenten ikke har verktøy til'
 );
 
 alter table knowledge.monograph_source_uses disable trigger monograph_source_uses_enqueue_answer;
