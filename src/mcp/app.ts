@@ -46,7 +46,13 @@ import {
   type JsonRpcRequest,
 } from './json-rpc.ts'
 import { consoleRunnerLogger, type RunnerLogger } from './logging.ts'
-import { judgeOrigin, originPolicy, type OriginVerdict } from './origin.ts'
+import {
+  judgeOrigin,
+  loggableOrigin,
+  opaqueIsAllowed,
+  originPolicy,
+  type OriginVerdict,
+} from './origin.ts'
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   META_CLIENT_CAPABILITIES,
@@ -944,12 +950,17 @@ export async function handleMcpRequest(
     originPolicy({ baseUrl, allowedOrigins: deps.allowedOrigins }),
   )
 
+  // En ugjennomsiktig opprinnelse avgjøres av ruten, ikke av mengden: den er
+  // ingen adresse og kan ikke listes opp. Se `opaqueIsAllowed`.
+  const barred =
+    verdict.kind === 'forbidden' || (verdict.kind === 'opaque' && !opaqueIsAllowed(route))
+
   let response: Response
   let tool: string | undefined
   let outcome: RunnerOutcome | 'auth_failed' | 'bad_request' = 'ok'
 
   try {
-    if (verdict.kind === 'forbidden') {
+    if (barred) {
       outcome = 'bad_request'
       response = forbiddenOrigin(route)
     } else if (request.method === 'OPTIONS') {
@@ -1020,6 +1031,11 @@ export async function handleMcpRequest(
 
   logger({
     route,
+    // En navngitt, tillatt opprinnelse er ikke noe å feilsøke, og loggen bærer
+    // ikke et felt den ikke trenger. Alt annet navngis — også den
+    // ugjennomsiktige som slapp inn, for uten den linjen ville ingen sett at
+    // tilkoblingen faktisk kom den veien.
+    origin: loggableOrigin(verdict),
     tool,
     outcome,
     status: response.status,

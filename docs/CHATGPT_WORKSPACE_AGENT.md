@@ -193,6 +193,9 @@ først i steg 4.
    registrerer seg selv (RFC 7591) og bruker PKCE.
 5. Appen legger seg under **Drafts** i appinnstillingene.
 
+Tilkoblingen krever ingen miljøvariabel. Møter du en 403 her, se
+feilsøkingsoppføringen for 403-setningen og «Drift» nederst.
+
 Developer mode er stedet du *prøver* tilkoblingen. Den er ikke den autonome
 veien: der krever hver ny samtale en ny godkjenning av skrivehandlinger. Se
 avsnittet «Godkjenning av skrivehandlinger» under.
@@ -389,6 +392,21 @@ Ser du ingen rader i det hele tatt, har ingen planlagt kjøring nådd fram. Prø
 appen i developer mode først; da ser du om det er tilkoblingen eller tidsplanen
 som mangler.
 
+**«Forespørselen kom fra en opprinnelse Antidep ikke slipper inn» (403).**
+Opprinnelseskontrollen avviste forespørselen før autentiseringen. Serverloggen
+navngir hva som ble avvist, i feltet `origin` på linjen med
+`"outcome":"bad_request"`:
+
+| `origin` i loggen | Hva det betyr                                                                                                          |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| en adresse        | Klienten står på den adressen, og ingen har listet den opp. Legg den i `ANTIDEP_MCP_ALLOWED_ORIGINS` og rull ut på nytt. |
+| `ugjennomsiktig`  | En sandkasset kontekst uten adresse, på en annen rute enn `/oauth/authorize`. Den skal ikke nå verktøyflaten.            |
+| `ugyldig`         | Verdien var ikke en adresse i det hele tatt.                                                                             |
+| `for-lang`        | Adressen var lengre enn noen adresse et oppsett bruker.                                                                  |
+
+Står det `ugjennomsiktig` på `authorize`, kjører utrullingen kode fra før
+unntaket i punkt 4 under «Drift». Rull ut på nytt.
+
 ## Drift
 
 MCP-appen deployes med resten av Antidep og trenger to verdier: adressen til
@@ -409,14 +427,43 @@ mangler. Det er med vilje: det er der en MCP-klient leser hvor den skal
 autentisere seg, og en utrulling som svarte «500» på alt, ville ikke fortalt
 noen hvorfor.
 
-`ANTIDEP_MCP_ALLOWED_ORIGINS` er også valgfri, og er tom i det vanlige
-oppsettet. Tre ting slipper gjennom opprinnelseskontrollen uten at noen setter
-den: en forespørsel uten `Origin` (som er den planlagte kjøringen), appens egen
-adresse over https (som er tilkoblingssiden som poster skjemaet sitt til seg
-selv) og loopback (som er utviklingsoppsettet og MCP-inspektøren). Skal en
-nettleserklient på en annen adresse kalle appen, listes den opp der, atskilt med
-komma. En ugyldig verdi stopper appen ved oppstart framfor å bli et hull ingen
-oppdager.
+`ANTIDEP_MCP_ALLOWED_ORIGINS` er valgfri, og er tom i det vanlige oppsettet —
+ChatGPT-oppsettet medregnet. Fire ting slipper gjennom opprinnelseskontrollen
+uten at noen setter den:
+
+1. En forespørsel uten `Origin`. Det er den planlagte kjøringen, som er
+   tjener-til-tjener.
+2. Appens egen adresse over https. Det er tilkoblingssiden som poster skjemaet
+   sitt til seg selv.
+3. Loopback — utviklingsoppsettet og MCP-inspektøren.
+4. Den ugjennomsiktige opprinnelsen `null`, **og bare på `/oauth/authorize`**.
+   Det er tilkoblingen fra ChatGPT web: klienten viser tilkoblingssiden i en
+   sandkasset kontekst, og en slik kontekst har ingen adresse å oppgi — den
+   sender det ene ordet `null`. Den kan ikke listes opp i variabelen, og skal
+   ikke kunne det: `null` er ikke en adresse, og ville vært den samme for
+   enhver sandkasse på ethvert nettsted.
+
+**Punkt 4 legger ikke til noe en angriper ikke allerede kunne.** En forespørsel
+_helt uten_ `Origin` slipper allerede inn overalt, så nøyaktig den samme
+forespørselen kan sendes fra en hvilken som helst tjener. Kontrollen finnes
+fordi en nettleserforespørsel kan bære legitimasjon avsenderen ikke selv har —
+cookies, en pålogget økt, en lokal tjener som stoler på maskinen sin. Denne
+appen har ingen av delene: ingen cookie, ingen økt og ingen påloggingstilstand.
+Alt `/oauth/authorize` kan gjøre, krever engangskoden et menneske med
+redaktørmandat nettopp har hentet, og uten den koden svarer ruten det samme til
+alle. En sandkasse har dessuten ingen legitimasjon å bære: en ugjennomsiktig
+opprinnelse har verken cookies eller lager hos oss.
+
+Unntaket er tilkoblingssidens, og ingen andres. `/mcp`, `/oauth/token` og
+`/oauth/register` avviser `null` som før — verktøyflaten bærer et token, og i
+utviklingsoppsettet står appen på maskinen selv, som er nettopp der DNS
+rebinding lever.
+
+Skal en nettleserklient på en **navngitt** adresse kalle appen, listes den opp i
+variabelen, atskilt med komma. Et jokertegn finnes ikke, og skal ikke lages. En
+ugyldig verdi stopper appen ved oppstart framfor å bli et hull ingen oppdager,
+og verdien leses ved oppstart, så en utrulling må gjøres på nytt etter at den er
+endret.
 
 **Tilkoblingssiden har to grenser som bare finnes i nettleseren, og begge må
 være sanne om den ene veien siden faktisk skal ta.** Ingen av dem kan prøves av
