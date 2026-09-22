@@ -48,6 +48,7 @@ import {
   asOptionalText,
   asOptionalVocabulary,
   asText,
+  asUuid,
   asVocabulary,
   fieldsOf,
   nestedFields,
@@ -358,6 +359,30 @@ function optionalObject(fields: Fields, key: string): Record<string, unknown> | 
   return value as Record<string, unknown>
 }
 
+function isCalendarDate(value: string): boolean {
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) {
+    return false
+  }
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
+function requiredDate(fields: Fields, key: string): string {
+  const value = asText(fields, key)
+  if (!isCalendarDate(value)) {
+    problem(fields.subject, `${fields.where}.${key}`, 'er ikke en gyldig dato på formen ÅÅÅÅ-MM-DD')
+  }
+  return value
+}
+
+function optionalDate(fields: Fields, key: string): string | null {
+  const value = asOptionalText(fields, key)
+  if (value !== null && !isCalendarDate(value)) {
+    problem(fields.subject, `${fields.where}.${key}`, 'er ikke en gyldig dato på formen ÅÅÅÅ-MM-DD')
+  }
+  return value
+}
+
 function monographAnswerProblem(result: Record<string, unknown>): string | null {
   const fields = fieldsOf(result, RESULT_SUBJECT, 'utkastet')
   const answer = nestedFields(fields, raw(fields, 'answer'), 'answer')
@@ -367,19 +392,19 @@ function monographAnswerProblem(result: Record<string, unknown>): string | null 
   optionalObject(answer, 'structured_value')
   asOptionalText(answer, 'uncertainty_summary')
   asOptionalText(answer, 'limitation_note')
-  asText(answer, 'as_of')
+  requiredDate(answer, 'as_of')
   asText(answer, 'source_quote')
   asText(answer, 'source_locator')
   asOptionalText(answer, 'recommending_body')
-  asOptionalText(answer, 'recommendation_date')
+  optionalDate(answer, 'recommendation_date')
 
   const additionalSources = optionalArray(answer, 'additional_sources')
   additionalSources.forEach((value, index) => {
     const source = nestedFields(answer, value, `answer.additional_sources[${String(index)}]`)
-    asText(source, 'source_version_id')
+    asUuid(source, 'source_version_id')
     asText(source, 'source_quote')
     asText(source, 'source_locator')
-    asText(source, 'as_of')
+    requiredDate(source, 'as_of')
     rejectUnknown(source)
   })
 
