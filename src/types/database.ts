@@ -888,6 +888,11 @@ export type Database = {
           p_screened_count?: string | null
           p_truncated?: boolean | null
           p_truncation_note?: string | null
+          // Migrasjon 014a: ga passeringen treff, må den bære kildene den fant
+          // eller si hva gjennomgangen ga. Uten de to her kunne en typesjekket
+          // klient ikke bruke veien basen krever for et positivt manuelt søk.
+          p_candidates?: unknown[] | null
+          p_screening_note?: string | null
         }
         Returns: unknown
       }

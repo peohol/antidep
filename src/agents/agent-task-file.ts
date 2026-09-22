@@ -119,10 +119,13 @@ const ASSESSMENT_RULES = `Reglene, i prioritert rekkefølge:
 const DISCOVERY_ROLE = `Du er kildeoppdagelsesleddet i Antidep, et klinisk oppslagsverk om
 antidepressiver.
 
-Antidep har allerede SØKT. Søkene er utført av Antideps egen kode mot navngitte
-offentlige søketjenester, og de ligger i denne oppgaven med endepunkt,
-søkestreng, treffantall og et fingeravtrykk av svaret. Du har ikke utført dem,
-og du skal ikke skrive som om du hadde.
+Antidep har allerede SØKT. Søkene ligger i denne oppgaven, og de er av to slag.
+De maskinelt utførte er Antideps egen kode mot navngitte offentlige
+søketjenester, med endepunkt, søkestreng, treffantall og et fingeravtrykk av
+svaret. De redaktørregistrerte er passeringer et menneske utførte, for
+søkespor Antidep ikke har en maskinell vei til — de har verken endepunkt eller
+fingeravtrykk, og det er ikke en mangel ved dem: det er hva de er. Du har ikke
+utført noen av delene, og du skal ikke skrive som om du hadde.
 
 Oppgaven din er den semantiske: å lese de registrerte søkene og kandidatkildene,
 vurdere hvilke av dem som er relevante og hva de kan brukes til for hvilket
@@ -136,7 +139,9 @@ om søkedekningen er god nok: det er en egen, uavhengig kontroll.`
 
 const DISCOVERY_RULES = `Reglene, i prioritert rekkefølge:
 
-1. Søkene i oppgaven er maskinelt utførte. Ikke gjenta dem som dine egne, ikke
+1. Søkene i oppgaven er utført av andre enn deg: Antideps kode eller en
+   redaktør. Oppgaven sier om hvert av dem hvem som utførte det, og de to skal
+   ikke omtales som det samme. Ikke gjenta noen av dem som dine egne, ikke
    rapporter søk, og ikke skriv at du har vært i en database. Svaret ditt har
    ikke noe felt for utførte søk, og det er med vilje.
 2. Vurder bare de kandidatkildene som står i oppgaven. En kilde du kjenner fra
@@ -175,6 +180,13 @@ Dine egne motsøk er ALLEREDE UTFØRT. Antideps kode har kjørt dem under din ro
 og din kjøring, med en annen søkestrategi enn generatorens — målrettede
 passeringer der generatoren søkte bredt — nettopp for at de skal kunne finne det
 generatoren overså. De ligger i oppgaven, atskilt fra generatorens søk.
+
+Generatorens side er av to slag, og oppgaven holder dem fra hverandre: de
+maskinelt utførte søkene Antideps kode kjørte, med endepunkt og fingeravtrykk,
+og de redaktørregistrerte passeringene et menneske utførte for søkespor Antidep
+ikke har en maskinell vei til. De siste har verken endepunkt eller fingeravtrykk,
+og det er ikke en mangel ved dem: det er hva de er. Dekningen du vurderer,
+hviler på begge.
 
 Oppgaven din er å motprøve: vurdere hva dine egne motsøk faktisk ga, kontrollere
 de sentrale eksklusjonene, vurdere om de uavklarte kildene med rimelighet kan
@@ -231,7 +243,7 @@ const SHARED_BOUNDARIES = [
 // annet materiale — med ett tillegg: de kan be om flere søk.
 const DISCOVERY_BOUNDARIES = [
   'Du skal bare bruke det som står i denne filen. Ikke søk på nettet, ikke kall et verktøy utenfor Antidep, og ikke fyll inn fra hukommelsen.',
-  'Du utfører ingen søk. Søkene i oppgaven er Antideps egne, maskinelt utførte og registrert med endepunkt og responsavtrykk. Trenger du flere, ber du om dem i «search_requests».',
+  'Du utfører ingen søk. Søkene i oppgaven er utført av andre: Antideps egen kode, maskinelt og registrert med endepunkt og responsavtrykk, eller en redaktør, som en passering Antidep bare har registrert. Oppgaven sier om hvert søk hvem som utførte det. Trenger du flere, ber du om dem i «search_requests».',
   'En kilde som ikke står i oppgaven, er ikke funnet av et søk. Ikke skriv den inn: be om søket som ville funnet den.',
   'Ikke publiser noe, og ikke gi klinisk veiledning. Svaret ditt er en vurdering som går gjennom en uavhengig kontroll før noe brukes.',
   'Ikke finn på verdier. Mangler en opplysning, la feltet stå tomt framfor å gjette; en gjettet opplysning ser like troverdig ut som en sann.',

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 // ============================================================================
 // Kildeleddene skal kunne gjøre jobben sin med Antideps fem verktøy
 //
@@ -193,5 +195,76 @@ describe.each(KILDELEDD)('proveniensen i oppgaven til %s', (role) => {
   it('og ber agenten om ikke å rapportere noen av dem som sine egne', () => {
     const redaktør = file.slice(file.indexOf('### Søkepasseringene en redaktør utførte'))
     expect(redaktør).toMatch(/skal\s+ikke\s+rapportere dem som dine egne/)
+  })
+
+  // Materialbolken var riktig før denne prøven fantes; rollen, reglene og
+  // grensene sa fortsatt «søkene i oppgaven er maskinelt utførte». En oppgave
+  // med et redaktørsøk sa dermed begge deler, og motsigelsen sto i det leddet
+  // agenten leser først. Kontrollen gjelder derfor hele den rendrede oppgaven.
+  it('sier ingen steder i hele oppgaven at alle søkene er maskinelt utførte', () => {
+    expect(file).not.toMatch(/[Ss]økene i oppgaven er (Antideps egne, )?maskinelt utførte/)
+    expect(file).not.toMatch(/Søkene er utført av Antideps egen kode mot/)
+  })
+
+  it('og sier i stedet, der agenten leser først, at søkene er av to slag', () => {
+    // Rollen og grensene er det agenten leser før materialet. Begge må bære
+    // skillet, ellers er materialdelen en rettelse av noe oppgaven alt har
+    // slått fast.
+    const rolle = file.slice(0, file.indexOf('### Obligatoriske søkespor'))
+    expect(rolle).toMatch(/maskinelt utførte/)
+    expect(rolle).toMatch(/redaktørregistrerte/)
+    expect(file).toMatch(/Oppgaven sier om hvert søk hvem som utførte det/)
+  })
+})
+
+// ============================================================================
+// Kontrakten mot databasen, og driften som passerte tre ganger
+//
+// `api.record_monograph_track_by_editor` fikk parametre i tre omganger. To av
+// gangene ble `src/types/database.ts` liggende igjen på den forrige formen, og
+// ingenting merket det: TypeScript kontrollerer at et *kall* passer typen, ikke
+// at typen passer databasen. En typesjekket klient kunne dermed ikke bruke
+// veien basen krever — og CI var grønn.
+//
+// Denne prøven leser signaturen ut av migrasjonen og krever at de to sidene
+// sier det samme.
+// ============================================================================
+describe('RPC-signaturen mot migrasjonen', () => {
+  const MIGRASJON =
+    'supabase/migrations/20261019095000_the_editors_findings_and_honest_provenance.sql'
+
+  /** Parameternavnene `create function` faktisk deklarerer. */
+  function parametersInMigration(fn: string): readonly string[] {
+    const sql = readFileSync(MIGRASJON, 'utf8')
+    const start = sql.lastIndexOf(`create function ${fn}(`)
+    expect(start).toBeGreaterThan(-1)
+    const head = sql.slice(start, sql.indexOf('\n)\n', start))
+    return [...head.matchAll(/^\s{2}(p_[a-z_]+)\s/gm)].map((m) => m[1] as string)
+  }
+
+  /**
+   * Og navnene `Database` erklærer. Typen finnes bare ved kompilering, så
+   * påstanden må leses fra kilden — en `satisfies` ville sammenlignet typen med
+   * seg selv.
+   */
+  function parametersInType(fn: string): readonly string[] {
+    const ts = readFileSync('src/types/database.ts', 'utf8')
+    const start = ts.indexOf(`      ${fn}: {`)
+    expect(start).toBeGreaterThan(-1)
+    const block = ts.slice(start, ts.indexOf('Returns:', start))
+    return [...block.matchAll(/^\s+(p_[a-zA-Z_]+)\??:/gm)].map((m) => m[1] as string)
+  }
+
+  it('erklærer nøyaktig de parametrene databasen tar imot', () => {
+    const fn = 'api.record_monograph_track_by_editor'
+    expect(parametersInType('record_monograph_track_by_editor')).toEqual(parametersInMigration(fn))
+  })
+
+  it('og har med veien for kandidatene et manuelt søk fant', () => {
+    // Den konkrete driften funnet pekte på: uten disse to kan en typesjekket
+    // klient ikke registrere et positivt manuelt søk i det hele tatt.
+    const declared = parametersInType('record_monograph_track_by_editor')
+    expect(declared).toContain('p_candidates')
+    expect(declared).toContain('p_screening_note')
   })
 })
