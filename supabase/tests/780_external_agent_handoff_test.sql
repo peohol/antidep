@@ -7,6 +7,8 @@
 --     annet grunnlag kan ikke importeres,
 --   * svaret er data: ukjente felter avvises, og verdiene hentes ut av svaret,
 --   * modellidentiteten registreres, og to agentledd kan dele modell (013t),
+--   * modellnavnet er proveniens og ikke adgangskontroll: et svar som melder et
+--     annet modellnavn enn tildelingen, avvises ikke av den grunn (013u),
 --   * en ikke-eksponert versjon er kanonisk, slik at to ukjente er én modell,
 --   * det samme svaret sendt inn igjen lager ingen doble kliniske artefakter,
 --   * og kildeteksten er like privat som originalfilen.
@@ -263,8 +265,13 @@ select 'chatgpt', jsonb_build_object(
   'job_key', t.payload ->> 'job_key',
   'request_digest', t.payload ->> 'request_digest',
   'output_schema_version', t.payload ->> 'output_schema_version',
+  -- Regresjon (013u): leddet er tildelt «GPT-5 Thinking», og svaret melder
+  -- «GPT-5». Det er nøyaktig det som skjedde i drift — plattformen viser en
+  -- Workspace Agent menynavnet og ikke modellvekten — og begge utsagnene er
+  -- sanne. Svaret skal registreres, ikke avvises: et navn modellen skriver selv,
+  -- er ingen grense (ANTIDEP_CONSTITUTION.md regel 3).
   'identity', jsonb_build_object(
-    'provider', 'openai', 'model', 'GPT-5 Thinking',
+    'provider', 'openai', 'model', 'GPT-5',
     'model_version_disclosure', 'not_exposed'),
   'answered_at', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
   'result', jsonb_build_object(
@@ -363,12 +370,25 @@ select is(
   'kjøringen er bundet til nettopp det uttaket importen tok'
 );
 
+-- Den semantiske proveniensen er tildelingen — hvor arbeidet ble satt ut — og
+-- ikke navnet svaret meldte om seg selv. Svaret sa «GPT-5»; kjøringen står med
+-- den attesterte tildelingen (013u).
 select is(
   (select format('%s/%s/%s', r.semantic_provider, r.semantic_model, r.semantic_model_version)
    from provenance.agent_runs r
    where r.id = (select (payload ->> 'agent_run_id')::uuid from res where label = 'imported')),
   'openai/GPT-5 Thinking/ikke-eksponert',
-  'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet'
+  'kjøringen bærer den tjenesten leddet er satt ut til'
+);
+
+-- Selvutsagnet går ikke tapt, men det står som det er: agentens eget ord, og
+-- ikke som den attesterte proveniensen.
+select is(
+  (select r.input_manifest -> 'handoff' -> 'self_reported_identity' ->> 'model'
+   from provenance.agent_runs r
+   where r.id = (select (payload ->> 'agent_run_id')::uuid from res where label = 'imported')),
+  'GPT-5',
+  'agentens eget ord om seg selv tas vare på, merket som nettopp det'
 );
 
 select is(
@@ -470,19 +490,11 @@ select throws_ok(
   'en erklæring om en eksakt versjon uten versjon avvises framfor å bli gjettet'
 );
 
-select throws_ok(
-  format(
-    $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
-    (select payload ->> 'pipeline_job_id' from res where label = 'job2'),
-    (select (payload || jsonb_build_object('identity', jsonb_build_object(
-       'provider', 'openai', 'model', 'GPT-5 Thinking',
-       'model_version', 'en annen build', 'model_version_disclosure', 'exact')))::text
-     from answers where label = 'for_job2')
-  ),
-  '22023',
-  null,
-  'en annen modellidentitet enn rollens registrerte avvises'
-);
+-- Her sto prøven av at «en annen modellidentitet enn rollens registrerte
+-- avvises». Den er borte med regelen (013u): et annet modellnavn er nå det
+-- normale, og det prøves ovenfor — svaret som ble registrert, meldte «GPT-5»
+-- mens leddet er tildelt «GPT-5 Thinking». Det som fortsatt kontrolleres på
+-- identiteten, er formen, og de to prøvene rundt denne er nettopp det.
 
 -- En versjon oppgitt sammen med «ikke eksponert» er en selvmotsigelse. Forkastet
 -- stille ville proveniensen sagt «ikke eksponert» mens svaret faktisk oppga en
@@ -551,22 +563,21 @@ select 'assigned_synthesis', api.assign_agent_role_model(
   'Prøve 780: en annen tjeneste for synteseleddet.',
   'Prøve 780: byttet bort fra den modellen ekstraksjonsleddet også bruker.');
 
--- Og identiteten kan ikke lånes: et ekstraksjonssvar som utgir seg for å være
--- den modellen synteseleddet er tildelt, avvises. Uten tildelingen på forhånd
--- var dette nettopp hullet — et svar kunne oppgitt hvilken modell som helst, og
--- proveniensen ville sagt det på modellens eget ord.
+-- Det som ikke kan lånes, er rollen. Et modellnavn kan et svar skrive hva som
+-- helst i — derfor er det heller ingen grense (013u) — men rollen er
+-- oppgavens, og et svar avgitt i en annen rolle enn den oppgaven gjelder,
+-- avvises. Det er den grensen som faktisk avgjør hva svaret får registrere
+-- (ANTIDEP_CONSTITUTION.md regel 3).
 select throws_ok(
   format(
     $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
     (select payload ->> 'pipeline_job_id' from res where label = 'job2'),
-    (select (payload || jsonb_build_object('identity', jsonb_build_object(
-       'provider', 'anthropic', 'model', 'Claude Opus',
-       'model_version_disclosure', 'not_exposed')))::text
+    (select (payload || jsonb_build_object('role', 'claim_synthesis'))::text
      from answers where label = 'for_job2')
   ),
   '22023',
   null,
-  'et svar som utgir seg for å være et annet ledds modell, avvises'
+  'et svar avgitt i en annen rolle enn oppgavens, avvises'
 );
 reset role;
 

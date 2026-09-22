@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(114);
+select plan(115);
 
 -- ===========================================================================
 -- Del 1 — Flaten
@@ -653,8 +653,12 @@ select 'runner', jsonb_build_object(
   'job_key', t.payload -> 'task' ->> 'job_key',
   'request_digest', t.payload -> 'task' ->> 'request_digest',
   'output_schema_version', t.payload -> 'task' ->> 'output_schema_version',
+  -- Regresjon (013u): leddet er tildelt «kjorer-modell-790», og kjøreren melder
+  -- det navnet plattformen viser den. Det er en annen streng, og begge er
+  -- sanne — en Workspace Agent får ikke vite hvilken modellvekt den kjører på.
+  -- Svaret skal registreres, ikke avvises.
   'identity', jsonb_build_object(
-    'provider', 'antidep-test', 'model', 'kjorer-modell-790',
+    'provider', 'antidep-test', 'model', 'menynavnet-agenten-ser',
     'model_version_disclosure', 'not_exposed'),
   'answered_at', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
   'result', jsonb_build_object(
@@ -717,16 +721,20 @@ select is(
 -- hva kjøreren sa. Fanget i leveringen er raden derimot skrevet av operasjonen
 -- som faktisk fant sted.
 --
--- Et svar fra en annen modell enn den leddet er tildelt, avvises før noe skrives.
+-- Et modellnavn som ikke er tildelingens, avvises IKKE lenger (013u) — det
+-- prøves av selve leveringen under. Det som fortsatt avvises, er et selvutsagn
+-- som motsier seg selv: «exact» uten en versjon er en usann proveniens uansett
+-- hvem som skrev den, og en gjettet versjon ville sett like troverdig ut som en
+-- sann (ANTIDEP_CONSTITUTION.md regel 4).
 select is(
   (select api.submit_agent_answer(
      (select payload ->> 'access_token' from res where label = 'tokens'),
      'https://antidep.example/mcp',
      (select (payload ->> 'task_handle')::uuid from res where label = 'claim'),
-     (select jsonb_set(payload, '{identity,model}', '"en-helt-annen-modell"')
+     (select jsonb_set(payload, '{identity,model_version_disclosure}', '"exact"')
       from answers where label = 'runner')) ->> 'reason'),
   'rejected',
-  'et svar fra en annen modell enn den tildelte, avvises'
+  'et selvutsagn som lover en eksakt versjon uten å ha en, avvises'
 );
 
 -- Og avvisningen står i sporet, skrevet av leveringen selv.
@@ -829,8 +837,9 @@ select is(
   'gjentatte leveringer gir aldri doble kliniske artefakter'
 );
 
--- Proveniensen bærer både registreringsidentiteten og den eksterne agenten som
--- faktisk gjorde arbeidet.
+-- Proveniensen bærer registreringsidentiteten og den tjenesten leddet er satt
+-- ut til. Svaret meldte et annet navn om seg selv, og det avgjorde ingenting:
+-- den semantiske proveniensen er den attesterte tildelingen (013u).
 select is(
   (select format('%s/%s', r.semantic_provider, r.semantic_model)
    from workflow.agent_handoff_imports i
@@ -838,7 +847,19 @@ select is(
    where i.pipeline_job_id = (select (payload ->> 'pipeline_job_id')::uuid
                               from res where label = 'task')),
   'antidep-test/kjorer-modell-790',
-  'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet'
+  'kjøringen bærer den tjenesten leddet er satt ut til'
+);
+
+-- Og kjørerens eget ord om seg selv går ikke tapt: det står i manifestet,
+-- merket som et selvutsagn.
+select is(
+  (select r.input_manifest -> 'handoff' -> 'self_reported_identity' ->> 'model'
+   from workflow.agent_handoff_imports i
+   join provenance.agent_runs r on r.id = i.agent_run_id
+   where i.pipeline_job_id = (select (payload ->> 'pipeline_job_id')::uuid
+                              from res where label = 'task')),
+  'menynavnet-agenten-ser',
+  'kjørerens eget ord om seg selv tas vare på, merket som nettopp det'
 );
 
 -- Og importen navngir kjøreren som leverte det, uten å gjøre den til aktør:

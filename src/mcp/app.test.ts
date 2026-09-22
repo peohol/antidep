@@ -530,6 +530,22 @@ describe('arbeidsgangen', () => {
     expect(gateway.submitted).toEqual([answer])
   })
 
+  // Regresjon (013u): et svar uten `identity` skal gjennom verktøyveien. En
+  // Workspace Agent får ikke vite hvilken modellvekt den kjører på, og den
+  // deterministiske forhåndskontrollen her skal ikke be den gjette — den skal
+  // ikke sammenligne et modellnavn i det hele tatt.
+  it('tar imot et svar uten noen selvrapportert runtime-modell', async () => {
+    const gateway = createFakeGateway()
+    await call(gateway, 'claim_agent_task')
+    const answer = answerFor('evidence_extraction', null)
+    const submitted = await call(gateway, 'submit_agent_answer', {
+      task_handle: FAKE_TASK_HANDLE,
+      answer,
+    })
+    expect(resultOf(submitted)['isError']).toBeUndefined()
+    expect(gateway.submitted).toEqual([answer])
+  })
+
   // Leveringen leser oppgaven én gang til for de deterministiske kontrollene,
   // fordi protokollen er tilstandsløs. Den lesningen er ikke et verktøykall, og
   // går derfor sin egen databasevei: et spor som sa `get_agent_task`, ville

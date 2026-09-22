@@ -1448,8 +1448,11 @@ async function main(): Promise<void> {
     if (imported.error !== null) return
     const importOutcome = parseImportOutcome(imported.data)
 
+    // Verdien er den samme på begge skjemaene filen kjøres mot: før 013u er den
+    // svarets egen identitet, kontrollert mot tildelingen, og etterpå er den
+    // tildelingen selv. Prøven sier derfor det som er sant begge steder.
     check(
-      'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet',
+      'kjøringen bærer den eksterne tjenesten leddet er satt ut til',
       psql(
         config,
         `select format('%s/%s/%s', r.semantic_provider, r.semantic_model, r.semantic_model_version)
@@ -1544,24 +1547,15 @@ async function main(): Promise<void> {
       synthesisModel.error?.message ?? '',
     )
 
-    // Og identiteten kan ikke lånes: et svar som utgir seg for å være det andre
-    // leddets modell, avvises. Uten tildelingen på forhånd var dette hullet —
-    // svaret selv etablerte premisset som autoriserte det.
-    const borrowed = await editor.rpc('import_agent_answer', {
-      p_pipeline_job_id: staleJobId,
-      p_answer: answerForStaleJob(
-        {
-          provider: 'antidep-test',
-          model: 'ekstern-kjedeagent-to',
-          model_version_disclosure: 'not_exposed',
-        },
-        staleTask.requestDigest,
-      ),
-    })
-    check(
-      'et svar som utgir seg for å være et annet ledds modell, avvises',
-      borrowed.error !== null,
-    )
+    // Her sto prøven av at et svar ikke kunne «låne» et annet ledds
+    // modellidentitet. Den er borte med regelen (013u): modellnavnet er
+    // proveniens og ikke adgangskontroll, og et svar avvises ikke lenger på
+    // navnet det oppgir om seg selv. Den kunne heller ikke stått igjen her av
+    // samme grunn som modelldelingsprøven over: filen kjøres mot to skjemaer, og
+    // utfallet ville vært forskjellig på dem. Det regelen faktisk binder svaret
+    // til — avtrykket — prøves rett over, og den prøven er den samme begge
+    // steder. At et annet modellnavn nå slipper gjennom, prøves i pgTAP mot en
+    // ferdig migrert base (780, 790 og 870).
 
     // Forhåndskontrollen i køen er importens egen: funnet handoffen nettopp
     // registrerte, er ikke kontrollert av noen ennå, og en syntese på det kunne

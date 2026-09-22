@@ -9,6 +9,8 @@
 --     klinisk konklusjon,
 --   * et svar registreres som agentrapportert utførelse, aldri som maskinelt
 --     bekreftet,
+--   * et svar uten noen selvrapportert runtime-modell registreres, fordi
+--     modellnavnet er proveniens og ikke adgangskontroll (013u),
 --   * et registrert søkesvar legger kontrolloppgaven i køen,
 --   * kontrollens erklæring om egne søk avvises uten et registrert eget søk,
 --   * en bruk for et behov utenfor oppgaven avvises,
@@ -21,7 +23,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(28);
+select plan(29);
 
 -- ===========================================================================
 -- Del 1 — Kontoene, bestillingen og modelltildelingene
@@ -174,9 +176,11 @@ select 'import', api.import_agent_answer(
     'job_key', (select payload ->> 'job_key' from svar where label = 'oppgave'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'oppgave'),
     'output_schema_version', 'antidep/source-discovery-draft@2',
-    'identity', jsonb_build_object(
-      'provider', 'prøve-870-a', 'model', 'Generatormodell 870',
-      'model_version_disclosure', 'not_exposed'),
+    -- Regresjon (013u): svaret har ingen identity i det hele tatt. Det er
+    -- nøyaktig det en ChatGPT Workspace Agent leverer — plattformen forteller
+    -- den ikke hvilken modell den er, og den skal ikke gjette. Svaret skal
+    -- registreres; den semantiske proveniensen er tildelingen, som er attestert
+    -- av en redaktør og ikke noe modellen kunne bestemt om seg selv.
     'result', jsonb_build_object(
       'searches', jsonb_build_array(jsonb_build_object(
         'platform', 'Europe PMC',
@@ -238,7 +242,14 @@ select is(
   (select r.semantic_model from provenance.agent_runs r
    where r.id = (select (payload ->> 'agent_run_id')::uuid from svar where label = 'import')),
   'Generatormodell 870',
-  'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet'
+  'kjøringen bærer den tjenesten leddet er satt ut til, også uten et selvutsagn'
+);
+select is(
+  (select r.input_manifest -> 'handoff' -> 'self_reported_identity'
+   from provenance.agent_runs r
+   where r.id = (select (payload ->> 'agent_run_id')::uuid from svar where label = 'import')),
+  'null'::jsonb,
+  'og «ingen selvrapportert modell» står som nettopp det, framfor å bli gjettet'
 );
 
 -- ===========================================================================

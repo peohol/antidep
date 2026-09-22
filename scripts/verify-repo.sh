@@ -74,14 +74,32 @@ reject_grep_matches \
 # Grunnen til at det er et repo-søk og ikke en prøve, er at det er tekst og ikke
 # oppførsel: ingen database kan si fra om at et dokument lover for mye.
 #
-# Bare `docs/` søkes. En migrasjon forteller sin egen historie og siterer med
-# vilje regelen den fjerner; et søk som traff den, ville tvunget fram en
-# migrasjon som ikke kunne forklare seg.
+# Bare `docs/` og `README.md` søkes. En migrasjon forteller sin egen historie og
+# siterer med vilje regelen den fjerner; et søk som traff den, ville tvunget fram
+# en migrasjon som ikke kunne forklare seg.
 reject_grep_matches \
   'Et dokument hevder en separasjon systemet ikke har (migrasjon 013t).' \
   -R -n -E --include='*.md' \
-  '(modellruntime|ikke dele modell|kan ikke kjøre to|hå(ndhevet|ndheves) på (modellidentitet|agentidentitet)|to (roller|ledd|agentledd) kan ikke dele)' \
-  docs
+  '(modellruntime|ikke dele modell|kan ikke kjøre to|hå(ndhevet|ndheves) på (modellidentitet|agentidentitet)|to (roller|ledd|agentledd) kan ikke dele|ingen andre ledd kan bruke den samme|kan ikke være den samme modellen)' \
+  docs README.md
+
+# Modellnavnet skal ikke beskrives som en adgangskontroll (migrasjon 013u).
+#
+# Den kontrollen fantes, og den ble prøvd i drift: importen krevde at svarets
+# `identity` var nøyaktig den modellen leddet var tildelt. En Workspace Agent får
+# ikke vite hvilken modellvekt den kjører på, så den avviste nøyaktig det ærlige
+# svaret — og den kunne uansett ikke bære noe, siden den ene siden av
+# sammenligningen er noe modellen skriver selv.
+#
+# Setningene under er måtene den regelen ble beskrevet på. De er her fordi en
+# tekst som lover kontrollen tilbake, er det som får noen til å bygge den igjen —
+# eller, verre, til å hardkode et modellnavn i en agentinstruks for å få den til
+# å passere. Samme søkeflate som over, og av samme grunn.
+reject_grep_matches \
+  'Et dokument beskriver modellnavnet som en adgangskontroll (migrasjon 013u).' \
+  -R -n -E --include='*.md' \
+  '(bekrefter? identiteten sin|komme fra den tildelte modellen|kontrollert mot svaret|må bevise hvilken modell)' \
+  docs README.md
 
 # Rå feiltekst skal aldri rendres til et menneske.
 #

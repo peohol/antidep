@@ -140,9 +140,8 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     description:
       'Leverer ett svar på et uttak du holder. Svaret går gjennom Antideps egen autoritative ' +
       'kontroll: bindingsverdiene må være kopiert uendret, ukjente felter avvises, og svaret må ' +
-      'komme fra den modellen agentleddet er tildelt. Blir svaret avvist, rapporter feilen slik ' +
-      'den er — det finnes ingen vei utenom kontrollen. Det samme svaret sendt inn igjen ' +
-      'registrerer ingenting nytt.',
+      'gjelde nettopp det uttaket. Blir svaret avvist, rapporter feilen slik den er — det finnes ' +
+      'ingen vei utenom kontrollen. Det samme svaret sendt inn igjen registrerer ingenting nytt.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -154,7 +153,9 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
           type: 'object',
           description:
             'Svaret, i nøyaktig den formen oppgaveteksten viste. Bindingsverdiene kopieres ' +
-            'uendret; du fyller bare inn identity og result.',
+            'uendret; du fyller inn result. Feltet identity er valgfritt og skal utelates med ' +
+            'mindre tjenesten du kjører i, faktisk viser deg hvilken modell du er — det er ' +
+            'proveniens, ingen kontroll avhenger av det, og du skal aldri gjette.',
         },
       },
       required: ['task_handle', 'answer'],

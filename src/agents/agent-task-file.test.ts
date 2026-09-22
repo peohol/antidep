@@ -120,9 +120,29 @@ describe('oppgavefilen', () => {
 })
 
 describe('svarmalen', () => {
-  it('blir et gyldig svar når agenten fyller inn identiteten og utkastet', () => {
+  it('blir et gyldig svar når agenten fyller inn utkastet', () => {
     const t = task('evidence_extraction')
     const filled = {
+      ...answerTemplate(t),
+      answered_at: '2026-09-15T10:12:00Z',
+      result: resultFor('evidence_extraction'),
+    }
+    const answer = parseAgentAnswer(filled)
+    expect(answer.requestDigest).toBe(t.requestDigest)
+    expect(answer.jobKey).toBe(t.jobKey)
+    expect(answer.identity).toBeNull()
+  })
+
+  // Malen skal ikke invitere til en påstand agenten ikke kan vite er sann. En
+  // plassholder her ville blitt kopiert uendret inn i proveniensen av nettopp
+  // den agenten som ikke fikk vite hvilken modell den er.
+  it('har ingen plassholder for identity', () => {
+    expect(answerTemplate(task('evidence_extraction'))).not.toHaveProperty('identity')
+  })
+
+  it('tar imot identity når tjenesten faktisk oppgir en modell', () => {
+    const t = task('evidence_extraction')
+    const answer = parseAgentAnswer({
       ...answerTemplate(t),
       identity: {
         provider: 'openai',
@@ -131,10 +151,27 @@ describe('svarmalen', () => {
       },
       answered_at: '2026-09-15T10:12:00Z',
       result: resultFor('evidence_extraction'),
-    }
-    const answer = parseAgentAnswer(filled)
-    expect(answer.requestDigest).toBe(t.requestDigest)
-    expect(answer.jobKey).toBe(t.jobKey)
+    })
+    expect(answer.identity?.model).toBe('GPT-5 Thinking')
+  })
+
+  // Oppgaveteksten sier hvor arbeidet er satt ut, og den skal ikke be agenten
+  // om å skrive det navnet tilbake: da ville proveniensen vært et ekko av
+  // oppgaven framfor en opplysning (ANTIDEP_CONSTITUTION.md regel 3, 4).
+  it('ber ikke agenten bekrefte den tildelte tjenesten', () => {
+    const withModel = parseAgentTask(
+      taskPayload('source_discovery', {
+        registered_model: {
+          provider: 'openai',
+          model: 'gpt-5.6-sol',
+          model_version: 'ikke-eksponert',
+          model_version_disclosure: 'not_exposed',
+        },
+      }),
+    )
+    const file = renderAgentTaskFile(withModel)
+    expect(file).toContain('Ikke skriv dette')
+    expect(file).toContain('bare når den')
   })
 })
 
