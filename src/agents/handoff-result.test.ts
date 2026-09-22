@@ -289,4 +289,38 @@ describe('kilde- og monografisvar', () => {
       }),
     ).toMatch(/structured_value.*objekt/)
   })
+
+  it('avviser ugyldige monografidatoer før databaseskriving', () => {
+    const result = resultFor('monograph_answer')
+    const answer = result['answer'] as Record<string, unknown>
+
+    expect(
+      handoffResultProblem(task('monograph_answer'), {
+        ...result,
+        answer: { ...answer, as_of: '2026-02-30' },
+      }),
+    ).toMatch(/as_of.*gyldig dato/)
+  })
+
+  it('avviser ugyldig kilde-id i en tilleggskilde før databaseskriving', () => {
+    const result = resultFor('monograph_answer')
+    const answer = result['answer'] as Record<string, unknown>
+
+    expect(
+      handoffResultProblem(task('monograph_answer'), {
+        ...result,
+        answer: {
+          ...answer,
+          additional_sources: [
+            {
+              source_version_id: 'ikke-en-uuid',
+              source_quote: 'Ordrett sitat.',
+              source_locator: 'Avsnitt 1',
+              as_of: '2026-09-22',
+            },
+          ],
+        },
+      }),
+    ).toMatch(/source_version_id.*uuid/)
+  })
 })
