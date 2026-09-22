@@ -126,6 +126,7 @@ function asText(value: unknown): string | undefined {
 
 function requestFrom(row: Record<string, unknown>): SearchRequest {
   const terms = Array.isArray(row['query_terms']) ? (row['query_terms'] as unknown[]) : []
+  const aliases = Array.isArray(row['drug_aliases']) ? (row['drug_aliases'] as unknown[]) : []
   const tracks = Array.isArray(row['track_codes']) ? (row['track_codes'] as unknown[]) : []
   return {
     requestReference: String(row['request_reference'] ?? ''),
@@ -134,6 +135,7 @@ function requestFrom(row: Record<string, unknown>): SearchRequest {
     strategy: row['strategy'] === 'broad' ? 'broad' : 'targeted',
     rationale: String(row['rationale'] ?? ''),
     platform: asText(row['platform']) ?? null,
+    drugAliases: aliases.map((alias) => String(alias)).filter((alias) => alias.length > 0),
     queryTerms: terms.map((term) => String(term)).filter((term) => term.length > 0),
     filtersNote: asText(row['filters_note']) ?? null,
     trackCodes: tracks.map((track) => String(track)).filter((track) => track.length > 0),

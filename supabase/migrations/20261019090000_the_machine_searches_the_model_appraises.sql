@@ -185,6 +185,43 @@ comment on function workflow.monograph_search_terms_shaped(text[]) is
 
 revoke execute on function workflow.monograph_search_terms_shaped(text[]) from public;
 
+-- Hva som gjør én bestilling til en annen.
+--
+-- Uten denne ville to bestilte søk i den samme runden med den samme strategien
+-- og den samme plattformen vært «den samme bestillingen», og den andre ville
+-- blitt stille forkastet av `on conflict do nothing`. To målrettede PubMed-søk
+-- — ett på en aldersgruppe og ett på et studiedesign — er to søk, og et system
+-- som svelget det ene uten å si fra, ville registrert en runde som dekket noe
+-- den ikke dekket.
+--
+-- Identiteten er derfor innholdet: strategien, plattformen, synonymene og
+-- termene. Den samme bestillingen to ganger er fortsatt én rad — det er
+-- idempotensen planen og kontrollåpningen hviler på.
+create function workflow.monograph_search_request_key(
+  p_strategy workflow.monograph_search_strategy,
+  p_platform text,
+  p_drug_aliases text[],
+  p_query_terms text[]
+)
+  returns text
+  language sql
+  immutable
+as $$
+  select encode(
+    sha256(convert_to(
+      p_strategy::text
+        || '|' || coalesce(p_platform, '')
+        || '|' || coalesce(array_to_string(p_drug_aliases, chr(31)), '')
+        || '|' || coalesce(array_to_string(p_query_terms, chr(31)), ''),
+      'UTF8')),
+    'hex');
+$$;
+
+comment on function workflow.monograph_search_request_key(workflow.monograph_search_strategy, text, text[], text[]) is
+  'Avtrykket som gjør én bestilt søkerunde til en annen: strategien, plattformen, virkestoffsynonymene og termene. Unikheten står på denne og ikke på strategien og plattformen alene, fordi to bestillinger med forskjellige termer er to søk — og det ene ville ellers blitt stille forkastet mens runden gikk videre som om begge var utført. Den samme bestillingen to ganger er fortsatt én rad.';
+
+revoke execute on function workflow.monograph_search_request_key(workflow.monograph_search_strategy, text, text[], text[]) from public;
+
 create table workflow.monograph_search_requests (
   id uuid primary key default gen_random_uuid(),
   reference text not null default workflow.new_public_reference(),
@@ -203,11 +240,25 @@ create table workflow.monograph_search_requests (
   -- Plattformen forespørselen gjelder, når den gjelder én bestemt. NULL er
   -- «alle tre», og en verdi må være en av de tre Antidep faktisk kaller.
   platform text,
-  -- Termene som legges til avgrensningen. Fri tekst, men bundet i form og
-  -- antall: de havner i en søkestreng, og en streng uten grenser er ikke en
-  -- term, den er et inndatafelt.
+  -- Virkestoffnavn som skal søkes SOM ALTERNATIVER til det kanoniske: den
+  -- engelske stavemåten, et handelsnavn, et navn på et annet språk. De hører
+  -- ikke sammen med termene under, og forskjellen er ikke kosmetisk: et
+  -- synonym lagt til som et ekstra påkrevd begrep gir «"sertralin" AND
+  -- "sertraline"», og da kan ikke en artikkel som bare bruker det engelske
+  -- navnet, treffe i det hele tatt — nettopp den artikkelen søket var ment å
+  -- finne.
+  drug_aliases text[] not null default array[]::text[],
+  -- Termene som legges til avgrensningen som egne begreper. Fri tekst, men
+  -- bundet i form og antall: de havner i en søkestreng, og en streng uten
+  -- grenser er ikke en term, den er et inndatafelt.
   query_terms text[] not null default array[]::text[],
   filters_note text,
+
+  -- Hva bestillingen faktisk ber om, som et avtrykk. Generert, slik at den
+  -- ikke kan komme i utakt med kolonnene den er utledet av.
+  request_key text not null generated always as (
+    workflow.monograph_search_request_key(strategy, platform, drug_aliases, query_terms)
+  ) stored,
   -- Sporene runden kan erklære å dekke. Kontrollens motsøk har alltid ingen:
   -- et motsøk som dekket generatorens obligatoriske spor, ville produsert den
   -- dekningen det kontrollerer (SOURCE_POLICY.md §4.2, §6).
@@ -244,6 +295,8 @@ create table workflow.monograph_search_requests (
     check (platform is null or platform in ('Europe PMC', 'PubMed', 'Crossref')),
   constraint monograph_search_requests_terms_shape_check
     check (workflow.monograph_search_terms_shaped(query_terms)),
+  constraint monograph_search_requests_aliases_shape_check
+    check (workflow.monograph_search_terms_shaped(drug_aliases)),
   constraint monograph_search_requests_filters_note_shape_check
     check (filters_note is null
            or (filters_note = btrim(filters_note)
@@ -267,12 +320,13 @@ create table workflow.monograph_search_requests (
         else false
       end
     ),
-  -- Én åpen forespørsel per (plan, versjon, rolle, runde, strategi, plattform).
-  -- Uten den ville to overganger om det samme kunnet åpne to runder, og
-  -- kjøringen ville søkt det samme to ganger og kalt det to passeringer.
+  -- Én bestilling per (plan, versjon, rolle, runde, innhold). Uten den ville to
+  -- overganger om det samme kunnet åpne to runder, og kjøringen ville søkt det
+  -- samme to ganger og kalt det to passeringer. Nøkkelen er innholdet og ikke
+  -- formen: to bestilte søk med forskjellige termer er to søk, og det andre
+  -- skal ikke forsvinne fordi det delte strategi og plattform med det første.
   constraint monograph_search_requests_round_key
-    unique nulls not distinct
-      (plan_id, plan_version, requested_for_role, search_round, strategy, platform)
+    unique (plan_id, plan_version, requested_for_role, search_round, request_key)
 );
 
 comment on table workflow.monograph_search_requests is
@@ -309,6 +363,7 @@ begin
      or new.strategy is distinct from old.strategy
      or new.rationale is distinct from old.rationale
      or new.platform is distinct from old.platform
+     or new.drug_aliases is distinct from old.drug_aliases
      or new.query_terms is distinct from old.query_terms
      or new.track_codes is distinct from old.track_codes
      or new.requested_by_agent_run_id is distinct from old.requested_by_agent_run_id
@@ -404,6 +459,7 @@ create function workflow.open_monograph_search_request(
   p_strategy workflow.monograph_search_strategy,
   p_rationale text,
   p_platform text,
+  p_drug_aliases text[],
   p_query_terms text[],
   p_filters_note text,
   p_agent_run_id uuid,
@@ -449,13 +505,14 @@ begin
 
   insert into workflow.monograph_search_requests (
     plan_id, plan_version, requested_for_role, search_round,
-    origin, strategy, rationale, platform, query_terms, filters_note,
+    origin, strategy, rationale, platform, drug_aliases, query_terms, filters_note,
     track_codes, requested_by_agent_run_id, requested_by_actor_id
   )
   values (
     p_plan_id, v_plan.plan_version, p_role, p_round,
     p_origin, p_strategy, btrim(p_rationale),
     nullif(btrim(coalesce(p_platform, '')), ''),
+    coalesce(p_drug_aliases, array[]::text[]),
     coalesce(p_query_terms, array[]::text[]),
     nullif(btrim(coalesce(p_filters_note, '')), ''),
     v_tracks, p_agent_run_id,
@@ -468,10 +525,10 @@ begin
 end;
 $$;
 
-comment on function workflow.open_monograph_search_request(uuid, provenance.agent_role, integer, workflow.monograph_search_request_origin, workflow.monograph_search_strategy, text, text, text[], text, uuid, uuid) is
+comment on function workflow.open_monograph_search_request(uuid, provenance.agent_role, integer, workflow.monograph_search_request_origin, workflow.monograph_search_strategy, text, text, text[], text[], text, uuid, uuid) is
   'Åpner én maskinell søkerunde på en søkeplanversjon, idempotent på (plan, versjon, rolle, runde, strategi, plattform). Sporene runden kan erklære, utledes av kildeprofilen og settes her og ikke av kalleren: et søk som erklærte et spor profilen aldri ba om, ville fått porten til å se dekket ut (SOURCE_POLICY.md §4.2). Dekningskontrollens motsøk får ingen spor i det hele tatt — et motsøk som dekket generatorens spor, ville produsert den dekningen det kontrollerer (§6). Svarer med runden sin id, eller NULL når den fantes fra før eller planen er lukket eller står på pause.';
 
-revoke execute on function workflow.open_monograph_search_request(uuid, provenance.agent_role, integer, workflow.monograph_search_request_origin, workflow.monograph_search_strategy, text, text, text[], text, uuid, uuid) from public;
+revoke execute on function workflow.open_monograph_search_request(uuid, provenance.agent_role, integer, workflow.monograph_search_request_origin, workflow.monograph_search_strategy, text, text, text[], text[], text, uuid, uuid) from public;
 
 create function workflow.monograph_search_round(
   p_plan_id uuid,
@@ -687,7 +744,7 @@ begin
       'plan_opened'::workflow.monograph_search_request_origin,
       'broad'::workflow.monograph_search_strategy,
       'Den nye søkeplanens første maskinelle søkerunde: et bredt orienterende søk over avgrensningen (SOURCE_POLICY.md §4.1).',
-      null, array[]::text[], null, null, v_plan.created_by_actor_id);
+      null, array[]::text[], array[]::text[], null, null, v_plan.created_by_actor_id);
   end if;
 
   -- Og porten: den semantiske oppgaven finnes ikke før søkene er utført.
@@ -773,7 +830,7 @@ begin
       'control_opened'::workflow.monograph_search_request_origin,
       'targeted'::workflow.monograph_search_strategy,
       'Dekningskontrollens egen maskinelle motsøkerunde: målrettede passeringer per akse, atskilt fra generatorens brede søk, slik at kontrollen leter etter det generatoren overså (SOURCE_POLICY.md §6).',
-      null, array[]::text[], null, null, v_plan.created_by_actor_id);
+      null, array[]::text[], array[]::text[], null, null, v_plan.created_by_actor_id);
   end if;
 
   if workflow.monograph_search_phase_problem(
@@ -1031,6 +1088,7 @@ begin
                  'strategy', r.strategy::text,
                  'rationale', r.rationale,
                  'platform', r.platform,
+                 'drug_aliases', to_jsonb(r.drug_aliases),
                  'query_terms', to_jsonb(r.query_terms),
                  'filters_note', r.filters_note,
                  'track_codes', to_jsonb(r.track_codes),
@@ -1606,6 +1664,7 @@ begin
       'platforms', jsonb_build_array('Europe PMC', 'PubMed', 'Crossref'),
       'strategies', jsonb_build_array('broad', 'targeted'),
       'max_terms', 8,
+      'max_drug_aliases', 8,
       'rounds_remaining', greatest(4 - v_round, 0)),
     -- Kriteriene for å avslutte, ordrett, og de fire grunnene som uttrykkelig
     -- ikke holder (SOURCE_POLICY.md §8).
@@ -2048,6 +2107,7 @@ declare
   v_platform text;
   v_strategy workflow.monograph_search_strategy;
   v_terms text[];
+  v_aliases text[];
 begin
   select p.* into v_plan
   from workflow.monograph_search_plans p
@@ -2276,7 +2336,8 @@ begin
     for v_item in select value from jsonb_array_elements(p_result -> 'search_requests') loop
       select string_agg(quote_literal(k.value), ', ' order by k.value) into v_unknown
       from jsonb_object_keys(v_item) as k(value)
-      where k.value not in ('rationale', 'platform', 'strategy', 'query_terms', 'filters_note');
+      where k.value not in (
+        'rationale', 'platform', 'strategy', 'drug_aliases', 'query_terms', 'filters_note');
       if v_unknown is not null then
         raise exception using
           errcode = 'invalid_parameter_value',
@@ -2304,8 +2365,12 @@ begin
       v_terms := (
         select coalesce(array_agg(btrim(t.value #>> '{}')), array[]::text[])
         from jsonb_array_elements(coalesce(v_item -> 'query_terms', '[]'::jsonb)) as t(value));
+      v_aliases := (
+        select coalesce(array_agg(btrim(t.value #>> '{}')), array[]::text[])
+        from jsonb_array_elements(coalesce(v_item -> 'drug_aliases', '[]'::jsonb)) as t(value));
 
-      if not workflow.monograph_search_terms_shaped(v_terms) then
+      if not workflow.monograph_search_terms_shaped(v_terms)
+         or not workflow.monograph_search_terms_shaped(v_aliases) then
         raise exception using
           errcode = 'invalid_parameter_value',
           message = 'Søkeforespørselens termer har ikke formen en søkestreng kan bære.',
@@ -2324,7 +2389,7 @@ begin
              v_strategy,
              coalesce(nullif(btrim(coalesce(v_item ->> 'rationale', '')), ''),
                       'Leddet ba om en mer målrettet søkerunde.'),
-             v_platform, v_terms, v_item ->> 'filters_note',
+             v_platform, v_aliases, v_terms, v_item ->> 'filters_note',
              p_run_id, p_actor_id) is not null then
           v_requests := v_requests + 1;
         end if;

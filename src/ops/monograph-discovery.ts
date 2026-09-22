@@ -107,6 +107,14 @@ export interface SearchRequest {
   readonly rationale: string
   /** Plattformen runden gjelder, eller null for alle tre. */
   readonly platform: string | null
+  /**
+   * Virkestoffnavn som skal søkes som ALTERNATIVER til det kanoniske.
+   *
+   * Egen liste og ikke en term: et synonym lagt til som et ekstra påkrevd
+   * begrep gir «"sertralin" AND "sertraline"», og da kan ikke en artikkel som
+   * bare bruker det engelske navnet, treffe i det hele tatt.
+   */
+  readonly drugAliases: readonly string[]
   readonly queryTerms: readonly string[]
   readonly filtersNote: string | null
   /**
@@ -228,7 +236,12 @@ export async function runMonographDiscovery(
     for (const request of plan.requests) {
       requests += 1
       const platforms = platformsFor(settings.platforms, request.platform)
-      const queries = buildQueries(plan.scope, request.strategy, request.queryTerms)
+      const queries = buildQueries(
+        plan.scope,
+        request.strategy,
+        request.queryTerms,
+        request.drugAliases,
+      )
 
       for (const platform of platforms) {
         for (const query of queries) {

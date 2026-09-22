@@ -307,12 +307,19 @@ function searchRequestSchema(): Schema {
           SEARCH_STRATEGIES,
           '«broad» setter avgrensningsaksene som ELLER-ledd; «targeted» gjør én passering per akse eller term. Utelat for «targeted».',
         ),
+        drug_aliases: {
+          type: 'array',
+          maxItems: SEARCH_REQUEST_MAX_TERMS,
+          items: { type: 'string', minLength: 2, maxLength: 120 },
+          description:
+            'Virkestoffnavn som skal søkes som ALTERNATIVER til det kanoniske: den engelske stavemåten, et handelsnavn, et navn på et annet språk. De hører hjemme her og ikke i query_terms — et synonym lagt til som en term ville blitt et ekstra påkrevd begrep, og da kunne ikke en artikkel som bare bruker det andre navnet, treffe i det hele tatt.',
+        },
         query_terms: {
           type: 'array',
           maxItems: SEARCH_REQUEST_MAX_TERMS,
           items: { type: 'string', minLength: 2, maxLength: 120 },
           description:
-            'Termene som skal legges til avgrensningen — synonymer, et studiedesign, et virkestoffnavn på et annet språk. Høyst åtte, uten anførselstegn og uten linjeskift.',
+            'Begrepene som skal legges til avgrensningen som egne krav — et studiedesign, en aldersgruppe, et utfall. Høyst åtte, uten anførselstegn og uten linjeskift. Et annet navn på virkestoffet hører i drug_aliases.',
         },
         filters_note: optionalText(
           'En avgrensning som er faglig begrunnet. Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater.',
@@ -372,6 +379,22 @@ export function buildSourceCoverageControlDraftSchema(): Schema {
     type: 'object',
     additionalProperties: false,
     required: ['candidate_appraisals'],
+    // En kontrollrunde har nøyaktig ett utfall: den avgjør, eller den ber om
+    // flere motsøk. Alternativene står her og ikke bare i prosaen, fordi det er
+    // dette skjemaet agenten faktisk følger — et svar som var gyldig etter
+    // skjemaet og likevel ble avvist av kontrakten, ville vært vår feil og ikke
+    // agentens.
+    oneOf: [
+      {
+        required: ['control'],
+        description: 'Runden avgjør dekningen.',
+      },
+      {
+        required: ['search_requests'],
+        properties: { search_requests: { minItems: 1 } },
+        description: 'Runden ber om flere motsøk, og avgjør i neste runde.',
+      },
+    ],
     properties: {
       candidate_appraisals: candidateAppraisalSchema(),
       search_requests: searchRequestSchema(),

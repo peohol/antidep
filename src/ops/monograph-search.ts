@@ -114,6 +114,24 @@ function scopeTerms(scope: SearchScope): readonly string[] {
 }
 
 /**
+ * Virkestoffleddet: det kanoniske navnet, og synonymene som ALTERNATIVER.
+ *
+ * Skillet mellom et synonym og en term er ikke kosmetisk. Et virkestoffnavn på
+ * et annet språk lagt til som en ekstra term gir «"sertralin" AND "sertraline"»
+ * — og da kan en artikkel som bare bruker det engelske navnet, ikke treffe i
+ * det hele tatt. Nettopp den artikkelen var søket ment å finne.
+ */
+function drugClause(scope: SearchScope, aliases: readonly string[]): string {
+  const names = [scope.drug, ...aliases.map((alias) => alias.trim())].filter(
+    (name) => name.length > 0,
+  )
+  const unique = [...new Set(names)]
+  return unique.length === 1
+    ? `"${unique[0] ?? ''}"`
+    : `(${unique.map((name) => `"${name}"`).join(' OR ')})`
+}
+
+/**
  * Søkestrengen, bygget av avgrensningen.
  *
  * Bredere enn den senere analyseavgrensningen med vilje: et søk som krever at
@@ -122,15 +140,20 @@ function scopeTerms(scope: SearchScope): readonly string[] {
  * til som ELLER-ledd, slik at en artikkel som bare nevner den ene, fortsatt
  * kommer med.
  */
-export function buildQuery(scope: SearchScope, extraTerms: readonly string[] = []): string {
+export function buildQuery(
+  scope: SearchScope,
+  extraTerms: readonly string[] = [],
+  drugAliases: readonly string[] = [],
+): string {
+  const drug = drugClause(scope, drugAliases)
   const extra = [...scopeTerms(scope), ...extraTerms.map((term) => term.trim())].filter(
     (value) => value.length > 0,
   )
 
   if (extra.length === 0) {
-    return `"${scope.drug}"`
+    return drug
   }
-  return `"${scope.drug}" AND (${extra.map((value) => `"${value}"`).join(' OR ')})`
+  return `${drug} AND (${extra.map((value) => `"${value}"`).join(' OR ')})`
 }
 
 /** Hvor mange strenger én runde kan gi. En driftskjøring er ikke en støvsuger. */
@@ -150,21 +173,23 @@ export function buildQueries(
   scope: SearchScope,
   strategy: 'broad' | 'targeted',
   extraTerms: readonly string[] = [],
+  drugAliases: readonly string[] = [],
 ): readonly string[] {
   if (strategy === 'broad') {
-    return [buildQuery(scope, extraTerms)]
+    return [buildQuery(scope, extraTerms, drugAliases)]
   }
 
+  const drug = drugClause(scope, drugAliases)
   const axes = [...scopeTerms(scope), ...extraTerms.map((term) => term.trim())].filter(
     (value) => value.length > 0,
   )
   if (axes.length === 0) {
-    return [`"${scope.drug}"`]
+    return [drug]
   }
   // Duplikater fjernes: den samme strengen kjørt to ganger er ett spor og ikke
   // to passeringer, og metningsregelen teller passeringer.
   const unique = [...new Set(axes)]
-  return unique.slice(0, MAX_QUERIES_PER_REQUEST).map((axis) => `"${scope.drug}" AND "${axis}"`)
+  return unique.slice(0, MAX_QUERIES_PER_REQUEST).map((axis) => `${drug} AND "${axis}"`)
 }
 
 function digest(bytes: Uint8Array): string {
@@ -372,8 +397,16 @@ export async function runSearch(
   platform: SearchPlatform,
   query: string,
   fetcher: Fetcher = guardedGet,
-  trackCodes: readonly string[] = [],
+  allowedTracks: readonly string[] = [],
 ): Promise<MachineSearch> {
+  // Sporene søket kan erklære, er skjæringen mellom det runden fikk lov til og
+  // det plattformen faktisk dekker. Begge trengs, og det er den siste som er
+  // lett å miste: en runde får alle kildeprofilens obligatoriske spor, mens
+  // Europe PMC bare dekker det bibliografiske. Uten skjæringen ville ett
+  // vellykket Europe PMC-søk merket forsøksregistre, referanselister og
+  // regulatorisk veiledning som dekket — og porten ville sett dekket ut for
+  // spor ingen hadde søkt i (SOURCE_POLICY.md §4.2).
+  const trackCodes = platform.trackCodes.filter((code) => allowedTracks.includes(code))
   const endpoint = platform.endpoint(query)
   const base = {
     platform: platform.name,
@@ -383,11 +416,6 @@ export async function runSearch(
     screenedCount: 0,
     truncated: false,
     truncationNote: null,
-    // Et søk kan bare erklære å dekke et spor runden faktisk fikk
-    // (SOURCE_POLICY.md §4.2). Hvilke det er, avgjøres når runden åpnes, og
-    // databasen avviser et søk som erklærer noe annet — med rette: ellers ville
-    // porten sett dekket ut uten at noe var forsøkt. Dekningskontrollens motsøk
-    // får ingen spor i det hele tatt.
     trackCodes,
     candidates: [] as readonly CandidateSource[],
   }

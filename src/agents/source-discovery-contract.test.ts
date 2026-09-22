@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest'
 import { HANDOFF_ROLES, parseAgentTask } from './agent-task.ts'
 import { renderAgentTaskFile } from './agent-task-file.ts'
 import { handoffResultProblem } from './handoff-result.ts'
+import { buildSourceCoverageControlDraftSchema } from './handoff-schemas.ts'
 import { resultFor, taskPayload, TEST_CANDIDATE_DOI } from './handoff-test-support.ts'
 import { TOOL_NAMES } from '../mcp/tools.ts'
 
@@ -91,6 +92,49 @@ describe.each(KILDELEDD)('kildeoppgaven til %s', (role) => {
   // uten et eneste verktøykall utenfor Antidep, er et gyldig svar.
   it('kan besvares av et svar bygget bare av oppgavens eget materiale', () => {
     expect(handoffResultProblem(task, resultFor(role))).toBeNull()
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Skjemaet agenten følger, og kontrakten svaret møter, må si det samme
+//
+// Et svar som var gyldig etter det versjonerte skjemaet og likevel ble avvist
+// av handoffen, ville vært vår feil og ikke agentens.
+// ----------------------------------------------------------------------------
+describe('svarformen for dekningskontrollen', () => {
+  const schema = buildSourceCoverageControlDraftSchema()
+
+  it('krever nøyaktig ett av de to utfallene en kontrollrunde kan ha', () => {
+    const alternatives = schema['oneOf'] as readonly Record<string, unknown>[]
+    expect(alternatives).toHaveLength(2)
+    expect(alternatives.map((alternative) => alternative['required'])).toEqual([
+      ['control'],
+      ['search_requests'],
+    ])
+  })
+
+  it('krever at en runde som ber om motsøk, faktisk ber om minst ett', () => {
+    const alternatives = schema['oneOf'] as readonly Record<string, unknown>[]
+    const requests = (alternatives[1]?.['properties'] as Record<string, unknown>)[
+      'search_requests'
+    ] as Record<string, unknown>
+    expect(requests['minItems']).toBe(1)
+  })
+
+  // Og de to sidene er faktisk enige: det skjemaet forbyr, avviser kontrakten,
+  // og det skjemaet tillater, godtar den.
+  it('avvises av kontrakten i nøyaktig de tilfellene skjemaet forbyr', () => {
+    const task = parseAgentTask(taskPayload('source_quality_assessment'))
+    const withoutOutcome = { ...resultFor('source_quality_assessment') }
+    delete withoutOutcome['control']
+
+    expect(handoffResultProblem(task, withoutOutcome)).not.toBeNull()
+    expect(
+      handoffResultProblem(task, {
+        ...withoutOutcome,
+        search_requests: [{ rationale: 'Et motsøk mangler.' }],
+      }),
+    ).toBeNull()
   })
 })
 

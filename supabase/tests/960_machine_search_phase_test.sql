@@ -19,7 +19,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(19);
+select plan(23);
 
 insert into auth.users (id, email)
 values ('96000000-0000-4000-8000-00000000000a', 'redaktor-960@test.invalid');
@@ -152,6 +152,62 @@ select is(
      and r.requested_for_role = 'source_discovery'),
   true,
   'generatorens egen runde har derimot de sporene kildeprofilen krever'
+);
+
+-- ===========================================================================
+-- Del 2b — To bestillinger med forskjellig innhold er to bestillinger
+-- ===========================================================================
+-- Uten dette ville et målrettet PubMed-søk på en aldersgruppe og et på et
+-- studiedesign vært «den samme bestillingen», og det andre ville blitt stille
+-- forkastet mens runden gikk videre som om begge var utført.
+select lives_ok(
+  format($$
+    insert into workflow.monograph_search_requests
+      (plan_id, plan_version, requested_for_role, search_round, origin, strategy,
+       rationale, platform, query_terms, requested_by_actor_id)
+    values
+      (%1$L, 1, 'source_discovery', 2, 'agent_requested', 'targeted',
+       'Aldersgruppen mangler.', 'PubMed', array['older adults'],
+       'ac960000-0000-4000-8000-00000000000a'),
+      (%1$L, 1, 'source_discovery', 2, 'agent_requested', 'targeted',
+       'Studiedesignet mangler.', 'PubMed', array['randomized controlled trial'],
+       'ac960000-0000-4000-8000-00000000000a')
+  $$, (select id from plans where label = 'eff')),
+  'to bestilte søk i samme runde, strategi og plattform med ulike termer er to rader'
+);
+select is(
+  (select count(*)::integer from workflow.monograph_search_requests r
+   where r.plan_id = (select id from plans where label = 'eff')
+     and r.search_round = 2),
+  2,
+  'og begge står der: ingen av dem er stille forkastet'
+);
+
+-- Den samme bestillingen to ganger er derimot fortsatt én rad. Det er
+-- idempotensen planåpningen og kontrollåpningen hviler på.
+select throws_ok(
+  format($$
+    insert into workflow.monograph_search_requests
+      (plan_id, plan_version, requested_for_role, search_round, origin, strategy,
+       rationale, platform, query_terms, requested_by_actor_id)
+    values (%L, 1, 'source_discovery', 2, 'agent_requested', 'targeted',
+            'En annen begrunnelse, men nøyaktig det samme søket.', 'PubMed',
+            array['older adults'], 'ac960000-0000-4000-8000-00000000000a')
+  $$, (select id from plans where label = 'eff')),
+  '23505',
+  null,
+  'den samme bestillingen to ganger er fortsatt én rad'
+);
+
+-- Og et virkestoffsynonym er en del av bestillingens identitet, ikke en
+-- merknad ved siden av.
+select isnt(
+  (select r.request_key from workflow.monograph_search_requests r
+   where r.plan_id = (select id from plans where label = 'eff')
+     and r.search_round = 2 and r.query_terms = array['older adults']),
+  workflow.monograph_search_request_key(
+    'targeted', 'PubMed', array['sertraline'], array['older adults']),
+  'to bestillinger som skiller seg bare på virkestoffsynonymet, er to bestillinger'
 );
 
 -- ===========================================================================

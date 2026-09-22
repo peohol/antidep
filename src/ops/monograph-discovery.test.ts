@@ -18,6 +18,7 @@ function request(overrides: Partial<SearchRequest> = {}): SearchRequest {
     strategy: 'broad',
     rationale: 'Den nye søkeplanens første maskinelle søkerunde.',
     platform: null,
+    drugAliases: [],
     queryTerms: [],
     filtersNote: null,
     trackCodes: ['bibliographic_database', 'trial_registry'],
@@ -206,6 +207,35 @@ describe('søkerunden', () => {
     expect(searches[0]?.trackCodes).toEqual([])
   })
 
+  // Regresjonen Codex fanget: runden får ALLE kildeprofilens obligatoriske
+  // spor, men Europe PMC dekker bare det bibliografiske. Uten skjæringen ville
+  // ett vellykket søk merket forsøksregistre og referanselister som dekket, og
+  // porten ville sett dekket ut for spor ingen hadde søkt i.
+  it('erklærer aldri et spor plattformen ikke dekker', async () => {
+    const { api: port, searches } = api({
+      work: async () => [
+        {
+          ...PLAN,
+          requests: [
+            request({
+              trackCodes: [
+                'bibliographic_database',
+                'trial_registry',
+                'reference_lists',
+                'norwegian_authority_source',
+              ],
+            }),
+          ],
+        },
+      ],
+    })
+    await runMonographDiscovery(port, {
+      platforms: [EUROPE_PMC],
+      fetcher: recorded('europe-pmc-sertraline.json'),
+    })
+    expect(searches[0]?.trackCodes).toEqual(['bibliographic_database'])
+  })
+
   it('erklærer sporene runden fikk av databasen', async () => {
     const { api: port, searches } = api({
       work: async () => [
@@ -248,6 +278,25 @@ describe('søkerunden', () => {
       '"sertralin" AND "depressiv lidelse"',
       '"sertralin" AND "vektendring"',
     ])
+  })
+
+  it('søker virkestoffsynonymer som alternativer, ikke som et krav i tillegg', async () => {
+    const { api: port, searches } = api({
+      work: async () => [
+        {
+          ...PLAN,
+          scope: { drug: 'sertralin' },
+          requests: [request({ strategy: 'targeted', drugAliases: ['sertraline'] })],
+        },
+      ],
+    })
+    await runMonographDiscovery(port, {
+      platforms: [EUROPE_PMC],
+      fetcher: recorded('europe-pmc-sertraline.json'),
+    })
+    // «"sertralin" AND "sertraline"» ville utelukket nettopp de artiklene som
+    // bare bruker det engelske navnet — de søket var ment å finne.
+    expect(searches[0]?.queryString).toBe('("sertralin" OR "sertraline")')
   })
 
   it('tar med de termene forespørselen ba om', async () => {

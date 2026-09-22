@@ -85,6 +85,57 @@ describe('søkestrategiene', () => {
   })
 })
 
+// ----------------------------------------------------------------------------
+// Synonymer er alternativer, ikke krav i tillegg
+//
+// Et virkestoffnavn på et annet språk lagt til som en term ville gitt
+// «"sertralin" AND "sertraline"» — og da kan ikke en artikkel som bare bruker
+// det engelske navnet, treffe i det hele tatt. Nettopp den artikkelen var
+// søket ment å finne.
+// ----------------------------------------------------------------------------
+describe('virkestoffsynonymer', () => {
+  it('står som ELLER-ledd sammen med det kanoniske navnet', () => {
+    expect(buildQuery({ drug: 'sertralin' }, [], ['sertraline', 'Zoloft'])).toBe(
+      '("sertralin" OR "sertraline" OR "Zoloft")',
+    )
+  })
+
+  it('bærer hele avgrensningen videre i det brede søket', () => {
+    expect(buildQuery(SCOPE, [], ['sertraline'])).toBe(
+      '("sertralin" OR "sertraline") AND ("depressiv lidelse" OR "vektendring")',
+    )
+  })
+
+  it('gjentas i hver målrettede passering', () => {
+    expect(buildQueries(SCOPE, 'targeted', [], ['sertraline'])).toEqual([
+      '("sertralin" OR "sertraline") AND "depressiv lidelse"',
+      '("sertralin" OR "sertraline") AND "vektendring"',
+    ])
+  })
+
+  it('gjentar ikke det kanoniske navnet når det også står som synonym', () => {
+    expect(buildQuery({ drug: 'sertralin' }, [], ['sertralin'])).toBe('"sertralin"')
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Sporene et søk kan erklære
+// ----------------------------------------------------------------------------
+describe('sporene søket erklærer', () => {
+  it('er skjæringen mellom rundens lov og plattformens egen dekning', async () => {
+    const search = await runSearch(EUROPE_PMC, QUERY, recorded('europe-pmc-sertraline.json'), [
+      'bibliographic_database',
+      'trial_registry',
+    ])
+    expect(search.trackCodes).toEqual(['bibliographic_database'])
+  })
+
+  it('er tom når runden ikke ga noen — som for kontrollens motsøk', async () => {
+    const search = await runSearch(EUROPE_PMC, QUERY, recorded('europe-pmc-sertraline.json'), [])
+    expect(search.trackCodes).toEqual([])
+  })
+})
+
 describe('plattformene', () => {
   it('bygger adresser som bare peker på det navngitte, offentlige endepunktet', () => {
     for (const platform of SEARCH_PLATFORMS) {

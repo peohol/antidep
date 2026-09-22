@@ -333,23 +333,25 @@ function discoverySearchRequests(fields: Fields): number {
     asText(request, 'rationale')
     asOptionalVocabulary(request, 'platform', SEARCH_PLATFORMS)
     asOptionalVocabulary(request, 'strategy', SEARCH_STRATEGIES)
-    const terms = stringArray(request, 'query_terms')
-    if (terms.length > SEARCH_REQUEST_MAX_TERMS) {
-      problem(
-        request.subject,
-        `${request.where}.query_terms`,
-        `har flere enn ${String(SEARCH_REQUEST_MAX_TERMS)} termer`,
-      )
-    }
-    terms.forEach((term, termIndex) => {
-      if (term.trim() !== term || term.length < 2 || term.length > 120 || /["\n\r]/.test(term)) {
+    for (const key of ['drug_aliases', 'query_terms'] as const) {
+      const terms = stringArray(request, key)
+      if (terms.length > SEARCH_REQUEST_MAX_TERMS) {
         problem(
           request.subject,
-          `${request.where}.query_terms[${String(termIndex)}]`,
-          'har ikke formen en søkestreng kan bære: 2–120 tegn, uten anførselstegn og linjeskift',
+          `${request.where}.${key}`,
+          `har flere enn ${String(SEARCH_REQUEST_MAX_TERMS)} termer`,
         )
       }
-    })
+      terms.forEach((term, termIndex) => {
+        if (term.trim() !== term || term.length < 2 || term.length > 120 || /["\n\r]/.test(term)) {
+          problem(
+            request.subject,
+            `${request.where}.${key}[${String(termIndex)}]`,
+            'har ikke formen en søkestreng kan bære: 2–120 tegn, uten anførselstegn og linjeskift',
+          )
+        }
+      })
+    }
     asOptionalText(request, 'filters_note')
     rejectUnknown(request)
   })

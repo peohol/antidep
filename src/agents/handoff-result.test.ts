@@ -326,6 +326,30 @@ describe('kilde- og monografisvar', () => {
     ).toMatch(/query_terms/)
   })
 
+  it('avviser et virkestoffsynonym som ikke har formen en søkestreng kan bære', () => {
+    expect(
+      handoffResultProblem(task('source_discovery'), {
+        ...resultFor('source_discovery'),
+        search_requests: [{ rationale: 'Engelsk navn.', drug_aliases: ['sertraline" OR alt'] }],
+      }),
+    ).toMatch(/drug_aliases/)
+  })
+
+  it('godtar en søkeforespørsel med virkestoffsynonymer', () => {
+    expect(
+      handoffResultProblem(task('source_discovery'), {
+        ...resultFor('source_discovery'),
+        search_requests: [
+          {
+            rationale: 'Det engelske navnet er ikke søkt ennå.',
+            strategy: 'targeted',
+            drug_aliases: ['sertraline'],
+          },
+        ],
+      }),
+    ).toBeNull()
+  })
+
   it('lar ikke kontrollen erklære sin egen uavhengighet', () => {
     const result = resultFor('source_quality_assessment')
     const control = result['control'] as Record<string, unknown>
