@@ -190,13 +190,29 @@ export function handoffResultProblem(
   result: Record<string, unknown>,
 ): string | null {
   try {
-    if (task.role === 'evidence_extraction') {
-      return extractionProblem(task, result)
+    switch (task.role) {
+      case 'evidence_extraction':
+        return extractionProblem(task, result)
+      case 'claim_synthesis':
+        return synthesisProblem(task, result)
+      case 'evidence_assessment':
+        return assessmentProblem(result)
+
+      // Disse tre rollene har egne, strenge skriveveier i databasen
+      // (record_monograph_discovery_answer / record_monograph_answer_handoff).
+      // Denne modulen har ingen lokal parser for dem. De skal derfor sendes
+      // videre til den autoritative kontrollen, ikke falle gjennom til parseren
+      // for evidence_assessment slik de gjorde før.
+      case 'source_discovery':
+      case 'source_quality_assessment':
+      case 'monograph_answer':
+        return null
+
+      default: {
+        const exhaustive: never = task.role
+        return exhaustive
+      }
     }
-    if (task.role === 'claim_synthesis') {
-      return synthesisProblem(task, result)
-    }
-    return assessmentProblem(result)
   } catch (cause) {
     return cause instanceof Error ? cause.message : String(cause)
   }
