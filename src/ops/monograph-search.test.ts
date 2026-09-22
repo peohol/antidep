@@ -6,6 +6,7 @@ import {
   buildQuery,
   CROSSREF,
   EUROPE_PMC,
+  EXECUTABLE_TRACK_CODES,
   PAGE_SIZE,
   PUBMED,
   runSearch,
@@ -231,5 +232,60 @@ describe('runSearch', () => {
     for (const platform of SEARCH_PLATFORMS) {
       expect(platform.endpoint('x')).toContain(String(PAGE_SIZE))
     }
+  })
+})
+
+// ============================================================================
+// Speilet: hva kjøreren kan, og hva basen tror den kan
+//
+// Skjæringen i `runSearch` er halve regelen. Den andre halvdelen er porten i
+// databasen, som leser `knowledge.monograph_search_platforms`. Er de to ikke
+// enige, er den ene av dem usann — og prøvene ville bestått på den snilleste.
+//
+// Før migrasjon 013x fantes ikke registeret, og pgTAP-prøvene registrerte søk
+// som erklærte `systematic_review_search` og `trial_registries` på Europe PMC.
+// Kjeden så dekket ut i en prøve mens den sto stille i produksjon. Denne prøven
+// er broen som gjør den feilen umulig å gjenta.
+// ============================================================================
+describe('registeret over søkeveier', () => {
+  const MIGRASJON = 'supabase/migrations/20261019092000_the_runner_declares_what_it_can_execute.sql'
+
+  /** Radene migrasjonen seeder, lest som `plattform → spor`. */
+  function seededPairs(): ReadonlySet<string> {
+    const sql = readFileSync(MIGRASJON, 'utf8')
+    const start = sql.indexOf('insert into knowledge.monograph_search_platforms')
+    expect(start).toBeGreaterThan(-1)
+    const block = sql.slice(start, sql.indexOf(';', start))
+    const pairs = new Set<string>()
+    for (const match of block.matchAll(/\('([^']+)',\s*'([^']+)'\)/g)) {
+      pairs.add(`${match[1]}|${match[2]}`)
+    }
+    return pairs
+  }
+
+  it('speiler nøyaktig plattformene kjøreren faktisk kaller', () => {
+    const fraKoden = new Set(
+      SEARCH_PLATFORMS.flatMap((platform) =>
+        platform.trackCodes.map((code) => `${platform.name}|${code}`),
+      ),
+    )
+    expect(seededPairs()).toEqual(fraKoden)
+  })
+
+  it('og de utførbare sporene er utledet, ikke skrevet av', () => {
+    const utledet = [...new Set(SEARCH_PLATFORMS.flatMap((p) => p.trackCodes))].sort()
+    expect([...EXECUTABLE_TRACK_CODES]).toEqual(utledet)
+  })
+
+  it('et søk erklærer aldri et spor plattformen ikke står oppført med', async () => {
+    // Runden gir fire spor; Europe PMC dekker ett. Erklærte søket alle fire,
+    // ville porten sett dekket ut for tre spor ingen hadde søkt i.
+    const search = await runSearch(
+      EUROPE_PMC,
+      '"sertralin"',
+      recorded('europe-pmc-sertraline.json'),
+      ['bibliographic_database', 'systematic_review_search', 'trial_registries', 'citing_works'],
+    )
+    expect(search.trackCodes).toEqual(['bibliographic_database'])
   })
 })

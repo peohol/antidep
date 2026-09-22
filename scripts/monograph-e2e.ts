@@ -293,13 +293,22 @@ function planForTemplate(template: string): string {
 }
 
 /** Den åpne søkerunden for én plan og ett kildeledd. */
+// Sporene runden kan erklære, skåret mot det søkeveien faktisk er registrert
+// for. Runden bærer hele kildeprofilens obligatoriske spor; Europe PMC dekker
+// bare det bibliografiske. Uten skjæringen ville prøveløpet erklært spor den
+// virkelige kjøringen aldri kan produsere — og bestått på det (migrasjon 013x).
 function openSearchRequest(
   planReference: string,
   role: string,
+  platform: string,
 ): { readonly reference: string; readonly tracks: readonly string[] } {
   const row = psql(
     config,
-    `select r.reference || '|' || array_to_string(r.track_codes, ',')
+    `select r.reference || '|' || array_to_string(array(
+       select code from unnest(r.track_codes) as t(code)
+       where code in (select sp.track_code
+                      from knowledge.monograph_search_platforms sp
+                      where sp.platform = ${q(platform)})), ',')
      from workflow.monograph_search_requests r
      join workflow.monograph_search_plans p on p.id = r.plan_id
      where p.reference = ${q(planReference)}
@@ -514,7 +523,7 @@ async function main(): Promise<void> {
   const planRef = planForTemplate('MN29')
   check('søkeplanen for spørsmålet finnes', planRef.length === 32)
 
-  const machineRound = openSearchRequest(planRef, 'source_discovery')
+  const machineRound = openSearchRequest(planRef, 'source_discovery', 'Europe PMC')
   check(
     'og den har åpnet sin egen maskinelle søkerunde',
     machineRound.reference.length === 32 && machineRound.tracks.length > 0,
@@ -736,7 +745,7 @@ async function main(): Promise<void> {
   // --------------------------------------------------------------------
   // 4b. Dekningskontrollens egne, separat utførte motsøk
   // --------------------------------------------------------------------
-  const controlRound = openSearchRequest(planRef, 'source_quality_assessment')
+  const controlRound = openSearchRequest(planRef, 'source_quality_assessment', 'Europe PMC')
   check(
     'det registrerte vurderingssvaret åpnet dekningskontrollens egen motsøkerunde',
     controlRound.reference.length === 32,

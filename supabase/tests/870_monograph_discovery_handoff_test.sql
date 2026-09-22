@@ -171,7 +171,7 @@ select 'maskinsok', api.record_monograph_machine_search(
   'https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=x',
   'sha256:' || repeat('a', 64),
   'executed', 31, 25, false, null, null,
-  array['bibliographic_database', 'systematic_review_search'],
+  array['bibliographic_database'],
   jsonb_build_array(jsonb_build_object(
     'identifier_kind', 'doi',
     'identifier_value', '10.1000/870-oversikt',
@@ -192,7 +192,7 @@ select 'utilgjengelig', api.record_monograph_machine_search(
   null,
   'unavailable', null, 0, false, null,
   'Søkeveien svarte ikke: tidsavbrudd.',
-  array['independent_second_database'], null);
+  array['bibliographic_database'], null);
 
 insert into svar (label, payload)
 select 'lukk1', api.close_monograph_search_request(
@@ -444,7 +444,7 @@ select 'maskinsok2', api.record_monograph_machine_search(
   'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=x',
   'sha256:' || repeat('b', 64),
   'zero_results', 0, 0, false, null, null,
-  array['independent_second_database'], null);
+  array['bibliographic_database'], null);
 insert into svar (label, payload)
 select 'lukk2', api.close_monograph_search_request(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),

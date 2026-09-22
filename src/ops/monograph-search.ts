@@ -387,6 +387,24 @@ export const CROSSREF: SearchPlatform = {
 export const SEARCH_PLATFORMS: readonly SearchPlatform[] = [EUROPE_PMC, PUBMED, CROSSREF]
 
 /**
+ * Søkesporene Antideps deterministiske kode faktisk kan utføre.
+ *
+ * Utledet av plattformene, aldri skrevet av. En liste ved siden av
+ * SEARCH_PLATFORMS ville kunne påstå at Antidep dekker et spor ingen plattform
+ * søker i, og porten i basen ville trodd på påstanden — som er nøyaktig den
+ * feilen skjæringen i `runSearch` finnes for å hindre, bare ett ledd lenger ute.
+ *
+ * Kjøringen sender denne til `api.close_monograph_search_request(...)`, og
+ * basen merker de obligatoriske sporene som faller utenfor, som spor uten
+ * maskinell søkevei. Erklærer kjøringen *færre* evner enn den har, blir svaret
+ * en synlig begrensning og aldri en dekning den ikke hadde: feilen faller til
+ * den trygge siden.
+ */
+export const EXECUTABLE_TRACK_CODES: readonly string[] = [
+  ...new Set(SEARCH_PLATFORMS.flatMap((platform) => platform.trackCodes)),
+].sort()
+
+/**
  * Utfører ett søk mot én plattform, med den strengen runden ba om.
  *
  * Kaster aldri: en plattform som er nede, et svar som ikke lar seg lese, og et

@@ -71,6 +71,16 @@ Kildene skal kunne oppdages bredere enn den senere analyseavgrensningen: et for 
 
 Ikke alle kilder eller databaser er nødvendigvis tilgjengelige i en agentkjøring. En utilgjengelig obligatorisk søkevei registreres som begrensning, ikke som null treff. En erstattende søkevei må begrunnes og kontrolleres separat. Delvis søk kan gi et tydelig merket delutkast, men ikke status som ferdig søkedekning.
 
+Tre tilstander holdes fra hverandre, fordi de utløser forskjellig arbeid:
+
+| Tilstand | Hva den betyr | Hva som løser den |
+| --- | --- | --- |
+| Utilgjengelig | Søkeveien ble forsøkt, men svarte ikke. | Et nytt forsøk. Antidep prøver inntil tre ganger. |
+| Ingen maskinell søkevei | Ingen av søkeveiene Antidep faktisk kaller, dekker sporet. Sporet blir ikke forsøkt maskinelt uansett hvor lenge man venter. | En redaktør utfører søket og registrerer utfallet. |
+| Dekket | Et dokumentert søk dekker sporet. | Ingenting. |
+
+Hvilke søkespor Antidep faktisk kan dekke maskinelt, er et registrert faktum (`knowledge.monograph_search_platforms`) og ikke en antakelse. Et søk kan ikke erklære et spor søkeveien ikke står oppført for: et bibliografisk søk som erklærte forsøksregistre dekket, ville gjort stoppkravet blindt for et spor ingen hadde søkt i. Et obligatorisk spor uten maskinell søkevei teller derfor aldri som dekning — men det blir heller ikke stående som «ikke forsøkt ennå», der det ville ventet for alltid. Stoppkravet navngir sporet og sier hva som løser det.
+
 Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater. En avgrensning kan være begrunnet, men må stå i planen og i begrensningene. Søk gjerne først etter en dekkende nyere syntese; eldre originalstudier blir ikke ugyldige fordi de er gamle.
 
 ### 4.3 Søkelogg og utvalgslogg
@@ -90,6 +100,8 @@ Rekkefølgen er en port og ikke en forventning: en semantisk kildeoppgave skal i
 Et modellrapportert søk og et maskinelt utført søk er fortsatt to forskjellige opplysninger (§4.3), og de blandes ikke. Kildeleddene har ingen vei til å rapportere et søk de skulle ha utført, og et svar som gjør det, avvises.
 
 En søkeforespørsel kan bare be om det den deterministiske søkeveien faktisk gjør: en navngitt søketjeneste av dem systemet allerede kaller, en søkestrategi og noen termer. En adresse kan ikke oppgis. Antall runder per planversjon er begrenset; er budsjettet brukt opp, er arbeidet åpent og ventende (§8.2) og aldri en konklusjon om evidensen.
+
+Og det tredje leddet: mennesket. De søkeveiene Antidep faktisk kaller, dekker i dag bare det bibliografiske sporet. De øvrige obligatoriske sporene i §4.2 — myndighetskilden, preparatomtalen, forsøksregistrene, referanselistene, de siterende arbeidene, den regulatoriske veiledningen — har ingen maskinell utfører, og de får ikke en ved at noen venter. Slike spor føres derfor som *ingen maskinell søkevei* med én gang planen lages, de teller aldri som dekning, og stoppkravet navngir dem. En redaktør utfører søket og registrerer utfallet; raden bærer hvem som gjorde det, slik at «et menneske har håndtert dette» og «en tjeneste svarte ikke» forblir to forskjellige fakta. Får Antidep siden en søkevei for et slikt spor, flyttes sporet tilbake til den maskinelle køen av seg selv.
 
 ## 5. Innhenting og kildeintegritet
 

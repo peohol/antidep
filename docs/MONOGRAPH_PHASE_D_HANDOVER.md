@@ -50,6 +50,18 @@ svarkontrollen. Et søk Antidep utførte selv, bærer endepunktet og et
 responsavtrykk; en agents beretning om et verktøykall gjør det ikke, og de to
 blandes ikke.
 
+Og et tredje ledd er menneskets. De søkeveiene Antidep faktisk kaller — Europe
+PMC, PubMed og Crossref — dekker bare det bibliografiske søkesporet. Hva hver
+søkevei kan dekke, er registrert i `knowledge.monograph_search_platforms`, og
+et søk kan ikke erklære et spor søkeveien ikke står oppført for. De øvrige
+obligatoriske sporene per kildeprofil har derfor ingen maskinell utfører: de
+føres som `no_machine_path` når planen lages, teller aldri som dekning, og
+navngis av stoppkravet framfor å bli stående som «ikke forsøkt ennå». En
+redaktør utfører søket og registrerer utfallet med
+`api.record_monograph_track_by_editor(...)`; raden bærer hvem som gjorde det.
+Ingen av de tre leddene kan gjøre den andres arbeid, og ingen av dem kan late
+som (migrasjon 013x).
+
 **Ingen av de seks leddene utfører nettverkskall, og ingen av dem kan.** Den
 autonome kjøreren har Antidep-appens fem verktøy og ikke ett til, og ingen av
 dem søker. Fram til migrasjon 013v ba `source_discovery`-oppgaven likevel om

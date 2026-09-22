@@ -1,0 +1,31 @@
+-- ---------------------------------------------------------------------------
+-- Migrasjon 013w — tilstanden «ingen maskinell søkevei»
+--
+-- Denne migrasjonen gjør én ting: den legger verdien til. PostgreSQL nekter å
+-- *bruke* en enumverdi i den transaksjonen som la den til, og verdien brukes av
+-- både en check-constraint og en porten i 013x. Derfor ligger den alene, slik
+-- den må.
+--
+-- Hvorfor verdien trengs
+--
+-- `workflow.monograph_track_state` hadde tre verdier: `pending` (ikke forsøkt),
+-- `covered` (et dokumentert søk dekker sporet) og `unavailable` (søkeveien
+-- svarte ikke). Etter 013v finnes det et fjerde tilfelle som ingen av dem
+-- beskriver ærlig: Antidep har ingen maskinell søkevei for sporet i det hele
+-- tatt.
+--
+-- Å kalle det `covered` ville vært den opprinnelige feilen 013v ble skrevet for
+-- å fjerne — et bibliografisk søk som erklærte forsøksregistre dekket.
+--
+-- Å kalle det `unavailable` ville vært nesten like galt. `unavailable` betyr «vi
+-- forsøkte, og tjenesten svarte ikke»: en forbigående begrensning som prøves på
+-- nytt. «Vi har ingen utfører» er ikke forbigående, blir ikke bedre av et nytt
+-- forsøk, og krever et menneske framfor en ny runde. To tilstander som utløser
+-- helt forskjellig arbeid, kan ikke dele navn.
+--
+-- Å la sporet bli stående `pending` — som var virkningen rett etter 013v — er
+-- det tredje gale svaret: planen kan da aldri lukkes, og den stanser uten at
+-- noe sted sier hvorfor. En stille blokkering er ikke en ærlig begrensning.
+-- ---------------------------------------------------------------------------
+
+alter type workflow.monograph_track_state add value if not exists 'no_machine_path';

@@ -344,6 +344,7 @@ select is_empty(
         'api.monograph_discovery_work(text,text)',
         'api.record_monograph_machine_search(text,text,uuid,text,text,text,text,text,text,text,text,integer,integer,boolean,text,text,text[],jsonb)',
         'api.close_monograph_search_request(text,text,uuid,text)',
+        'api.record_monograph_track_by_editor(text,text,text,text)',
         'api.monograph_search_plans(text)',
         'api.close_monograph_search_plan(text,text)',
         'api.pause_monograph_search_plan(text,text)',

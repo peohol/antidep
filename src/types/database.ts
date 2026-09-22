@@ -868,6 +868,15 @@ export type Database = {
         }
         Returns: unknown
       }
+      record_monograph_track_by_editor: {
+        Args: {
+          p_plan_reference: string
+          p_track_code: string
+          p_outcome: string
+          p_note: string
+        }
+        Returns: unknown
+      }
       record_monograph_machine_search: {
         Args: {
           p_identity_key: string

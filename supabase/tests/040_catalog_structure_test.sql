@@ -67,6 +67,7 @@ select set_eq(
            ('monograph_standard_versions'), ('monograph_source_profiles'),
            ('monograph_question_templates'), ('monograph_template_profiles'),
            ('monograph_search_tracks'), ('monograph_search_track_profiles'),
+           ('monograph_search_platforms'),
            ('monograph_prescribed_scope_values'),
            -- Migrasjon 013c: bestillingen og de konkrete kunnskapsbehovene.
            ('monograph_editions'), ('monograph_needs'),
