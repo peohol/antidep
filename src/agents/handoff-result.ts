@@ -41,7 +41,22 @@ import {
   type ClaimBinding,
 } from './claim-synthesis-proposal.ts'
 import { parseProposedAssessment } from './evidence-assessment-proposal.ts'
-import { asObjectList, fieldsOf, raw, rejectUnknown } from './strict-fields.ts'
+import { CANDIDATE_DECISIONS, SEARCH_OUTCOMES } from './handoff-schemas.ts'
+import {
+  asObjectList,
+  asOptionalInteger,
+  asOptionalText,
+  asOptionalVocabulary,
+  asText,
+  asUuid,
+  asVocabulary,
+  fieldsOf,
+  nestedFields,
+  problem,
+  raw,
+  rejectUnknown,
+  type Fields,
+} from './strict-fields.ts'
 import type { AgentTask } from './agent-task.ts'
 import type { Uuid } from '../types/api.ts'
 
@@ -178,6 +193,218 @@ function assessmentProblem(result: Record<string, unknown>): string | null {
   return null
 }
 
+function optionalBoolean(fields: Fields, key: string): boolean | null {
+  const value = raw(fields, key)
+  if (value === undefined || value === null) {
+    return null
+  }
+  if (typeof value !== 'boolean') {
+    problem(fields.subject, `${fields.where}.${key}`, 'er ikke sann/usann')
+  }
+  return value
+}
+
+function requiredBoolean(fields: Fields, key: string): boolean {
+  const value = optionalBoolean(fields, key)
+  if (value === null) {
+    problem(fields.subject, `${fields.where}.${key}`, 'mangler')
+  }
+  return value
+}
+
+function optionalArray(fields: Fields, key: string): readonly unknown[] {
+  const value = raw(fields, key)
+  if (value === undefined || value === null) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    problem(fields.subject, `${fields.where}.${key}`, 'er ikke en liste')
+  }
+  return value
+}
+
+function requiredArray(fields: Fields, key: string): readonly unknown[] {
+  const value = raw(fields, key)
+  if (!Array.isArray(value)) {
+    problem(fields.subject, `${fields.where}.${key}`, 'mangler eller er ikke en liste')
+  }
+  return value
+}
+
+function nonNegativeInteger(fields: Fields, key: string): number | null {
+  const value = asOptionalInteger(fields, key)
+  if (value !== null && value < 0) {
+    problem(fields.subject, `${fields.where}.${key}`, 'er negativt')
+  }
+  return value
+}
+
+function stringArray(fields: Fields, key: string): readonly string[] {
+  const values = optionalArray(fields, key)
+  return values.map((value, index) => {
+    if (typeof value !== 'string') {
+      problem(fields.subject, `${fields.where}.${key}[${String(index)}]`, 'er ikke tekst')
+    }
+    return value
+  })
+}
+
+function discoverySearches(fields: Fields): void {
+  const searches = requiredArray(fields, 'searches')
+  searches.forEach((value, index) => {
+    const search = nestedFields(fields, value, `searches[${String(index)}]`)
+    asText(search, 'platform')
+    asText(search, 'query_string')
+    asOptionalText(search, 'filters')
+    asVocabulary(search, 'outcome', SEARCH_OUTCOMES)
+    nonNegativeInteger(search, 'result_count')
+    nonNegativeInteger(search, 'screened_count')
+    optionalBoolean(search, 'truncated')
+    asOptionalText(search, 'truncation_note')
+    asOptionalText(search, 'limitation_note')
+    stringArray(search, 'track_codes')
+    rejectUnknown(search)
+  })
+}
+
+function discoveryCandidates(fields: Fields): void {
+  const candidates = optionalArray(fields, 'candidates')
+  candidates.forEach((value, index) => {
+    const candidate = nestedFields(fields, value, `candidates[${String(index)}]`)
+    asVocabulary(candidate, 'identifier_kind', [
+      'doi',
+      'pmid',
+      'pmcid',
+      'url',
+      'title',
+      'registry_id',
+    ])
+    asText(candidate, 'identifier_value')
+    asText(candidate, 'title')
+    asOptionalText(candidate, 'authors_or_issuer')
+    asOptionalText(candidate, 'publisher_or_journal')
+    const year = nonNegativeInteger(candidate, 'publication_year')
+    if (year !== null && (year < 1800 || year > 2200)) {
+      problem(candidate.subject, `${candidate.where}.publication_year`, 'ligger utenfor 1800–2200')
+    }
+    asText(candidate, 'discovery_path')
+    optionalBoolean(candidate, 'access_limited')
+    asOptionalText(candidate, 'access_limitation_note')
+    optionalBoolean(candidate, 'could_change_conclusion')
+    asOptionalText(candidate, 'materiality_reason')
+    asOptionalVocabulary(candidate, 'decision', CANDIDATE_DECISIONS)
+    asOptionalText(candidate, 'decision_reason')
+
+    const uses = optionalArray(candidate, 'uses')
+    uses.forEach((useValue, useIndex) => {
+      const use = nestedFields(candidate, useValue, `${candidate.where}.uses[${String(useIndex)}]`)
+      asText(use, 'need_reference')
+      asText(use, 'proposed_use')
+      rejectUnknown(use)
+    })
+    rejectUnknown(candidate)
+  })
+}
+
+function sourceDiscoveryProblem(
+  role: 'source_discovery' | 'source_quality_assessment',
+  result: Record<string, unknown>,
+): string | null {
+  const fields = fieldsOf(result, RESULT_SUBJECT, 'utkastet')
+  discoverySearches(fields)
+  discoveryCandidates(fields)
+
+  if (role === 'source_discovery') {
+    const proposals = optionalArray(fields, 'term_proposals')
+    proposals.forEach((value, index) => {
+      const proposal = nestedFields(fields, value, `term_proposals[${String(index)}]`)
+      asText(proposal, 'axis')
+      asText(proposal, 'label')
+      asText(proposal, 'rationale')
+      asOptionalText(proposal, 'from_need')
+      rejectUnknown(proposal)
+    })
+  } else {
+    const control = nestedFields(fields, raw(fields, 'control'), 'control')
+    asVocabulary(control, 'outcome', ['accepted', 'insufficient'])
+    asText(control, 'note')
+    requiredBoolean(control, 'searched_independently')
+    nonNegativeInteger(control, 'missed_candidates')
+    nonNegativeInteger(control, 'exclusions_checked')
+    requiredBoolean(control, 'materiality_assessed')
+    rejectUnknown(control)
+  }
+
+  asOptionalText(fields, 'note')
+  rejectUnknown(fields)
+  return null
+}
+
+function optionalObject(fields: Fields, key: string): Record<string, unknown> | null {
+  const value = raw(fields, key)
+  if (value === undefined || value === null) {
+    return null
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    problem(fields.subject, `${fields.where}.${key}`, 'er ikke et objekt')
+  }
+  return value as Record<string, unknown>
+}
+
+function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false
+  }
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
+function requiredDate(fields: Fields, key: string): string {
+  const value = asText(fields, key)
+  if (!isCalendarDate(value)) {
+    problem(fields.subject, `${fields.where}.${key}`, 'er ikke en gyldig dato på formen ÅÅÅÅ-MM-DD')
+  }
+  return value
+}
+
+function optionalDate(fields: Fields, key: string): string | null {
+  const value = asOptionalText(fields, key)
+  if (value !== null && !isCalendarDate(value)) {
+    problem(fields.subject, `${fields.where}.${key}`, 'er ikke en gyldig dato på formen ÅÅÅÅ-MM-DD')
+  }
+  return value
+}
+
+function monographAnswerProblem(result: Record<string, unknown>): string | null {
+  const fields = fieldsOf(result, RESULT_SUBJECT, 'utkastet')
+  const answer = nestedFields(fields, raw(fields, 'answer'), 'answer')
+
+  asVocabulary(answer, 'knowledge_type', ['regulatory_fact', 'product_data', 'attributed_advice'])
+  asText(answer, 'statement')
+  optionalObject(answer, 'structured_value')
+  asOptionalText(answer, 'uncertainty_summary')
+  asOptionalText(answer, 'limitation_note')
+  requiredDate(answer, 'as_of')
+  asText(answer, 'source_quote')
+  asText(answer, 'source_locator')
+  asOptionalText(answer, 'recommending_body')
+  optionalDate(answer, 'recommendation_date')
+
+  const additionalSources = optionalArray(answer, 'additional_sources')
+  additionalSources.forEach((value, index) => {
+    const source = nestedFields(answer, value, `answer.additional_sources[${String(index)}]`)
+    asUuid(source, 'source_version_id')
+    asText(source, 'source_quote')
+    asText(source, 'source_locator')
+    requiredDate(source, 'as_of')
+    rejectUnknown(source)
+  })
+
+  rejectUnknown(answer)
+  rejectUnknown(fields)
+  return null
+}
+
 /**
  * Om svaret holder mål, eller hvorfor det ikke gjør det.
  *
@@ -190,13 +417,25 @@ export function handoffResultProblem(
   result: Record<string, unknown>,
 ): string | null {
   try {
-    if (task.role === 'evidence_extraction') {
-      return extractionProblem(task, result)
+    switch (task.role) {
+      case 'evidence_extraction':
+        return extractionProblem(task, result)
+      case 'claim_synthesis':
+        return synthesisProblem(task, result)
+      case 'evidence_assessment':
+        return assessmentProblem(result)
+
+      case 'source_discovery':
+      case 'source_quality_assessment':
+        return sourceDiscoveryProblem(task.role, result)
+      case 'monograph_answer':
+        return monographAnswerProblem(result)
+
+      default: {
+        const exhaustive: never = task.role
+        return exhaustive
+      }
     }
-    if (task.role === 'claim_synthesis') {
-      return synthesisProblem(task, result)
-    }
-    return assessmentProblem(result)
   } catch (cause) {
     return cause instanceof Error ? cause.message : String(cause)
   }

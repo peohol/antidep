@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseAgentTask } from './agent-task.ts'
+import { parseAgentTask, type HandoffRole } from './agent-task.ts'
 import { handoffResultProblem } from './handoff-result.ts'
 import {
   resultFor,
@@ -10,7 +10,7 @@ import {
   TEST_OUTCOME_ID,
 } from './handoff-test-support.ts'
 
-type Role = 'evidence_extraction' | 'claim_synthesis' | 'evidence_assessment'
+type Role = HandoffRole
 
 function task(role: Role) {
   return parseAgentTask(taskPayload(role))
@@ -242,5 +242,85 @@ describe('vurderingsutkastet', () => {
         },
       }),
     ).toMatch(/evidence_gap/)
+  })
+})
+
+describe('kilde- og monografisvar', () => {
+  for (const role of [
+    'source_discovery',
+    'source_quality_assessment',
+    'monograph_answer',
+  ] as const) {
+    it(`godtar et gyldig ${role}-resultat uten å lese det som en evidensvurdering`, () => {
+      expect(handoffResultProblem(task(role), resultFor(role))).toBeNull()
+    })
+  }
+
+  it('avviser feil type i et rapportert treffantall før databaseskriving', () => {
+    const result = resultFor('source_discovery')
+    const searches = [...(result['searches'] as Record<string, unknown>[])]
+    searches[0] = { ...searches[0], result_count: 'ukjent' }
+
+    expect(handoffResultProblem(task('source_discovery'), { ...result, searches })).toMatch(
+      /result_count.*heltall/,
+    )
+  })
+
+  it('avviser feil type i kontrollens boolske felt før databaseskriving', () => {
+    const result = resultFor('source_quality_assessment')
+    const control = result['control'] as Record<string, unknown>
+
+    expect(
+      handoffResultProblem(task('source_quality_assessment'), {
+        ...result,
+        control: { ...control, searched_independently: 'ja' },
+      }),
+    ).toMatch(/searched_independently.*sann\/usann/)
+  })
+
+  it('avviser structured_value som ikke er et objekt', () => {
+    const result = resultFor('monograph_answer')
+    const answer = result['answer'] as Record<string, unknown>
+
+    expect(
+      handoffResultProblem(task('monograph_answer'), {
+        ...result,
+        answer: { ...answer, structured_value: '50 mg' },
+      }),
+    ).toMatch(/structured_value.*objekt/)
+  })
+
+  it('avviser ugyldige monografidatoer før databaseskriving', () => {
+    const result = resultFor('monograph_answer')
+    const answer = result['answer'] as Record<string, unknown>
+
+    expect(
+      handoffResultProblem(task('monograph_answer'), {
+        ...result,
+        answer: { ...answer, as_of: '2026-02-30' },
+      }),
+    ).toMatch(/as_of.*gyldig dato/)
+  })
+
+  it('avviser ugyldig kilde-id i en tilleggskilde før databaseskriving', () => {
+    const result = resultFor('monograph_answer')
+    const answer = result['answer'] as Record<string, unknown>
+
+    expect(
+      handoffResultProblem(task('monograph_answer'), {
+        ...result,
+        answer: {
+          ...answer,
+          additional_sources: [
+            {
+              source_version_id: 'ikke-en-uuid',
+              source_quote: 'Ordrett sitat.',
+              source_locator: 'Avsnitt 1',
+              as_of: '2026-09-22',
+            },
+          ],
+        },
+      }),
+    ).toMatch(/source_version_id.*uuid/)
   })
 })
