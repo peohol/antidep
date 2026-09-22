@@ -613,10 +613,18 @@ async function main(): Promise<void> {
     'og lukkingen er det som legger den semantiske vurderingsoppgaven i køen',
     closed['enqueued_job'] === true,
   )
+  // Avgrenset til søkene en maskinell runde faktisk bestilte. Påstanden «alle
+  // rader i loggen er maskinelt utført» var sann bare fordi dette løpet ikke
+  // registrerer en redaktørpassering — den er ikke lenger en invariant i
+  // systemet, og en prøve som hevder den, ville blitt feil i det øyeblikket
+  // løpet ble utvidet (migrasjon 013y).
   check(
-    'søkene står i loggen som Antideps egen, maskinelt bekreftede utførelse',
-    psql(config, `select distinct execution_evidence::text from workflow.monograph_searches`) ===
-      'machine_executed',
+    'søkene en maskinell runde bestilte, står i loggen som Antideps egen, maskinelt bekreftede utførelse',
+    psql(
+      config,
+      `select distinct execution_evidence::text from workflow.monograph_searches
+       where search_request_id is not null`,
+    ) === 'machine_executed',
   )
   check(
     'en søkevei som ikke svarte, er lagret som en begrensning og ikke som null treff',
