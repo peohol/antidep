@@ -285,11 +285,7 @@ function discoveryCandidates(fields: Fields): void {
     asOptionalText(candidate, 'publisher_or_journal')
     const year = nonNegativeInteger(candidate, 'publication_year')
     if (year !== null && (year < 1800 || year > 2200)) {
-      problem(
-        candidate.subject,
-        `${candidate.where}.publication_year`,
-        'ligger utenfor 1800–2200',
-      )
+      problem(candidate.subject, `${candidate.where}.publication_year`, 'ligger utenfor 1800–2200')
     }
     asText(candidate, 'discovery_path')
     optionalBoolean(candidate, 'access_limited')
@@ -301,11 +297,7 @@ function discoveryCandidates(fields: Fields): void {
 
     const uses = optionalArray(candidate, 'uses')
     uses.forEach((useValue, useIndex) => {
-      const use = nestedFields(
-        candidate,
-        useValue,
-        `${candidate.where}.uses[${String(useIndex)}]`,
-      )
+      const use = nestedFields(candidate, useValue, `${candidate.where}.uses[${String(useIndex)}]`)
       asText(use, 'need_reference')
       asText(use, 'proposed_use')
       rejectUnknown(use)
@@ -360,7 +352,7 @@ function optionalObject(fields: Fields, key: string): Record<string, unknown> | 
 }
 
 function isCalendarDate(value: string): boolean {
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false
   }
   const date = new Date(`${value}T00:00:00.000Z`)
