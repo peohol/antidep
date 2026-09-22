@@ -41,7 +41,12 @@ import {
   type ClaimBinding,
 } from './claim-synthesis-proposal.ts'
 import { parseProposedAssessment } from './evidence-assessment-proposal.ts'
-import { CANDIDATE_DECISIONS, SEARCH_OUTCOMES } from './handoff-schemas.ts'
+import {
+  CANDIDATE_DECISIONS,
+  SEARCH_PLATFORMS,
+  SEARCH_REQUEST_MAX_TERMS,
+  SEARCH_STRATEGIES,
+} from './handoff-schemas.ts'
 import {
   asObjectList,
   asOptionalInteger,
@@ -249,28 +254,38 @@ function stringArray(fields: Fields, key: string): readonly string[] {
   })
 }
 
-function discoverySearches(fields: Fields): void {
-  const searches = requiredArray(fields, 'searches')
-  searches.forEach((value, index) => {
-    const search = nestedFields(fields, value, `searches[${String(index)}]`)
-    asText(search, 'platform')
-    asText(search, 'query_string')
-    asOptionalText(search, 'filters')
-    asVocabulary(search, 'outcome', SEARCH_OUTCOMES)
-    nonNegativeInteger(search, 'result_count')
-    nonNegativeInteger(search, 'screened_count')
-    optionalBoolean(search, 'truncated')
-    asOptionalText(search, 'truncation_note')
-    asOptionalText(search, 'limitation_note')
-    stringArray(search, 'track_codes')
-    rejectUnknown(search)
-  })
+/**
+ * De feltene kildeleddene hadde før migrasjon 013v, og som ikke finnes lenger.
+ *
+ * De fortjener hver sin setning framfor «ukjent felt». `searches` er ikke en
+ * skrivefeil: det er et svar som gjør krav på å ha utført søk, og den veien
+ * finnes ikke for et ledd som ikke har verktøy til å søke. `candidates` er en
+ * kilde uten en oppdagelsesvei. Den samme regelen står i databasen, med de
+ * samme ordene (SOURCE_POLICY.md §4.3, §4.4).
+ */
+function rejectRetiredDiscoveryFields(result: Record<string, unknown>): string | null {
+  if ('searches' in result) {
+    return (
+      'Svaret rapporterer utførte søk, og det kan ikke dette agentleddet. Søkene utføres av ' +
+      'Antideps egen kode og registreres med endepunkt og responsavtrykk; et modellrapportert ' +
+      'søk kan ikke fremstilles som maskinelt bekreftet utførelse. Trengs det flere søk, be om ' +
+      'dem i «search_requests».'
+    )
+  }
+  if ('candidates' in result) {
+    return (
+      'Svaret legger til kandidatkilder, og det kan ikke dette agentleddet. Kandidatkildene ' +
+      'kommer fra de maskinelt utførte søkene; vurder dem i «candidate_appraisals», og be om et ' +
+      'søk som ville funnet en kilde du mener mangler.'
+    )
+  }
+  return null
 }
 
-function discoveryCandidates(fields: Fields): void {
-  const candidates = optionalArray(fields, 'candidates')
-  candidates.forEach((value, index) => {
-    const candidate = nestedFields(fields, value, `candidates[${String(index)}]`)
+function discoveryAppraisals(fields: Fields): void {
+  const appraisals = requiredArray(fields, 'candidate_appraisals')
+  appraisals.forEach((value, index) => {
+    const candidate = nestedFields(fields, value, `candidate_appraisals[${String(index)}]`)
     asVocabulary(candidate, 'identifier_kind', [
       'doi',
       'pmid',
@@ -280,18 +295,15 @@ function discoveryCandidates(fields: Fields): void {
       'registry_id',
     ])
     asText(candidate, 'identifier_value')
-    asText(candidate, 'title')
-    asOptionalText(candidate, 'authors_or_issuer')
-    asOptionalText(candidate, 'publisher_or_journal')
-    const year = nonNegativeInteger(candidate, 'publication_year')
-    if (year !== null && (year < 1800 || year > 2200)) {
-      problem(candidate.subject, `${candidate.where}.publication_year`, 'ligger utenfor 1800–2200')
+    const material = optionalBoolean(candidate, 'could_change_conclusion')
+    const reason = asOptionalText(candidate, 'materiality_reason')
+    if (material === true && reason === null) {
+      problem(
+        candidate.subject,
+        `${candidate.where}.materiality_reason`,
+        'mangler, og en kilde som kan endre hovedkonklusjonen, må ha en begrunnelse',
+      )
     }
-    asText(candidate, 'discovery_path')
-    optionalBoolean(candidate, 'access_limited')
-    asOptionalText(candidate, 'access_limitation_note')
-    optionalBoolean(candidate, 'could_change_conclusion')
-    asOptionalText(candidate, 'materiality_reason')
     asOptionalVocabulary(candidate, 'decision', CANDIDATE_DECISIONS)
     asOptionalText(candidate, 'decision_reason')
 
@@ -306,13 +318,56 @@ function discoveryCandidates(fields: Fields): void {
   })
 }
 
+/**
+ * Søkeforespørslene: den ene veien fra en semantisk vurdering til et nytt søk.
+ *
+ * Grensene er de samme som raden håndhever. De står også her fordi flaten skal
+ * kunne si hva som er galt før databasen avviser det — og fordi en forespørsel
+ * som kunne navngi en vilkårlig tjeneste, ikke ville vært en søkeforespørsel,
+ * men en proxy (ANTIDEP_CONSTITUTION.md regel 7).
+ */
+function discoverySearchRequests(fields: Fields): number {
+  const requests = optionalArray(fields, 'search_requests')
+  requests.forEach((value, index) => {
+    const request = nestedFields(fields, value, `search_requests[${String(index)}]`)
+    asText(request, 'rationale')
+    asOptionalVocabulary(request, 'platform', SEARCH_PLATFORMS)
+    asOptionalVocabulary(request, 'strategy', SEARCH_STRATEGIES)
+    const terms = stringArray(request, 'query_terms')
+    if (terms.length > SEARCH_REQUEST_MAX_TERMS) {
+      problem(
+        request.subject,
+        `${request.where}.query_terms`,
+        `har flere enn ${String(SEARCH_REQUEST_MAX_TERMS)} termer`,
+      )
+    }
+    terms.forEach((term, termIndex) => {
+      if (term.trim() !== term || term.length < 2 || term.length > 120 || /["\n\r]/.test(term)) {
+        problem(
+          request.subject,
+          `${request.where}.query_terms[${String(termIndex)}]`,
+          'har ikke formen en søkestreng kan bære: 2–120 tegn, uten anførselstegn og linjeskift',
+        )
+      }
+    })
+    asOptionalText(request, 'filters_note')
+    rejectUnknown(request)
+  })
+  return requests.length
+}
+
 function sourceDiscoveryProblem(
   role: 'source_discovery' | 'source_quality_assessment',
   result: Record<string, unknown>,
 ): string | null {
+  const retired = rejectRetiredDiscoveryFields(result)
+  if (retired !== null) {
+    return retired
+  }
+
   const fields = fieldsOf(result, RESULT_SUBJECT, 'utkastet')
-  discoverySearches(fields)
-  discoveryCandidates(fields)
+  discoveryAppraisals(fields)
+  const requested = discoverySearchRequests(fields)
 
   if (role === 'source_discovery') {
     const proposals = optionalArray(fields, 'term_proposals')
@@ -325,14 +380,40 @@ function sourceDiscoveryProblem(
       rejectUnknown(proposal)
     })
   } else {
-    const control = nestedFields(fields, raw(fields, 'control'), 'control')
-    asVocabulary(control, 'outcome', ['accepted', 'insufficient'])
-    asText(control, 'note')
-    requiredBoolean(control, 'searched_independently')
-    nonNegativeInteger(control, 'missed_candidates')
-    nonNegativeInteger(control, 'exclusions_checked')
-    requiredBoolean(control, 'materiality_assessed')
-    rejectUnknown(control)
+    const raw_control = raw(fields, 'control')
+    const hasControl = raw_control !== undefined && raw_control !== null
+
+    if (hasControl && requested > 0) {
+      return (
+        'Kontrollen ber om flere søk og avgjør dekningen i det samme svaret. De to er ' +
+        'forskjellige utfall av én kontrollrunde: be om søkene, vurder resultatene, og avgjør ' +
+        'etterpå.'
+      )
+    }
+    if (!hasControl && requested === 0) {
+      return (
+        'Kontrollen verken avgjør dekningen eller ber om flere motsøk. Én av delene må stå i ' +
+        'svaret: ellers er kontrollrunden uten et utfall.'
+      )
+    }
+
+    if (hasControl) {
+      const control = nestedFields(fields, raw_control, 'control')
+      if (raw(control, 'searched_independently') !== undefined) {
+        return (
+          'Kontrollen erklærer selv at den søkte uavhengig, og det er ikke lenger en opplysning ' +
+          'svaret gir. Antidep kjørte motsøkene under kontrollens egen rolle og kjøring, og ' +
+          'leser det av søkeloggen — en erklæring et svar kan bestå ved å skrive den, ' +
+          'kontrollerer ingenting.'
+        )
+      }
+      asVocabulary(control, 'outcome', ['accepted', 'insufficient'])
+      asText(control, 'note')
+      nonNegativeInteger(control, 'missed_candidates')
+      nonNegativeInteger(control, 'exclusions_checked')
+      requiredBoolean(control, 'materiality_assessed')
+      rejectUnknown(control)
+    }
   }
 
   asOptionalText(fields, 'note')

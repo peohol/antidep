@@ -148,6 +148,10 @@ select set_eq(
            ('monograph_searches'), ('monograph_search_track_attempts'),
            ('monograph_candidate_sources'), ('monograph_candidate_source_needs'),
            ('monograph_coverage_controls'),
+           -- Migrasjon 013v: bestillingen av en maskinell søkerunde. Leddet som
+           -- gjør arbeidsdelingen til en rad: den semantiske agenten ber om
+           -- søk, og Antideps deterministiske kode utfører dem.
+           ('monograph_search_requests'),
            -- Migrasjon 013h: forespørselen om et myndighets-, preparat- eller
            -- retningslinjedokument, atskilt fra den forskningsfaglige.
            ('monograph_document_requests'),
@@ -161,7 +165,7 @@ select set_eq(
            -- forhåndsgodkjente kildene og de synlige avvikene.
            ('monograph_source_restrictions'), ('monograph_restriction_sources'),
            ('monograph_revision_proposals')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i, 013j og 013k'
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i, 013j, 013k og 013v'
 );
 select set_eq(
   $$

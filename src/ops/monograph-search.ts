@@ -44,6 +44,7 @@
 import { createHash } from 'node:crypto'
 
 import { guardedGet, type GuardedGetOptions } from '../agents/guarded-http.ts'
+import { SEARCH_OUTCOMES } from '../agents/handoff-schemas.ts'
 
 /** Hentefunksjonen. Injiserbar, slik at prøver kan spille av et opptak. */
 export type Fetcher = (
@@ -82,6 +83,9 @@ export interface CandidateSource {
   readonly access_limitation_note?: string | undefined
 }
 
+/** Utfallet ett søk kan ha. Det samme vokabularet databasen og svarformen bruker. */
+export type SearchOutcome = (typeof SEARCH_OUTCOMES)[number]
+
 /** Resultatet av ett utført søk, klart til registrering. */
 export interface MachineSearch {
   readonly platform: string
@@ -89,7 +93,7 @@ export interface MachineSearch {
   readonly filters: string | null
   readonly endpoint: string
   readonly responseDigest: string | null
-  readonly outcome: 'executed' | 'zero_results' | 'unavailable' | 'failed'
+  readonly outcome: SearchOutcome
   readonly resultCount: number | null
   readonly screenedCount: number
   readonly truncated: boolean
@@ -102,6 +106,13 @@ export interface MachineSearch {
 /** Hvor mange treff hvert søk leser. Bevisst lavt: dette er en driftskjøring. */
 export const PAGE_SIZE = 25
 
+/** De aksene som er noe annet enn virkestoffet, i en fast rekkefølge. */
+function scopeTerms(scope: SearchScope): readonly string[] {
+  return [scope.indication, scope.outcome, scope.population, scope.comparator]
+    .map((value) => value?.trim())
+    .filter((value): value is string => value !== undefined && value.length > 0)
+}
+
 /**
  * Søkestrengen, bygget av avgrensningen.
  *
@@ -111,15 +122,49 @@ export const PAGE_SIZE = 25
  * til som ELLER-ledd, slik at en artikkel som bare nevner den ene, fortsatt
  * kommer med.
  */
-export function buildQuery(scope: SearchScope): string {
-  const extra = [scope.indication, scope.outcome, scope.population, scope.comparator]
-    .map((value) => value?.trim())
-    .filter((value): value is string => value !== undefined && value.length > 0)
+export function buildQuery(scope: SearchScope, extraTerms: readonly string[] = []): string {
+  const extra = [...scopeTerms(scope), ...extraTerms.map((term) => term.trim())].filter(
+    (value) => value.length > 0,
+  )
 
   if (extra.length === 0) {
     return `"${scope.drug}"`
   }
   return `"${scope.drug}" AND (${extra.map((value) => `"${value}"`).join(' OR ')})`
+}
+
+/** Hvor mange strenger én runde kan gi. En driftskjøring er ikke en støvsuger. */
+export const MAX_QUERIES_PER_REQUEST = 6
+
+/**
+ * Strengene én søkerunde skal kjøre.
+ *
+ * `broad` er den brede orienteringen: alle aksene som ELLER-ledd, som før.
+ * `targeted` er noe annet, og det er hele poenget med at de to finnes: én
+ * passering per akse og per bedt om term, hver av dem et smalere søk som kan
+ * løfte fram noe det brede søket lot drukne. Dekningskontrollens motsøk kjører
+ * alltid `targeted` — et motsøk som gjentok generatorens egen streng, ville
+ * ikke lett etter det generatoren overså (SOURCE_POLICY.md §6).
+ */
+export function buildQueries(
+  scope: SearchScope,
+  strategy: 'broad' | 'targeted',
+  extraTerms: readonly string[] = [],
+): readonly string[] {
+  if (strategy === 'broad') {
+    return [buildQuery(scope, extraTerms)]
+  }
+
+  const axes = [...scopeTerms(scope), ...extraTerms.map((term) => term.trim())].filter(
+    (value) => value.length > 0,
+  )
+  if (axes.length === 0) {
+    return [`"${scope.drug}"`]
+  }
+  // Duplikater fjernes: den samme strengen kjørt to ganger er ett spor og ikke
+  // to passeringer, og metningsregelen teller passeringer.
+  const unique = [...new Set(axes)]
+  return unique.slice(0, MAX_QUERIES_PER_REQUEST).map((axis) => `"${scope.drug}" AND "${axis}"`)
 }
 
 function digest(bytes: Uint8Array): string {
@@ -317,7 +362,7 @@ export const CROSSREF: SearchPlatform = {
 export const SEARCH_PLATFORMS: readonly SearchPlatform[] = [EUROPE_PMC, PUBMED, CROSSREF]
 
 /**
- * Utfører ett søk mot én plattform.
+ * Utfører ett søk mot én plattform, med den strengen runden ba om.
  *
  * Kaster aldri: en plattform som er nede, et svar som ikke lar seg lese, og et
  * søk uten treff er tre forskjellige registrerte utfall, og ingen av dem er en
@@ -325,11 +370,10 @@ export const SEARCH_PLATFORMS: readonly SearchPlatform[] = [EUROPE_PMC, PUBMED, 
  */
 export async function runSearch(
   platform: SearchPlatform,
-  scope: SearchScope,
+  query: string,
   fetcher: Fetcher = guardedGet,
-  allowedTracks?: readonly string[],
+  trackCodes: readonly string[] = [],
 ): Promise<MachineSearch> {
-  const query = buildQuery(scope)
   const endpoint = platform.endpoint(query)
   const base = {
     platform: platform.name,
@@ -339,15 +383,12 @@ export async function runSearch(
     screenedCount: 0,
     truncated: false,
     truncationNote: null,
-    // Et søk kan bare erklære å dekke et spor kildeprofilen faktisk krever
-    // (SOURCE_POLICY.md §4.2). Plattformen sier hva den *kan* dekke; planen
-    // sier hva som er obligatorisk for den. Uten skjæringen ville et søk
-    // erklært et spor profilen ikke ber om — og databasen avviser det, med
-    // rette: ellers ville porten sett dekket ut uten at noe var forsøkt.
-    trackCodes:
-      allowedTracks === undefined
-        ? platform.trackCodes
-        : platform.trackCodes.filter((code) => allowedTracks.includes(code)),
+    // Et søk kan bare erklære å dekke et spor runden faktisk fikk
+    // (SOURCE_POLICY.md §4.2). Hvilke det er, avgjøres når runden åpnes, og
+    // databasen avviser et søk som erklærer noe annet — med rette: ellers ville
+    // porten sett dekket ut uten at noe var forsøkt. Dekningskontrollens motsøk
+    // får ingen spor i det hele tatt.
+    trackCodes,
     candidates: [] as readonly CandidateSource[],
   }
 
@@ -387,4 +428,15 @@ export async function runSearch(
     limitationNote: null,
     candidates: parsed.candidates,
   }
+}
+
+/** Plattformen med dette navnet, eller alle når runden ikke navnga én. */
+export function platformsFor(
+  platforms: readonly SearchPlatform[],
+  name: string | null,
+): readonly SearchPlatform[] {
+  if (name === null) {
+    return platforms
+  }
+  return platforms.filter((platform) => platform.name === name)
 }

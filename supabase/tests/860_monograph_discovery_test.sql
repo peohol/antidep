@@ -188,6 +188,15 @@ insert into refs (label, value)
 select 'eff', p.reference from workflow.monograph_search_plans p
 where p.id = (select id from plans where label = 'eff');
 
+-- Migrasjon 013v: planen åpner sin egen maskinelle søkerunde, og et søk hører
+-- til nøyaktig én runde. Uten koblingen ville runden aldri blitt lukket, og den
+-- semantiske vurderingsoppgaven ville aldri blitt lagt i køen.
+insert into refs (label, value)
+select 'eff_runde', r.reference from workflow.monograph_search_requests r
+where r.plan_id = (select id from plans where label = 'eff')
+  and r.requested_for_role = 'source_discovery'
+  and r.state = 'pending';
+
 select matches(
   workflow.monograph_search_closure_problem((select id from plans where label = 'eff')),
   'ikke forsøkt ennå',
@@ -286,6 +295,7 @@ select 'sok1', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde'),
   'Europe PMC', 'sertraline AND depressive disorder AND systematic review',
   'ingen språk- eller årsavgrensning',
   'https://www.ebi.ac.uk/europepmc/webservices/rest/search',
@@ -392,17 +402,18 @@ set local role anon;
 select throws_ok(
   format($$
     select api.record_monograph_machine_search(
-      'agent-identity:source-discovery-01', %L, %L, %L,
+      'agent-identity:source-discovery-01', %L, %L, %L, %L,
       'Europe PMC', 'sertraline', null, 'https://example.test',
       'sha256:' || repeat('e', 64), 'executed', 3, 3, false, null, null,
       array['norwegian_authority_source'], null)
   $$,
   (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
-  (select value from refs where label = 'eff')),
+  (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde')),
   '22023',
   null,
-  'et søk kan ikke erklære å dekke et spor kildeprofilen ikke krever'
+  'et søk kan ikke erklære å dekke et spor runden ikke fikk'
 );
 reset role;
 
@@ -418,6 +429,7 @@ select 'utilgjengelig1', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde'),
   'Referanselister og siteringsindeks', 'oppfølging av referanser i oversikten', null,
   'https://example.test/860-referanser',
   'sha256:' || repeat('6', 64),
@@ -429,6 +441,7 @@ select 'utilgjengelig2', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde'),
   'ClinicalTrials.gov', 'sertraline AND depressive disorder', null,
   'https://clinicaltrials.gov/api/v2/studies',
   'sha256:' || repeat('7', 64),
@@ -467,6 +480,7 @@ select 'sok2', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde'),
   'PubMed', 'sertraline[tiab] AND depression[tiab]', null,
   'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi',
   'sha256:' || repeat('8', 64),
@@ -486,6 +500,7 @@ select 'sok3', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde'),
   'PubMed', 'sertraline[tiab] AND depression[tiab] AND randomized[pt]', null,
   'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi',
   'sha256:' || repeat('9', 64),
@@ -655,6 +670,7 @@ select 'metning', api.record_monograph_machine_search(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde'),
   'Europe PMC (utvidet synonym- og siteringssøk)',
   'CITES:"10.1000/860-oversikt" OR (sertraline OR "Zoloft")', null,
   'https://www.ebi.ac.uk/europepmc/webservices/rest/search',
@@ -724,14 +740,15 @@ set local role anon;
 select throws_ok(
   format($$
     select api.record_monograph_machine_search(
-      'agent-identity:source-discovery-01', %L, %L, %L,
+      'agent-identity:source-discovery-01', %L, %L, %L, %L,
       'Europe PMC', 'sertraline', null, 'https://example.test',
       'sha256:' || repeat('c', 63) || '3', 'executed', 1, 1, false, null, null,
       array['bibliographic_database'], null)
   $$,
   (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
-  (select value from refs where label = 'eff')),
+  (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_runde')),
   '23001',
   'Søkedekningen for denne planen er erklært ferdig.',
   'et søk etter at dekningen er erklært, avvises'

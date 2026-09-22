@@ -859,12 +859,22 @@ export type Database = {
         }
         Returns: unknown
       }
+      close_monograph_search_request: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+          p_agent_run_id: string
+          p_request_reference: string
+        }
+        Returns: unknown
+      }
       record_monograph_machine_search: {
         Args: {
           p_identity_key: string
           p_secret: string
           p_agent_run_id: string
           p_plan_reference: string
+          p_request_reference: string
           p_platform: string
           p_query_string: string
           p_filters: string | null

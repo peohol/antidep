@@ -205,6 +205,32 @@ async function main(): Promise<void> {
   )
   check('minst ett søk ble faktisk utført mot en ekte tjeneste', executed !== '0')
 
+  // Og runden ble lukket. Det er lukkingen som legger den semantiske
+  // vurderingsoppgaven i køen — uten den ville planen stått åpen uten at noe sa
+  // hvorfor, og uten den ville agenten fått en oppgave som krevde søke-I/O den
+  // ikke har verktøy til (migrasjon 013v).
+  check(
+    'søkerunden ble lukket av kjøringen',
+    psql(
+      config,
+      `select count(*)::text from workflow.monograph_search_requests r
+       join workflow.monograph_search_plans p on p.id = r.plan_id
+       join knowledge.monograph_editions e on e.id = p.edition_id
+       where e.reference = ${q(edition)} and r.state = 'fulfilled'`,
+    ) !== '0',
+  )
+  check(
+    'og den utførte runden la den semantiske vurderingsoppgaven i køen',
+    psql(
+      config,
+      `select count(*)::text from workflow.pipeline_jobs j
+       join workflow.monograph_search_plans p
+         on p.id = workflow.manifest_uuid(j.input_manifest, 'search_plan_id')
+       join knowledge.monograph_editions e on e.id = p.edition_id
+       where e.reference = ${q(edition)} and j.agent_role = 'source_discovery'`,
+    ) !== '0',
+  )
+
   check(
     'hvert utført søk bærer et avtrykk av svaret det leste',
     psql(

@@ -81,6 +81,16 @@ For hvert kandidatdokument: identifikatorer, bibliografi, oppdagelsesvei, mulige
 
 Søkestrategier og avgrensninger skal være lesbare for en fagperson, men tekniske identifikatorer og transport håndteres av systemet. PRISMA-S er et rapporteringsgrunnlag, ikke en erklæring om at Antidep har gjennomført en PRISMA-kompatibel systematisk oversikt (S06).
 
+### 4.4 Hvem som utfører søket, og hvem som vurderer det
+
+Søke-I/O er systemets egen deterministiske kode. En KI-agent i kildeleddene planlegger ikke et nettverkskall og utfører ikke et: den får de maskinelt utførte søkene med endepunkt, søkestreng, treffantall og et fingeravtrykk av svaret, og gjør den semantiske vurderingen av dem — hva som er relevant, til hvilket behov, hva som med rimelighet kan endre hovedkonklusjonen, og hva som mangler. Trenger den flere eller mer målrettede søk, ber den om dem som en strukturert søkeforespørsel; den deterministiske søkeveien utfører dem og gir leddet neste vurderingsrunde.
+
+Rekkefølgen er en port og ikke en forventning: en semantisk kildeoppgave skal ikke kunne hentes ut før den maskinelle søkerunden for nettopp den planversjonen faktisk er utført. En oppgave som krever søke-I/O agenten ikke har verktøy til, er ikke en oppgave — den er en umulighet, og den skal ikke finnes.
+
+Et modellrapportert søk og et maskinelt utført søk er fortsatt to forskjellige opplysninger (§4.3), og de blandes ikke. Kildeleddene har ingen vei til å rapportere et søk de skulle ha utført, og et svar som gjør det, avvises.
+
+En søkeforespørsel kan bare be om det den deterministiske søkeveien faktisk gjør: en navngitt søketjeneste av dem systemet allerede kaller, en søkestrategi og noen termer. En adresse kan ikke oppgis. Antall runder per planversjon er begrenset; er budsjettet brukt opp, er arbeidet åpent og ventende (§8.2) og aldri en konklusjon om evidensen.
+
 ## 5. Innhenting og kildeintegritet
 
 Før et menneske bes om en PDF, skal agenten undersøke originalutgiver, tilgjengelig åpen fulltekst, egnet institusjonelt arkiv og eventuelle allerede autoriserte tilganger. Bruk eksisterende privat kildebibliotek før ny innhenting. Ingen betalingsmur eller tilgangskontroll skal omgås, ingen betaling skal foretas uten mandat, og ingen personlige innlogginger skal etterlignes.
@@ -114,6 +124,8 @@ GRADE brukes når egnet til sikkerhet i et samlet effekt-/risikogrunnlag for et 
 Motstridende studier skal undersøkes for ulik dose, populasjon, komparator, oppfølging, målemetode, frafall og analyse. Ikke avgjør ved flertall av artikler eller agenter. Kan faglig motstrid ikke løses, bevar resultatene og konkluder med relevant usikkerhet. Et lavt p-nivå sier ikke alene at en forskjell er klinisk viktig; manglende statistisk signifikans skal ikke omskrives til likeverdighet.
 
 Motprøvingen skal også søke etter kilder som den første agenten overså. Et kontrollledd som bare leser generatorens utvalgte referanser, kan kontrollere sitatene, men ikke alene vurdere søkets dekningsgrad. Kildeutvalg og sentrale eksklusjoner må derfor ha egen separat kontroll før et søk lukkes.
+
+Kontrollens egne søk utføres av den deterministiske søkeveien, under kontrollrollens egen identitet og kjøring, og med en annen søkestrategi enn generatorens — målrettede passeringer der generatoren søkte bredt. At kontrollen faktisk har søkt selv, utledes av søkeloggen og erklæres ikke i svaret: en erklæring om egen uavhengighet som kan bestås ved å skrive den, kontrollerer ingenting. En godtatt dekning uten et eget søk som faktisk gikk, avvises.
 
 Modellseparasjon og deterministiske kontroller beholdes som prosjektgrenser, men enighet mellom modeller er ikke i seg selv fasit. Den senere pilotens faglige kontroll skal prøve originalkilder, utelatelser og klinisk mening, ikke bare om agentene er enige.
 

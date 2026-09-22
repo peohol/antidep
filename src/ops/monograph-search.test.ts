@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildQueries,
   buildQuery,
   CROSSREF,
   EUROPE_PMC,
@@ -32,6 +33,7 @@ function recorded(file: string, httpStatus = 200): Fetcher {
 }
 
 const SCOPE = { drug: 'sertralin', indication: 'depressiv lidelse', outcome: 'vektendring' }
+const QUERY = buildQuery(SCOPE)
 
 describe('søkestrengen', () => {
   it('har alltid virkestoffet, og de øvrige aksene som ELLER-ledd', () => {
@@ -40,6 +42,46 @@ describe('søkestrengen', () => {
 
   it('er virkestoffet alene når avgrensningen ikke har noen annen akse', () => {
     expect(buildQuery({ drug: 'sertralin' })).toBe('"sertralin"')
+  })
+
+  it('tar med de termene en søkeforespørsel ba om', () => {
+    expect(buildQuery({ drug: 'sertralin' }, ['sertraline', 'weight gain'])).toBe(
+      '"sertralin" AND ("sertraline" OR "weight gain")',
+    )
+  })
+})
+
+// ----------------------------------------------------------------------------
+// De to strategiene
+//
+// Skillet er ikke kosmetisk: dekningskontrollens motsøk kjører alltid
+// `targeted`, og et motsøk som gjentok generatorens egen brede streng, ville
+// ikke lett etter det generatoren overså (SOURCE_POLICY.md §6).
+// ----------------------------------------------------------------------------
+describe('søkestrategiene', () => {
+  it('gir én bred streng med aksene som ELLER-ledd', () => {
+    expect(buildQueries(SCOPE, 'broad')).toEqual([
+      '"sertralin" AND ("depressiv lidelse" OR "vektendring")',
+    ])
+  })
+
+  it('gir én målrettet passering per akse, og ikke generatorens egen streng', () => {
+    const targeted = buildQueries(SCOPE, 'targeted')
+    expect(targeted).toEqual([
+      '"sertralin" AND "depressiv lidelse"',
+      '"sertralin" AND "vektendring"',
+    ])
+    expect(targeted).not.toContain(buildQuery(SCOPE))
+  })
+
+  it('tar med de termene forespørselen ba om, og gjentar ingen streng', () => {
+    expect(buildQueries({ drug: 'sertralin' }, 'targeted', ['vektendring', 'vektendring'])).toEqual(
+      ['"sertralin" AND "vektendring"'],
+    )
+  })
+
+  it('faller tilbake til virkestoffet alene når ingen akse finnes', () => {
+    expect(buildQueries({ drug: 'sertralin' }, 'targeted')).toEqual(['"sertralin"'])
   })
 })
 
@@ -59,7 +101,7 @@ describe('plattformene', () => {
 
 describe('runSearch', () => {
   it('leser Europe PMC-treff til kandidatkilder med identitet', async () => {
-    const search = await runSearch(EUROPE_PMC, SCOPE, recorded('europe-pmc-sertraline.json'))
+    const search = await runSearch(EUROPE_PMC, QUERY, recorded('europe-pmc-sertraline.json'))
     expect(search.outcome).toBe('executed')
     expect(search.resultCount).toBe(3)
     expect(search.screenedCount).toBe(2)
@@ -70,7 +112,7 @@ describe('runSearch', () => {
   })
 
   it('sier fra når trefflisten er avkortet', async () => {
-    const search = await runSearch(EUROPE_PMC, SCOPE, recorded('europe-pmc-sertraline.json'))
+    const search = await runSearch(EUROPE_PMC, QUERY, recorded('europe-pmc-sertraline.json'))
     expect(search.truncated).toBe(true)
     expect(search.truncationNote).toContain('3 treff')
   })
@@ -78,18 +120,18 @@ describe('runSearch', () => {
   // En kilde som ikke er merket åpen tilgang, er tilgangsbegrenset — ikke
   // ekskludert. Betalingsmuren er en tilgangsbegrensning (SOURCE_POLICY.md §5).
   it('merker en kilde uten åpen tilgang som tilgangsbegrenset', async () => {
-    const search = await runSearch(EUROPE_PMC, SCOPE, recorded('europe-pmc-sertraline.json'))
+    const search = await runSearch(EUROPE_PMC, QUERY, recorded('europe-pmc-sertraline.json'))
     expect(search.candidates[0]?.access_limited).toBe(false)
     expect(search.candidates[1]?.access_limited).toBe(true)
     expect(search.candidates[1]?.access_limitation_note).toBeDefined()
   })
 
   it('skiller et utført nullsøk fra en utilgjengelig søkevei', async () => {
-    const tomt = await runSearch(EUROPE_PMC, SCOPE, recorded('europe-pmc-tomt.json'))
+    const tomt = await runSearch(EUROPE_PMC, QUERY, recorded('europe-pmc-tomt.json'))
     expect(tomt.outcome).toBe('zero_results')
     expect(tomt.resultCount).toBe(0)
 
-    const nede = await runSearch(EUROPE_PMC, SCOPE, async () => ({
+    const nede = await runSearch(EUROPE_PMC, QUERY, async () => ({
       status: 'error',
       message: 'tidsavbrudd',
     }))
@@ -99,7 +141,7 @@ describe('runSearch', () => {
   })
 
   it('skiller et svar som ikke lot seg lese, fra et søk uten treff', async () => {
-    const ulesbart = await runSearch(EUROPE_PMC, SCOPE, async (url) => ({
+    const ulesbart = await runSearch(EUROPE_PMC, QUERY, async (url) => ({
       status: 'ok',
       httpStatus: 200,
       contentType: 'text/html',
@@ -111,13 +153,13 @@ describe('runSearch', () => {
   })
 
   it('regner en HTTP-feil som en utilgjengelig søkevei', async () => {
-    const feil = await runSearch(EUROPE_PMC, SCOPE, recorded('europe-pmc-tomt.json', 503))
+    const feil = await runSearch(EUROPE_PMC, QUERY, recorded('europe-pmc-tomt.json', 503))
     expect(feil.outcome).toBe('unavailable')
     expect(feil.limitationNote).toContain('503')
   })
 
   it('leser PubMed-identifikatorer uten å finne på en tittel', async () => {
-    const search = await runSearch(PUBMED, SCOPE, recorded('pubmed-sertraline.json'))
+    const search = await runSearch(PUBMED, QUERY, recorded('pubmed-sertraline.json'))
     expect(search.outcome).toBe('executed')
     expect(search.candidates).toHaveLength(2)
     expect(search.candidates[0]?.identifier_kind).toBe('pmid')
@@ -126,7 +168,7 @@ describe('runSearch', () => {
   })
 
   it('leser Crossref-treff med forfattere og tidsskrift', async () => {
-    const search = await runSearch(CROSSREF, SCOPE, recorded('crossref-sertraline.json'))
+    const search = await runSearch(CROSSREF, QUERY, recorded('crossref-sertraline.json'))
     expect(search.outcome).toBe('executed')
     expect(search.candidates[0]?.identifier_value).toBe('10.1000/syntetisk.2022.003')
     expect(search.candidates[0]?.authors_or_issuer).toBe('Testforfatter D')
