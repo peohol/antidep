@@ -23,7 +23,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(30);
+select plan(31);
 
 -- ===========================================================================
 -- Del 1 — Kontoene, bestillingen og modelltildelingene
@@ -220,6 +220,15 @@ select 'import_igjen', api.import_agent_answer(
   (select id from jobs where label = 'discovery'),
   (select payload || jsonb_build_object('identity', null)
    from svar where label = 'discovery_answer'));
+
+-- Det samme gjelder det andre valgfrie toppnivåfeltet: et utelatt `answered_at`
+-- og `answered_at: null` er den samme opplysningen, og kan ikke gjøre et nytt
+-- forsøk til et annet svar.
+insert into svar (label, payload)
+select 'import_igjen_uten_tid', api.import_agent_answer(
+  (select id from jobs where label = 'discovery'),
+  (select payload || jsonb_build_object('answered_at', null)
+   from svar where label = 'discovery_answer'));
 reset role;
 
 select is(
@@ -272,6 +281,12 @@ select is(
   (select (payload -> 'already_imported')::boolean from svar where label = 'import_igjen'),
   true,
   'et utelatt identity og «identity: null» er det samme svaret, ikke to'
+);
+select is(
+  (select (payload -> 'already_imported')::boolean
+   from svar where label = 'import_igjen_uten_tid'),
+  true,
+  'og det samme gjelder et utelatt answered_at mot «answered_at: null»'
 );
 
 -- ===========================================================================

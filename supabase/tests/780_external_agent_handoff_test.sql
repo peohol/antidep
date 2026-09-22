@@ -20,7 +20,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(54);
+select plan(56);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -329,6 +329,24 @@ insert into res
 select 'imported_again', api.import_agent_answer(
   (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'enqueued'),
   (select payload from answers where label = 'chatgpt'));
+
+-- Regresjon (013u): kontrakten erklærer flere former som den samme
+-- opplysningen, og da må avtrykket si det samme om alle sammen. Under
+-- «not_exposed» er en utelatt versjon, en versjon som er JSON null, og den
+-- kanoniske verdien tre skrivemåter for én ting. Et nytt forsøk som velger en
+-- annen av dem enn det første, er det samme svaret — ikke «et annet svar på en
+-- besvart oppgave».
+insert into res
+select 'imported_kanonisk_versjon', api.import_agent_answer(
+  (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'enqueued'),
+  (select jsonb_set(payload, '{identity,model_version}', '"ikke-eksponert"')
+   from answers where label = 'chatgpt'));
+
+insert into res
+select 'imported_versjon_null', api.import_agent_answer(
+  (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'enqueued'),
+  (select jsonb_set(payload, '{identity,model_version}', 'null'::jsonb)
+   from answers where label = 'chatgpt'));
 reset role;
 
 select is(
@@ -341,6 +359,20 @@ select is(
   (select (payload ->> 'already_imported')::boolean from res where label = 'imported_again'),
   true,
   'det samme svaret sendt inn igjen svarer med det som allerede ble registrert'
+);
+
+select is(
+  (select (payload ->> 'already_imported')::boolean
+   from res where label = 'imported_kanonisk_versjon'),
+  true,
+  'en utelatt versjon og den kanoniske verdien under «not_exposed» er det samme svaret'
+);
+
+select is(
+  (select (payload ->> 'already_imported')::boolean
+   from res where label = 'imported_versjon_null'),
+  true,
+  'og en versjon som er JSON null, er den samme opplysningen igjen'
 );
 
 -- Retries skal ikke gi doble kliniske artefakter.
