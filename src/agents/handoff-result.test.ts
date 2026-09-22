@@ -245,14 +245,48 @@ describe('vurderingsutkastet', () => {
   })
 })
 
-describe('roller med autoritativ databasevalidering', () => {
+describe('kilde- og monografisvar', () => {
   for (const role of [
     'source_discovery',
     'source_quality_assessment',
     'monograph_answer',
   ] as const) {
-    it(`sender et gyldig ${role}-resultat videre uten å lese det som en evidensvurdering`, () => {
+    it(`godtar et gyldig ${role}-resultat uten å lese det som en evidensvurdering`, () => {
       expect(handoffResultProblem(task(role), resultFor(role))).toBeNull()
     })
   }
+
+  it('avviser feil type i et rapportert treffantall før databaseskriving', () => {
+    const result = resultFor('source_discovery')
+    const searches = [...(result['searches'] as Record<string, unknown>[])]
+    searches[0] = { ...searches[0], result_count: 'ukjent' }
+
+    expect(handoffResultProblem(task('source_discovery'), { ...result, searches })).toMatch(
+      /result_count.*heltall/,
+    )
+  })
+
+  it('avviser feil type i kontrollens boolske felt før databaseskriving', () => {
+    const result = resultFor('source_quality_assessment')
+    const control = result['control'] as Record<string, unknown>
+
+    expect(
+      handoffResultProblem(task('source_quality_assessment'), {
+        ...result,
+        control: { ...control, searched_independently: 'ja' },
+      }),
+    ).toMatch(/searched_independently.*sann\/usann/)
+  })
+
+  it('avviser structured_value som ikke er et objekt', () => {
+    const result = resultFor('monograph_answer')
+    const answer = result['answer'] as Record<string, unknown>
+
+    expect(
+      handoffResultProblem(task('monograph_answer'), {
+        ...result,
+        answer: { ...answer, structured_value: '50 mg' },
+      }),
+    ).toMatch(/structured_value.*objekt/)
+  })
 })
