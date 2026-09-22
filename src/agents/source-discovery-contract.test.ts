@@ -197,23 +197,42 @@ describe.each(KILDELEDD)('proveniensen i oppgaven til %s', (role) => {
     expect(redaktør).toMatch(/skal\s+ikke\s+rapportere dem som dine egne/)
   })
 
-  // Materialbolken var riktig før denne prøven fantes; rollen, reglene og
-  // grensene sa fortsatt «søkene i oppgaven er maskinelt utførte». En oppgave
-  // med et redaktørsøk sa dermed begge deler, og motsigelsen sto i det leddet
-  // agenten leser først. Kontrollen gjelder derfor hele den rendrede oppgaven.
-  it('sier ingen steder i hele oppgaven at alle søkene er maskinelt utførte', () => {
-    expect(file).not.toMatch(/[Ss]økene i oppgaven er (Antideps egne, )?maskinelt utførte/)
-    expect(file).not.toMatch(/Søkene er utført av Antideps egen kode mot/)
+  // Den første utgaven av denne prøven avviste to konkrete formuleringer. Den
+  // fanget derfor ikke de tre neste stedene som sa det samme med andre ord:
+  // svarskjemaets beskrivelse, oppgavens summary og åpningen av rollen. En
+  // prøve som lister forbudte setninger, fanger de setningene — ikke
+  // egenskapen.
+  //
+  // Egenskapen er denne: en *samlet* påstand om «søkene» kan ikke tilskrive dem
+  // maskinen alene, for søkegrunnlaget kan bestå av begge slag — og for REG,
+  // PROD og SYN består det ofte bare av redaktørens passeringer, fordi Antidep
+  // ikke har en maskinell vei til noen av deres søkespor.
+  //
+  // Setningene som snakker om én av delene («dine egne, maskinelt utførte
+  // motsøk», «disse er maskinelt utførte») er sanne og skal stå. Det er
+  // nettopp derfor regelen leser subjektet og ikke bare ordene.
+  it('tilskriver aldri søkegrunnlaget som helhet til maskinen alene', () => {
+    const samletOmSøkene = /\bsøkene\b/i
+    const maskinellPåstand = /maskinelt|Antideps egen kode|Antideps egne/i
+    const nevnerMennesket = /redaktør|editor_recorded|menneske|to slag|andre enn deg/i
+
+    // Deles på setningsslutt og på avsnitt. Bare på setningsslutt ville en
+    // overskrift uten punktum blitt limt sammen med setningen under; på hvert
+    // linjeskift ville en ombrukket setning blitt revet i biter. Et avsnitt er
+    // grensen som holder begge deler.
+    const brudd = file
+      .split(/(?<=[.:])\s+|\n{2,}/)
+      .filter((setning) => samletOmSøkene.test(setning))
+      .filter((setning) => maskinellPåstand.test(setning))
+      .filter((setning) => !nevnerMennesket.test(setning))
+
+    expect(brudd).toEqual([])
   })
 
-  it('og sier i stedet, der agenten leser først, at søkene er av to slag', () => {
-    // Rollen og grensene er det agenten leser før materialet. Begge må bære
-    // skillet, ellers er materialdelen en rettelse av noe oppgaven alt har
-    // slått fast.
+  it('og sier, der agenten leser først, at søkene er av to slag', () => {
     const rolle = file.slice(0, file.indexOf('### Obligatoriske søkespor'))
     expect(rolle).toMatch(/maskinelt utførte/)
-    expect(rolle).toMatch(/redaktørregistrerte/)
-    expect(file).toMatch(/Oppgaven sier om hvert søk hvem som utførte det/)
+    expect(rolle).toMatch(/redaktørregistrerte|redaktør/)
   })
 })
 

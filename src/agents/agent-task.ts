@@ -172,7 +172,7 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
     outputSchemaVersion: 'antidep/source-discovery-draft@3',
     label: 'Kildeoppdagelse',
     summary:
-      'Vurder de maskinelt utførte søkene og kandidatkildene de ga: hva er relevant, til hvilket behov, og hvilke flere søk trengs.',
+      'Vurder de registrerte søkene og kandidatkildene de ga — Antideps maskinelle kall og redaktørens dokumenterte passeringer: hva er relevant, til hvilket behov, og hvilke flere søk trengs.',
   },
   source_quality_assessment: {
     role: 'source_quality_assessment',

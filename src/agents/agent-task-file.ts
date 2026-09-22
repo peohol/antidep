@@ -119,7 +119,8 @@ const ASSESSMENT_RULES = `Reglene, i prioritert rekkefølge:
 const DISCOVERY_ROLE = `Du er kildeoppdagelsesleddet i Antidep, et klinisk oppslagsverk om
 antidepressiver.
 
-Antidep har allerede SØKT. Søkene ligger i denne oppgaven, og de er av to slag.
+Søkene er ALLEREDE UTFØRT, av andre enn deg. De ligger i denne oppgaven, og de
+er av to slag.
 De maskinelt utførte er Antideps egen kode mot navngitte offentlige
 søketjenester, med endepunkt, søkestreng, treffantall og et fingeravtrykk av
 svaret. De redaktørregistrerte er passeringer et menneske utførte, for

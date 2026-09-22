@@ -241,7 +241,7 @@ function candidateAppraisalSchema(): Schema {
   return {
     type: 'array',
     description:
-      'Vurderingen din av kandidatkildene de maskinelt utførte søkene ga. Bare kilder som står i oppgaven: en kilde som ikke er funnet av et registrert søk, har ingen oppdagelsesvei, og den skal ikke fylles inn fra hukommelsen. Mangler en kilde du mener bør være der, be om et søk som ville funnet den.',
+      'Vurderingen din av kandidatkildene de registrerte søkene ga. Søkene er enten Antideps maskinelle kall eller passeringer en redaktør utførte og registrerte; oppgaven sier om hvert av dem hvem som utførte det. Bare kilder som står i oppgaven: en kilde som ikke er funnet av et registrert søk, har ingen oppdagelsesvei, og den skal ikke fylles inn fra hukommelsen. Mangler en kilde du mener bør være der, be om et søk som ville funnet den.',
     items: {
       type: 'object',
       additionalProperties: false,
@@ -336,7 +336,7 @@ export function buildSourceDiscoveryDraftSchema(): Schema {
     $id: 'https://antidep.no/schema/source-discovery-draft-3.json',
     title: 'Antidep SourceDiscoveryDraft',
     description:
-      'Vurderingen av de maskinelt utførte søkene for én søkeplan: hvilke av kandidatkildene som er relevante og til hva, hvilke flere søk som trengs, og hvilke avgrensningsverdier monografien bør dekke. Hvilken plan, hvilken avgrensning og hvilke behov det gjelder, står i oppgaven og hører ikke hjemme i svaret. Svaret skal ikke inneholde et klinisk svar på noe av spørsmålene: dette leddet finner grunnlaget, det leser det ikke. Det rapporterer heller ikke søk — søkene er utført av Antideps egen kode.',
+      'Vurderingen av de registrerte søkene for én søkeplan: hvilke av kandidatkildene som er relevante og til hva, hvilke flere søk som trengs, og hvilke avgrensningsverdier monografien bør dekke. Hvilken plan, hvilken avgrensning og hvilke behov det gjelder, står i oppgaven og hører ikke hjemme i svaret. Svaret skal ikke inneholde et klinisk svar på noe av spørsmålene: dette leddet finner grunnlaget, det leser det ikke. Det rapporterer heller ikke søk — søkene er utført av andre enn deg: Antideps egen kode, eller en redaktør for de søkesporene Antidep ikke har en maskinell vei til.',
     type: 'object',
     additionalProperties: false,
     required: ['candidate_appraisals'],

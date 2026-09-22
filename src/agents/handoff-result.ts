@@ -275,7 +275,7 @@ function rejectRetiredDiscoveryFields(result: Record<string, unknown>): string |
   if ('candidates' in result) {
     return (
       'Svaret legger til kandidatkilder, og det kan ikke dette agentleddet. Kandidatkildene ' +
-      'kommer fra de maskinelt utførte søkene; vurder dem i «candidate_appraisals», og be om et ' +
+      'kommer fra de registrerte søkene; vurder dem i «candidate_appraisals», og be om et ' +
       'søk som ville funnet en kilde du mener mangler.'
     )
   }
