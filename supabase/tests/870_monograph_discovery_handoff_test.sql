@@ -9,6 +9,8 @@
 --     klinisk konklusjon,
 --   * et svar registreres som agentrapportert utførelse, aldri som maskinelt
 --     bekreftet,
+--   * et svar uten noen selvrapportert runtime-modell registreres, fordi
+--     modellnavnet er proveniens og ikke adgangskontroll (013u),
 --   * et registrert søkesvar legger kontrolloppgaven i køen,
 --   * kontrollens erklæring om egne søk avvises uten et registrert eget søk,
 --   * en bruk for et behov utenfor oppgaven avvises,
@@ -21,7 +23,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(28);
+select plan(31);
 
 -- ===========================================================================
 -- Del 1 — Kontoene, bestillingen og modelltildelingene
@@ -164,19 +166,22 @@ select matches(
 select set_config('request.jwt.claims',
                   '{"sub":"87000000-0000-4000-8000-00000000000a"}', true);
 set local role authenticated;
+-- Svaret lagres for seg, slik at det nye forsøket under kan være nøyaktig det
+-- samme svaret med bare den ene forskjellen prøven handler om.
 insert into svar (label, payload)
-select 'import', api.import_agent_answer(
-  (select id from jobs where label = 'discovery'),
+select 'discovery_answer',
   jsonb_build_object(
-    'answer_version', 'antidep/agent-answer@1',
+    'answer_version', 'antidep/agent-answer@2',
     'task_version', 'antidep/agent-task@1',
     'role', 'source_discovery',
     'job_key', (select payload ->> 'job_key' from svar where label = 'oppgave'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'oppgave'),
     'output_schema_version', 'antidep/source-discovery-draft@2',
-    'identity', jsonb_build_object(
-      'provider', 'prøve-870-a', 'model', 'Generatormodell 870',
-      'model_version_disclosure', 'not_exposed'),
+    -- Regresjon (013u): svaret har ingen identity i det hele tatt. Det er
+    -- nøyaktig det en ChatGPT Workspace Agent leverer — plattformen forteller
+    -- den ikke hvilken modell den er, og den skal ikke gjette. Svaret skal
+    -- registreres; den semantiske proveniensen er tildelingen, som er attestert
+    -- av en redaktør og ikke noe modellen kunne bestemt om seg selv.
     'result', jsonb_build_object(
       'searches', jsonb_build_array(jsonb_build_object(
         'platform', 'Europe PMC',
@@ -198,7 +203,32 @@ select 'import', api.import_agent_answer(
           'need_reference', (select payload -> 'input' -> 'needs' -> 0 ->> 'need_reference'
                              from svar where label = 'oppgave'),
           'proposed_use', 'Kan dokumentere endringen i symptomskår for den avgrensede populasjonen.')))),
-      'term_proposals', jsonb_build_array())));
+      'term_proposals', jsonb_build_array()));
+
+insert into svar (label, payload)
+select 'import', api.import_agent_answer(
+  (select id from jobs where label = 'discovery'),
+  (select payload from svar where label = 'discovery_answer'));
+
+-- Regresjon (013u): et nytt forsøk som skriver den andre av de to formene for
+-- taushet, er det samme svaret. Kontrakten sier at et utelatt `identity` og
+-- `identity: null` er den samme opplysningen, og da må avtrykket si det samme —
+-- ellers ville et nytt forsøk fra en modell som ikke gjentar seg ordrett, blitt
+-- lest som «et annet svar på en besvart oppgave» og avvist.
+insert into svar (label, payload)
+select 'import_igjen', api.import_agent_answer(
+  (select id from jobs where label = 'discovery'),
+  (select payload || jsonb_build_object('identity', null)
+   from svar where label = 'discovery_answer'));
+
+-- Det samme gjelder det andre valgfrie toppnivåfeltet: et utelatt `answered_at`
+-- og `answered_at: null` er den samme opplysningen, og kan ikke gjøre et nytt
+-- forsøk til et annet svar.
+insert into svar (label, payload)
+select 'import_igjen_uten_tid', api.import_agent_answer(
+  (select id from jobs where label = 'discovery'),
+  (select payload || jsonb_build_object('answered_at', null)
+   from svar where label = 'discovery_answer'));
 reset role;
 
 select is(
@@ -238,7 +268,25 @@ select is(
   (select r.semantic_model from provenance.agent_runs r
    where r.id = (select (payload ->> 'agent_run_id')::uuid from svar where label = 'import')),
   'Generatormodell 870',
-  'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet'
+  'kjøringen bærer den tjenesten leddet er satt ut til, også uten et selvutsagn'
+);
+select is(
+  (select r.input_manifest -> 'handoff' -> 'self_reported_identity'
+   from provenance.agent_runs r
+   where r.id = (select (payload ->> 'agent_run_id')::uuid from svar where label = 'import')),
+  'null'::jsonb,
+  'og «ingen selvrapportert modell» står som nettopp det, framfor å bli gjettet'
+);
+select is(
+  (select (payload -> 'already_imported')::boolean from svar where label = 'import_igjen'),
+  true,
+  'et utelatt identity og «identity: null» er det samme svaret, ikke to'
+);
+select is(
+  (select (payload -> 'already_imported')::boolean
+   from svar where label = 'import_igjen_uten_tid'),
+  true,
+  'og det samme gjelder et utelatt answered_at mot «answered_at: null»'
 );
 
 -- ===========================================================================
@@ -281,7 +329,7 @@ set local role authenticated;
 select throws_ok(
   format($$
     select api.import_agent_answer(%L, jsonb_build_object(
-      'answer_version', 'antidep/agent-answer@1',
+      'answer_version', 'antidep/agent-answer@2',
       'task_version', 'antidep/agent-task@1',
       'role', 'source_quality_assessment',
       'job_key', %L,
@@ -310,7 +358,7 @@ select throws_ok(
 select throws_ok(
   format($$
     select api.import_agent_answer(%L, jsonb_build_object(
-      'answer_version', 'antidep/agent-answer@1',
+      'answer_version', 'antidep/agent-answer@2',
       'task_version', 'antidep/agent-task@1',
       'role', 'source_quality_assessment',
       'job_key', %L,
@@ -377,7 +425,7 @@ set local role authenticated;
 select throws_like(
   format($$
     select api.import_agent_answer(%L, jsonb_build_object(
-      'answer_version', 'antidep/agent-answer@1',
+      'answer_version', 'antidep/agent-answer@2',
       'task_version', 'antidep/agent-task@1',
       'role', 'source_quality_assessment',
       'job_key', %L,
@@ -418,7 +466,7 @@ insert into svar (label, payload)
 select 'kontrollimport', api.import_agent_answer(
   (select id from jobs where label = 'kontroll'),
   jsonb_build_object(
-    'answer_version', 'antidep/agent-answer@1',
+    'answer_version', 'antidep/agent-answer@2',
     'task_version', 'antidep/agent-task@1',
     'role', 'source_quality_assessment',
     'job_key', (select payload ->> 'job_key' from svar where label = 'fersk'),

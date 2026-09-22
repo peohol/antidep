@@ -75,7 +75,7 @@ npm run ops:agents -- import-answer --job <id> --answer svar.json
 
 Oppgavefilen kan inneholde hele forskningsartikkelen. Den går rett fra terminalen og inn i KI-tjenesten, og skal aldri commites, legges i en issue eller havne i en logg.
 
-Generator, kildestøttekontroll og evidensvurdering er reelt separate. Hvilken KI-tjeneste et agentledd utføres av, tildeles på forhånd som et driftssteg (`npm run ops:agents -- assign-model …`), og ingen andre ledd kan bruke den samme. Valget inngår i oppgavens avtrykk, så et svar kan bekrefte identiteten sin men ikke bestemme den. Finnes ingen uavhengig modell, stopper kjeden framfor å registrere en kontroll som ikke er uavhengig.
+Generator, kildestøttekontroll og evidensvurdering er reelt separate — på rolle og kjøring, og ikke på modellnavn. Hvilken KI-tjeneste et agentledd utføres av, tildeles på forhånd som et driftssteg (`npm run ops:agents -- assign-model …`), og flere ledd kan godt få den samme: den samme modellen utfører dem da som atskilte kjøringer, hver under sin egen rolle, sin egen instruks og sin egen legitimasjon. Valget inngår i oppgavens avtrykk, så et bytte ugyldiggjør de utestående oppgavene. Modellnavnet er proveniens og aldri adgangskontroll: en agent blir ikke bedt om å bevise hvilken modell den er, fordi plattformen sjelden lar den vite det, og et navn en modell kan skrive selv er ingen grense. En kontroll kan ikke være den samme kjøringen som laget det den kontrollerer.
 
 ## Drift
 

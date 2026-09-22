@@ -279,10 +279,16 @@ export function taskPayload(
   }
 }
 
-/** Svaret en ekstern agent leverer, per rolle. */
+/**
+ * Svaret en ekstern agent leverer, per rolle.
+ *
+ * `identity` kan være `null`, og da utelates feltet helt. Det er ikke et
+ * kunstig tilfelle: en Workspace Agent som ikke får vite hvilken modell den
+ * kjører, skal levere svaret uten feltet framfor å gjette.
+ */
 export function answerFor(
   role: HandoffRole,
-  identity: { provider: string; model: string },
+  identity: { provider: string; model: string } | null,
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const contract = HANDOFF_CONTRACTS[role]
@@ -293,7 +299,9 @@ export function answerFor(
     job_key: `agent-handoff:${role}:abcdef123456`,
     request_digest: digestFor(role),
     output_schema_version: contract.outputSchemaVersion,
-    identity: { ...identity, model_version_disclosure: 'not_exposed' },
+    ...(identity === null
+      ? {}
+      : { identity: { ...identity, model_version_disclosure: 'not_exposed' } }),
     answered_at: '2026-09-15T10:12:00Z',
     result: resultFor(role),
     ...overrides,

@@ -7,6 +7,8 @@
 --     annet grunnlag kan ikke importeres,
 --   * svaret er data: ukjente felter avvises, og verdiene hentes ut av svaret,
 --   * modellidentiteten registreres, og to agentledd kan dele modell (013t),
+--   * modellnavnet er proveniens og ikke adgangskontroll: et svar som melder et
+--     annet modellnavn enn tildelingen, avvises ikke av den grunn (013u),
 --   * en ikke-eksponert versjon er kanonisk, slik at to ukjente er én modell,
 --   * det samme svaret sendt inn igjen lager ingen doble kliniske artefakter,
 --   * og kildeteksten er like privat som originalfilen.
@@ -18,7 +20,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(54);
+select plan(56);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -257,14 +259,19 @@ grant select on answers to authenticated;
 
 insert into answers
 select 'chatgpt', jsonb_build_object(
-  'answer_version', 'antidep/agent-answer@1',
+  'answer_version', 'antidep/agent-answer@2',
   'task_version', 'antidep/agent-task@1',
   'role', 'evidence_extraction',
   'job_key', t.payload ->> 'job_key',
   'request_digest', t.payload ->> 'request_digest',
   'output_schema_version', t.payload ->> 'output_schema_version',
+  -- Regresjon (013u): leddet er tildelt «GPT-5 Thinking», og svaret melder
+  -- «GPT-5». Det er nøyaktig det som skjedde i drift — plattformen viser en
+  -- Workspace Agent menynavnet og ikke modellvekten — og begge utsagnene er
+  -- sanne. Svaret skal registreres, ikke avvises: et navn modellen skriver selv,
+  -- er ingen grense (ANTIDEP_CONSTITUTION.md regel 3).
   'identity', jsonb_build_object(
-    'provider', 'openai', 'model', 'GPT-5 Thinking',
+    'provider', 'openai', 'model', 'GPT-5',
     'model_version_disclosure', 'not_exposed'),
   'answered_at', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
   'result', jsonb_build_object(
@@ -322,6 +329,24 @@ insert into res
 select 'imported_again', api.import_agent_answer(
   (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'enqueued'),
   (select payload from answers where label = 'chatgpt'));
+
+-- Regresjon (013u): kontrakten erklærer flere former som den samme
+-- opplysningen, og da må avtrykket si det samme om alle sammen. Under
+-- «not_exposed» er en utelatt versjon, en versjon som er JSON null, og den
+-- kanoniske verdien tre skrivemåter for én ting. Et nytt forsøk som velger en
+-- annen av dem enn det første, er det samme svaret — ikke «et annet svar på en
+-- besvart oppgave».
+insert into res
+select 'imported_kanonisk_versjon', api.import_agent_answer(
+  (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'enqueued'),
+  (select jsonb_set(payload, '{identity,model_version}', '"ikke-eksponert"')
+   from answers where label = 'chatgpt'));
+
+insert into res
+select 'imported_versjon_null', api.import_agent_answer(
+  (select (payload ->> 'pipeline_job_id')::uuid from res where label = 'enqueued'),
+  (select jsonb_set(payload, '{identity,model_version}', 'null'::jsonb)
+   from answers where label = 'chatgpt'));
 reset role;
 
 select is(
@@ -334,6 +359,20 @@ select is(
   (select (payload ->> 'already_imported')::boolean from res where label = 'imported_again'),
   true,
   'det samme svaret sendt inn igjen svarer med det som allerede ble registrert'
+);
+
+select is(
+  (select (payload ->> 'already_imported')::boolean
+   from res where label = 'imported_kanonisk_versjon'),
+  true,
+  'en utelatt versjon og den kanoniske verdien under «not_exposed» er det samme svaret'
+);
+
+select is(
+  (select (payload ->> 'already_imported')::boolean
+   from res where label = 'imported_versjon_null'),
+  true,
+  'og en versjon som er JSON null, er den samme opplysningen igjen'
 );
 
 -- Retries skal ikke gi doble kliniske artefakter.
@@ -363,12 +402,25 @@ select is(
   'kjøringen er bundet til nettopp det uttaket importen tok'
 );
 
+-- Den semantiske proveniensen er tildelingen — hvor arbeidet ble satt ut — og
+-- ikke navnet svaret meldte om seg selv. Svaret sa «GPT-5»; kjøringen står med
+-- den attesterte tildelingen (013u).
 select is(
   (select format('%s/%s/%s', r.semantic_provider, r.semantic_model, r.semantic_model_version)
    from provenance.agent_runs r
    where r.id = (select (payload ->> 'agent_run_id')::uuid from res where label = 'imported')),
   'openai/GPT-5 Thinking/ikke-eksponert',
-  'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet'
+  'kjøringen bærer den tjenesten leddet er satt ut til'
+);
+
+-- Selvutsagnet går ikke tapt, men det står som det er: agentens eget ord, og
+-- ikke som den attesterte proveniensen.
+select is(
+  (select r.input_manifest -> 'handoff' -> 'self_reported_identity' ->> 'model'
+   from provenance.agent_runs r
+   where r.id = (select (payload ->> 'agent_run_id')::uuid from res where label = 'imported')),
+  'GPT-5',
+  'agentens eget ord om seg selv tas vare på, merket som nettopp det'
 );
 
 select is(
@@ -470,19 +522,11 @@ select throws_ok(
   'en erklæring om en eksakt versjon uten versjon avvises framfor å bli gjettet'
 );
 
-select throws_ok(
-  format(
-    $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
-    (select payload ->> 'pipeline_job_id' from res where label = 'job2'),
-    (select (payload || jsonb_build_object('identity', jsonb_build_object(
-       'provider', 'openai', 'model', 'GPT-5 Thinking',
-       'model_version', 'en annen build', 'model_version_disclosure', 'exact')))::text
-     from answers where label = 'for_job2')
-  ),
-  '22023',
-  null,
-  'en annen modellidentitet enn rollens registrerte avvises'
-);
+-- Her sto prøven av at «en annen modellidentitet enn rollens registrerte
+-- avvises». Den er borte med regelen (013u): et annet modellnavn er nå det
+-- normale, og det prøves ovenfor — svaret som ble registrert, meldte «GPT-5»
+-- mens leddet er tildelt «GPT-5 Thinking». Det som fortsatt kontrolleres på
+-- identiteten, er formen, og de to prøvene rundt denne er nettopp det.
 
 -- En versjon oppgitt sammen med «ikke eksponert» er en selvmotsigelse. Forkastet
 -- stille ville proveniensen sagt «ikke eksponert» mens svaret faktisk oppga en
@@ -551,22 +595,21 @@ select 'assigned_synthesis', api.assign_agent_role_model(
   'Prøve 780: en annen tjeneste for synteseleddet.',
   'Prøve 780: byttet bort fra den modellen ekstraksjonsleddet også bruker.');
 
--- Og identiteten kan ikke lånes: et ekstraksjonssvar som utgir seg for å være
--- den modellen synteseleddet er tildelt, avvises. Uten tildelingen på forhånd
--- var dette nettopp hullet — et svar kunne oppgitt hvilken modell som helst, og
--- proveniensen ville sagt det på modellens eget ord.
+-- Det som ikke kan lånes, er rollen. Et modellnavn kan et svar skrive hva som
+-- helst i — derfor er det heller ingen grense (013u) — men rollen er
+-- oppgavens, og et svar avgitt i en annen rolle enn den oppgaven gjelder,
+-- avvises. Det er den grensen som faktisk avgjør hva svaret får registrere
+-- (ANTIDEP_CONSTITUTION.md regel 3).
 select throws_ok(
   format(
     $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
     (select payload ->> 'pipeline_job_id' from res where label = 'job2'),
-    (select (payload || jsonb_build_object('identity', jsonb_build_object(
-       'provider', 'anthropic', 'model', 'Claude Opus',
-       'model_version_disclosure', 'not_exposed')))::text
+    (select (payload || jsonb_build_object('role', 'claim_synthesis'))::text
      from answers where label = 'for_job2')
   ),
   '22023',
   null,
-  'et svar som utgir seg for å være et annet ledds modell, avvises'
+  'et svar avgitt i en annen rolle enn oppgavens, avvises'
 );
 reset role;
 
@@ -666,7 +709,7 @@ select throws_ok(
     $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
     (select payload ->> 'pipeline_job_id' from res where label = 'synthesis_job2'),
     (select jsonb_build_object(
-       'answer_version', 'antidep/agent-answer@1',
+       'answer_version', 'antidep/agent-answer@2',
        'task_version', 'antidep/agent-task@1',
        'role', 'claim_synthesis',
        'job_key', t.payload ->> 'job_key',
@@ -692,7 +735,7 @@ select throws_ok(
     $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
     (select payload ->> 'pipeline_job_id' from res where label = 'synthesis_job2'),
     (select jsonb_build_object(
-       'answer_version', 'antidep/agent-answer@1',
+       'answer_version', 'antidep/agent-answer@2',
        'task_version', 'antidep/agent-task@1',
        'role', 'claim_synthesis',
        'job_key', t.payload ->> 'job_key',
@@ -772,7 +815,7 @@ select throws_ok(
     $$ select api.import_agent_answer(%L::uuid, %L::jsonb) $$,
     (select payload ->> 'pipeline_job_id' from res where label = 'synthesis_job2'),
     (select jsonb_build_object(
-       'answer_version', 'antidep/agent-answer@1',
+       'answer_version', 'antidep/agent-answer@2',
        'task_version', 'antidep/agent-task@1',
        'role', 'claim_synthesis',
        'job_key', t.payload ->> 'job_key',

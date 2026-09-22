@@ -311,8 +311,15 @@ const ROLE_TEXTS: Readonly<
 /**
  * Svarmalen, med bindingsverdiene ferdig utfylt.
  *
- * `identity` og `result` står tomme, fordi de er de eneste to tingene bare
- * agenten vet. Alt annet kopieres uendret.
+ * `result` står tomt, fordi det er det eneste bare agenten vet. Alt annet
+ * kopieres uendret.
+ *
+ * `identity` står *ikke* i malen, og det er en avgjørelse og ikke en
+ * forglemmelse. De fleste tjenester viser ikke en agent hvilken modell den
+ * kjører, og en plassholder i malen ville blitt kopiert uendret inn i
+ * proveniensen av nettopp den agenten som ikke hadde noe å skrive der. Feltet
+ * er valgfritt, det beskrives i teksten for den som faktisk får vite det, og
+ * ingen kontroll avhenger av det (ANTIDEP_CONSTITUTION.md regel 3, 4).
  */
 export function answerTemplate(task: AgentTask): Record<string, unknown> {
   return {
@@ -322,11 +329,6 @@ export function answerTemplate(task: AgentTask): Record<string, unknown> {
     job_key: task.jobKey,
     request_digest: task.requestDigest,
     output_schema_version: task.outputSchemaVersion,
-    identity: {
-      provider: '<tjenesten du kjører i, for eksempel openai>',
-      model: '<modellnavnet tjenesten viser, for eksempel GPT-5 Thinking>',
-      model_version_disclosure: 'not_exposed',
-    },
     answered_at: '<tidspunktet du svarte, for eksempel 2026-09-15T10:12:00Z>',
     result: {},
   }
@@ -550,19 +552,33 @@ function material(task: AgentTask): string {
   return assessmentMaterial(task)
 }
 
+/**
+ * Hvem leddet er satt ut til, sagt som det er.
+ *
+ * Avsnittet er en opplysning og ikke en instruks om hva agenten skal skrive om
+ * seg selv. Navnet her er redaktørens attesterte tildeling — hvor arbeidet ble
+ * satt ut — og Antidep sammenligner det ikke med noe svaret oppgir. En tekst
+ * som ba agenten bekrefte navnet, ville bedt den kopiere en streng den ikke kan
+ * vite er sann, og gjort proveniensen til et ekko av oppgaven
+ * (ANTIDEP_CONSTITUTION.md regel 3, 4).
+ */
 function modelSection(task: AgentTask): string {
   if (task.registeredModel === null) {
     return `Denne oppgaven oppgir ingen tildelt KI-tjeneste, og det skal ikke skje:
 Antidep henter ikke ut en oppgave før noen har valgt hvilken tjeneste leddet
-utføres av. Skriv likevel sant hvem du er, og regn med at importen avvises.`
+utføres av. Utfør oppgaven som beskrevet, og regn med at importen avvises.`
   }
-  return `Dette agentleddet er tildelt ${describeModelIdentity(task.registeredModel)}.
-Tildelingen er gjort på forhånd av den som eier innholdet, og den inngår i
-avtrykket over. Er du en annen modell, skriv likevel sant hvem du faktisk er:
-Antidep avviser da importen framfor å registrere en usann proveniens. Generator,
-kildestøttekontroll og evidensvurdering skal være reelt separate ledd, og et svar
-fra feil modell er ikke en formalitet — det ville gjort en kontroll til den samme
-vurderingen gjort to ganger.`
+  return `Dette agentleddet er satt ut til ${describeModelIdentity(task.registeredModel)}.
+Det er en avgjørelse den som eier innholdet har tatt på forhånd, og den inngår i
+avtrykket over. Den er proveniens — den sier hvor arbeidet ble satt ut — og den
+er ikke noe du skal bekrefte, gjenta eller kopiere inn i svaret. Ikke skriv dette
+navnet i \`identity\`: det feltet er tjenestens eget navn på deg, og bare når den
+faktisk viser deg det.
+
+Separasjonen mellom leddene hviler ikke på modellnavnet. Den hviler på at dette
+er sin egen rolle, med sin egen instruks og sin egen legitimasjon, og at hver
+kontroll er en egen kjøring. Den samme modellen kan gjøre flere ledd, og det er
+ikke et avvik.`
 }
 
 /**
@@ -618,19 +634,25 @@ Malen under er ferdig utfylt med de verdiene som binder svaret til nettopp denne
 oppgaven. **Kopier dem uendret.** De kan ikke konstrueres, og et svar med en
 endret verdi blir avvist.
 
-Du fyller inn to ting:
-
-* \`identity\` — hvilken tjeneste og hvilken modell du faktisk er.
-  * \`provider\` er tjenesten, for eksempel \`openai\`, \`anthropic\` eller \`google\`.
-  * \`model\` er modellnavnet tjenesten selv viser deg og brukeren.
-  * \`model_version_disclosure\` er \`not_exposed\` når tjenesten ikke oppgir noen
-    eksakt versjon eller build. Oppgir den faktisk en, sett feltet til \`exact\`
-    og skriv versjonen i \`model_version\`. **Aldri gjett en versjon.** En
-    oppdiktet versjon ville sett like troverdig ut som en sann.
-* \`result\` — selve svaret, i den strukturen del 4 beskriver.
+Du fyller inn én ting: \`result\` — selve svaret, i den strukturen del 4
+beskriver.
 
 \`answered_at\` er valgfri. Er du usikker på klokkeslettet, la feltet stå tomt
 framfor å gjette.
+
+\`identity\` er også valgfri, og står derfor ikke i malen. **Utelat feltet med
+mindre tjenesten du kjører i, faktisk forteller deg hvilken modell du er.** De
+fleste gjør ikke det, og det er et normalt og sant utfall — ingen kontroll
+avhenger av feltet, og du skal aldri gjette for å fylle det. Vet du det, kan du
+ta det med som proveniens:
+
+* \`provider\` er tjenesten, for eksempel \`openai\`, \`anthropic\` eller \`google\`.
+* \`model\` er modellnavnet tjenesten selv viser deg og brukeren — det navnet,
+  og ikke et navn du har lest et annet sted i oppgaven.
+* \`model_version_disclosure\` er \`not_exposed\` når tjenesten ikke oppgir noen
+  eksakt versjon eller build. Oppgir den faktisk en, sett feltet til \`exact\`
+  og skriv versjonen i \`model_version\`. **Aldri gjett en versjon.** En
+  oppdiktet versjon ville sett like troverdig ut som en sann.
 
 ### Svarmal
 
@@ -638,7 +660,7 @@ framfor å gjette.
 ${json(answerTemplate(task))}
 \`\`\`
 
-### Hvilken modell som skal utføre oppgaven
+### Hvilken tjeneste leddet er satt ut til
 
 ${modelSection(task)}
 

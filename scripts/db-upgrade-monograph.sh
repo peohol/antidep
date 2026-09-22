@@ -113,8 +113,13 @@ npx --no-install supabase db reset --version "$LAST_BEFORE_MONOGRAPH" >/dev/null
 assert_eq "$(scalar "select coalesce(to_regclass('knowledge.monograph_editions')::text, '')")" '' \
   'basen hadde monografitabellene før migrasjonene ble kjørt'
 
+# `--skip-handoff`: steget her bygger innhold, og prøver ikke handoff-kontrakten.
+# Den er versjonert og pinnet mot denne utgaven av koden, mens basen med vilje
+# står på en eldre migrasjon — der er flaten og databasen i utakt, og pinningen
+# sier sannheten. Kontrakten prøves mot en ferdig migrert base av
+# `npm run db:test:chain`, `npm run db:test:mcp` og pgTAP 780, 790 og 870.
 printf '  2/7  bygger innhold gjennom de autoriserte veiene (agent-chain-test) …\n'
-if ! node scripts/agent-chain-test.ts >"$TMP_DIR/chain.log" 2>&1; then
+if ! node scripts/agent-chain-test.ts --skip-handoff >"$TMP_DIR/chain.log" 2>&1; then
   tail -40 "$TMP_DIR/chain.log" >&2
   fail 'kjedeprøven fikk ikke bygget innholdet oppgraderingen skal prøves mot'
 fi

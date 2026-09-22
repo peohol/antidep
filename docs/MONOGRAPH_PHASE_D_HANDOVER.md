@@ -142,7 +142,10 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
   en redaktør gjennom `api.assign_agent_role_model`. Uten tildeling stopper
   flyten med en tydelig avvisning framfor å gjette. Fra migrasjon 013t kan alle
   seks få **den samme** modellen: ett sant modellnavn er nok, og det er det
-  sanne svaret når workspacet har én modellmeny. De maskinelt utførte søkene
+  sanne svaret når workspacet har én modellmeny. Fra migrasjon 013u er navnet i
+  tildelingen proveniens og ikke adgangskontroll: agenten blir aldri bedt om å
+  bevise hvilken modell den er, og et svar avvises ikke fordi den melder et
+  annet navn om seg selv — eller ingen. De maskinelt utførte søkene
   (`npm run ops:discovery`) trenger ingen semantisk tildeling i det hele tatt —
   de kjører på kildeoppdagelsens registreringsidentitet, som migrasjonen seedet.
 - **Agentlegitimasjon.** Hvert kontrolledd har en egen identitet som er *inert*

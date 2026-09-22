@@ -128,10 +128,33 @@ opplysninger hver for seg:
    den samme agenten kan kjøre flere ledd, som atskilte kjøringer under hver sin
    rolle og hver sin instruks. Ett ledd har derimot høyst én gjeldende kjører —
    det er en transportregel, slik at «hvem henter arbeidet her» har ett svar.
-3. **Den faktiske modellen** — `provenance.role_model_assignments`, tildelt på
-   forhånd av en redaktør, og kontrollert mot svaret ved import. Oppgir
-   plattformen en eksakt modell og versjon, registreres den; gjør den ikke det,
-   registreres `not_exposed` med én kanonisk verdi.
+3. **Tjenesten leddet er satt ut til** — `provenance.role_model_assignments`,
+   tildelt på forhånd av en redaktør. Den er proveniens: den sier hvor arbeidet
+   ble satt ut, og den registreres på hver kjøring. Oppgir plattformen en
+   eksakt modell og versjon, registreres den; gjør den ikke det, registreres
+   `not_exposed` med én kanonisk verdi.
+
+**Agenten blir aldri bedt om å bevise hvilken modell den er.** Fram til
+migrasjon 013u krevde importen at svarets `identity` var nøyaktig den tildelte
+modellen. Den regelen er fjernet, fordi den ikke virket: en Workspace Agent får
+ikke vite hvilken modellvekt den kjører på, bare navnet menyen viser. Var leddet
+tildelt `gpt-5.6-sol` mens agenten meldte `GPT-5`, var begge utsagnene sanne —
+og det eneste kontrollen avviste, var det ærlige svaret. En kontroll et svar kan
+bestå ved å skrive det Antidep vil se, kontrollerer heller ingenting; den ville
+bare framprovosert en agentinstruks med et hardkodet modellnavn, og da hadde
+proveniensen vært et ekko av oppgaven.
+
+`identity` er derfor **valgfri** i svaret, og skal utelates når plattformen ikke
+viser agenten hvilken modell den er. Oppgir agenten et navn, lagres det som
+agentens eget ord om seg selv, ved siden av — og aldri i stedet for — den
+attesterte tildelingen. Formen kontrolleres fortsatt: en lovet «eksakt» versjon
+som ikke finnes, avvises, fordi en gjettet versjon ville sett like troverdig ut
+som en sann.
+
+Det som avgjør hva et svar får lov til, er noe annet enn et navn: rollen er
+tilkoblingens og kan ikke velges av modellen, svaret leveres under det uttaket
+kjøringen holder, `request_digest` binder det til nøyaktig ett grunnlag, og hver
+kontroll er en egen kjøring som ikke kan attestere sitt eget resultat.
 
 **Hvis plattformen ikke pinner modellen**, sett `platform_model_disclosure` til
 `not_exposed` når du registrerer kjøreren. Antidep hevder da ikke at
@@ -146,7 +169,9 @@ det var den ene feilen den gamle regelen framprovoserte, og den er verre enn å
 si sannheten om at modellen er delt.
 
 Antidep kan ikke oppdage en usann tildeling. Det er derfor tildelingen er en
-attestert avgjørelse med hvem og hvorfor, og ikke noe et svar kan etablere.
+attestert avgjørelse med hvem og hvorfor, og ikke noe et svar kan etablere — og
+det er også derfor den ikke brukes som en kontroll av svaret: den ville ikke
+kunnet bære mer enn den er.
 
 ## Engangsoppsettet i ChatGPT
 
@@ -224,10 +249,12 @@ du ingen enkeltoppgaver.
    den i Antidep med
    `npm run ops:agents -- assign-model --role <ledd> --provider openai --model <navn> --reason "…"`.
    Flere ledd kan ha den samme modellen; oppgi da det samme navnet for dem, og
-   aldri et oppdiktet navn for å få dem til å se forskjellige ut.
+   aldri et oppdiktet navn for å få dem til å se forskjellige ut. Skriv det
+   navnet du faktisk valgte i menyen — agenten blir ikke bedt om å bekrefte det,
+   og svaret avvises ikke om agenten melder et annet navn om seg selv.
    Tildelingen inngår i oppgavens avtrykk, og den må gjøres **før** agenten
-   henter sin første oppgave: et svar kan bekrefte identiteten sin, men aldri
-   bestemme den (ANTIDEP_CONSTITUTION.md regel 3).
+   henter sin første oppgave: et ledd uten tildelt tjeneste kan ikke ta imot et
+   svar (ANTIDEP_CONSTITUTION.md regel 3).
 4. Legg til Antidep-appen blant agentens apper/verktøy.
 5. Lim inn agentinstruksen under som agentens instruks.
 
@@ -288,7 +315,9 @@ Ved hver kjøring:
    oppgaven nøyaktig slik den returnerte teksten beskriver. Følg rollen,
    reglene, grensene og svarformen som står der.
 4. Lever resultatet med submit_agent_answer. Kopier bindingsverdiene uendret fra
-   svarmalen; du fyller bare inn identity og result.
+   svarmalen; du fyller inn result. Feltet identity er valgfritt, og du skal
+   utelate det med mindre tjenesten du kjører i, faktisk viser deg hvilken
+   modell du er. Ingen kontroll avhenger av det.
 5. Kan du ikke fullføre en oppgave, kall release_agent_task med en av de
    tillatte grunnene: blocked_by_task, could_not_complete eller out_of_time.
    Feltet tar ikke fri tekst.
@@ -303,7 +332,8 @@ Regler du aldri fraviker:
 - Bruk ikke kunnskap utenfra med mindre oppgaven uttrykkelig tillater det. Ikke
   søk på nettet og ikke fyll inn fra hukommelsen.
 - Finn ikke på verdier. Mangler en opplysning, skal feltet utelates og grunnen
-  oppgis der oppgaven ber om det. Gjett aldri en modellversjon.
+  oppgis der oppgaven ber om det. Gjett aldri en modell eller en modellversjon,
+  og skriv aldri inn et modellnavn du har lest et annet sted i oppgaven.
 - Utfør bare det agentleddet denne tilkoblingen er registrert for. Du kan ikke
   velge et annet, og du skal ikke forsøke.
 - Avviser Antidep resultatet, rapporter feilen slik den er og gå videre. Det

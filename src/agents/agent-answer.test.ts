@@ -93,6 +93,19 @@ describe('parseAgentAnswer', () => {
     expect(a.identity).toEqual(b.identity)
   })
 
+  // Regresjon: den observerte driftsfeilen. En ChatGPT Workspace Agent får ikke
+  // vite hvilken modellvekt den kjører på, og skal da utelate feltet framfor å
+  // gjette (ANTIDEP_CONSTITUTION.md regel 3, 4).
+  it('godtar et svar uten identity i det hele tatt', () => {
+    const answer = parseAgentAnswer(answerFor('evidence_extraction', null))
+    expect(answer.identity).toBeNull()
+  })
+
+  it('leser «identity: null» som den samme tausheten som et utelatt felt', () => {
+    const answer = parseAgentAnswer(answerFor('evidence_extraction', null, { identity: null }))
+    expect(answer.identity).toBeNull()
+  })
+
   it('avviser et svartidspunkt som ikke er en dato', () => {
     expect(() =>
       parseAgentAnswer(
@@ -135,19 +148,51 @@ describe('answerBindingProblem', () => {
     expect(answerBindingProblem(task('evidence_extraction'), answer)).toMatch(/svarformen/)
   })
 
-  it('avviser en annen modell enn den rollen er registrert med', () => {
-    const registered = parseAgentTask(
-      taskPayload('evidence_extraction', {
-        registered_model: {
-          provider: 'openai',
-          model: 'GPT-5 Thinking',
-          model_version: 'ikke-eksponert',
-          model_version_disclosure: 'not_exposed',
-        },
-      }),
+  // ------------------------------------------------------------------------
+  // Regresjon: modellnavnet er proveniens, ikke adgangskontroll
+  //
+  // Den autonome Workspace Agent-en for source_discovery fikk de tre første
+  // oppgavene avvist fordi rollen var tildelt «gpt-5.6-sol» mens agenten
+  // rapporterte «GPT-5». Begge var sanne: plattformen viser menynavnet og ikke
+  // modellvekten. En likhetskontroll på det navnet avviste derfor nøyaktig det
+  // ærlige svaret, og den kunne uansett ikke bære noe — den ene siden av
+  // sammenligningen er noe modellen skriver selv (ANTIDEP_CONSTITUTION.md
+  // regel 3).
+  // ------------------------------------------------------------------------
+  const assignedTask = parseAgentTask(
+    taskPayload('source_discovery', {
+      registered_model: {
+        provider: 'openai',
+        model: 'gpt-5.6-sol',
+        model_version: 'ikke-eksponert',
+        model_version_disclosure: 'not_exposed',
+      },
+    }),
+  )
+
+  it('godtar et svar som melder et annet modellnavn enn det leddet er satt ut til', () => {
+    const answer = parseAgentAnswer(
+      answerFor('source_discovery', { provider: 'openai', model: 'GPT-5' }),
     )
-    const answer = parseAgentAnswer(answerFor('evidence_extraction', CLAUDE))
-    expect(answerBindingProblem(registered, answer)).toMatch(/GPT-5 Thinking/)
+    expect(answerBindingProblem(assignedTask, answer)).toBeNull()
+  })
+
+  it('godtar et svar uten noen runtime-modell', () => {
+    const answer = parseAgentAnswer(answerFor('source_discovery', null))
+    expect(answerBindingProblem(assignedTask, answer)).toBeNull()
+  })
+
+  // Det som fortsatt binder svaret, binder det like hardt. En agent som fikk
+  // slippe gjennom på modellnavnet, skal ikke slippe gjennom på grunnlaget.
+  it('avviser fortsatt et svar på et annet grunnlag, uansett modellnavn', () => {
+    const answer = parseAgentAnswer(
+      answerFor(
+        'source_discovery',
+        { provider: 'openai', model: 'gpt-5.6-sol' },
+        { request_digest: `sha256:${'e'.repeat(64)}` },
+      ),
+    )
+    expect(answerBindingProblem(assignedTask, answer)).toMatch(/endret/)
   })
 })
 

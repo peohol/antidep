@@ -182,10 +182,13 @@ menneskeoppgave.
 som recovery. Ingen av kommandoene finnes i produkt-UI.
 
 Sikkerhetsgrensene er uendret. Tildelingen er fortsatt en attestert avgjørelse
-tatt *før* oppgaven hentes ut, den inngår fortsatt i oppgavens avtrykk, og et
-svar kan fortsatt bekrefte identiteten sin uten å bestemme den
-(ANTIDEP_CONSTITUTION.md regel 3). Ingen modell attesterer seg selv, og ingen
-kontroll er svekket for å få flaten enklere.
+tatt *før* oppgaven hentes ut, og den inngår fortsatt i oppgavens avtrykk, slik
+at et bytte ugyldiggjør de utestående oppgavene (ANTIDEP_CONSTITUTION.md regel
+3). Modellnavnet er proveniens og ikke adgangskontroll: agenten blir ikke bedt
+om å bevise hvilken modell den er, og et svar avvises ikke fordi den melder et
+annet navn — eller ingen. Det som binder svaret, er rollen tilkoblingen er
+registrert for, uttaket det leveres under og avtrykket. Ingen modell attesterer
+seg selv, og ingen kontroll er svekket for å få flaten enklere.
 
 ## Den primære arbeidsformen
 

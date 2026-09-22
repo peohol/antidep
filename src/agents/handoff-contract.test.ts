@@ -14,8 +14,34 @@ import {
 import { taskPayload, TEST_JOB_ID } from './handoff-test-support.ts'
 
 const MIGRATIONS = 'supabase/migrations'
-/** Migrasjonen som innførte oppgaveformen og svarformen. */
-const CONTRACT_MIGRATION = `${MIGRATIONS}/20260928092000_external_agent_handoff.sql`
+
+async function migrationFiles(): Promise<readonly string[]> {
+  return (await readdir(MIGRATIONS)).filter((name) => name.endsWith('.sql')).sort()
+}
+
+/**
+ * Den gjeldende definisjonen av en versjonsfunksjon.
+ *
+ * Som for kontraktfunksjonen under: fasiten er den *siste* definisjonen og ikke
+ * den første. Migrasjon 013u hevet svarformen til @2, og en prøve som fortsatt
+ * pekte på migrasjonen som innførte formen, ville pinnet flaten mot en utgave
+ * som ikke gjelder — og vært stille grønn den dagen de to gikk i utakt.
+ */
+async function currentVersionFunction(name: string): Promise<string> {
+  let current: string | null = null
+  for (const file of await migrationFiles()) {
+    const sql = await readFile(`${MIGRATIONS}/${file}`, 'utf8')
+    const match = new RegExp(
+      `create (?:or replace )?function workflow\\.${name}\\(\\)[\\s\\S]*?\\$(?:function)?\\$;`,
+      'i',
+    ).exec(sql)
+    if (match !== null) {
+      current = match[0]
+    }
+  }
+  expect(current, `ingen migrasjon definerer workflow.${name}()`).not.toBeNull()
+  return current ?? ''
+}
 
 /**
  * Den gjeldende definisjonen av `workflow.agent_task_contract`.
@@ -26,9 +52,8 @@ const CONTRACT_MIGRATION = `${MIGRATIONS}/20260928092000_external_agent_handoff.
  * gjelder lenger, og da ville den vært stille grønn.
  */
 async function currentContractFunction(): Promise<string> {
-  const files = (await readdir(MIGRATIONS)).filter((name) => name.endsWith('.sql')).sort()
   let current: string | null = null
-  for (const name of files) {
+  for (const name of await migrationFiles()) {
     const sql = await readFile(`${MIGRATIONS}/${name}`, 'utf8')
     // Både den håndskrevne formen (`$$`) og den som er spleiset fra databasens
     // egen `pg_get_functiondef` (`$function$`). Uten begge ville prøven lest en
@@ -91,9 +116,12 @@ describe('oppgavekontrakten', () => {
 // ----------------------------------------------------------------------------
 describe('kontrakten er den samme som databasens', () => {
   it('bruker de samme oppgave- og svarformversjonene som migrasjonen', async () => {
-    const sql = await readFile(CONTRACT_MIGRATION, 'utf8')
-    expect(sql).toContain(`select '${AGENT_TASK_VERSION}'::text`)
-    expect(sql).toContain(`select '${AGENT_ANSWER_VERSION}'::text`)
+    expect(await currentVersionFunction('agent_handoff_task_version')).toContain(
+      `select '${AGENT_TASK_VERSION}'::text`,
+    )
+    expect(await currentVersionFunction('agent_handoff_answer_version')).toContain(
+      `select '${AGENT_ANSWER_VERSION}'::text`,
+    )
   })
 
   it('bruker de samme promptmal- og svarformversjonene som den gjeldende kontrakten', async () => {

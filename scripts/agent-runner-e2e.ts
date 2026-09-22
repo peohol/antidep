@@ -438,7 +438,13 @@ async function main(): Promise<void> {
   )
 
   // «Agenten»: kopierer bindingsverdiene uendret ut av oppgaven, og fyller inn
-  // de to tingene bare den vet.
+  // det ene bare den vet.
+  //
+  // Regresjon (013u): svaret settes sammen av svarmalen slik den kommer fra
+  // `get_agent_task`, og den har ingen `identity` — en Workspace Agent får ikke
+  // vite hvilken modellvekt den kjører på, og skal ikke gjette. Leveringen skal
+  // gå gjennom likevel. Det var nettopp her de tre første oppgavene i drift ble
+  // avvist, fordi tildelingen sa ett modellnavn og agenten meldte et annet.
   const template = taskResult.structured['answer_template'] as Record<string, unknown>
   const manifest = (enqueued.data as { input_manifest?: Record<string, unknown> } | null) ?? {}
   void manifest
@@ -448,11 +454,6 @@ async function main(): Promise<void> {
 
   const answer = {
     ...template,
-    identity: {
-      provider,
-      model,
-      model_version_disclosure: 'not_exposed',
-    },
     answered_at: new Date().toISOString(),
     result: {
       extraction: {
@@ -617,8 +618,11 @@ async function main(): Promise<void> {
       ),
     ) >= 10,
   )
+  // Proveniensen er tildelingen, ikke et selvutsagn: svaret hadde ingen
+  // `identity` i det hele tatt, og kjøringen står likevel med tjenesten leddet
+  // er satt ut til (013u).
   check(
-    'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet',
+    'kjøringen bærer den tjenesten leddet er satt ut til, også uten et selvutsagn',
     psql(
       config,
       `select format('%s/%s', r.semantic_provider, r.semantic_model)
@@ -626,6 +630,16 @@ async function main(): Promise<void> {
        join provenance.agent_runs r on r.id = i.agent_run_id
        where i.pipeline_job_id = ${q(jobId)}`,
     ) === `${String(provider)}/${String(model)}`,
+  )
+  check(
+    'og «ingen selvrapportert modell» står som nettopp det, framfor å bli gjettet',
+    psql(
+      config,
+      `select coalesce(r.input_manifest -> 'handoff' ->> 'self_reported_identity', 'null')
+       from workflow.agent_handoff_imports i
+       join provenance.agent_runs r on r.id = i.agent_run_id
+       where i.pipeline_job_id = ${q(jobId)}`,
+    ) === 'null',
   )
   check(
     'importen navngir den autonome kjøreren som leverte svaret',

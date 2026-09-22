@@ -10,7 +10,7 @@
 //   job_key                hvilken oppgave det gjelder
 //   request_digest         hvilket grunnlag oppgaven ble bygget av
 //   output_schema_version  hvilken svarstruktur result følger
-//   identity               hvem som faktisk svarte
+//   identity               hva tjenesten sier at den er (valgfritt)
 //   answered_at            når det ble svart (valgfritt)
 //   result                 selve svaret
 //
@@ -19,6 +19,28 @@
 // på nytt av databasen ved import, mot en oppgave den bygger av radene slik de
 // er *da* (migrasjon 010c). Er grunnlaget endret i mellomtiden, gjelder ikke
 // svaret lenger, og det er riktig utfall.
+//
+// ----------------------------------------------------------------------------
+// Hvorfor `identity` er valgfri, og hvorfor den ikke kontrolleres
+//
+// Fordi en agent ikke kan vite svaret. En ChatGPT Workspace Agent får ikke se
+// hvilken modellvekt den kjører på; den ser navnet i menyen, og
+// `platform_model_disclosure = not_exposed` er normaltilfellet. Fram til
+// migrasjon 013u krevde Antidep at navnet var *nøyaktig* det rollen var tildelt,
+// og avviste svaret ellers. Den kontrollen avviste i praksis bare den agenten
+// som svarte ærlig — tildelingen sa `gpt-5.6-sol`, agenten sa `GPT-5`, og begge
+// var sanne.
+//
+// Og den kunne uansett ikke bære noe: den ene siden av sammenligningen er noe
+// modellen skriver selv. En kontroll et svar kan bestå ved å skrive det Antidep
+// vil se, har ikke kontrollert noe — den har bare lært den som skriver svaret,
+// hvilken streng som slipper gjennom.
+//
+// Modellnavnet er derfor proveniens, ikke adgangskontroll. Er det der, tas det
+// vare på som agentens eget ord. Er det ikke der, er det den sanne
+// opplysningen, og ingen skal gjette. Det som binder svaret, er rollen
+// tilkoblingen er registrert for, uttaket det leveres under, og
+// `request_digest` (ANTIDEP_CONSTITUTION.md regel 3).
 //
 // ----------------------------------------------------------------------------
 // Hvorfor filnavnet ikke betyr noe
@@ -68,7 +90,8 @@ export interface AgentAnswer {
   readonly jobKey: string
   readonly requestDigest: string
   readonly outputSchemaVersion: string
-  readonly identity: ModelIdentity
+  /** Hva tjenesten sier at den er, eller `null` når den ikke oppgir noe. */
+  readonly identity: ModelIdentity | null
   readonly answeredAt: string | null
   readonly result: Record<string, unknown>
 }
@@ -109,7 +132,14 @@ export function parseAgentAnswer(value: unknown): AgentAnswer {
   const role = asText(fields, 'role')
   const jobKey = asText(fields, 'job_key')
   const outputSchemaVersion = asText(fields, 'output_schema_version')
-  const identity = parseModelIdentity(fields, raw(fields, 'identity'))
+  // Utelatt felt og `identity: null` er den samme opplysningen: tjenesten
+  // oppgav ingen modell. Å skille dem ville vært to former for taushet, og
+  // agenten ville måttet velge riktig mellom dem uten å kunne vite hvorfor.
+  const declaredIdentity = raw(fields, 'identity')
+  const identity =
+    declaredIdentity === undefined || declaredIdentity === null
+      ? null
+      : parseModelIdentity(fields, declaredIdentity)
 
   const answeredAt = asOptionalText(fields, 'answered_at')
   if (answeredAt !== null && answeredAt.trimStart().startsWith(PLACEHOLDER_PREFIX)) {
@@ -183,18 +213,9 @@ export function answerBindingProblem(task: AgentTask, answer: AgentAnswer): stri
       'bygget av, er endret siden den ble hentet ut. Hent oppgaven på nytt og be om et nytt svar.'
     )
   }
-  if (
-    task.registeredModel !== null &&
-    (task.registeredModel.provider !== answer.identity.provider ||
-      task.registeredModel.model !== answer.identity.model ||
-      task.registeredModel.modelVersion !== answer.identity.modelVersion)
-  ) {
-    return (
-      `Dette agentleddet er tildelt ${task.registeredModel.model} ` +
-      `(${task.registeredModel.provider}), men svaret kom fra ${answer.identity.model} ` +
-      `(${answer.identity.provider}). Bruk den tildelte tjenesten, eller bytt tildelingen først.`
-    )
-  }
+  // Modellidentiteten sammenlignes ikke med rollens tildeling, og det er ikke
+  // en utelatelse. Se filhodet: navnet er agentens eget ord om seg selv, og en
+  // sammenligning med det kunne bare avvise den som svarte ærlig.
   return null
 }
 
@@ -207,7 +228,7 @@ export function serializeAgentAnswer(answer: AgentAnswer): Record<string, unknow
     job_key: answer.jobKey,
     request_digest: answer.requestDigest,
     output_schema_version: answer.outputSchemaVersion,
-    identity: serializeModelIdentity(answer.identity),
+    ...(answer.identity === null ? {} : { identity: serializeModelIdentity(answer.identity) }),
     ...(answer.answeredAt === null ? {} : { answered_at: answer.answeredAt }),
     result: answer.result,
   }

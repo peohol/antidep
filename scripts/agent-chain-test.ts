@@ -239,8 +239,33 @@ function seed(config: Config): { secret: string; verifierSecret: string } {
   }
 }
 
+/**
+ * Bygg innholdet, men prøv ikke den versjonerte handoff-kontrakten.
+ *
+ * `scripts/db-upgrade-monograph.sh` kjører denne filen mot en base som med
+ * vilje er satt tilbake til siste migrasjon før monografien, for å bygge det
+ * innholdet oppgraderingen skal prøves mot. Handoff-kontrakten er versjonert og
+ * pinnet mot *denne* utgaven av koden: `parseAgentTask` avviser en oppgave der
+ * databasens `answer_version` eller `prompt_template_version` er en annen enn
+ * flatens. Mot en base som er pinnet til en eldre migrasjon, er de forskjellige
+ * — og da sier pinningen sannheten: flaten og databasen *er* i utakt der.
+ *
+ * En prøve som kjøres mot to skjemaer, kan ikke påstå noe som gjelder bare det
+ * ene (migrasjon 013t). Kontraktleddet hører derfor til en ferdig migrert base,
+ * og prøves der: av denne filen uten flagget (`npm run db:test:chain`), av
+ * `npm run db:test:mcp`, og av pgTAP 780, 790 og 870. Steget i
+ * oppgraderingsprøven heter «bygger innhold gjennom de autoriserte veiene», og
+ * det er nøyaktig det som blir igjen når flagget er satt.
+ */
+const SKIP_HANDOFF_FLAG = '--skip-handoff'
+
 async function main(): Promise<void> {
-  const config = readLocalStackConfig(process.argv.slice(2))
+  // `--skip-handoff` er ikke en stack-innstilling, og skal ikke leses som et
+  // flagg med verdi. Den filtreres bort før argumentene tolkes.
+  const skipHandoff = process.argv.includes(SKIP_HANDOFF_FLAG)
+  const config = readLocalStackConfig(
+    process.argv.slice(2).filter((argument) => argument !== SKIP_HANDOFF_FLAG),
+  )
   console.log(
     'Antidep 2: PDF → oppdrag → agentekstraksjon → uavhengig verifikasjon → forseglet ' +
       'kandidat → sluttkontroll → publisering → klinikervisning → withdraw → rollback.\n',
@@ -1270,6 +1295,14 @@ async function main(): Promise<void> {
     // oppgavekontrakten i TypeScript og de api-funksjonene som faktisk tar imot
     // den.
     // ------------------------------------------------------------------
+    if (skipHandoff) {
+      console.log(
+        '\nHopper over den versjonerte handoff-kontrakten (--skip-handoff): basen er ' +
+          'pinnet til en eldre migrasjon, og kontraktversjonene er derfor ikke flatens.',
+      )
+      return
+    }
+
     const otherDrugId = psql(
       config,
       `select id from catalog.drugs where canonical_name = 'mirtazapin'`,
@@ -1448,8 +1481,11 @@ async function main(): Promise<void> {
     if (imported.error !== null) return
     const importOutcome = parseImportOutcome(imported.data)
 
+    // Verdien er den samme på begge skjemaene filen kjøres mot: før 013u er den
+    // svarets egen identitet, kontrollert mot tildelingen, og etterpå er den
+    // tildelingen selv. Prøven sier derfor det som er sant begge steder.
     check(
-      'kjøringen bærer den eksterne modellen som faktisk gjorde arbeidet',
+      'kjøringen bærer den eksterne tjenesten leddet er satt ut til',
       psql(
         config,
         `select format('%s/%s/%s', r.semantic_provider, r.semantic_model, r.semantic_model_version)
@@ -1544,24 +1580,15 @@ async function main(): Promise<void> {
       synthesisModel.error?.message ?? '',
     )
 
-    // Og identiteten kan ikke lånes: et svar som utgir seg for å være det andre
-    // leddets modell, avvises. Uten tildelingen på forhånd var dette hullet —
-    // svaret selv etablerte premisset som autoriserte det.
-    const borrowed = await editor.rpc('import_agent_answer', {
-      p_pipeline_job_id: staleJobId,
-      p_answer: answerForStaleJob(
-        {
-          provider: 'antidep-test',
-          model: 'ekstern-kjedeagent-to',
-          model_version_disclosure: 'not_exposed',
-        },
-        staleTask.requestDigest,
-      ),
-    })
-    check(
-      'et svar som utgir seg for å være et annet ledds modell, avvises',
-      borrowed.error !== null,
-    )
+    // Her sto prøven av at et svar ikke kunne «låne» et annet ledds
+    // modellidentitet. Den er borte med regelen (013u): modellnavnet er
+    // proveniens og ikke adgangskontroll, og et svar avvises ikke lenger på
+    // navnet det oppgir om seg selv. Den kunne heller ikke stått igjen her av
+    // samme grunn som modelldelingsprøven over: filen kjøres mot to skjemaer, og
+    // utfallet ville vært forskjellig på dem. Det regelen faktisk binder svaret
+    // til — avtrykket — prøves rett over, og den prøven er den samme begge
+    // steder. At et annet modellnavn nå slipper gjennom, prøves i pgTAP mot en
+    // ferdig migrert base (780, 790 og 870).
 
     // Forhåndskontrollen i køen er importens egen: funnet handoffen nettopp
     // registrerte, er ikke kontrollert av noen ennå, og en syntese på det kunne
@@ -1713,12 +1740,16 @@ async function main(): Promise<void> {
   } finally {
     rmSync(work, { recursive: true, force: true })
   }
-
-  if (process.exitCode === 1) {
-    console.error('\nMinst én Antidep 2-kjedekontroll slo feil.')
-  } else {
-    console.log('\nAntidep 2-kjeden gikk gjennom.')
-  }
 }
 
 await main()
+
+// Oppsummeringen står utenfor `main()`, slik at den også skrives når kjøringen
+// avslutter tidlig — for eksempel under `--skip-handoff`. En kjøring som gikk i
+// stykker før det punktet, skal ikke kunne ende uten den ene linjen som sier at
+// noe slo feil: oppgraderingsprøven leser nettopp denne loggen.
+if (process.exitCode === 1) {
+  console.error('\nMinst én Antidep 2-kjedekontroll slo feil.')
+} else {
+  console.log('\nAntidep 2-kjeden gikk gjennom.')
+}
