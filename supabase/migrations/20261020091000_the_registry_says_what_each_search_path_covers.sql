@@ -1027,6 +1027,111 @@ create trigger monograph_candidate_source_plans_sync_candidate
   on workflow.monograph_candidate_source_plans
   for each row execute function workflow.sync_candidate_after_plan_appraisal();
 
+-- Bruken av kilden hører også til planen som foreslo den. Ett behov kan dekkes
+-- av flere planer (workflow.monograph_search_plan_needs er mange-til-mange), og
+-- to planer kan foreslå hver sin bruk av den samme kilden for det samme
+-- behovet — og komme til hver sin beslutning om kilden. Uten planen på raden
+-- ville den første planens bruk vært den eneste, og hvilken plan som eide den,
+-- måtte ha blitt gjettet av behovet.
+alter table workflow.monograph_candidate_source_needs
+  add column plan_id uuid
+    references workflow.monograph_search_plans (id) on update restrict on delete restrict;
+
+comment on column workflow.monograph_candidate_source_needs.plan_id is
+  'Søkeplanen som foreslo bruken. Bruken gjelder bare når nettopp den planen har valgt eller inkludert kilden (workflow.monograph_wanted_candidate_needs). NULL for en bruk lagt til utenom en søkeplan, som følger kildens samlede utfall.';
+
+-- Hvilken plan en bruk uten oppgitt plan hører til, når det er entydig: planen
+-- kilden ble registrert på, når den dekker behovet, og ellers den ene planen som
+-- har funnet kilden og dekker behovet. Er det flere, gjettes det ikke.
+create function workflow.monograph_candidate_use_plan(p_candidate_id uuid, p_need_id uuid)
+  returns uuid
+  language sql
+  stable
+  set search_path = ''
+as $$
+  select coalesce(
+    (select c.plan_id
+     from workflow.monograph_candidate_sources c
+     join workflow.monograph_search_plan_needs pn
+       on pn.plan_id = c.plan_id and pn.need_id = p_need_id
+     where c.id = p_candidate_id),
+    (select (array_agg(l.plan_id))[1]
+     from workflow.monograph_candidate_source_plans l
+     join workflow.monograph_search_plan_needs pn
+       on pn.plan_id = l.plan_id and pn.need_id = p_need_id
+     where l.candidate_source_id = p_candidate_id
+     having count(*) = 1));
+$$;
+
+comment on function workflow.monograph_candidate_use_plan(uuid, uuid) is
+  'Planen en bruk av en kandidatkilde for et behov hører til, når det er entydig: planen kilden ble registrert på, når den dekker behovet, ellers den ene planen som har funnet kilden og dekker behovet. NULL når ingen eller flere planer kan eie bruken — da gjettes det ikke.';
+
+revoke execute on function workflow.monograph_candidate_use_plan(uuid, uuid) from public;
+
+-- De brukene som finnes. Tabellen er append-only, og tidspunktet bruken ble
+-- foreslått, skal stå: begge triggerne holdes av under tilbakefyllingen.
+alter table workflow.monograph_candidate_source_needs
+  disable trigger monograph_candidate_source_needs_are_append_only;
+alter table workflow.monograph_candidate_source_needs
+  disable trigger monograph_candidate_source_needs_set_created_at;
+
+update workflow.monograph_candidate_source_needs cn
+set plan_id = workflow.monograph_candidate_use_plan(cn.candidate_source_id, cn.need_id)
+where cn.plan_id is null;
+
+alter table workflow.monograph_candidate_source_needs
+  enable trigger monograph_candidate_source_needs_set_created_at;
+alter table workflow.monograph_candidate_source_needs
+  enable trigger monograph_candidate_source_needs_are_append_only;
+
+-- Én bruk per (kilde, behov, plan) — og én per (kilde, behov) for brukene uten
+-- en plan.
+alter table workflow.monograph_candidate_source_needs
+  drop constraint monograph_candidate_source_needs_pair_key;
+alter table workflow.monograph_candidate_source_needs
+  add constraint monograph_candidate_source_needs_plan_pair_key
+    unique nulls not distinct (candidate_source_id, need_id, plan_id);
+
+create index monograph_candidate_source_needs_plan_idx
+  on workflow.monograph_candidate_source_needs (plan_id);
+
+-- En bruk med en plan må gjelde et behov planen dekker, og en kilde planen har
+-- funnet. En bruk uten plan får planen når den er entydig.
+create function workflow.bind_monograph_candidate_use_to_plan()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  new.plan_id := coalesce(
+    new.plan_id, workflow.monograph_candidate_use_plan(new.candidate_source_id, new.need_id));
+
+  if new.plan_id is not null and not exists (
+    select 1
+    from workflow.monograph_candidate_source_plans l
+    join workflow.monograph_search_plan_needs pn
+      on pn.plan_id = l.plan_id and pn.need_id = new.need_id
+    where l.candidate_source_id = new.candidate_source_id and l.plan_id = new.plan_id
+  ) then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'En bruk av en kandidatkilde må høre til en plan som har funnet kilden og dekker behovet.',
+      hint = 'Bruken er planens forslag: den gjelder et behov planen dekker, for en kilde et søk på planen fant (migrasjon 014c).';
+  end if;
+
+  return new;
+end;
+$$;
+
+comment on function workflow.bind_monograph_candidate_use_to_plan() is
+  'Binder en foreslått bruk av en kandidatkilde til planen som foreslo den: planen må ha funnet kilden og dekke behovet, og en bruk uten plan får planen når den er entydig (workflow.monograph_candidate_use_plan).';
+
+revoke execute on function workflow.bind_monograph_candidate_use_to_plan() from public;
+
+create trigger monograph_candidate_source_needs_bind_plan
+  before insert on workflow.monograph_candidate_source_needs
+  for each row execute function workflow.bind_monograph_candidate_use_to_plan();
+
 create or replace function workflow.record_monograph_candidate_source(
   p_plan_id uuid,
   p_search_id uuid,

@@ -12,16 +12,18 @@
 --     sentral kilde følges — også når sporet alt er dekket,
 --   * en avkortet treffliste kan ikke lukke dekningen: resten er dekket bare av
 --     det samme søket lest helt, eller av et smalere søk med den samme metoden
---     som uttrykkelig erstatter det, og
+--     som uttrykkelig erstatter det,
 --   * dekningskontrollen er et atskilt ledd: den arver ikke generatorens søk,
---     og generatorens søk gjør den ikke uavhengig.
+--     og generatorens søk gjør den ikke uavhengig, og
+--   * når det samme behovet hører til to planer, har hver plan sin egen bruk av
+--     en delt kilde, og bare planens egen beslutning driver den.
 --
 -- SQLSTATE 23514 = check_violation, 42501 = insufficient_privilege.
 begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(38);
+select plan(44);
 
 insert into auth.users (id, email)
 values ('98000000-0000-4000-8000-00000000000a', 'redaktor-980@test.invalid');
@@ -315,12 +317,13 @@ create temporary table behov_for on commit drop as
   select b.label, b.need_id, n.work_state::text as work_state
   from behov b join knowledge.monograph_needs n on n.id = b.need_id;
 
-insert into workflow.monograph_candidate_source_needs (candidate_source_id, need_id, proposed_use)
+insert into workflow.monograph_candidate_source_needs
+  (candidate_source_id, need_id, plan_id, proposed_use)
 values
   (pg_temp.kilde('10.1000/980-felles'), (select need_id from behov where label = 'ae'),
-   'Foreslått av bivirkningsplanen før den ekskluderte kilden.'),
+   pg_temp.plan_id('p_ae'), 'Foreslått av bivirkningsplanen før den ekskluderte kilden.'),
   (pg_temp.kilde('10.1000/980-felles'), (select need_id from behov where label = 'eff'),
-   'Effektstørrelsen i den avgrensede populasjonen.');
+   pg_temp.plan_id('p_eff'), 'Effektstørrelsen i den avgrensede populasjonen.');
 
 select is(
   (select array_agg(w.need_id)
@@ -805,6 +808,147 @@ select is(
      and r.agent_role = 'source_quality_assessment'),
   0,
   'og ingen av dem peker på et av kontrollens søk'
+);
+
+-- ===========================================================================
+-- Del 6 — Det samme behovet på to planer, med hver sin bruk
+-- ===========================================================================
+-- Et behov kan høre til flere planer. Begge planene finner den samme kilden,
+-- foreslår hver sin bruk av den for det samme behovet og kommer til hver sin
+-- beslutning. Hver plan ser og driver bare sin egen bruk: ingen av dem skrives
+-- over av den andre, og ingen arves av den andre planen. Behovet er et
+-- myndighetsbehov på effektplanen, slik at innhentingen skriver den faglige
+-- grunnen inn i forespørselen den åpner.
+create temporary table delt_behov on commit drop as
+  select pn.need_id
+  from workflow.monograph_search_plan_needs pn
+  where pn.plan_id = pg_temp.plan_id('p_eff')
+    and knowledge.monograph_need_material_kind(pn.need_id) = 'authority_document'
+  order by pn.need_id
+  limit 1;
+
+insert into workflow.monograph_search_plan_needs (plan_id, need_id)
+select pg_temp.plan_id('p_ae'), need_id from delt_behov;
+
+select workflow.record_monograph_candidate_source(
+  pg_temp.plan_id(v.plan),
+  (select s.id from workflow.monograph_searches s
+   where s.plan_id = pg_temp.plan_id(v.plan) order by s.registration_ordinal limit 1),
+  'doi', '10.1000/980-samme-behov', 'Kilde to planer bruker for det samme behovet (prøve 980)',
+  null, null, 2021, 'Europe PMC, søk gjennom det åpne REST-endepunktet', false, null,
+  false, null, null, 'ac980000-0000-4000-8000-00000000000a')
+from (values ('p_eff'), ('p_ae')) as v(plan);
+
+insert into workflow.monograph_candidate_source_needs
+  (candidate_source_id, need_id, plan_id, proposed_use)
+values
+  (pg_temp.kilde('10.1000/980-samme-behov'), (select need_id from delt_behov),
+   pg_temp.plan_id('p_eff'), 'Effektplanens bruk: effektstørrelsen ved endepunktet.'),
+  (pg_temp.kilde('10.1000/980-samme-behov'), (select need_id from delt_behov),
+   pg_temp.plan_id('p_ae'), 'Bivirkningsplanens bruk: frafallet på grunn av bivirkninger.');
+
+select throws_ok(
+  $$insert into workflow.monograph_candidate_source_needs
+      (candidate_source_id, need_id, plan_id, proposed_use)
+    values (pg_temp.kilde('10.1000/980-samme-behov'),
+            (select need_id from delt_behov),
+            pg_temp.plan_id('p_tox'), 'En plan som aldri fant kilden.')$$,
+  '22023',
+  'En bruk av en kandidatkilde må høre til en plan som har funnet kilden og dekker behovet.',
+  'en plan som ikke har funnet kilden, kan ikke foreslå en bruk av den'
+);
+
+select workflow.decide_monograph_candidate_source(
+  pg_temp.kilde('10.1000/980-samme-behov'), pg_temp.plan_id('p_eff'), 'excluded',
+  'Effektplanen finner ikke effektmålet sitt i kilden.',
+  'ac980000-0000-4000-8000-00000000000a', null);
+select workflow.decide_monograph_candidate_source(
+  pg_temp.kilde('10.1000/980-samme-behov'), pg_temp.plan_id('p_ae'), 'included',
+  'Bivirkningsplanen bruker kilden for frafallet.',
+  'ac980000-0000-4000-8000-00000000000a', null);
+
+select bag_eq(
+  $$
+    select p.reference as plan_reference, cn.proposed_use
+    from workflow.monograph_candidate_source_needs cn
+    join workflow.monograph_search_plans p on p.id = cn.plan_id
+    where cn.candidate_source_id = pg_temp.kilde('10.1000/980-samme-behov')
+  $$,
+  $$
+    values ((select value from refs where label = 'p_eff'),
+            'Effektplanens bruk: effektstørrelsen ved endepunktet.'),
+           ((select value from refs where label = 'p_ae'),
+            'Bivirkningsplanens bruk: frafallet på grunn av bivirkninger.')
+  $$,
+  'hver plan har sin egen bruk for det samme behovet, og ingen av dem er skrevet over'
+);
+select is(
+  (select jsonb_agg(jsonb_build_array(v.plan, (
+     select jsonb_agg(u ->> 'proposed_use')
+     from jsonb_array_elements(workflow.monograph_discovery_task_input(pg_temp.plan_id(v.plan),
+            'source_discovery') -> 'candidates') as c,
+          jsonb_array_elements(c -> 'uses') as u
+     where c ->> 'identifier_value' = '10.1000/980-samme-behov')) order by v.plan)
+   from (values ('p_ae'), ('p_eff')) as v(plan)),
+  jsonb_build_array(
+    jsonb_build_array('p_ae', jsonb_build_array(
+      'Bivirkningsplanens bruk: frafallet på grunn av bivirkninger.')),
+    jsonb_build_array('p_eff', jsonb_build_array(
+      'Effektplanens bruk: effektstørrelsen ved endepunktet.'))),
+  'hver plans oppgave viser bare planens egen bruk, også når behovet er det samme'
+);
+select is(
+  (select jsonb_agg(jsonb_build_array(v.plan, (
+     select jsonb_agg(u ->> 'proposed_use')
+     from jsonb_array_elements(workflow.monograph_search_plan_payload(p) -> 'candidates') as c,
+          jsonb_array_elements(c -> 'uses') as u
+     where c ->> 'identifier_value' = '10.1000/980-samme-behov')) order by v.plan)
+   from (values ('p_ae'), ('p_eff')) as v(plan)
+   join workflow.monograph_search_plans p on p.id = pg_temp.plan_id(v.plan)),
+  jsonb_build_array(
+    jsonb_build_array('p_ae', jsonb_build_array(
+      'Bivirkningsplanens bruk: frafallet på grunn av bivirkninger.')),
+    jsonb_build_array('p_eff', jsonb_build_array(
+      'Effektplanens bruk: effektstørrelsen ved endepunktet.'))),
+  'og det samme gjelder planens egen oversikt'
+);
+select bag_eq(
+  $$
+    select p.reference as plan_reference, w.proposed_use
+    from workflow.monograph_wanted_candidate_needs w
+    join workflow.monograph_search_plans p on p.id = w.plan_id
+    where w.candidate_source_id = pg_temp.kilde('10.1000/980-samme-behov')
+  $$,
+  $$
+    values ((select value from refs where label = 'p_ae'),
+            'Bivirkningsplanens bruk: frafallet på grunn av bivirkninger.')
+  $$,
+  'bare bruken til planen som inkluderte kilden, er ønsket — effektplanens eksklusjon arver ikke bivirkningsplanens valg'
+);
+
+insert into refs (label, value)
+select 'utgave', e.reference
+from knowledge.monograph_editions e
+join workflow.monograph_candidate_sources c on c.edition_id = e.id
+where c.id = pg_temp.kilde('10.1000/980-samme-behov');
+
+select set_config('request.jwt.claims',
+                  '{"sub":"98000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+insert into svar (label, payload)
+select 'foresporsler', api.monograph_source_requests(
+  (select value from refs where label = 'utgave'));
+reset role;
+
+select is(
+  (select jsonb_build_array(
+            position('Bivirkningsplanens bruk' in r ->> 'professional_reason') > 0,
+            position('Effektplanens bruk' in r ->> 'professional_reason') > 0)
+   from svar, jsonb_array_elements(payload -> 'authority_documents') as r
+   where label = 'foresporsler'
+     and r ->> 'title' = 'Kilde to planer bruker for det samme behovet (prøve 980)'),
+  jsonb_build_array(true, false),
+  'og forespørselen innhentingen åpnet, bærer bivirkningsplanens bruk som faglig grunn — ikke effektplanens'
 );
 
 select * from finish();

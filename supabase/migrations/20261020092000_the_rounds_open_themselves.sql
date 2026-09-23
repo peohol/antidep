@@ -1603,11 +1603,13 @@ as $$
                  from workflow.monograph_candidate_source_needs cn
                  join knowledge.monograph_needs n on n.id = cn.need_id
                  join knowledge.monograph_question_templates t on t.id = n.template_id
-                 -- Bare bruken for planens egne behov: bruken en annen plan har
-                 -- foreslått for sine, er den planens (migrasjon 014c).
-                 join workflow.monograph_search_plan_needs pn
-                   on pn.need_id = cn.need_id and pn.plan_id = p_plan.id
-                 where cn.candidate_source_id = c.id))
+                 where cn.candidate_source_id = c.id
+                   -- Bare planens egne forslag: bruken en annen plan har
+                   -- foreslått, er den planens (migrasjon 014c).
+                   and (cn.plan_id = p_plan.id
+                        or (cn.plan_id is null and exists (
+                              select 1 from workflow.monograph_search_plan_needs pn
+                              where pn.plan_id = p_plan.id and pn.need_id = cn.need_id)))))
              order by c.created_at), '[]'::jsonb)
       from workflow.monograph_candidate_sources c
       join workflow.monograph_candidate_source_plans l
@@ -1829,11 +1831,13 @@ begin
                           'proposed_use', cn.proposed_use) order by n.reference), '[]'::jsonb)
                  from workflow.monograph_candidate_source_needs cn
                  join knowledge.monograph_needs n on n.id = cn.need_id
-                 -- Bare bruken for planens egne behov: bruken en annen plan har
-                 -- foreslått for sine, er den planens (migrasjon 014c).
-                 join workflow.monograph_search_plan_needs pn
-                   on pn.need_id = cn.need_id and pn.plan_id = v_plan.id
-                 where cn.candidate_source_id = c.id))
+                 where cn.candidate_source_id = c.id
+                   -- Bare planens egne forslag: bruken en annen plan har
+                   -- foreslått, er den planens (migrasjon 014c).
+                   and (cn.plan_id = v_plan.id
+                        or (cn.plan_id is null and exists (
+                              select 1 from workflow.monograph_search_plan_needs pn
+                              where pn.plan_id = v_plan.id and pn.need_id = cn.need_id)))))
                order by c.created_at), '[]'::jsonb)
       from workflow.monograph_candidate_sources c
       join workflow.monograph_candidate_source_plans l
@@ -2131,10 +2135,12 @@ begin
               hint = 'Hvilke behov søkeplanen dekker, er en faglig avgrensning som ligger i oppgaven. En bruk utenfor den ville flyttet kilden til et spørsmål ingen hadde avgrenset.';
           end if;
 
+          -- Bruken er denne planens forslag. En annen plan kan foreslå sin egen
+          -- bruk av den samme kilden for det samme behovet (migrasjon 014c).
           insert into workflow.monograph_candidate_source_needs
-            (candidate_source_id, need_id, proposed_use)
-          values (v_candidate.id, v_need_id, v_use ->> 'proposed_use')
-          on conflict (candidate_source_id, need_id) do nothing;
+            (candidate_source_id, need_id, plan_id, proposed_use)
+          values (v_candidate.id, v_need_id, v_plan_id, v_use ->> 'proposed_use')
+          on conflict on constraint monograph_candidate_source_needs_plan_pair_key do nothing;
         end loop;
       end if;
 

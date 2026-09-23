@@ -11,11 +11,12 @@
 -- førte så opp As bruk og satte As behov i arbeid. Det er nøyaktig den
 -- kryssplan-virkningen beslutningen per plan skulle fjerne.
 --
--- Bruken bindes nå til planen gjennom behovet: et behov hører til planen som
--- dekker det (`workflow.monograph_search_plan_needs`), og bruken for det behovet
--- gjelder bare når nettopp den planen har valgt eller inkludert kilden.
--- `workflow.monograph_wanted_candidate_needs` er den ene definisjonen av det,
--- og hver vei videre leser den:
+-- Bruken er bundet til planen som foreslo den (`plan_id` på
+-- `workflow.monograph_candidate_source_needs`, fra 014c): det samme behovet kan
+-- høre til flere planer, og hver av dem har sin egen bruk av kilden og sin egen
+-- beslutning om den. Bruken gjelder bare når nettopp den planen har valgt eller
+-- inkludert kilden. `workflow.monograph_wanted_candidate_needs` er den ene
+-- definisjonen av det, og hver vei videre leser den:
 --
 --   * innhentingen (`workflow.acquire_monograph_candidate`),
 --   * forespørslene om fulltekst og myndighetsdokument og den faglige grunnen
@@ -25,8 +26,9 @@
 --   * redaktørens oversikt over forespørslene, og
 --   * rekonsilieringen av avbrutte overganger.
 --
--- Et behov ingen plan som har funnet kilden, dekker — lagt til utenom en
--- søkeplan — følger kildens samlede utfall, som før.
+-- En bruk uten en plan — lagt til utenom en søkeplan — følger kildens samlede
+-- utfall, som før. Velger to planer kilden for det samme behovet med hver sin
+-- bruk, blir den først foreslåtte den godkjente bruken for behovet.
 --
 -- Og når en plan velger en kilde en annen plan alt hadde valgt, endres ikke
 -- kildens samlede utfall, og kildens egen overgang til innhentingen går ikke.
@@ -35,7 +37,8 @@
 -- Funksjonskroppene under er hentet fra databasen med `pg_get_functiondef` og
 -- splisset, som i 20261003095000_monograph_discovery_handoff.sql: den eneste endringen i hver av dem er at behovene leses
 -- fra `workflow.monograph_wanted_candidate_needs`, og — i registreringen av
--- kildebruken — at opphavet er planens beslutning.
+-- kildebruken — at opphavet er planens beslutning og at den først foreslåtte
+-- bruken for et behov går først.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -45,31 +48,25 @@
 create view workflow.monograph_wanted_candidate_needs
   with (security_invoker = true)
 as
--- Et behov på en plan som har funnet kilden: bruken gjelder når den planen har
--- valgt eller inkludert kilden, med den planens beslutning som opphav.
+-- En bruk bundet til en plan (014c): den gjelder når nettopp den planen har
+-- valgt eller inkludert kilden, med den planens beslutning som opphav. En annen
+-- plan som dekker det samme behovet, har sin egen bruk og sin egen beslutning.
 select cn.id,
        cn.candidate_source_id,
        cn.need_id,
        cn.proposed_use,
        cn.created_at,
-       w.plan_id,
-       w.decided_by_actor_id,
-       w.decided_by_agent_run_id
+       cn.plan_id,
+       l.decided_by_actor_id,
+       l.decided_by_agent_run_id
 from workflow.monograph_candidate_source_needs cn
-cross join lateral (
-  select l.plan_id, l.decided_by_actor_id, l.decided_by_agent_run_id
-  from workflow.monograph_candidate_source_plans l
-  join workflow.monograph_search_plan_needs pn
-    on pn.plan_id = l.plan_id and pn.need_id = cn.need_id
-  where l.candidate_source_id = cn.candidate_source_id
-    and l.decision in ('selected_for_retrieval'::workflow.monograph_candidate_decision,
-                       'included'::workflow.monograph_candidate_decision)
-  order by workflow.monograph_candidate_decision_rank(l.decision),
-           l.decided_at desc nulls last, l.id
-  limit 1
-) w
+join workflow.monograph_candidate_source_plans l
+  on l.candidate_source_id = cn.candidate_source_id and l.plan_id = cn.plan_id
+where l.decision in ('selected_for_retrieval'::workflow.monograph_candidate_decision,
+                     'included'::workflow.monograph_candidate_decision)
 union all
--- Et behov ingen plan som har funnet kilden, dekker: kildens samlede utfall.
+-- En bruk uten en plan — lagt til utenom en søkeplan, eller for et behov ingen
+-- plan som har funnet kilden, dekker: kildens samlede utfall.
 select cn.id,
        cn.candidate_source_id,
        cn.need_id,
@@ -80,17 +77,12 @@ select cn.id,
        c.decided_by_agent_run_id
 from workflow.monograph_candidate_source_needs cn
 join workflow.monograph_candidate_sources c on c.id = cn.candidate_source_id
-where c.decision in ('selected_for_retrieval'::workflow.monograph_candidate_decision,
-                     'included'::workflow.monograph_candidate_decision)
-  and not exists (
-    select 1
-    from workflow.monograph_candidate_source_plans l
-    join workflow.monograph_search_plan_needs pn
-      on pn.plan_id = l.plan_id and pn.need_id = cn.need_id
-    where l.candidate_source_id = cn.candidate_source_id);
+where cn.plan_id is null
+  and c.decision in ('selected_for_retrieval'::workflow.monograph_candidate_decision,
+                     'included'::workflow.monograph_candidate_decision);
 
 comment on view workflow.monograph_wanted_candidate_needs is
-  'Den foreslåtte bruken av en kandidatkilde for et behov, når bruken faktisk er ønsket: behovet hører til en plan som har funnet kilden og valgt eller inkludert den — med den planens beslutning som opphav — eller, for et behov ingen slik plan dekker, når kildens samlede utfall er valgt eller inkludert. Den ene definisjonen innhentingen, forespørslene og registreringen av kildebruken leser, slik at én plans valg aldri fører opp en annen plans bruk (migrasjon 014f).';
+  'Den foreslåtte bruken av en kandidatkilde for et behov, når bruken faktisk er ønsket: bruken er bundet til en plan (plan_id) som har valgt eller inkludert kilden — med den planens beslutning som opphav — eller, for en bruk uten en plan, når kildens samlede utfall er valgt eller inkludert. Den ene definisjonen innhentingen, forespørslene og registreringen av kildebruken leser, slik at én plans valg aldri fører opp en annen plans bruk (migrasjon 014f).';
 
 revoke all on workflow.monograph_wanted_candidate_needs from public, anon, authenticated;
 
@@ -566,7 +558,7 @@ begin
     where c.source_id = v_version.source_id
       and c.decision in ('selected_for_retrieval', 'included')
       and n.relevance <> 'not_applicable'
-    order by cn.need_id
+    order by cn.need_id, cn.created_at, cn.id
   loop
     -- Representasjonen må passe det behovet trenger. Et sammendrag er ikke
     -- forskningsfulltekst, og et forskningsbehov skal ikke få en godkjent bruk

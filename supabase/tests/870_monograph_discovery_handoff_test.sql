@@ -25,7 +25,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(60);
+select plan(61);
 
 -- ===========================================================================
 -- Del 1 — Kontoene, bestillingen og modelltildelingene
@@ -491,6 +491,15 @@ select is(
   (select (payload -> 'imported')::boolean from svar where label = 'import'),
   true,
   'vurderingssvaret ble importert gjennom den samme skriveveien de øvrige leddene bruker'
+);
+select is(
+  (select array_agg(p.reference)
+   from workflow.monograph_candidate_source_needs cn
+   join workflow.monograph_candidate_sources c on c.id = cn.candidate_source_id
+   join workflow.monograph_search_plans p on p.id = cn.plan_id
+   where c.identifier_value = '10.1000/870-oversikt'),
+  array[(select value from refs where label = 'plan')],
+  'og bruken svaret foreslo, er bundet til planen svaret gjaldt (migrasjon 014c)'
 );
 select is(
   (select (payload -> 'outcome' -> 'search_requests_opened')::integer
