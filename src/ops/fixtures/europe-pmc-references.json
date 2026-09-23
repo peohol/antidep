@@ -1,0 +1,37 @@
+{
+  "version": "6.9",
+  "hitCount": 3,
+  "request": {
+    "id": "37032427",
+    "source": "MED",
+    "offSet": 0,
+    "pageSize": 1000
+  },
+  "referenceList": {
+    "reference": [
+      {
+        "source": "MED",
+        "id": "10000001",
+        "citationType": "JOURNAL ARTICLE",
+        "title": "Syntetisk referanse A om farmakokinetikk.",
+        "authorString": "Testforfatter A.",
+        "journalAbbreviation": "J Synth Pharmacol",
+        "pubYear": 2014
+      },
+      {
+        "source": "MED",
+        "id": "10000002",
+        "citationType": "JOURNAL ARTICLE",
+        "title": "Syntetisk referanse B om genotype.",
+        "authorString": "Testforfatter B.",
+        "journalAbbreviation": "J Synth Genet",
+        "pubYear": 2018
+      },
+      {
+        "citationType": "BOOK",
+        "title": "En referanse uten identifikator Antidep kan slå opp.",
+        "pubYear": 2001
+      }
+    ]
+  }
+}

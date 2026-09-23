@@ -9,8 +9,10 @@
 //
 // Prøven bestiller en monografi, åpner en søkeplan, og kjører deretter den
 // *samme kommandoen driften kjører* — `src/ops/monograph-discovery-cli.ts` —
-// mot Europe PMC, PubMed og Crossref. Ingen treff er hardkodet, og ingen
-// fetcher er byttet ut: `guardedGet` går ut på nettet.
+// mot de offentlige tjenestene registeret har søkemetoder for (Europe PMC,
+// PubMed, Crossref, ClinicalTrials.gov, DMP FEST, EMA og ClinPGx, etter hva
+// planene som tas, krever). Ingen treff er hardkodet, og ingen fetcher er
+// byttet ut: `guardedGet` går ut på nettet.
 //
 // ----------------------------------------------------------------------------
 // Hvorfor kommandoen kjøres som en egen prosess

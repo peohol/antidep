@@ -12,13 +12,17 @@
 //
 //    1. en redaktør bestiller monografien for ett virkestoff
 //    2. dekningskartet finnes: alle 80 spørsmålsmalene har konkrete behov
-//    3. Antideps egen kode utfører den maskinelle søkerunden planen åpnet, og
-//       registrerer hvert søk med endepunkt og responsavtrykk — og først da
-//       finnes den semantiske vurderingsoppgaven
+//    3. Antideps egen søkekjører — den samme driften kjører, mot et opptak av
+//       de offentlige tjenestene — utfører hver maskinelle søkerunde planen
+//       åpnet, én per søkemetode registeret har for sporene, og registrerer
+//       hvert søk med metode, endepunkt og responsavtrykk; først da finnes den
+//       semantiske vurderingsoppgaven
 //    4. kildeoppdagelsen henter oppgaven sin, vurderer de maskinelt funne
-//       kandidatene, og foreslår en ny utfallsverdi; deretter utfører Antidep
-//       dekningskontrollens EGNE motsøk, og kontrollen avgjør om begrunnelsen
-//       for å avslutte holder
+//       kandidatene, og foreslår en ny utfallsverdi; kilden den vurderer som
+//       mulig konklusjonsendrende, følger kjøreren selv i neste runde
+//       (referanser og siterende arbeider), og en ny vurderingsoppgave kommer
+//       tilbake; deretter utfører kjøreren dekningskontrollens EGNE motsøk, og
+//       kontrollen avgjør om begrunnelsen for å avslutte holder
 //    5. redaktøren aksepterer utfallsverdien, og behovet forgrenes
 //    6. redaktøren velger kilden, og innhentingen går videre av seg selv:
 //       kilden opprettes, og fullteksten etterspørres i én samlet forespørsel
@@ -58,6 +62,14 @@ import {
   EXTRACTION_VERIFICATION_PREMISES,
 } from '../src/agents/pipeline-version.ts'
 import { syntheticArticlePdf } from '../src/agents/test-support.ts'
+import { createAgentClient } from '../src/agents/agent-api.ts'
+import { createDiscoveryApi } from '../src/ops/monograph-discovery-api.ts'
+import {
+  runMonographDiscovery,
+  type DiscoveryApi,
+  type DiscoveryReport,
+} from '../src/ops/monograph-discovery.ts'
+import type { Fetcher } from '../src/ops/monograph-search.ts'
 import type { Database } from '../src/types/database.ts'
 import { check, psql, q, readLocalStackConfig, userToken } from './local-stack.ts'
 
@@ -292,35 +304,100 @@ function planForTemplate(template: string): string {
   )
 }
 
-/** Den åpne søkerunden for én plan og ett kildeledd. */
-// Sporene runden kan erklære, skåret mot det søkeveien faktisk er registrert
-// for. Runden bærer hele kildeprofilens obligatoriske spor; Europe PMC dekker
-// bare det bibliografiske. Uten skjæringen ville prøveløpet erklært spor den
-// virkelige kjøringen aldri kan produsere — og bestått på det (migrasjon 013x).
-function openSearchRequest(
-  planReference: string,
-  role: string,
-  platform: string,
-): { readonly reference: string; readonly tracks: readonly string[] } {
-  const row = psql(
-    config,
-    `select r.reference || '|' || array_to_string(array(
-       select code from unnest(r.track_codes) as t(code)
-       where code in (select sp.track_code
-                      from knowledge.monograph_search_platforms sp
-                      where sp.platform = ${q(platform)})), ',')
-     from workflow.monograph_search_requests r
-     join workflow.monograph_search_plans p on p.id = r.plan_id
-     where p.reference = ${q(planReference)}
-       and r.requested_for_role = ${q(role)}
-       and r.state in ('pending', 'unavailable')
-     order by r.created_at desc
-     limit 1`,
-  ).split('|')
-  return {
-    reference: row[0] ?? '',
-    tracks: (row[1] ?? '').split(',').filter((code) => code.length > 0),
+/**
+ * Opptaket av de offentlige søketjenestene kjøreren søker mot.
+ *
+ * Ordinær kjøring søker ikke på nettet. Svarene har de ekte tjenestenes form
+ * og syntetisk innhold, og at de *er* et opptak, står her framfor å bli omtalt
+ * som en utført søkerunde (SOURCE_POLICY.md §4.3). Europe PMC finner artikkelen
+ * prøven bygger på; PubMed svarer ikke i denne kjøringen, slik at begrensningen
+ * må bæres hele veien; de andre tjenestene svarer med null treff, og Crossref
+ * har ingen deponert referanseliste for den.
+ */
+function recordedWeb(): Fetcher {
+  const json = (url: string, body: unknown) =>
+    Promise.resolve({
+      status: 'ok' as const,
+      httpStatus: 200,
+      contentType: 'application/json',
+      bytes: new TextEncoder().encode(JSON.stringify(body)),
+      finalUrl: url,
+    })
+  return async (url) => {
+    const { hostname, pathname, searchParams } = new URL(url)
+    if (hostname === 'www.ebi.ac.uk') {
+      if (!pathname.endsWith('/search')) {
+        return json(url, {
+          hitCount: 0,
+          referenceList: { reference: [] },
+          citationList: { citation: [] },
+        })
+      }
+      const query = searchParams.get('query') ?? ''
+      if (query.startsWith('DOI:')) {
+        return json(url, {
+          hitCount: 1,
+          resultList: { result: [{ id: '40000029', source: 'MED' }] },
+        })
+      }
+      if (query.includes('PUB_TYPE')) {
+        return json(url, { hitCount: 0, resultList: { result: [] } })
+      }
+      return json(url, {
+        hitCount: 1,
+        resultList: {
+          result: [
+            {
+              id: '40000029',
+              source: 'MED',
+              pmid: '40000029',
+              doi: DOI,
+              title: ARTICLE_TITLE,
+              authorString: 'Testforfatter A, Testforfatter B',
+              journalTitle: 'Journal of Synthetic Trials',
+              pubYear: '2024',
+              isOpenAccess: 'Y',
+            },
+          ],
+        },
+      })
+    }
+    if (hostname === 'api.crossref.org') {
+      return pathname === '/works'
+        ? json(url, { status: 'ok', message: { 'total-results': 0, items: [] } })
+        : json(url, { status: 'ok', message: { DOI, reference: [] } })
+    }
+    if (hostname === 'clinicaltrials.gov') {
+      return json(url, { studies: [], totalCount: 0 })
+    }
+    return { status: 'error', message: 'Tidsavbrudd: tjenesten svarte ikke i denne kjøringen.' }
   }
+}
+
+/**
+ * Den samme kjøreren og den samme databasegrensen driften bruker
+ * (`npm run ops:discovery -- --plan <referanse>`), avgrenset til planen prøven
+ * følger og spilt mot opptaket. Ingen søk registreres for hånd: prøven hadde
+ * ellers bestått på en registrering kjøreren aldri gjør.
+ */
+async function runSearches(api: DiscoveryApi): Promise<DiscoveryReport> {
+  return runMonographDiscovery(api, {
+    fetcher: recordedWeb(),
+    politeness: false,
+    now: () => new Date('2026-09-23T08:00:00Z'),
+  })
+}
+
+/** Hvor mange rader et utsnitt av søkerundene for planen har. */
+function requestCount(planReference: string, where: string): number {
+  return Number(
+    psql(
+      config,
+      `select count(*)::text from workflow.monograph_search_requests r
+       join workflow.monograph_search_plans p on p.id = r.plan_id
+       where p.reference = ${q(planReference)} and ${where}`,
+    ),
+  )
 }
 
 async function main(): Promise<void> {
@@ -523,95 +600,48 @@ async function main(): Promise<void> {
   const planRef = planForTemplate('MN29')
   check('søkeplanen for spørsmålet finnes', planRef.length === 32)
 
-  const machineRound = openSearchRequest(planRef, 'source_discovery', 'Europe PMC')
+  const firstRound = requestCount(
+    planRef,
+    `r.requested_for_role = 'source_discovery' and r.state = 'pending'`,
+  )
   check(
-    'og den har åpnet sin egen maskinelle søkerunde',
-    machineRound.reference.length === 32 && machineRound.tracks.length > 0,
+    'og den har åpnet sine egne maskinelle søkerunder, én per søkemetode registeret har for sporene',
+    firstRound > 1 &&
+      requestCount(
+        planRef,
+        `r.requested_for_role = 'source_discovery' and r.origin <> 'plan_opened'`,
+      ) === 0,
+    `runder: ${String(firstRound)}`,
   )
 
-  const discoveryRun = String(
-    await call(control, 'begin_agent_run', {
-      p_identity_key: 'agent-identity:source-discovery-01',
-      p_secret: secrets.discovery,
-      p_agent_role: 'source_discovery',
-      p_provider: 'antidep',
-      p_model: 'search-execution-and-registration',
-      p_model_version: '1.0.0',
-      p_prompt_template_version: 'source-discovery/machine-execution/2',
-      p_pipeline_version: 'antidep-evidence/1',
-      p_input_manifest: { search_plan_reference: planRef, mode: 'machine_executed' },
-    }),
+  const agentClient = createAgentClient({ url: config.apiUrl, publishableKey: config.anonKey })
+  const discoveryApi = createDiscoveryApi(
+    agentClient,
+    { p_identity_key: 'agent-identity:source-discovery-01', p_secret: secrets.discovery },
+    'discovery',
+    planRef,
+  )
+  const coverageApi = createDiscoveryApi(
+    agentClient,
+    { p_identity_key: 'agent-identity:source-quality-assessment-01', p_secret: secrets.coverage },
+    'coverage',
+    planRef,
   )
 
-  // Ett søk som gikk, og ett som ikke nådde fram. De er to forskjellige
-  // opplysninger, og begge skal kunne registreres (SOURCE_POLICY.md §8.2).
-  await call(control, 'record_monograph_machine_search', {
-    p_identity_key: 'agent-identity:source-discovery-01',
-    p_secret: secrets.discovery,
-    p_agent_run_id: discoveryRun,
-    p_plan_reference: planRef,
-    p_request_reference: machineRound.reference,
-    p_platform: 'Europe PMC',
-    p_query_string: '"sertralin" AND ("vektendring")',
-    p_filters: 'pageSize=25',
-    p_endpoint: 'https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=sertralin',
-    p_response_digest: `sha256:${'a'.repeat(64)}`,
-    p_outcome: 'executed',
-    p_result_count: 2,
-    p_screened_count: 2,
-    p_truncated: false,
-    p_truncation_note: null,
-    p_limitation_note: null,
-    p_track_codes: machineRound.tracks,
-    p_candidates: [
-      {
-        identifier_kind: 'doi',
-        identifier_value: DOI,
-        title: ARTICLE_TITLE,
-        authors_or_issuer: 'Testforfatter A, Testforfatter B',
-        publisher_or_journal: 'Journal of Synthetic Trials',
-        publication_year: 2024,
-        discovery_path: 'Europe PMC, søk gjennom det åpne REST-endepunktet',
-        access_limited: false,
-      },
-    ],
-  })
-
-  await call(control, 'record_monograph_machine_search', {
-    p_identity_key: 'agent-identity:source-discovery-01',
-    p_secret: secrets.discovery,
-    p_agent_run_id: discoveryRun,
-    p_plan_reference: planRef,
-    p_request_reference: machineRound.reference,
-    p_platform: 'PubMed',
-    p_query_string: 'sertraline[tiab] AND (weight OR appetite)',
-    p_filters: null,
-    p_endpoint: 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed',
-    // Ingen responsavtrykk: tjenesten svarte ikke i det hele tatt, og et
-    // avtrykk av ingenting ville vært et oppdiktet bevis.
-    p_response_digest: null,
-    p_outcome: 'unavailable',
-    p_result_count: null,
-    p_screened_count: 0,
-    p_truncated: false,
-    p_truncation_note: null,
-    p_limitation_note: 'Søkeveien svarte ikke i denne kjøringen.',
-    p_track_codes: machineRound.tracks,
-    p_candidates: null,
-  })
-
-  const closed = record(
-    await call(control, 'close_monograph_search_request', {
-      p_identity_key: 'agent-identity:source-discovery-01',
-      p_secret: secrets.discovery,
-      p_agent_run_id: discoveryRun,
-      p_request_reference: machineRound.reference,
-    }),
-  )
-  check('runden er utført fordi minst ett søk faktisk gikk', closed['state'] === 'fulfilled')
+  const round1 = await runSearches(discoveryApi)
   check(
-    'og lukkingen er det som legger den semantiske vurderingsoppgaven i køen',
-    closed['enqueued_job'] === true,
+    'Antideps kjører utførte hver runde planen åpnet, uten et eneste problem',
+    round1.requests === firstRound && round1.problems.length === 0,
+    round1.problems.join(' | '),
+  )
+  check(
+    'og både søk som gikk og søkeveier som ikke svarte, er registrert',
+    round1.executed > 0 && round1.unavailable > 0 && round1.zeroResults > 0,
+    `utført ${String(round1.executed)}, null treff ${String(round1.zeroResults)}, utilgjengelig ${String(round1.unavailable)}`,
+  )
+  check(
+    'og lukkingen av den siste runden er det som legger den semantiske vurderingsoppgaven i køen',
+    round1.tasksOpened === 1,
   )
   // Avgrenset til søkene en maskinell runde faktisk bestilte. Påstanden «alle
   // rader i loggen er maskinelt utført» var sann bare fordi dette løpet ikke
@@ -622,17 +652,26 @@ async function main(): Promise<void> {
     'søkene en maskinell runde bestilte, står i loggen som Antideps egen, maskinelt bekreftede utførelse',
     psql(
       config,
-      `select distinct execution_evidence::text from workflow.monograph_searches
-       where search_request_id is not null`,
-    ) === 'machine_executed',
+      `select distinct execution_evidence::text || '|' || (search_method is not null)::text
+       from workflow.monograph_searches where search_request_id is not null`,
+    ) === 'machine_executed|true',
   )
   check(
     'en søkevei som ikke svarte, er lagret som en begrensning og ikke som null treff',
     psql(
       config,
-      `select outcome::text || '|' || coalesce(result_count::text, 'ingen')
+      `select distinct outcome::text || '|' || coalesce(result_count::text, 'ingen')
        from workflow.monograph_searches where platform = 'PubMed'`,
     ) === 'unavailable|ingen',
+  )
+  check(
+    'ingen av planens spor venter på et menneske',
+    psql(
+      config,
+      `select count(*)::text from workflow.monograph_search_track_attempts a
+       join workflow.monograph_search_plans p on p.id = a.plan_id
+       where p.reference = ${q(planRef)} and a.state = 'no_machine_path'`,
+    ) === '0',
   )
 
   const candidateRef = psql(
@@ -736,10 +775,12 @@ async function main(): Promise<void> {
     påstått,
   )
 
-  await call(editor, 'import_agent_answer', {
-    p_pipeline_job_id: discoveryJob,
-    p_answer: answerFor(discoveryTask, discoveryResult, serviceFor('source_discovery')),
-  })
+  const imported1 = record(
+    await call(editor, 'import_agent_answer', {
+      p_pipeline_job_id: discoveryJob,
+      p_answer: answerFor(discoveryTask, discoveryResult, serviceFor('source_discovery')),
+    }),
+  )
 
   check(
     'vesentligheten er registrert som den semantiske vurderingen den er',
@@ -751,63 +792,111 @@ async function main(): Promise<void> {
   )
 
   // --------------------------------------------------------------------
+  // 4a. Kilden leddet vurderte som mulig konklusjonsendrende, følger Antidep selv
+  // --------------------------------------------------------------------
+  // Referanselistene og de siterende arbeidene er obligatoriske spor for
+  // profilen. Hvilke kilder som er sentrale, er leddets avgjørelse; å slå dem
+  // opp er Antideps deterministiske kode, i neste runde — uten at leddet måtte
+  // be om det, og uten at en redaktør måtte søke.
+  const outcome1 = record(imported1['outcome'])
+  const seedRounds = requestCount(
+    planRef,
+    `r.origin = 'selection_opened' and ${q(`doi:${DOI.toLowerCase()}`)} = any (r.seed_identifiers)`,
+  )
+  check(
+    'vurderingen åpnet selv rundene som følger den sentrale kilden',
+    Number(outcome1['machine_requests_opened'] ?? 0) === seedRounds && seedRounds > 0,
+    `åpnet: ${String(outcome1['machine_requests_opened'])}, med kilden: ${String(seedRounds)}`,
+  )
+  check(
+    'og ingen kontrolloppgave finnes før de er utført',
+    requestCount(planRef, `r.requested_for_role = 'source_quality_assessment'`) === 0,
+  )
+
+  // En søkevei som ikke svarte i forrige runde, prøves igjen i den samme
+  // kjøringen: den er en begrensning som står, ikke en runde som er gitt opp.
+  const retried = requestCount(
+    planRef,
+    `r.requested_for_role = 'source_discovery' and r.state = 'unavailable'`,
+  )
+  const round2 = await runSearches(discoveryApi)
+  check(
+    'Antideps kjører fulgte kilden i sin egen runde, og prøvde søkeveien som ikke svarte, på nytt',
+    round2.requests === seedRounds + retried &&
+      round2.problems.length === 0 &&
+      round2.tasksOpened === 1,
+    JSON.stringify(round2),
+  )
+  check(
+    'og en kilde uten registrert referanseliste er en begrensning, ikke null referanser',
+    psql(
+      config,
+      `select string_agg(distinct outcome::text, ',') from workflow.monograph_searches
+       where search_method = 'references'`,
+    ) === 'unavailable',
+  )
+
+  const discoveryJob2 = jobForTemplate('source_discovery', 'MN29')
+  check('og den nye runden ga kildeoppdagelsen en ny vurderingsoppgave', discoveryJob2.length > 0)
+  if (discoveryJob2.length === 0) return
+  const discoveryTask2 = parseAgentTask(
+    await call(editor, 'agent_task_payload', { p_pipeline_job_id: discoveryJob2 }),
+  )
+  const imported2 = record(
+    await call(editor, 'import_agent_answer', {
+      p_pipeline_job_id: discoveryJob2,
+      p_answer: answerFor(
+        discoveryTask2,
+        {
+          candidate_appraisals: [],
+          search_requests: [],
+          note: 'Referanselisten og de siterende arbeidene ga ingen nye kilder.',
+        },
+        serviceFor('source_discovery'),
+      ),
+    }),
+  )
+  check(
+    'en runde uten flere søk avslutter kildeoppdagelsens del, og ingen spor står igjen',
+    Number(record(imported2['outcome'])['machine_requests_opened'] ?? 0) === 0 &&
+      psql(
+        config,
+        `select count(*)::text from workflow.monograph_search_track_attempts a
+         join workflow.monograph_search_plans p on p.id = a.plan_id
+         where p.reference = ${q(planRef)} and a.state in ('pending', 'no_machine_path')`,
+      ) === '0',
+  )
+
+  // --------------------------------------------------------------------
   // 4b. Dekningskontrollens egne, separat utførte motsøk
   // --------------------------------------------------------------------
-  const controlRound = openSearchRequest(planRef, 'source_quality_assessment', 'Europe PMC')
   check(
     'det registrerte vurderingssvaret åpnet dekningskontrollens egen motsøkerunde',
-    controlRound.reference.length === 32,
+    requestCount(
+      planRef,
+      `r.requested_for_role = 'source_quality_assessment' and r.state = 'pending'`,
+    ) === 1,
   )
   check(
     'og motsøket kan ikke dekke generatorens obligatoriske søkespor',
-    controlRound.tracks.length === 0,
+    requestCount(
+      planRef,
+      `r.requested_for_role = 'source_quality_assessment' and cardinality(r.track_codes) > 0`,
+    ) === 0,
   )
   check(
     'kontrolloppgaven finnes ikke før motsøkene er utført',
     jobForTemplate('source_quality_assessment', 'MN29').length === 0,
   )
 
-  const coverageRun = String(
-    await call(control, 'begin_agent_run', {
-      p_identity_key: 'agent-identity:source-quality-assessment-01',
-      p_secret: secrets.coverage,
-      p_agent_role: 'source_quality_assessment',
-      p_provider: 'antidep',
-      p_model: 'coverage-control-registration',
-      p_model_version: '1.0.0',
-      p_prompt_template_version: 'source-coverage/machine-countersearch/1',
-      p_pipeline_version: 'antidep-evidence/1',
-      p_input_manifest: { search_plan_reference: planRef, mode: 'machine_executed' },
-    }),
+  const countersearch = await runSearches(coverageApi)
+  check(
+    'Antideps kjører utførte kontrollens motsøk under kontrollens egen identitet',
+    countersearch.requests === 1 &&
+      countersearch.problems.length === 0 &&
+      countersearch.tasksOpened === 1,
+    countersearch.problems.join(' | '),
   )
-
-  await call(control, 'record_monograph_machine_search', {
-    p_identity_key: 'agent-identity:source-quality-assessment-01',
-    p_secret: secrets.coverage,
-    p_agent_run_id: coverageRun,
-    p_plan_reference: planRef,
-    p_request_reference: controlRound.reference,
-    p_platform: 'Crossref',
-    p_query_string: '"sertralin" AND "vektendring"',
-    p_filters: 'rows=25',
-    p_endpoint: 'https://api.crossref.org/works?query=sertralin',
-    p_response_digest: `sha256:${'b'.repeat(64)}`,
-    p_outcome: 'zero_results',
-    p_result_count: 0,
-    p_screened_count: 0,
-    p_truncated: false,
-    p_truncation_note: null,
-    p_limitation_note: null,
-    p_track_codes: [],
-    p_candidates: null,
-  })
-
-  await call(control, 'close_monograph_search_request', {
-    p_identity_key: 'agent-identity:source-quality-assessment-01',
-    p_secret: secrets.coverage,
-    p_agent_run_id: coverageRun,
-    p_request_reference: controlRound.reference,
-  })
 
   const controlJob = jobForTemplate('source_quality_assessment', 'MN29')
   check('den separate dekningskontrollen har fått sin egen oppgave', controlJob.length > 0)

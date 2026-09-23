@@ -50,6 +50,18 @@ agentens arbeid er den semantiske vurderingen av dem. Trenger den flere søk, be
 den om dem i svaret sitt (`search_requests`), og Antidep utfører dem og gir den
 en ny vurderingsrunde.
 
+Fra migrasjon 014c er søkene flere enn fritekstsøkene. Oppgaven lister under
+«Søk du kan be om» hver søkemetode Antidep har — oversiktsfiltre,
+forsøksregisteret, FEST, EMAs sikkerhetsvurderinger, ClinPGx, referanser og
+siterende arbeider — med hvilke spor den dekker og hva den *ikke* dekker. En
+søkeforespørsel kan navngi metoden (`method`), og for «references» og
+«citations» kildene som skal følges (`seed_candidates`, som må være
+kandidatkilder på planen). Agenten trenger sjelden å be om dem: planen åpner selv
+én runde per metode den trenger, og kildene agenten velger til innhenting,
+inkluderer eller vurderer som mulig konklusjonsendrende, følger Antidep selv i
+neste runde. Er en begrensning vesentlig for spørsmålet — en nasjonal
+retningslinje Antidep ikke kan søke i — sier agenten det i merknaden.
+
 En tilkobling er bundet til nøyaktig **ett** agentledd. Rollen er ikke en
 parameter modellen kan oppgi; den er tilkoblingens egen, registrert av et
 menneske med redaktørmandat.

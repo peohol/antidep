@@ -8,7 +8,16 @@ import {
   type DiscoveryPlan,
   type SearchRequest,
 } from './monograph-discovery.ts'
-import { CROSSREF, EUROPE_PMC, type Fetcher, type MachineSearch } from './monograph-search.ts'
+import type { Fetcher, MachineSearch } from './monograph-search.ts'
+import { findMethod, type SearchMethod } from './search-methods.ts'
+
+function method(platform: string, name: string): SearchMethod {
+  const found = findMethod(platform, name)
+  if (found === undefined) throw new Error(`${platform} (${name}) finnes ikke`)
+  return found
+}
+
+const keyword = (platform: string): SearchMethod => method(platform, 'keyword')
 
 function request(overrides: Partial<SearchRequest> = {}): SearchRequest {
   return {
@@ -18,6 +27,9 @@ function request(overrides: Partial<SearchRequest> = {}): SearchRequest {
     strategy: 'broad',
     rationale: 'Den nye søkeplanens første maskinelle søkerunde.',
     platform: null,
+    method: null,
+    methods: [],
+    seedIdentifiers: [],
     drugAliases: [],
     queryTerms: [],
     filtersNote: null,
@@ -78,7 +90,8 @@ describe('runMonographDiscovery', () => {
   it('registrerer ett søk per plattform, med endepunkt og fingeravtrykk', async () => {
     const { api: port, searches, closed } = api()
     const report = await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
 
@@ -97,7 +110,8 @@ describe('runMonographDiscovery', () => {
   it('lukker hver runde, og teller oppgavene lukkingen åpnet', async () => {
     const { api: port } = api()
     const report = await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     expect(report.fulfilled).toBe(1)
@@ -108,7 +122,8 @@ describe('runMonographDiscovery', () => {
     const closeRequest = vi.fn().mockResolvedValue({ state: 'unavailable', enqueuedJob: true })
     const { api: port, searches } = api({ closeRequest })
     const report = await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: async () => ({ status: 'error', message: 'tidsavbrudd' }),
     })
 
@@ -126,7 +141,8 @@ describe('runMonographDiscovery', () => {
     const { api: port } = api({ work: async () => many })
     const report = await runMonographDiscovery(port, {
       maxPlans: 3,
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     expect(report.plans).toBe(3)
@@ -141,7 +157,8 @@ describe('runMonographDiscovery', () => {
       },
     })
     const report = await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     expect(report.searches).toBe(1)
@@ -153,7 +170,8 @@ describe('runMonographDiscovery', () => {
     const beginRun = vi.fn().mockRejectedValue(new Error('avvist'))
     const { api: port, searches } = api({ work: async () => [PLAN, PLAN], beginRun })
     const report = await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     expect(beginRun).toHaveBeenCalledTimes(2)
@@ -167,7 +185,10 @@ describe('runMonographDiscovery', () => {
       work: async () => [{ ...PLAN, requests: [] }],
       beginRun,
     })
-    const report = await runMonographDiscovery(port, { platforms: [EUROPE_PMC] })
+    const report = await runMonographDiscovery(port, {
+      methods: [keyword('Europe PMC')],
+      politeness: false,
+    })
     expect(beginRun).not.toHaveBeenCalled()
     expect(report.searches).toBe(0)
   })
@@ -177,7 +198,8 @@ describe('runMonographDiscovery', () => {
   it('rapporterer uten å navngi en kilde eller en avgrensning', async () => {
     const { api: port } = api()
     const report = await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     const text = describeDiscoveryReport(report)
@@ -197,7 +219,8 @@ describe('søkerunden', () => {
       work: async () => [{ ...PLAN, requests: [request({ trackCodes: [] })] }],
     })
     await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
 
@@ -230,7 +253,8 @@ describe('søkerunden', () => {
       ],
     })
     await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     expect(searches[0]?.trackCodes).toEqual(['bibliographic_database'])
@@ -243,7 +267,8 @@ describe('søkerunden', () => {
       ],
     })
     await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     expect(searches[0]?.trackCodes).toEqual(['bibliographic_database'])
@@ -254,7 +279,8 @@ describe('søkerunden', () => {
       work: async () => [{ ...PLAN, requests: [request({ platform: 'Crossref' })] }],
     })
     await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC, CROSSREF],
+      methods: [keyword('Europe PMC'), keyword('Crossref')],
+      politeness: false,
       fetcher: recorded('crossref-sertraline.json'),
     })
     expect(searches.map((search) => search.platform)).toEqual(['Crossref'])
@@ -271,7 +297,8 @@ describe('søkerunden', () => {
       ],
     })
     await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     expect(searches.map((search) => search.queryString)).toEqual([
@@ -291,7 +318,8 @@ describe('søkerunden', () => {
       ],
     })
     await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     // «"sertralin" AND "sertraline"» ville utelukket nettopp de artiklene som
@@ -310,9 +338,122 @@ describe('søkerunden', () => {
       ],
     })
     await runMonographDiscovery(port, {
-      platforms: [EUROPE_PMC],
+      methods: [keyword('Europe PMC')],
+      politeness: false,
       fetcher: recorded('europe-pmc-sertraline.json'),
     })
     expect(searches[0]?.queryString).toBe('"sertralin" AND "weight gain"')
+  })
+})
+
+// ----------------------------------------------------------------------------
+// Metodene: kjøreren utfører det databasen sier runden betyr (migrasjon 014d)
+// ----------------------------------------------------------------------------
+
+describe('søkemetodene runden bestilte', () => {
+  it('utfører nøyaktig den metoden runden ber om, og bærer metoden videre til registreringen', async () => {
+    const { api: port, searches } = api({
+      work: async () => [
+        {
+          ...PLAN,
+          profileCode: 'EFF',
+          requests: [
+            request({
+              platform: 'PubMed',
+              method: 'systematic_review_filter',
+              methods: [{ platform: 'PubMed', method: 'systematic_review_filter' }],
+              trackCodes: ['systematic_review_search', 'bibliographic_database'],
+            }),
+          ],
+        },
+      ],
+    })
+    await runMonographDiscovery(port, {
+      fetcher: recorded('pubmed-sertraline.json'),
+      politeness: false,
+    })
+    expect(searches).toHaveLength(1)
+    expect(searches[0]?.platform).toBe('PubMed')
+    expect(searches[0]?.method).toBe('systematic_review_filter')
+    expect(searches[0]?.queryString).toContain('systematic[sb]')
+    // Oversiktsfilteret dekker oversiktssporet og ikke det bibliografiske: det
+    // er et annet søk enn fritekstsøket, selv mot den samme tjenesten.
+    expect(searches[0]?.trackCodes).toEqual(['systematic_review_search'])
+  })
+
+  it('sier fra om en metode databasen kjenner og kjøreren ikke har, og lukker runden likevel', async () => {
+    const {
+      api: port,
+      searches,
+      closed,
+    } = api({
+      work: async () => [
+        {
+          ...PLAN,
+          requests: [request({ methods: [{ platform: 'Cochrane Library', method: 'central' }] })],
+        },
+      ],
+    })
+    const report = await runMonographDiscovery(port, {
+      fetcher: recorded('pubmed-sertraline.json'),
+      politeness: false,
+    })
+    expect(searches).toHaveLength(0)
+    expect(report.problems.join(' ')).toContain('Cochrane Library (central)')
+    expect(closed).toHaveLength(1)
+  })
+
+  it('følger bare de sentrale kildene runden navnga', async () => {
+    const seen: string[] = []
+    const fetcher: Fetcher = async (url) => {
+      seen.push(url)
+      return {
+        status: 'ok',
+        httpStatus: 200,
+        contentType: 'application/json',
+        bytes: new TextEncoder().encode(
+          readFileSync('src/ops/fixtures/europe-pmc-references.json', 'utf8'),
+        ),
+        finalUrl: url,
+      }
+    }
+    const { api: port, searches } = api({
+      work: async () => [
+        {
+          ...PLAN,
+          profileCode: 'EFF',
+          requests: [
+            request({
+              method: 'references',
+              seedIdentifiers: ['pmid:37032427'],
+              methods: [{ platform: 'Europe PMC', method: 'references' }],
+              trackCodes: ['reference_lists'],
+            }),
+          ],
+        },
+      ],
+    })
+    await runMonographDiscovery(port, { fetcher, politeness: false })
+    expect(seen.every((url) => url.includes('/MED/37032427/references'))).toBe(true)
+    expect(searches[0]?.queryString).toBe('Referanselisten til pmid:37032427')
+    expect(searches[0]?.trackCodes).toEqual(['reference_lists'])
+    expect(searches[0]?.candidates.length).toBeGreaterThan(0)
+  })
+
+  it('bruker katalogens synonymer for virkestoffet i hver metode', async () => {
+    const { api: port, searches } = api({
+      work: async () => [
+        {
+          ...PLAN,
+          scope: { drug: 'sertralin', drugAliases: ['sertraline'] },
+          requests: [request({ methods: [{ platform: 'Europe PMC', method: 'keyword' }] })],
+        },
+      ],
+    })
+    await runMonographDiscovery(port, {
+      fetcher: recorded('europe-pmc-sertraline.json'),
+      politeness: false,
+    })
+    expect(searches[0]?.queryString).toBe('("sertralin" OR "sertraline")')
   })
 })

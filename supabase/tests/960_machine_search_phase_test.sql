@@ -100,8 +100,8 @@ select throws_ok(
     values (%L, 1, 'source_discovery', 2, 'agent_requested', 'targeted',
             'Prøve i 960.', 'Et internt arkiv', 'ac960000-0000-4000-8000-00000000000a')
   $$, (select id from plans where label = 'eff')),
-  '23514',
-  null,
+  '22023',
+  'Et internt arkiv er ikke en søkevei Antidep kaller.',
   'en søkeforespørsel kan ikke navngi en tjeneste Antidep ikke kaller'
 );
 
@@ -147,11 +147,11 @@ select throws_ok(
 );
 
 select is(
-  (select cardinality(r.track_codes) > 0 from workflow.monograph_search_requests r
+  (select bool_and(cardinality(r.track_codes) > 0) from workflow.monograph_search_requests r
    where r.plan_id = (select id from plans where label = 'eff')
      and r.requested_for_role = 'source_discovery'),
   true,
-  'generatorens egen runde har derimot de sporene kildeprofilen krever'
+  'generatorens egne runder har derimot hver sine av sporene kildeprofilen krever'
 );
 
 -- ===========================================================================
@@ -206,7 +206,7 @@ select isnt(
    where r.plan_id = (select id from plans where label = 'eff')
      and r.search_round = 2 and r.query_terms = array['older adults']),
   workflow.monograph_search_request_key(
-    'targeted', 'PubMed', array['sertraline'], array['older adults']),
+    'targeted', 'PubMed', null, array['sertraline'], array['older adults'], array[]::text[]),
   'to bestillinger som skiller seg bare på virkestoffsynonymet, er to bestillinger'
 );
 

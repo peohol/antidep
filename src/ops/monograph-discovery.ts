@@ -37,14 +37,10 @@
 // skal ikke bli et sted slikt samler seg (AGENTS.md).
 // ============================================================================
 
+import { guardedGet } from '../agents/guarded-http.ts'
 import type { Fetcher, MachineSearch, SearchScope } from './monograph-search.ts'
-import {
-  buildQueries,
-  platformsFor,
-  runSearch,
-  SEARCH_PLATFORMS,
-  type SearchPlatform,
-} from './monograph-search.ts'
+import { createPoliteFetcher, type PoliteFetcherOptions } from './search-http.ts'
+import { resolveRequestMethods, SEARCH_METHODS, type SearchMethod } from './search-methods.ts'
 
 /**
  * De to leddene kjøringen kan utføre søk for.
@@ -105,8 +101,18 @@ export interface SearchRequest {
   readonly origin: string
   readonly strategy: 'broad' | 'targeted'
   readonly rationale: string
-  /** Plattformen runden gjelder, eller null for alle tre. */
+  /** Plattformen runden gjelder, eller null for alle. */
   readonly platform: string | null
+  /** Søkemetoden runden gjelder, eller null for de bibliografiske fritekstsøkene. */
+  readonly method: string | null
+  /**
+   * Nøyaktig de (plattform, metode) runden betyr, slik databasen leser den
+   * (`workflow.monograph_request_methods`). Kjøreren utfører denne listen og
+   * gjetter ikke selv hva en forespørsel uten metode betyr.
+   */
+  readonly methods: readonly { readonly platform: string; readonly method: string }[]
+  /** De sentrale kildene runden skal følge, som «doi:…», «pmid:…» eller «pmcid:…». */
+  readonly seedIdentifiers: readonly string[]
   /**
    * Virkestoffnavn som skal søkes som ALTERNATIVER til det kanoniske.
    *
@@ -182,13 +188,19 @@ export interface DiscoveryReport {
 export interface DiscoveryOptions {
   /** Hvor mange planer én kjøring tar. En driftskjøring er ikke en støvsuger. */
   readonly maxPlans: number
-  readonly platforms: readonly SearchPlatform[]
+  readonly methods: readonly SearchMethod[]
   readonly fetcher?: Fetcher | undefined
+  /**
+   * Takt, nye forsøk og deling innen kjøringen (`search-http.ts`). `false` slår
+   * det av — bare for prøver som spiller av et opptak og ikke skal vente.
+   */
+  readonly politeness?: Partial<PoliteFetcherOptions> | false | undefined
+  readonly now?: (() => Date) | undefined
 }
 
 export const DISCOVERY_DEFAULTS = {
   maxPlans: 5,
-  platforms: SEARCH_PLATFORMS,
+  methods: SEARCH_METHODS,
 } as const
 
 /**
@@ -204,6 +216,15 @@ export async function runMonographDiscovery(
 ): Promise<DiscoveryReport> {
   const settings: DiscoveryOptions = { ...DISCOVERY_DEFAULTS, ...options }
   const plans = (await api.work()).slice(0, settings.maxPlans)
+  const baseFetcher = settings.fetcher ?? guardedGet
+  // Én høflig henter for hele kjøringen: takten og delingen gjelder på tvers av
+  // planene, og det er nettopp der FEST og EMAs datasett leses mange ganger.
+  const fetcher =
+    settings.politeness === false
+      ? baseFetcher
+      : createPoliteFetcher(baseFetcher, settings.politeness ?? {})
+  const memo = new Map<string, unknown>()
+  const now = settings.now ?? (() => new Date())
 
   let requests = 0
   let searches = 0
@@ -235,17 +256,42 @@ export async function runMonographDiscovery(
 
     for (const request of plan.requests) {
       requests += 1
-      const platforms = platformsFor(settings.platforms, request.platform)
-      const queries = buildQueries(
-        plan.scope,
-        request.strategy,
-        request.queryTerms,
-        request.drugAliases,
-      )
+      // Hva runden betyr, er databasens svar. Mangler det — en eldre base —
+      // leses det av den samme regelen her.
+      const wanted =
+        request.methods.length > 0
+          ? request.methods
+          : resolveRequestMethods(settings.methods, request.platform, request.method)
+      const aliases = [...new Set([...(plan.scope.drugAliases ?? []), ...request.drugAliases])]
 
-      for (const platform of platforms) {
-        for (const query of queries) {
-          const search = await runSearch(platform, query, settings.fetcher, request.trackCodes)
+      for (const entry of wanted) {
+        const method = settings.methods.find(
+          (candidate) => candidate.platform === entry.platform && candidate.method === entry.method,
+        )
+        if (method === undefined) {
+          // En metode databasen kjenner og kjøreren ikke har, utføres ikke. Det
+          // er en feil i utrullingen og ikke et søk uten treff: den sies fra om,
+          // og runden lukkes på det som faktisk ble gjort.
+          problems.push(
+            `Kjøreren har ikke søkemetoden ${entry.platform} (${entry.method}) som én søkerunde ba om (${plan.profileCode}).`,
+          )
+          continue
+        }
+
+        const results = await method.execute({
+          scope: plan.scope,
+          profileCode: plan.profileCode,
+          strategy: request.strategy,
+          queryTerms: request.queryTerms,
+          drugAliases: aliases,
+          seeds: request.seedIdentifiers,
+          allowedTracks: request.trackCodes,
+          fetcher,
+          memo,
+          now: now(),
+        })
+
+        for (const search of results) {
           searches += 1
           if (search.outcome === 'executed') executed += 1
           if (search.outcome === 'zero_results') zeroResults += 1
@@ -258,7 +304,7 @@ export async function runMonographDiscovery(
             recorded += 1
           } catch {
             problems.push(
-              `Et søk mot ${platform.name} lot seg ikke registrere for én søkerunde (${plan.profileCode}).`,
+              `Et søk mot ${method.platform} (${method.method}) lot seg ikke registrere for én søkerunde (${plan.profileCode}).`,
             )
           }
         }

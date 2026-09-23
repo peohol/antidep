@@ -25,7 +25,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(52);
+select plan(57);
 
 -- ===========================================================================
 -- Del 1 — Kontoene, bestillingen og modelltildelingene
@@ -127,7 +127,8 @@ select 'runde1', r.reference
 from workflow.monograph_search_requests r
 join workflow.monograph_search_plans p on p.id = r.plan_id
 where p.reference = (select value from refs where label = 'plan')
-  and r.requested_for_role = 'source_discovery';
+  and r.requested_for_role = 'source_discovery'
+  and r.platform is null and r.method is null;
 
 select matches(
   workflow.monograph_search_phase_problem(
@@ -194,6 +195,56 @@ select 'utilgjengelig', api.record_monograph_machine_search(
   'Søkeveien svarte ikke: tidsavbrudd.',
   array['bibliographic_database'], null);
 
+-- Det uavhengige sporet svarte heller ikke. Et spor der ingen søkevei svarte,
+-- er ikke forsøkt: det står og venter på neste runde.
+insert into svar (label, payload)
+select 'uavhengig_nede', api.record_monograph_machine_search(
+  'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
+  (select id from runs where label = 'discovery'),
+  (select value from refs where label = 'plan'),
+  (select value from refs where label = 'runde1'),
+  'Crossref', '"sertralin"', null,
+  'https://api.crossref.org/works?query.bibliographic=x',
+  null,
+  'unavailable', null, 0, false, null,
+  'Søkeveien svarte ikke: HTTP 503 etter siste forsøk.',
+  array['bibliographic_database', 'independent_second_database'], null);
+
+-- De øvrige rundene planen åpnet — én per søkemetode registeret har for de
+-- ventende sporene (migrasjon 014d). Kjøreren utfører hver av dem; her står
+-- de som søk uten treff, og lukkes. Den semantiske oppgaven kommer først når
+-- den siste er lukket.
+reset role;
+insert into svar (label, payload)
+select 'runde1|' || r.platform || '|' || r.method, api.record_monograph_machine_search(
+  'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
+  (select id from runs where label = 'discovery'),
+  (select value from refs where label = 'plan'),
+  r.reference, r.platform, 'Prøve 870: ' || r.method, null,
+  'https://example.test/' || r.method, 'sha256:' || repeat('e', 64),
+  'zero_results', 0, 0, false, null, null, r.track_codes, null, r.method)
+from workflow.monograph_search_requests r
+join workflow.monograph_search_plans p on p.id = r.plan_id
+where p.reference = (select value from refs where label = 'plan')
+  and r.requested_for_role = 'source_discovery'
+  and r.method is not null;
+insert into svar (label, payload)
+select 'lukk1|' || r.platform || '|' || r.method, api.close_monograph_search_request(
+  'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
+  (select id from runs where label = 'discovery'), r.reference)
+from workflow.monograph_search_requests r
+join workflow.monograph_search_plans p on p.id = r.plan_id
+where p.reference = (select value from refs where label = 'plan')
+  and r.requested_for_role = 'source_discovery'
+  and r.method is not null;
+
+select is(
+  (select count(*)::integer from svar where label like 'lukk1|%' and (payload -> 'enqueued_job')::boolean),
+  0,
+  'ingen semantisk oppgave før hver runde planen åpnet, er utført'
+);
+
+set local role anon;
 insert into svar (label, payload)
 select 'lukk1', api.close_monograph_search_request(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
@@ -204,6 +255,7 @@ reset role;
 select is(
   (select s.response_digest from workflow.monograph_searches s
    where s.platform = 'PubMed'
+     and s.outcome = 'unavailable'
      and s.plan_id = (select p.id from workflow.monograph_search_plans p
                       where p.reference = (select value from refs where label = 'plan'))),
   null,
@@ -249,9 +301,9 @@ select 'oppgave', workflow.agent_task(j) from workflow.pipeline_jobs j
 where j.id = (select id from jobs where label = 'discovery');
 
 select ok(
-  (select jsonb_array_length(payload -> 'input' -> 'machine_searches') = 2
+  (select jsonb_array_length(payload -> 'input' -> 'machine_searches') = 6
    from svar where label = 'oppgave'),
-  'oppgaven bærer de maskinelt utførte søkene'
+  'oppgaven bærer de maskinelt utførte søkene — fritekstsøkene, oversiktssøkene og forsøksregisteret'
 );
 select ok(
   (select bool_and(s ->> 'execution_evidence' = 'machine_executed' and s ? 'endpoint')
@@ -260,9 +312,9 @@ select ok(
   'hvert av dem med utførelsesbeviset og endepunktet Antidep faktisk kalte'
 );
 select ok(
-  (select jsonb_array_length(payload -> 'input' -> 'search_limitations') = 1
+  (select jsonb_array_length(payload -> 'input' -> 'search_limitations') = 2
    from svar where label = 'oppgave'),
-  'søkeveien som ikke svarte, står for seg som en begrensning og ikke som null treff'
+  'søkeveiene som ikke svarte, står for seg som begrensninger og ikke som null treff'
 );
 select ok(
   (select jsonb_array_length(payload -> 'input' -> 'candidates') = 1
@@ -278,13 +330,19 @@ select ok(
 );
 select ok(
   (select payload -> 'input' -> 'search_request_options' -> 'platforms'
-          = jsonb_build_array('Europe PMC', 'PubMed', 'Crossref')
+          = (select jsonb_agg(distinct m.platform) from knowledge.monograph_search_methods m)
    from svar where label = 'oppgave'),
-  'og oppgaven sier uttømmende hvilke søketjenester en forespørsel kan navngi'
+  'og oppgaven sier uttømmende hvilke søketjenester en forespørsel kan navngi — lest av registeret'
+);
+select ok(
+  (select bool_and(m ? 'covers' and m ? 'follows_central_sources')
+   from svar, jsonb_array_elements(payload -> 'input' -> 'search_request_options' -> 'methods') as m
+   where label = 'oppgave'),
+  'og hver søkemetode står med hva den dekker, og om den følger sentrale kilder'
 );
 select is(
   (select payload ->> 'output_schema_version' from svar where label = 'oppgave'),
-  'antidep/source-discovery-draft@3',
+  'antidep/source-discovery-draft@4',
   'svarformen er den som ikke har et felt for utførte søk'
 );
 
@@ -302,7 +360,7 @@ select throws_ok(
       'role', 'source_discovery',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-discovery-draft@3',
+      'output_schema_version', 'antidep/source-discovery-draft@4',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(),
         'searches', jsonb_build_array(jsonb_build_object(
@@ -325,7 +383,7 @@ select throws_ok(
       'role', 'source_discovery',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-discovery-draft@3',
+      'output_schema_version', 'antidep/source-discovery-draft@4',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(jsonb_build_object(
           'identifier_kind', 'doi',
@@ -357,7 +415,7 @@ select 'import', api.import_agent_answer(
     'role', 'source_discovery',
     'job_key', (select payload ->> 'job_key' from svar where label = 'oppgave'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'oppgave'),
-    'output_schema_version', 'antidep/source-discovery-draft@3',
+    'output_schema_version', 'antidep/source-discovery-draft@4',
     -- Regresjon (013u): svaret har ingen identity i det hele tatt. Det er
     -- nøyaktig det en ChatGPT Workspace Agent leverer.
     'result', jsonb_build_object(
@@ -424,7 +482,27 @@ from workflow.monograph_search_requests r
 join workflow.monograph_search_plans p on p.id = r.plan_id
 where p.reference = (select value from refs where label = 'plan')
   and r.requested_for_role = 'source_discovery'
-  and r.search_round = 2;
+  and r.search_round = 2
+  and r.origin = 'agent_requested';
+
+-- Og det Antidep åpnet selv: leddet valgte oversikten til innhenting og vurderte
+-- den som mulig konklusjonsendrende. Referanselisten og de siterende arbeidene
+-- til den følges nå av Antideps kode, uten at leddet måtte be om det.
+select is(
+  (select (payload -> 'outcome' -> 'machine_requests_opened')::integer
+   from svar where label = 'import'),
+  3,
+  'Antidep åpnet selv én runde per kildefølgende metode for kilden leddet valgte'
+);
+select bag_eq(
+  $$select r.platform || '|' || r.method || '|' || array_to_string(r.seed_identifiers, ',')
+    from workflow.monograph_search_requests r
+    where r.origin = 'selection_opened' and r.search_round = 2$$,
+  $$values ('Europe PMC|references|doi:10.1000/870-oversikt'),
+           ('Europe PMC|citations|doi:10.1000/870-oversikt'),
+           ('Crossref|references|doi:10.1000/870-oversikt')$$,
+  'og den følger nøyaktig den kilden kildeoppdagelsen valgte'
+);
 
 select is(
   (select r.origin::text from workflow.monograph_search_requests r
@@ -440,17 +518,59 @@ select 'maskinsok2', api.record_monograph_machine_search(
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'plan'),
   (select value from refs where label = 'runde2'),
-  'PubMed', '"sertralin" AND "sertraline"', null,
-  'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=x',
+  'Crossref', '"sertralin" AND "sertraline"', null,
+  'https://api.crossref.org/works?query.bibliographic=x',
   'sha256:' || repeat('b', 64),
   'zero_results', 0, 0, false, null, null,
-  array['bibliographic_database'], null);
+  array['bibliographic_database', 'independent_second_database'], null);
 insert into svar (label, payload)
 select 'lukk2', api.close_monograph_search_request(
   'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
   (select id from runs where label = 'discovery'),
   (select value from refs where label = 'runde2'));
 reset role;
+
+-- Antideps kode følger kilden: Europe PMC har referanselisten, ingen i Europe
+-- PMC siterer den ennå, og Crossref har ingen deponert liste.
+insert into svar (label, payload)
+select 'kilde|' || r.platform || '|' || r.method, api.record_monograph_machine_search(
+  'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
+  (select id from runs where label = 'discovery'),
+  (select value from refs where label = 'plan'),
+  r.reference, r.platform,
+  r.method || ' for ' || array_to_string(r.seed_identifiers, ', '), null,
+  'https://example.test/' || r.method,
+  case when r.platform = 'Crossref' then null else 'sha256:' || repeat('f', 64) end,
+  case when r.platform = 'Crossref' then 'unavailable'
+       when r.method = 'citations' then 'zero_results'
+       else 'executed' end,
+  case when r.platform = 'Crossref' then null
+       when r.method = 'citations' then 0 else 2 end,
+  case when r.platform = 'Crossref' or r.method = 'citations' then 0 else 2 end,
+  false, null,
+  case when r.platform = 'Crossref'
+       then 'Utgiveren har ikke deponert en referanseliste i Crossref.' end,
+  r.track_codes, null, r.method)
+from workflow.monograph_search_requests r
+where r.origin = 'selection_opened'
+order by r.platform desc;
+insert into svar (label, payload)
+select 'lukk_kilde|' || r.platform || '|' || r.method, api.close_monograph_search_request(
+  'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
+  (select id from runs where label = 'discovery'), r.reference)
+from workflow.monograph_search_requests r
+where r.origin = 'selection_opened';
+
+select bag_eq(
+  $$select k.code || '|' || a.state::text
+    from workflow.monograph_search_track_attempts a
+    join knowledge.monograph_search_tracks k on k.id = a.track_id
+    join workflow.monograph_search_plans p on p.id = a.plan_id
+    where p.reference = (select value from refs where label = 'plan')
+      and k.code in ('reference_lists', 'citing_works')$$,
+  $$values ('reference_lists|covered'), ('citing_works|covered')$$,
+  'referanselisten og de siterende arbeidene er dekket av søk Antidep faktisk gjorde — en Crossref uten liste ble en begrensning, ikke null referanser'
+);
 
 insert into jobs (label, id)
 select 'discovery2', j.id
@@ -491,7 +611,7 @@ select 'import2', api.import_agent_answer(
     'role', 'source_discovery',
     'job_key', (select payload ->> 'job_key' from svar where label = 'oppgave2'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'oppgave2'),
-    'output_schema_version', 'antidep/source-discovery-draft@3',
+    'output_schema_version', 'antidep/source-discovery-draft@4',
     'result', jsonb_build_object(
       'candidate_appraisals', jsonb_build_array(),
       'note', 'Det uavhengige sporet ga ingen treff. Ingen flere søk trengs nå.')));
@@ -637,7 +757,7 @@ select throws_ok(
       'role', 'source_quality_assessment',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-coverage-control-draft@2',
+      'output_schema_version', 'antidep/source-coverage-control-draft@3',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(),
         'control', jsonb_build_object(
@@ -662,7 +782,7 @@ select throws_ok(
       'role', 'source_quality_assessment',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-coverage-control-draft@2',
+      'output_schema_version', 'antidep/source-coverage-control-draft@3',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(),
         'control', jsonb_build_object(
@@ -695,7 +815,7 @@ select 'kontrollimport1', api.import_agent_answer(
     'role', 'source_quality_assessment',
     'job_key', (select payload ->> 'job_key' from svar where label = 'kontrolloppgave'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'kontrolloppgave'),
-    'output_schema_version', 'antidep/source-coverage-control-draft@2',
+    'output_schema_version', 'antidep/source-coverage-control-draft@3',
     'result', jsonb_build_object(
       'candidate_appraisals', jsonb_build_array(),
       'search_requests', jsonb_build_array(jsonb_build_object(
@@ -789,7 +909,7 @@ select 'kontrollimport2', api.import_agent_answer(
     'role', 'source_quality_assessment',
     'job_key', (select payload ->> 'job_key' from svar where label = 'kontrolloppgave2'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'kontrolloppgave2'),
-    'output_schema_version', 'antidep/source-coverage-control-draft@2',
+    'output_schema_version', 'antidep/source-coverage-control-draft@3',
     'result', jsonb_build_object(
       'candidate_appraisals', jsonb_build_array(jsonb_build_object(
         'identifier_kind', 'doi',

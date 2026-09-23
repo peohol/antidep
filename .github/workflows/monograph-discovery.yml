@@ -171,7 +171,7 @@ jobs:
           ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_DISCOVERY_AGENT_IDENTITY_KEY }}
           ANTIDEP_DISCOVERY_AGENT_SECRET: ${{ secrets.ANTIDEP_DISCOVERY_AGENT_SECRET }}
         run: |
-          npm run ops:discovery -- --leg discovery --max-plans 8 | tee -a "$GITHUB_STEP_SUMMARY"
+          npm run ops:discovery -- --leg discovery --max-plans 20 | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Kontrollens motsøk kjøres etter generatorens, fordi runden deres åpnes av
       # et registrert søkesvar. Rekkefølgen er en bekvemmelighet og ikke en
@@ -184,4 +184,4 @@ jobs:
           ANTIDEP_COVERAGE_AGENT_IDENTITY_KEY: ${{ secrets.ANTIDEP_COVERAGE_AGENT_IDENTITY_KEY }}
           ANTIDEP_COVERAGE_AGENT_SECRET: ${{ secrets.ANTIDEP_COVERAGE_AGENT_SECRET }}
         run: |
-          npm run ops:discovery -- --leg coverage --max-plans 8 | tee -a "$GITHUB_STEP_SUMMARY"
+          npm run ops:discovery -- --leg coverage --max-plans 20 | tee -a "$GITHUB_STEP_SUMMARY"

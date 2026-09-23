@@ -20,6 +20,17 @@ navngitt menneske og en egen, autorisert handling.
 startes, hvor dekning, kilder, kontroller, avvik og utkast inspiseres, og hvilke
 reelle oppsett- og tilgangsbegrensninger som står igjen.
 
+**Søkesporene krever ikke lenger et menneske.** Fram til migrasjon 014c kunne
+Antideps egen søkekode bare utføre det bibliografiske sporet, og i en
+sertralinbestilling sto hver eneste av de 70 søkeplanene fast på spor en
+redaktør måtte søke i for hånd — 217 slike spor til sammen. Nå har hvert
+obligatorisk søkespor en maskinell søkemetode mot en navngitt offentlig tjeneste
+(Europe PMC, PubMed, Crossref, ClinicalTrials.gov, FEST, EMA og ClinPGx), planene
+åpner sine egne runder, og kildene kildeoppdagelsen velger ut, følges av
+kjøreren selv. Sertralinpiloten har 69 planer (sammendragsleddet søker ikke), og
+ingen av dem venter på et menneske i søkefasen. Redaktørens registrering av et
+manuelt søk består som en kontrollert reservevei for reelle unntak.
+
 ## Eksisterende leveranse
 
 Siste leveranse — **revisjonen av en påstand som allerede finnes** — er
