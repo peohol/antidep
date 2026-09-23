@@ -264,19 +264,30 @@ export async function runMonographDiscovery(
           : resolveRequestMethods(settings.methods, request.platform, request.method)
       const aliases = [...new Set([...(plan.scope.drugAliases ?? []), ...request.drugAliases])]
 
-      for (const entry of wanted) {
-        const method = settings.methods.find(
+      // En metode databasen kjenner og kjøreren ikke har, er en feil i
+      // utrullingen og ikke et søk uten treff. Runden røres da ikke: den
+      // utføres ikke halvt, og den lukkes ikke — en lukket runde uten søk ville
+      // blitt «utilgjengelig», sluppet den semantiske oppgaven fri og til slutt
+      // blitt gitt opp, uten at en eneste tjeneste var spurt. Den står åpen til
+      // en kjører som har metoden, tar den.
+      const methods = wanted.map((entry) => ({
+        entry,
+        method: settings.methods.find(
           (candidate) => candidate.platform === entry.platform && candidate.method === entry.method,
-        )
-        if (method === undefined) {
-          // En metode databasen kjenner og kjøreren ikke har, utføres ikke. Det
-          // er en feil i utrullingen og ikke et søk uten treff: den sies fra om,
-          // og runden lukkes på det som faktisk ble gjort.
+        ),
+      }))
+      const missing = methods.filter((pair) => pair.method === undefined)
+      if (missing.length > 0) {
+        for (const { entry } of missing) {
           problems.push(
-            `Kjøreren har ikke søkemetoden ${entry.platform} (${entry.method}) som én søkerunde ba om (${plan.profileCode}).`,
+            `Kjøreren har ikke søkemetoden ${entry.platform} (${entry.method}) som én søkerunde ba om (${plan.profileCode}); runden står åpen.`,
           )
-          continue
         }
+        continue
+      }
+
+      for (const { method } of methods) {
+        if (method === undefined) continue
 
         const results = await method.execute({
           scope: plan.scope,

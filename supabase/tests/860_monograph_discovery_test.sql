@@ -632,13 +632,15 @@ select alike(
   'og porten sier hva de venter på: at kildeoppdagelsen velger ut de sentrale kildene'
 );
 
--- Kildeoppdagelsen velger oversikten som sentral kilde, og Antidep følger den.
-update workflow.monograph_candidate_sources
-set decision = 'selected_for_retrieval',
-    decision_reason = 'Prøve i 860: den sentrale oversikten for effektspørsmålet.',
-    decided_at = now(),
-    decided_by_agent_run_id = (select id from runs where label = 'discovery')
-where identifier_value = '10.1000/860-oversikt';
+-- Kildeoppdagelsen velger oversikten som sentral kilde for denne planen, og
+-- Antidep følger den.
+select workflow.decide_monograph_candidate_source(
+  (select c.id from workflow.monograph_candidate_sources c
+   where c.identifier_value = '10.1000/860-oversikt'),
+  (select id from plans where label = 'eff'),
+  'selected_for_retrieval',
+  'Prøve i 860: den sentrale oversikten for effektspørsmålet.',
+  null, (select id from runs where label = 'discovery'));
 
 select is(
   workflow.open_monograph_machine_rounds(

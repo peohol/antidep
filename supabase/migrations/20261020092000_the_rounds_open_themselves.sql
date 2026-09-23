@@ -149,8 +149,8 @@ as $$
   from (
     select c.identifier_kind || ':' || c.identifier_value as seed,
            case
-             when c.decision = 'included'::workflow.monograph_candidate_decision then 0
-             when c.could_change_conclusion then 1
+             when l.decision = 'included'::workflow.monograph_candidate_decision then 0
+             when l.could_change_conclusion then 1
              else 2
            end as priority,
            c.created_at
@@ -160,9 +160,9 @@ as $$
     join knowledge.monograph_search_methods m
       on m.platform = p_platform and m.method = p_method and m.requires_seeds
     where l.plan_id = p_plan_id
-      and (c.decision in ('selected_for_retrieval'::workflow.monograph_candidate_decision,
+      and (l.decision in ('selected_for_retrieval'::workflow.monograph_candidate_decision,
                           'included'::workflow.monograph_candidate_decision)
-           or c.could_change_conclusion)
+           or l.could_change_conclusion)
       and c.identifier_kind = any (m.seed_identifier_kinds)
       and workflow.monograph_seed_identifiers_shaped(
             array[c.identifier_kind || ':' || c.identifier_value])
@@ -186,6 +186,34 @@ comment on function workflow.monograph_unchased_seeds(uuid, text, text) is
 
 revoke execute on function workflow.monograph_unchased_seeds(uuid, text, text) from public;
 
+create function workflow.monograph_plan_has_unchased_seeds(p_plan_id uuid)
+  returns boolean
+  language sql
+  stable
+  set search_path = ''
+as $$
+  select exists (
+    select 1
+    from workflow.monograph_search_plans p
+    join knowledge.monograph_source_profiles sp on sp.id = p.profile_id
+    join workflow.monograph_search_track_attempts a
+      on a.plan_id = p.id and a.state in ('pending', 'covered', 'unavailable')
+    join knowledge.monograph_search_tracks k on k.id = a.track_id
+    join knowledge.monograph_search_platforms c
+      on c.track_code = k.code
+     and (c.profile_codes is null or sp.code = any (c.profile_codes))
+    join knowledge.monograph_search_methods m
+      on m.platform = c.platform and m.method = c.method and m.requires_seeds
+    where p.id = p_plan_id
+      and cardinality(workflow.monograph_unchased_seeds(p.id, m.platform, m.method)) > 0
+  );
+$$;
+
+comment on function workflow.monograph_plan_has_unchased_seeds(uuid) is
+  'Om planen har sentrale kilder en kildefølgende metode for et av planens spor ennå ikke har fulgt. Et oppbrukt søkebudsjett med slike kilder igjen er åpent, ventende arbeid og ikke en fullført følging.';
+
+revoke execute on function workflow.monograph_plan_has_unchased_seeds(uuid) from public;
+
 -- ----------------------------------------------------------------------------
 -- 3. Rundene registeret har en vei til
 -- ----------------------------------------------------------------------------
@@ -205,6 +233,7 @@ declare
   v_plan workflow.monograph_search_plans;
   v_profile text;
   v_pending text[];
+  v_searched text[];
   v_row record;
   v_default_opened boolean := false;
   v_seeds text[];
@@ -223,25 +252,32 @@ begin
   select sp.code into v_profile
   from knowledge.monograph_source_profiles sp where sp.id = v_plan.profile_id;
 
-  select coalesce(array_agg(k.code order by k.ordinal), array[]::text[]) into v_pending
+  select coalesce(array_agg(k.code order by k.ordinal)
+                    filter (where a.state = 'pending'), array[]::text[]),
+         coalesce(array_agg(k.code order by k.ordinal)
+                    filter (where a.state in ('pending', 'covered', 'unavailable')),
+                  array[]::text[])
+    into v_pending, v_searched
   from workflow.monograph_search_track_attempts a
   join knowledge.monograph_search_tracks k on k.id = a.track_id
-  where a.plan_id = p_plan_id and a.state = 'pending';
-
-  if cardinality(v_pending) = 0 then
-    return 0;
-  end if;
+  where a.plan_id = p_plan_id;
 
   -- Én runde per søkemetode registeret har for planens ventende spor. De
   -- bibliografiske fritekstsøkene er én runde sammen, slik de alltid har vært:
   -- det er dem en forespørsel uten navngitt metode betyr.
+  --
+  -- Metodene som følger kilder, vurderes også når sporet deres alt er dekket.
+  -- Et spor er dekket av den første kilden som ble fulgt, men hver sentral
+  -- kilde skal følges: en kilde leddet valgte etter den første runden, eller
+  -- som ikke fikk plass i den, ville ellers aldri blitt fulgt.
   for v_row in
     select m.platform, m.method, m.requires_seeds, m.default_for_requests, m.description,
            array_agg(distinct c.track_code order by c.track_code) as tracks
     from knowledge.monograph_search_methods m
     join knowledge.monograph_search_platforms c
       on c.platform = m.platform and c.method = m.method
-    where c.track_code = any (v_pending)
+    where (c.track_code = any (v_pending)
+           or (m.requires_seeds and c.track_code = any (v_searched)))
       and (c.profile_codes is null or v_profile = any (c.profile_codes))
     group by m.platform, m.method, m.requires_seeds, m.default_for_requests, m.description
     order by m.default_for_requests desc, m.requires_seeds, m.platform, m.method
@@ -269,20 +305,22 @@ begin
     end if;
 
     if v_row.requires_seeds then
-      v_seeds := (workflow.monograph_unchased_seeds(p_plan_id, v_row.platform, v_row.method))[1:10];
-      if v_seeds is null or cardinality(v_seeds) = 0 then
-        continue;
-      end if;
+      -- Høyst ti kilder per runde, så mange runder som trengs: en runde er én
+      -- avgrenset jobb, og hver sentral kilde skal følges. En kilde som står i
+      -- en runde, regnes ikke lenger som ufulgt, så løkken går mot tom.
       v_rationale := format(
         'Kildeoppdagelsen har valgt ut sentrale kilder, og Antideps kode følger dem (%s, %s) for sporene: %s. %s',
         v_row.platform, v_row.method, v_labels, v_row.description);
-      if workflow.open_monograph_search_request(
-           p_plan_id, 'source_discovery'::provenance.agent_role, p_round, p_origin,
-           'broad'::workflow.monograph_search_strategy, v_rationale,
-           v_row.platform, v_row.method, array[]::text[], array[]::text[], v_seeds,
-           null, p_agent_run_id, p_actor_id) is not null then
+      loop
+        v_seeds := (workflow.monograph_unchased_seeds(p_plan_id, v_row.platform, v_row.method))[1:10];
+        exit when v_seeds is null or cardinality(v_seeds) = 0;
+        exit when workflow.open_monograph_search_request(
+                    p_plan_id, 'source_discovery'::provenance.agent_role, p_round, p_origin,
+                    'broad'::workflow.monograph_search_strategy, v_rationale,
+                    v_row.platform, v_row.method, array[]::text[], array[]::text[], v_seeds,
+                    null, p_agent_run_id, p_actor_id) is null;
         v_opened := v_opened + 1;
-      end if;
+      end loop;
     elsif v_row.default_for_requests then
       if v_default_opened then
         continue;
@@ -1177,6 +1215,25 @@ grant execute on function api.record_monograph_machine_search(text, text, uuid, 
 -- venter på at sentrale kilder blir valgt.
 -- ----------------------------------------------------------------------------
 
+-- Hva slags søk en rad er, for spørsmålet om et senere søk dekker resten av det:
+-- søkemetoden for Antideps egne kall (en eldre maskinell rad uten metode var
+-- fritekstsøket), og ellers hvem som utførte det.
+create function workflow.monograph_search_kind(p_search workflow.monograph_searches)
+  returns text
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select case when p_search.execution_evidence = 'machine_executed'
+              then coalesce(p_search.search_method, 'keyword')
+              else p_search.execution_evidence::text end;
+$$;
+
+comment on function workflow.monograph_search_kind(workflow.monograph_searches) is
+  'Søkets slag: søkemetoden for et maskinelt utført søk, og ellers hvem som utførte det. Stoppkravet lar et senere søk dekke resten av en avkortet treffliste bare når det er det samme slaget søk på den samme plattformen.';
+
+revoke execute on function workflow.monograph_search_kind(workflow.monograph_searches) from public;
+
 create or replace function workflow.monograph_search_closure_problem(p_plan_id uuid)
   returns text
   language plpgsql
@@ -1281,7 +1338,17 @@ begin
   end if;
 
   -- 4. Ingen skjult treffavkorting.
-  select string_agg(distinct s.platform, ', ' order by s.platform) into v_open_truncation
+  --
+  --    Et senere, helt lest søk dekker resten av en avkortet treffliste bare
+  --    når det er det samme slaget søk: den samme plattformen og den samme
+  --    søkemetoden. Et kort oversiktssøk i PubMed sier ingenting om resten av et
+  --    avkortet fritekstsøk der (migrasjon 014d). Innenfor metoden er det det
+  --    målrettede oppfølgingssøket som lukker det brede (§4.1): å kreve den
+  --    samme søkestrengen lest helt ville gjort hvert bredt orienterende søk til
+  --    en port som aldri åpner.
+  select string_agg(distinct s.platform || ' (' || workflow.monograph_search_kind(s) || ')', ', '
+                    order by s.platform || ' (' || workflow.monograph_search_kind(s) || ')')
+    into v_open_truncation
   from workflow.monograph_searches s
   where s.plan_id = p_plan_id
     and s.plan_version = v_plan.plan_version
@@ -1291,6 +1358,7 @@ begin
       where later.plan_id = s.plan_id
         and later.plan_version = s.plan_version
         and later.platform = s.platform
+        and workflow.monograph_search_kind(later) = workflow.monograph_search_kind(s)
         and not later.truncated
         and later.outcome in ('executed', 'zero_results')
         and later.registration_ordinal > s.registration_ordinal
@@ -1301,13 +1369,15 @@ begin
       v_open_truncation);
   end if;
 
-  -- 5. Ingen uavklart kilde som med rimelighet kan endre hovedkonklusjonen.
+  -- 5. Ingen uavklart kilde som med rimelighet kan endre hovedkonklusjonen —
+  --    for denne planen. Vurderingen står per plan (migrasjon 014c): en annen
+  --    plans eksklusjon lukker ikke denne planens port.
   select string_agg(c.title, '; ' order by c.title) into v_unresolved
   from workflow.monograph_candidate_sources c
   join workflow.monograph_candidate_source_plans l
     on l.candidate_source_id = c.id and l.plan_id = p_plan_id
-  where c.could_change_conclusion
-    and c.decision not in ('included', 'excluded');
+  where l.could_change_conclusion
+    and l.decision not in ('included', 'excluded');
   if v_unresolved is not null then
     return format(
       'Disse kildene kan endre hovedkonklusjonen og er fortsatt uavklarte: %s. En ulest eller utilgjengelig kilde som med rimelighet kan endre svaret, hindrer at søket kan avsluttes (SOURCE_POLICY.md §8.1).',
@@ -1477,12 +1547,12 @@ as $$
                'publisher_or_journal', c.publisher_or_journal,
                'publication_year', c.publication_year,
                'discovery_path', c.discovery_path,
-               'decision', c.decision::text,
-               'decision_reason', c.decision_reason,
+               'decision', l.decision::text,
+               'decision_reason', l.decision_reason,
                'access_limited', c.access_limited,
                'access_limitation_note', c.access_limitation_note,
-               'could_change_conclusion', c.could_change_conclusion,
-               'materiality_reason', c.materiality_reason,
+               'could_change_conclusion', l.could_change_conclusion,
+               'materiality_reason', l.materiality_reason,
                'registered', c.source_id is not null,
                'uses', (
                  select coalesce(jsonb_agg(jsonb_build_object(
@@ -1696,12 +1766,12 @@ begin
                                    from workflow.monograph_searches s
                                    where s.id = coalesce(l.search_id, c.search_id)
                                      and s.execution_evidence = 'machine_executed'),
-               'decision', c.decision::text,
-               'decision_reason', c.decision_reason,
+               'decision', l.decision::text,
+               'decision_reason', l.decision_reason,
                'access_limited', c.access_limited,
                'access_limitation_note', c.access_limitation_note,
-               'could_change_conclusion', c.could_change_conclusion,
-               'materiality_reason', c.materiality_reason,
+               'could_change_conclusion', l.could_change_conclusion,
+               'materiality_reason', l.materiality_reason,
                'uses', (
                  select coalesce(jsonb_agg(jsonb_build_object(
                           'need_reference', n.reference,
@@ -1815,24 +1885,24 @@ begin
                    'identifier_kind', c.identifier_kind,
                    'identifier_value', c.identifier_value,
                    'title', c.title,
-                   'decision_reason', c.decision_reason) order by c.created_at), '[]'::jsonb)
+                   'decision_reason', l.decision_reason) order by c.created_at), '[]'::jsonb)
           from workflow.monograph_candidate_sources c
           join workflow.monograph_candidate_source_plans l
             on l.candidate_source_id = c.id and l.plan_id = v_plan.id
-          where c.decision = 'excluded'),
+          where l.decision = 'excluded'),
         'unresolved_candidates', (
           select coalesce(jsonb_agg(jsonb_build_object(
                    'identifier_kind', c.identifier_kind,
                    'identifier_value', c.identifier_value,
                    'title', c.title,
-                   'decision', c.decision::text,
+                   'decision', l.decision::text,
                    'access_limited', c.access_limited,
-                   'could_change_conclusion', c.could_change_conclusion,
-                   'materiality_reason', c.materiality_reason) order by c.created_at), '[]'::jsonb)
+                   'could_change_conclusion', l.could_change_conclusion,
+                   'materiality_reason', l.materiality_reason) order by c.created_at), '[]'::jsonb)
           from workflow.monograph_candidate_sources c
           join workflow.monograph_candidate_source_plans l
             on l.candidate_source_id = c.id and l.plan_id = v_plan.id
-          where c.decision not in ('included', 'excluded'))));
+          where l.decision not in ('included', 'excluded'))));
   end if;
 
   return v_payload;
@@ -1980,6 +2050,7 @@ begin
 
       perform workflow.appraise_monograph_candidate_source(
         v_candidate.id,
+        v_plan_id,
         coalesce((v_item ->> 'could_change_conclusion')::boolean, false),
         v_item ->> 'materiality_reason',
         p_run_id);
@@ -2020,7 +2091,7 @@ begin
         end;
 
         perform workflow.decide_monograph_candidate_source(
-          v_candidate.id, v_decision, v_item ->> 'decision_reason', null, p_run_id);
+          v_candidate.id, v_plan_id, v_decision, v_item ->> 'decision_reason', null, p_run_id);
         v_decisions := v_decisions + 1;
       end if;
     end loop;
@@ -2236,9 +2307,11 @@ begin
         v_plan_id, v_next_round,
         'selection_opened'::workflow.monograph_search_request_origin,
         p_actor_id, p_run_id);
-    elsif v_requests = 0 and exists (
-      select 1 from workflow.monograph_search_track_attempts a
-      where a.plan_id = v_plan_id and a.state = 'pending'
+    elsif v_requests = 0 and (
+      exists (
+        select 1 from workflow.monograph_search_track_attempts a
+        where a.plan_id = v_plan_id and a.state = 'pending')
+      or workflow.monograph_plan_has_unchased_seeds(v_plan_id)
     ) then
       v_paused := true;
     end if;

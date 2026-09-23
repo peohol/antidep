@@ -754,13 +754,74 @@ create table workflow.monograph_candidate_source_plans (
   -- som ble lagt til uten et søk.
   search_id uuid
     references workflow.monograph_searches (id) on update restrict on delete restrict,
-  created_at timestamptz not null default now(),
 
-  constraint monograph_candidate_source_plans_pair_key unique (candidate_source_id, plan_id)
+  -- Vurderingen av kilden for nettopp denne planen. Den samme artikkelen kan
+  -- være sentral for effektspørsmålet og uten betydning for bivirkningen, og
+  -- den samme oversikten kan inkluderes for én avgrensning og ekskluderes med
+  -- en faglig grunn for en annen (SOURCE_POLICY.md §2). En felles beslutning
+  -- ville latt den siste planen som vurderte kilden, skrive over de andres —
+  -- og en eksklusjon for én plan ville ha lukket porten for en annen.
+  decision workflow.monograph_candidate_decision not null default 'proposed',
+  decision_reason text,
+  decided_by_actor_id uuid
+    references provenance.actors (id) on update restrict on delete restrict,
+  decided_by_agent_run_id uuid
+    references provenance.agent_runs (id) on update restrict on delete restrict,
+  decided_at timestamptz,
+  could_change_conclusion boolean not null default false,
+  materiality_reason text,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  constraint monograph_candidate_source_plans_pair_key unique (candidate_source_id, plan_id),
+  constraint monograph_candidate_source_plans_decision_reason_shape_check
+    check (decision_reason is null
+           or (decision_reason = btrim(decision_reason)
+               and length(decision_reason) between 1 and 2000)),
+  constraint monograph_candidate_source_plans_decision_origin_check
+    check (num_nonnulls(decided_by_actor_id, decided_by_agent_run_id) <= 1),
+  constraint monograph_candidate_source_plans_materiality_pairing_check
+    check (could_change_conclusion = (materiality_reason is not null)),
+  constraint monograph_candidate_source_plans_materiality_reason_shape_check
+    check (materiality_reason is null
+           or (materiality_reason = btrim(materiality_reason)
+               and length(materiality_reason) between 1 and 2000)),
+  -- De samme kravene som på kilden (migrasjon 013e): beslutningen bestemmer
+  -- hva som skal være satt.
+  constraint monograph_candidate_source_plans_decision_shape_check
+    check (
+      case decision
+        when 'proposed' then decided_at is null
+        when 'excluded' then decision_reason is not null and decided_at is not null
+                             and num_nonnulls(decided_by_actor_id, decided_by_agent_run_id) = 1
+        when 'awaiting_access' then decided_at is not null
+        when 'awaiting_clarification' then decision_reason is not null
+                                           and decided_at is not null
+        when 'selected_for_retrieval' then decision_reason is not null
+                                           and decided_at is not null
+        when 'included' then decision_reason is not null and decided_at is not null
+        else false
+      end
+    )
 );
 
 comment on table workflow.monograph_candidate_source_plans is
-  'Hvilke søkeplaner som har funnet en kandidatkilde, og med hvilket søk. En kilde er unik per utgave, men den samme preparatomtalen, det samme forsøket og den samme oversikten finnes av mange planer, og hver av dem skal kunne se og vurdere den for sine egne behov. Fram til migrasjon 014c var kilden knyttet bare til den første planen som fant den, og de neste stod tomme. Søket er det som fant kilden for planen først: metningssignalet spør om noe er nytt for planen, ikke for utgaven.';
+  'Hvilke søkeplaner som har funnet en kandidatkilde, med hvilket søk, og hva hver plan har vurdert om den. En kilde er unik per utgave, men den samme preparatomtalen, det samme forsøket og den samme oversikten finnes av mange planer, og hver av dem skal kunne se og vurdere den for sine egne behov. Fram til migrasjon 014c var kilden knyttet bare til den første planen som fant den, og de neste stod tomme. Søket er det som fant kilden for planen først: metningssignalet spør om noe er nytt for planen, ikke for utgaven. Utvalgsbeslutningen og vesentligheten står her, per plan, og kildens egen rad bærer det samlede utfallet (workflow.sync_monograph_candidate_appraisal).';
+
+-- De kildene som finnes, med planen de ble registrert på: vurderingen som står
+-- på kilden, er den planens vurdering. Før tidsstempeltriggeren, slik at
+-- koblingen bærer tidspunktet kilden faktisk ble funnet — metningssignalet måler
+-- nye kilder mot det (workflow.monograph_search_closure_problem).
+insert into workflow.monograph_candidate_source_plans
+  (candidate_source_id, plan_id, search_id, decision, decision_reason,
+   decided_by_actor_id, decided_by_agent_run_id, decided_at,
+   could_change_conclusion, materiality_reason, created_at)
+select c.id, c.plan_id, c.search_id, c.decision, c.decision_reason,
+       c.decided_by_actor_id, c.decided_by_agent_run_id, c.decided_at,
+       c.could_change_conclusion, c.materiality_reason, c.created_at
+from workflow.monograph_candidate_sources c
+where c.plan_id is not null;
 
 alter table workflow.monograph_candidate_source_plans enable row level security;
 
@@ -769,25 +830,47 @@ create index monograph_candidate_source_plans_plan_idx
 create index monograph_candidate_source_plans_search_idx
   on workflow.monograph_candidate_source_plans (search_id);
 
-create trigger monograph_candidate_source_plans_set_created_at
+create trigger monograph_candidate_source_plans_set_row_timestamps
   before insert or update on workflow.monograph_candidate_source_plans
-  for each row execute function catalog.set_created_at();
+  for each row execute function catalog.set_row_timestamps();
 
-create trigger monograph_candidate_source_plans_are_append_only
+-- At en plan fant kilden, og med hvilket søk, er et historisk faktum søkeloggen
+-- hviler på. Vurderingen endres; funnet gjør det ikke.
+create function workflow.freeze_monograph_candidate_source_plan()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  if tg_op = 'DELETE'
+     or new.id is distinct from old.id
+     or new.candidate_source_id is distinct from old.candidate_source_id
+     or new.plan_id is distinct from old.plan_id
+     or new.search_id is distinct from old.search_id
+     or new.created_at is distinct from old.created_at then
+    raise exception using
+      errcode = 'restrict_violation',
+      message = 'At en plan fant en kilde med et søk, er et historisk faktum søkeloggen hviler på.',
+      hint = 'Vurderingen av kilden for planen kan endres. Hvilken plan som fant den, og med hvilket søk, kan ikke.';
+  end if;
+  return new;
+end;
+$$;
+
+comment on function workflow.freeze_monograph_candidate_source_plan() is
+  'Holder koblingen mellom en kandidatkilde og planen som fant den uforanderlig i det den dokumenterer — planen og søket — mens planens vurdering av kilden kan endres.';
+
+revoke execute on function workflow.freeze_monograph_candidate_source_plan() from public;
+
+create trigger monograph_candidate_source_plans_are_frozen
   before update or delete on workflow.monograph_candidate_source_plans
-  for each row execute function knowledge.reject_append_only_mutation(
-    'At en plan fant en kilde med et søk, er et historisk faktum søkeloggen hviler på.');
-
-insert into workflow.monograph_candidate_source_plans
-  (candidate_source_id, plan_id, search_id, created_at)
-select c.id, c.plan_id, c.search_id, c.created_at
-from workflow.monograph_candidate_sources c
-where c.plan_id is not null;
+  for each row execute function workflow.freeze_monograph_candidate_source_plan();
 
 -- Planen en kandidat ble registrert på, står alltid på koblingen — uansett
--- hvilken vei raden kom inn. En kilde som kan endre hovedkonklusjonen og ble
--- lagt til uten om `record_monograph_candidate_source`, skal ikke kunne falle
--- utenfor porten fordi koblingen manglet.
+-- hvilken vei raden kom inn — med vurderingen kilden ble registrert med. En
+-- kilde som kan endre hovedkonklusjonen og ble lagt til utenom
+-- `record_monograph_candidate_source`, skal ikke kunne falle utenfor porten
+-- fordi koblingen manglet.
 create function workflow.link_candidate_to_its_plan()
   returns trigger
   language plpgsql
@@ -795,8 +878,13 @@ create function workflow.link_candidate_to_its_plan()
 as $$
 begin
   if new.plan_id is not null then
-    insert into workflow.monograph_candidate_source_plans (candidate_source_id, plan_id, search_id)
-    values (new.id, new.plan_id, new.search_id)
+    insert into workflow.monograph_candidate_source_plans
+      (candidate_source_id, plan_id, search_id, decision, decision_reason,
+       decided_by_actor_id, decided_by_agent_run_id, decided_at,
+       could_change_conclusion, materiality_reason)
+    values (new.id, new.plan_id, new.search_id, new.decision, new.decision_reason,
+            new.decided_by_actor_id, new.decided_by_agent_run_id, new.decided_at,
+            new.could_change_conclusion, new.materiality_reason)
     on conflict (candidate_source_id, plan_id) do nothing;
   end if;
   return new;
@@ -804,13 +892,111 @@ end;
 $$;
 
 comment on function workflow.link_candidate_to_its_plan() is
-  'Fører planen en kandidatkilde ble registrert på, inn i workflow.monograph_candidate_source_plans i den samme transaksjonen, uansett vei inn.';
+  'Fører planen en kandidatkilde ble registrert på, inn i workflow.monograph_candidate_source_plans i den samme transaksjonen, uansett vei inn, med vurderingen kilden ble registrert med.';
 
 revoke execute on function workflow.link_candidate_to_its_plan() from public;
 
 create trigger monograph_candidate_sources_link_plan
   after insert on workflow.monograph_candidate_sources
   for each row execute function workflow.link_candidate_to_its_plan();
+
+-- Kildens samlede utfall, utledet av planenes vurderinger. Innhentingen og
+-- redaktørens oversikt leser kilden og ikke planen: en kilde én plan vil ha,
+-- skal hentes, uansett hva en annen plan mente om den for sin avgrensning.
+-- Rekkefølgen sier nettopp det. Ekskludert er kilden bare når hver plan som
+-- har vurdert den, har ekskludert den; en plan som ennå ikke har tatt stilling,
+-- holder den som foreslått.
+create function workflow.monograph_candidate_decision_rank(
+  p_decision workflow.monograph_candidate_decision
+)
+  returns integer
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select case p_decision
+    when 'included' then 1
+    when 'selected_for_retrieval' then 2
+    when 'awaiting_access' then 3
+    when 'awaiting_clarification' then 4
+    when 'proposed' then 5
+    when 'excluded' then 6
+  end;
+$$;
+
+comment on function workflow.monograph_candidate_decision_rank(workflow.monograph_candidate_decision) is
+  'Rekkefølgen planenes utvalgsbeslutninger slås sammen i for kildens samlede utfall: det én plan vil ha, går foran det en annen har forkastet.';
+
+revoke execute on function workflow.monograph_candidate_decision_rank(workflow.monograph_candidate_decision) from public;
+
+create function workflow.sync_monograph_candidate_appraisal(p_candidate_id uuid)
+  returns void
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_winner workflow.monograph_candidate_source_plans;
+  v_material workflow.monograph_candidate_source_plans;
+begin
+  select l.* into v_winner
+  from workflow.monograph_candidate_source_plans l
+  where l.candidate_source_id = p_candidate_id
+  order by workflow.monograph_candidate_decision_rank(l.decision),
+           l.decided_at desc nulls last, l.created_at
+  limit 1;
+
+  if not found then
+    return;
+  end if;
+
+  select l.* into v_material
+  from workflow.monograph_candidate_source_plans l
+  where l.candidate_source_id = p_candidate_id and l.could_change_conclusion
+  order by l.updated_at desc
+  limit 1;
+
+  update workflow.monograph_candidate_sources c
+  set decision = v_winner.decision,
+      decision_reason = v_winner.decision_reason,
+      decided_by_actor_id = v_winner.decided_by_actor_id,
+      decided_by_agent_run_id = v_winner.decided_by_agent_run_id,
+      decided_at = v_winner.decided_at,
+      could_change_conclusion = v_material.id is not null,
+      materiality_reason = v_material.materiality_reason
+  where c.id = p_candidate_id
+    and (c.decision, c.decision_reason, c.decided_by_actor_id, c.decided_by_agent_run_id,
+         c.decided_at, c.could_change_conclusion, c.materiality_reason)
+        is distinct from
+        (v_winner.decision, v_winner.decision_reason, v_winner.decided_by_actor_id,
+         v_winner.decided_by_agent_run_id, v_winner.decided_at, v_material.id is not null,
+         v_material.materiality_reason);
+end;
+$$;
+
+comment on function workflow.sync_monograph_candidate_appraisal(uuid) is
+  'Fører planenes vurderinger av én kandidatkilde sammen til kildens samlede utfall: beslutningen etter workflow.monograph_candidate_decision_rank, og vesentlig når minst én plan har vurdert den som mulig konklusjonsendrende. Innhentingen utløses av kildens utfall, slik at en kilde én plan har valgt, hentes (migrasjon 014c).';
+
+revoke execute on function workflow.sync_monograph_candidate_appraisal(uuid) from public;
+
+create function workflow.sync_candidate_after_plan_appraisal()
+  returns trigger
+  language plpgsql
+  set search_path = ''
+as $$
+begin
+  perform workflow.sync_monograph_candidate_appraisal(new.candidate_source_id);
+  return null;
+end;
+$$;
+
+revoke execute on function workflow.sync_candidate_after_plan_appraisal() from public;
+
+create trigger monograph_candidate_source_plans_sync_candidate
+  after insert or update of decision, decision_reason, decided_by_actor_id,
+                            decided_by_agent_run_id, decided_at,
+                            could_change_conclusion, materiality_reason
+  on workflow.monograph_candidate_source_plans
+  for each row execute function workflow.sync_candidate_after_plan_appraisal();
 
 create or replace function workflow.record_monograph_candidate_source(
   p_plan_id uuid,
@@ -881,9 +1067,14 @@ begin
   end if;
 
   -- Og planen som fant den, står på koblingen — også når en annen plan fant
-  -- den først. Søket er det første som fant den for nettopp denne planen.
-  insert into workflow.monograph_candidate_source_plans (candidate_source_id, plan_id, search_id)
-  values (v_id, p_plan_id, p_search_id)
+  -- den først. Søket er det første som fant den for nettopp denne planen, og
+  -- vesentligheten som fulgte med registreringen, er denne planens.
+  insert into workflow.monograph_candidate_source_plans
+    (candidate_source_id, plan_id, search_id, could_change_conclusion, materiality_reason)
+  values (v_id, p_plan_id, p_search_id,
+          coalesce(p_could_change_conclusion, false),
+          case when coalesce(p_could_change_conclusion, false)
+               then nullif(btrim(coalesce(p_materiality_reason, '')), '') end)
   on conflict (candidate_source_id, plan_id) do nothing;
 
   return v_id;
@@ -892,6 +1083,179 @@ $$;
 
 comment on function workflow.record_monograph_candidate_source(uuid, uuid, text, text, text, text, text, integer, text, boolean, text, boolean, text, uuid, uuid) is
   'Registrerer én identifisert kandidatkilde med bibliografi, oppdagelsesvei, eventuell tilgangsbegrensning og eventuell vesentlighet, og knytter den til planen som fant den. Idempotent på (utgave, identifikatorform, identifikator): den samme kilden funnet av to søk er én kandidat, og oppdagelsesveien til det første søket beholdes. Fra migrasjon 014c står hver plan som fant kilden, på workflow.monograph_candidate_source_plans med søket som fant den for den planen, slik at en kilde funnet av mange planer kan vurderes i hver av dem.';
+
+-- Vurderingen og utvalgsbeslutningen skrives for én plan. Leddet som vurderer,
+-- gjør det for sin egen søkeplan og dens behov; et annet ledd for en annen plan
+-- kan komme til noe annet, og begge står. Kildens samlede utfall følger av dem.
+drop function workflow.appraise_monograph_candidate_source(uuid, boolean, text, uuid);
+
+create function workflow.appraise_monograph_candidate_source(
+  p_candidate_id uuid,
+  p_plan_id uuid,
+  p_could_change_conclusion boolean,
+  p_materiality_reason text,
+  p_agent_run_id uuid
+)
+  returns void
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_reason text := nullif(btrim(coalesce(p_materiality_reason, '')), '');
+begin
+  if coalesce(p_could_change_conclusion, false) and v_reason is null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'En kilde som kan endre hovedkonklusjonen, må ha en begrunnelse.',
+      hint = 'Vesentligheten skal begrunnes og kontrolleres separat (SOURCE_POLICY.md §8.1). Uten begrunnelsen ville porten stått på et utsagn ingen kunne etterprøve.';
+  end if;
+
+  update workflow.monograph_candidate_source_plans l
+  set could_change_conclusion = coalesce(p_could_change_conclusion, false),
+      materiality_reason = case when coalesce(p_could_change_conclusion, false)
+                                then v_reason end,
+      decided_by_agent_run_id = case when l.decided_by_actor_id is null
+                                     then coalesce(l.decided_by_agent_run_id, p_agent_run_id)
+                                     else l.decided_by_agent_run_id end
+  where l.candidate_source_id = p_candidate_id and l.plan_id = p_plan_id;
+
+  if not found then
+    raise exception using
+      errcode = 'no_data_found',
+      message = 'Kandidatkilden er ikke funnet av et søk på denne søkeplanen.';
+  end if;
+end;
+$$;
+
+comment on function workflow.appraise_monograph_candidate_source(uuid, uuid, boolean, text, uuid) is
+  'Registrerer den semantiske vurderingen av om én kandidatkilde med rimelighet kan endre hovedkonklusjonen for én søkeplan, med begrunnelsen. Det maskinelle søket kan ikke avgjøre dette — det leser en treffliste — og vurderingen er nettopp det som hindrer at søket avsluttes for tidlig (SOURCE_POLICY.md §8.1). Fra migrasjon 014c står vurderingen per plan: en kilde som er sentral for ett spørsmål, er ikke nødvendigvis det for et annet.';
+
+revoke execute on function workflow.appraise_monograph_candidate_source(uuid, uuid, boolean, text, uuid) from public;
+
+drop function workflow.decide_monograph_candidate_source(
+  uuid, workflow.monograph_candidate_decision, text, uuid, uuid);
+
+create function workflow.decide_monograph_candidate_source(
+  p_candidate_id uuid,
+  p_plan_id uuid,
+  p_decision workflow.monograph_candidate_decision,
+  p_reason text,
+  p_actor_id uuid,
+  p_agent_run_id uuid
+)
+  returns void
+  language plpgsql
+  set search_path = ''
+as $$
+declare
+  v_candidate workflow.monograph_candidate_sources;
+  v_reason text := nullif(btrim(coalesce(p_reason, '')), '');
+begin
+  select c.* into v_candidate
+  from workflow.monograph_candidate_sources c
+  where c.id = p_candidate_id
+  for update;
+
+  if not found then
+    raise exception using
+      errcode = 'no_data_found',
+      message = 'Kandidatkilden finnes ikke.';
+  end if;
+
+  -- En tilgangsbegrenset kilde kan ikke ekskluderes. Regelen står også på
+  -- radene; her sies den med en setning et menneske kan lese.
+  if p_decision = 'excluded' and v_candidate.access_limited then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = 'En kilde med registrert tilgangsbegrensning kan ikke ekskluderes.',
+      hint = 'En betalingsmur er en tilgangsbegrensning og ikke en faglig eksklusjonsgrunn (SOURCE_POLICY.md §5). Kilden hører under «avventer tilgang» til grunnlaget er hentet eller en faglig grunn faktisk finnes.';
+  end if;
+
+  -- Én plan, eller — for redaktørens beslutning om utgaven — hver plan kilden
+  -- står på.
+  update workflow.monograph_candidate_source_plans l
+  set decision = p_decision,
+      decision_reason = v_reason,
+      decided_by_actor_id = p_actor_id,
+      decided_by_agent_run_id = p_agent_run_id,
+      decided_at = case when p_decision = 'proposed' then null else now() end
+  where l.candidate_source_id = p_candidate_id
+    and (p_plan_id is null or l.plan_id = p_plan_id);
+
+  if found then
+    return;
+  end if;
+
+  if p_plan_id is not null then
+    raise exception using
+      errcode = 'no_data_found',
+      message = 'Kandidatkilden er ikke funnet av et søk på denne søkeplanen.';
+  end if;
+
+  -- En kilde uten en plan — lagt til utenom et søk — bærer beslutningen selv.
+  update workflow.monograph_candidate_sources
+  set decision = p_decision,
+      decision_reason = v_reason,
+      decided_by_actor_id = p_actor_id,
+      decided_by_agent_run_id = p_agent_run_id,
+      decided_at = case when p_decision = 'proposed' then null else now() end
+  where id = p_candidate_id;
+end;
+$$;
+
+comment on function workflow.decide_monograph_candidate_source(uuid, uuid, workflow.monograph_candidate_decision, text, uuid, uuid) is
+  'Registrerer utvalgsbeslutningen om én kandidatkilde med sin begrunnelse og sitt opphav — for én søkeplan når planen er oppgitt, og ellers, som redaktørens beslutning om utgaven, for hver plan kilden står på. Kildens samlede utfall utledes av planenes (workflow.sync_monograph_candidate_appraisal), slik at en eksklusjon for én avgrensning ikke overstyrer at en annen plan har valgt kilden. Avviser en eksklusjon av en kilde med registrert tilgangsbegrensning: en betalingsmur er en tilgangsbegrensning og ikke en faglig eksklusjonsgrunn (SOURCE_POLICY.md §5).';
+
+revoke execute on function workflow.decide_monograph_candidate_source(uuid, uuid, workflow.monograph_candidate_decision, text, uuid, uuid) from public;
+
+create or replace function api.decide_monograph_candidate(
+  p_candidate_reference text,
+  p_decision text,
+  p_reason text
+)
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = ''
+as $$
+declare
+  v_actor_id uuid;
+  v_candidate workflow.monograph_candidate_sources;
+  v_decision workflow.monograph_candidate_decision;
+begin
+  v_actor_id := knowledge.assert_editor_authorized();
+
+  select c.* into v_candidate
+  from workflow.monograph_candidate_sources c
+  where c.reference = p_candidate_reference;
+
+  if not found then
+    raise exception using
+      errcode = 'no_data_found',
+      message = 'Kandidatkilden finnes ikke.';
+  end if;
+
+  begin
+    v_decision := p_decision::workflow.monograph_candidate_decision;
+  exception
+    when invalid_text_representation then
+      raise exception using
+        errcode = 'invalid_parameter_value',
+        message = format('%L er ikke en utvalgsbeslutning.', p_decision);
+  end;
+
+  perform workflow.decide_monograph_candidate_source(
+    v_candidate.id, null, v_decision, p_reason, v_actor_id, null);
+
+  return jsonb_build_object(
+    'reference', v_candidate.reference,
+    'decision', v_decision::text,
+    'title', v_candidate.title);
+end;
+$$;
+
+comment on function api.decide_monograph_candidate(text, text, text) is
+  'En redaktørs utvalgsbeslutning om én kandidatkilde for utgaven: velg den til innhenting, inkluder den for en navngitt bruk, ekskluder den med en faglig grunn, eller sett den som avventer tilgang eller avklaring. Beslutningen gjelder hver søkeplan kilden står på (migrasjon 014c). En kilde med registrert tilgangsbegrensning kan ikke ekskluderes. Krever editor-mandat.';
 
 -- ----------------------------------------------------------------------------
 -- 8. Sporets tilstand, ført mot registeret per profil

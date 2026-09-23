@@ -136,6 +136,41 @@ describe('runMonographDiscovery', () => {
     expect(report.tasksOpened).toBe(1)
   })
 
+  // En kjører som mangler en metode databasen kjenner, er en utrullingsfeil.
+  // Lukket runden seg likevel, ville den blitt «utilgjengelig» uten at en eneste
+  // tjeneste var spurt — og sporet ville blitt gitt opp på en feil i koden.
+  it('lar runden stå åpen, uten ett søk, når kjøreren mangler en metode den ber om', async () => {
+    const closeRequest = vi.fn()
+    const { api: port, searches } = api({
+      closeRequest,
+      work: async () => [
+        {
+          ...PLAN,
+          requests: [
+            request({
+              methods: [
+                { platform: 'Europe PMC', method: 'keyword' },
+                { platform: 'Europe PMC', method: 'finnes_ikke' },
+              ],
+            }),
+          ],
+        },
+      ],
+    })
+    const fetcher = vi.fn(recorded('europe-pmc-sertraline.json'))
+    const report = await runMonographDiscovery(port, {
+      methods: [keyword('Europe PMC')],
+      politeness: false,
+      fetcher,
+    })
+
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(searches).toHaveLength(0)
+    expect(closeRequest).not.toHaveBeenCalled()
+    expect(report.problems.join(' ')).toContain('finnes_ikke')
+    expect(report.problems.join(' ')).toContain('runden står åpen')
+  })
+
   it('tar høyst så mange planer som kjøringen er bedt om', async () => {
     const many = Array.from({ length: 8 }, () => PLAN)
     const { api: port } = api({ work: async () => many })
@@ -379,28 +414,6 @@ describe('søkemetodene runden bestilte', () => {
     // Oversiktsfilteret dekker oversiktssporet og ikke det bibliografiske: det
     // er et annet søk enn fritekstsøket, selv mot den samme tjenesten.
     expect(searches[0]?.trackCodes).toEqual(['systematic_review_search'])
-  })
-
-  it('sier fra om en metode databasen kjenner og kjøreren ikke har, og lukker runden likevel', async () => {
-    const {
-      api: port,
-      searches,
-      closed,
-    } = api({
-      work: async () => [
-        {
-          ...PLAN,
-          requests: [request({ methods: [{ platform: 'Cochrane Library', method: 'central' }] })],
-        },
-      ],
-    })
-    const report = await runMonographDiscovery(port, {
-      fetcher: recorded('pubmed-sertraline.json'),
-      politeness: false,
-    })
-    expect(searches).toHaveLength(0)
-    expect(report.problems.join(' ')).toContain('Cochrane Library (central)')
-    expect(closed).toHaveLength(1)
   })
 
   it('følger bare de sentrale kildene runden navnga', async () => {

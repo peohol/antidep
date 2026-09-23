@@ -8,7 +8,10 @@
 --   * en kandidatkilde flere planer finner, er bundet til hver plan og til
 --     søket på den planen som fant den,
 --   * en søkevei som ikke svarte, er en begrensning og aldri null treff,
---   * en avkortet treffliste kan ikke lukke dekningen, og
+--   * hver plan vurderer en delt kilde for sin egen avgrensning, og hver
+--     sentral kilde følges — også når sporet alt er dekket,
+--   * en avkortet treffliste kan ikke lukke dekningen, heller ikke av et annet
+--     slag søk på den samme plattformen, og
 --   * dekningskontrollen er et atskilt ledd: den arver ikke generatorens søk,
 --     og generatorens søk gjør den ikke uavhengig.
 --
@@ -17,7 +20,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(21);
+select plan(33);
 
 insert into auth.users (id, email)
 values ('98000000-0000-4000-8000-00000000000a', 'redaktor-980@test.invalid');
@@ -228,6 +231,172 @@ select is(
 );
 
 -- ===========================================================================
+-- Del 2b — Hver plan vurderer kilden for sin egen avgrensning
+-- ===========================================================================
+-- Den samme oversikten kan være sentral for effektspørsmålet og uten betydning
+-- for bivirkningen. En felles beslutning ville latt den siste planen som
+-- vurderte kilden, skrive over de andres.
+create function pg_temp.plan_id(p_label text) returns uuid language sql stable as $$
+  select p.id from workflow.monograph_search_plans p
+  where p.reference = (select value from refs where label = p_label);
+$$;
+create function pg_temp.kilde(p_value text) returns uuid language sql stable as $$
+  select c.id from workflow.monograph_candidate_sources c where c.identifier_value = p_value;
+$$;
+
+select workflow.appraise_monograph_candidate_source(
+  pg_temp.kilde('10.1000/980-felles'), pg_temp.plan_id('p_eff'), true,
+  'Den eneste oversikten som rapporterer effekten for nettopp denne avgrensningen.', null);
+select workflow.decide_monograph_candidate_source(
+  pg_temp.kilde('10.1000/980-felles'), pg_temp.plan_id('p_ae'), 'excluded',
+  'Handler ikke om bivirkningene denne planen spør om.',
+  'ac980000-0000-4000-8000-00000000000a', null);
+
+select bag_eq(
+  $$
+    select p.reference as plan_reference, l.decision::text as decision,
+           l.could_change_conclusion as material
+    from workflow.monograph_candidate_source_plans l
+    join workflow.monograph_search_plans p on p.id = l.plan_id
+    where l.candidate_source_id = pg_temp.kilde('10.1000/980-felles')
+  $$,
+  $$
+    values ((select value from refs where label = 'p_eff'), 'proposed', true),
+           ((select value from refs where label = 'p_ae'), 'excluded', false)
+  $$,
+  'hver plan har sin egen vurdering av den samme kilden'
+);
+select is(
+  (select c.decision::text || '|' || c.could_change_conclusion::text
+   from workflow.monograph_candidate_sources c
+   where c.id = pg_temp.kilde('10.1000/980-felles')),
+  'proposed|true',
+  'og én plans eksklusjon gjør ikke kilden ekskludert for utgaven: en annen plan har ikke tatt stilling'
+);
+select is(
+  (select jsonb_build_array(
+     jsonb_array_length(workflow.monograph_discovery_task_input(pg_temp.plan_id('p_eff'),
+       'source_quality_assessment') -> 'control_task' -> 'excluded_candidates'),
+     jsonb_array_length(workflow.monograph_discovery_task_input(pg_temp.plan_id('p_ae'),
+       'source_quality_assessment') -> 'control_task' -> 'excluded_candidates'))),
+  jsonb_build_array(0, 1),
+  'kontrollen av effektplanen ser ingen eksklusjon; kontrollen av bivirkningsplanen ser sin egen'
+);
+
+select workflow.decide_monograph_candidate_source(
+  pg_temp.kilde('10.1000/980-felles'), pg_temp.plan_id('p_eff'), 'included',
+  'Inkludert for effektstørrelsen i den avgrensede populasjonen.',
+  'ac980000-0000-4000-8000-00000000000a', null);
+
+select is(
+  (select c.decision::text || '|' ||
+          (select l.decision::text from workflow.monograph_candidate_source_plans l
+           where l.candidate_source_id = c.id and l.plan_id = pg_temp.plan_id('p_ae'))
+   from workflow.monograph_candidate_sources c
+   where c.id = pg_temp.kilde('10.1000/980-felles')),
+  'included|excluded',
+  'en kilde én plan inkluderer, hentes for utgaven — uten at den andre planens eksklusjon er skrevet over'
+);
+
+insert into refs (label, value)
+select 'felles', c.reference from workflow.monograph_candidate_sources c
+where c.identifier_value = '10.1000/980-felles';
+
+select set_config('request.jwt.claims',
+                  '{"sub":"98000000-0000-4000-8000-00000000000a"}', true);
+set local role authenticated;
+select api.decide_monograph_candidate(
+  (select value from refs where label = 'felles'),
+  'awaiting_clarification',
+  'Redaktøren vil avklare om oversikten dekker begge avgrensningene.');
+reset role;
+
+select is(
+  (select array_agg(distinct l.decision::text)
+   from workflow.monograph_candidate_source_plans l
+   where l.candidate_source_id = pg_temp.kilde('10.1000/980-felles')),
+  array['awaiting_clarification'],
+  'redaktørens beslutning om utgaven gjelder hver plan kilden står på'
+);
+
+-- ===========================================================================
+-- Del 2c — Hver sentral kilde følges, også når sporet alt er dekket
+-- ===========================================================================
+-- Tolv nye kilder kildeoppdagelsen vurderer som mulig konklusjonsendrende for
+-- effektplanen. En runde følger høyst ti; resten får sin egen runde, og ingen
+-- kilde blir liggende fordi den ikke fikk plass.
+select workflow.record_monograph_candidate_source(
+  pg_temp.plan_id('p_eff'),
+  (select s.id from workflow.monograph_searches s
+   where s.plan_id = pg_temp.plan_id('p_eff') order by s.registration_ordinal limit 1),
+  'doi', '10.1000/980-sentral-' || n, 'Sentral kilde ' || n || ' (prøve 980)',
+  null, null, 2020, 'Europe PMC, søk gjennom det åpne REST-endepunktet', false, null,
+  true, 'Kan endre konklusjonen for effektplanen (prøve 980).',
+  null, 'ac980000-0000-4000-8000-00000000000a')
+from generate_series(1, 12) as n;
+
+select is(
+  workflow.open_monograph_machine_rounds(
+    pg_temp.plan_id('p_eff'), 2, 'selection_opened'::workflow.monograph_search_request_origin,
+    'ac980000-0000-4000-8000-00000000000a', null),
+  6,
+  'tretten sentrale kilder gir to runder per kildefølgende metode: ti og tre'
+);
+select is(
+  (select count(distinct seed)::integer
+   from workflow.monograph_search_requests r, unnest(r.seed_identifiers) as seed
+   where r.plan_id = pg_temp.plan_id('p_eff')
+     and r.platform = 'Europe PMC' and r.method = 'references'),
+  13,
+  'og hver av dem står i en runde'
+);
+
+-- Referanselisten til den første følges, og sporet er dermed dekket. En ny
+-- sentral kilde etter det skal likevel følges.
+select workflow.record_monograph_search(
+  pg_temp.plan_id('p_eff'), 'Europe PMC', 'Referanselisten til doi:10.1000/980-sentral-1',
+  null, now(), 5, 5, false, null, 'executed', null, 'machine_executed',
+  'https://www.ebi.ac.uk/europepmc/webservices/rest/MED/1/references?format=json',
+  'sha256:' || repeat('9', 64), array['reference_lists'], null,
+  'ac980000-0000-4000-8000-00000000000a',
+  (select r.id from workflow.monograph_search_requests r
+   where r.plan_id = pg_temp.plan_id('p_eff')
+     and r.platform = 'Europe PMC' and r.method = 'references'
+   order by r.created_at limit 1),
+  'references');
+select workflow.record_monograph_candidate_source(
+  pg_temp.plan_id('p_eff'), null,
+  'doi', '10.1000/980-sentral-sen', 'En sentral kilde valgt etter at sporet var dekket (prøve 980)',
+  null, null, 2021, 'Europe PMC, søk gjennom det åpne REST-endepunktet', false, null,
+  true, 'Kan endre konklusjonen for effektplanen (prøve 980).',
+  null, 'ac980000-0000-4000-8000-00000000000a');
+
+select is(
+  (select a.state::text from workflow.monograph_search_track_attempts a
+   join knowledge.monograph_search_tracks k on k.id = a.track_id
+   where a.plan_id = pg_temp.plan_id('p_eff') and k.code = 'reference_lists'),
+  'covered',
+  'referanselistesporet er dekket'
+);
+select is(
+  workflow.open_monograph_machine_rounds(
+    pg_temp.plan_id('p_eff'), 3, 'selection_opened'::workflow.monograph_search_request_origin,
+    'ac980000-0000-4000-8000-00000000000a', null),
+  3,
+  'og den nye kilden følges likevel, med hver kildefølgende metode'
+);
+select bag_eq(
+  $$
+    select r.platform || '|' || r.method
+    from workflow.monograph_search_requests r
+    where r.plan_id = pg_temp.plan_id('p_eff') and r.search_round = 3
+      and 'doi:10.1000/980-sentral-sen' = any (r.seed_identifiers)
+  $$,
+  $$values ('Europe PMC|references'), ('Europe PMC|citations'), ('Crossref|references')$$,
+  'også referanselistene, selv om sporet deres alt var dekket'
+);
+
+-- ===========================================================================
 -- Del 3 — En søkevei som ikke svarte, er ikke null treff
 -- ===========================================================================
 set local role anon;
@@ -365,6 +534,40 @@ select alike(
   (select payload ->> 'closure_problem' from svar where label = 'reg_hel'),
   '%separate kontrollen%',
   'først en hel lesning flytter porten videre — til dekningskontrollen, og ikke til en redaktør'
+);
+
+-- Og et senere søk dekker bare resten av det samme slaget søk. Et kort
+-- oversiktssøk i PubMed sier ingenting om resten av et avkortet fritekstsøk.
+select workflow.record_monograph_search(
+  pg_temp.plan_id('p_reg'), 'PubMed', 'sertraline', null, now(), 5000, 25, true,
+  'Første side av 5000 treff.', 'executed', null, 'machine_executed',
+  'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=sertraline',
+  'sha256:' || repeat('7', 64), array[]::text[], null,
+  'ac980000-0000-4000-8000-00000000000a', null, 'keyword');
+select workflow.record_monograph_search(
+  pg_temp.plan_id('p_reg'), 'PubMed', 'sertraline AND systematic[sb]', null, now(), 4, 4, false,
+  null, 'executed', null, 'machine_executed',
+  'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=sertraline+systematic',
+  'sha256:' || repeat('8', 64), array[]::text[], null,
+  'ac980000-0000-4000-8000-00000000000a', null, 'systematic_review_filter');
+
+select alike(
+  workflow.monograph_search_closure_problem(pg_temp.plan_id('p_reg')),
+  '%avkortet på PubMed (keyword)%',
+  'et helt lest oversiktssøk lukker ikke et avkortet fritekstsøk på den samme plattformen'
+);
+
+select workflow.record_monograph_search(
+  pg_temp.plan_id('p_reg'), 'PubMed', 'sertraline AND "drug shortage"', null, now(), 3, 3, false,
+  null, 'executed', null, 'machine_executed',
+  'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=sertraline+shortage',
+  'sha256:' || repeat('6', 64), array[]::text[], null,
+  'ac980000-0000-4000-8000-00000000000a', null, 'keyword');
+
+select alike(
+  workflow.monograph_search_closure_problem(pg_temp.plan_id('p_reg')),
+  '%separate kontrollen%',
+  'mens et målrettet, helt lest fritekstsøk gjør det'
 );
 
 -- ===========================================================================
