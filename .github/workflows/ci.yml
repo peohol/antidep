@@ -134,7 +134,9 @@ jobs:
       # som ingen unikhetskrav fanger, fordi radene de to øktene skriver, ikke er
       # like nok til å kollidere. Det samme gjelder en redaksjonell beslutning
       # tatt mens grunnlaget endrer seg under den. Denne kjører øktene mot
-      # hverandre (migrasjon 012b, 012c, 012d).
+      # hverandre (migrasjon 012b, 012c, 012d). Det samme gjelder de to siste
+      # søkene i en maskinell søkerunde lukket samtidig: de skal gi nøyaktig én
+      # vurderingsoppgave (migrasjon 014g).
       #
       # Den står sist med vilje. Prøven bestiller og laster ikke opp, og selv om
       # den rydder opp etter seg, er den den eneste kjøringen her som med vilje

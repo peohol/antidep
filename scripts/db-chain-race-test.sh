@@ -1487,6 +1487,220 @@ SQL
   printf 'ok       %s\n' "$navn"
 }
 
+# ============================================================================
+# Prøve 10 — de to siste søkene i en runde lukkes samtidig, og gir én oppgave
+#
+# Migrasjon 014g. Vurderingsoppgaven for en maskinell søkerunde legges inn av
+# den lukkingen som finner runden fullført. Lukkes de to siste søkene i hver
+# sin transaksjon samtidig, ville begge — uten låsen på subjektet — ha sett det
+# andre søket som ventende og latt være: runden ville stått ferdig uten noen
+# oppgave, som er nøyaktig det produksjonen viste. Med låsen venter den som
+# kommer sist, og leser runden etter at den første har committet.
+#
+# Prøven legger to nye søk inn i runden en åpen plan står i, slik registeret
+# gjør når en ny søkevei åpner seg, og lukker dem i hver sin økt med hver sin
+# kjøring (en kjøring låses av den som bruker den, og da ville økt B stått i kø
+# på kjøringen og ikke på subjektet). Etterpå skal runden ha nøyaktig én
+# gjeldende oppgave, for hele grunnlaget, og oppgaven for det gamle grunnlaget
+# skal være trukket tilbake — ikke slettet.
+#
+# Finnes ingen åpen søkeplan, bestiller prøven sertralin. Bestillingen står
+# igjen etter kjøringen; det er én grunn til at CI kjører denne prøven sist.
+# ============================================================================
+proeve10() {
+  local navn='to samtidige lukkinger av en søkerunde gir én oppgave'
+  local styr="$arbeid/styr10" a_log="$arbeid/a10.log" b_log="$arbeid/b10.log"
+  local identitet='agent-identity:source-discovery-01'
+  local plan hemmelighet kjoring_f kjoring_s1 kjoring_s2 gammel foer sok_a sok_b
+
+  if [ "$(les "select count(*) from workflow.monograph_search_plans
+               where closed_at is null and paused_at is null")" = "0" ]; then
+    psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/fikstur10.log" 2>&1 <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+set local role authenticated;
+select api.order_monograph('sertralin', 'Kappløpsprøven ${kjoring:0:8}.');
+commit;
+SQL
+    [ $? -eq 0 ] || feil "$navn" 'Sertralin lot seg ikke bestille.' "$arbeid/fikstur10.log"
+  fi
+
+  if [ "$(les "select (provenance.current_role_model('source_discovery')).id is null")" = "t" ]; then
+    psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/fikstur10.log" 2>&1 <<SQL
+begin;
+select set_config('request.jwt.claims', '{"sub":"$bruker"}', true);
+set local role authenticated;
+select api.assign_agent_role_model(
+  'source_discovery', 'kappløpsprøven', 'Kappløpsmodell', 'ikke-eksponert', 'not_exposed',
+  'Kappløpsprøven ${kjoring:0:8}.', 'Kappløpsprøven: generatorens modell.');
+commit;
+SQL
+    [ $? -eq 0 ] || feil "$navn" 'Generatorens modell lot seg ikke tildele.' "$arbeid/fikstur10.log"
+  fi
+
+  plan=$(les "select id from workflow.monograph_search_plans
+              where closed_at is null and paused_at is null
+              order by reference limit 1")
+  hemmelighet=$(les "select provenance.issue_agent_identity_credential(
+                       '$identitet', 'human:kapplop-${kjoring:0:8}')")
+  kjoring_f=$(les "select api.begin_agent_run('$identitet', '$hemmelighet',
+                     'source_discovery', 'antidep', 'search-execution-and-registration', '1.0.0',
+                     'source-discovery/machine-execution/2', 'antidep-evidence/1',
+                     jsonb_build_object('search_plan_reference',
+                       (select reference from workflow.monograph_search_plans where id = '$plan')))
+                   from generate_series(1, 3)" | tr '\n' ' ')
+  read -r kjoring_f kjoring_s1 kjoring_s2 <<< "$kjoring_f"
+  [ -n "$kjoring_s2" ] || feil "$navn" 'Kjøringene for kildeoppdagelsen lot seg ikke starte.'
+
+  # Runden planen står i, lukkes til den har oppgaven sin — og lukkingen kan selv
+  # åpne nye søk (registeret), så løkken går til ingen står ventende.
+  psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/fikstur10.log" 2>&1 <<SQL
+do \$\$
+declare
+  v_ref text;
+  v_guard integer := 0;
+begin
+  loop
+    select r.reference into v_ref
+    from workflow.monograph_search_requests r
+    join workflow.monograph_search_plans p on p.id = r.plan_id
+    where p.id = '$plan'
+      and r.plan_version = p.plan_version
+      and r.requested_for_role = 'source_discovery'
+      and r.state = 'pending'
+    order by r.reference
+    limit 1;
+    exit when v_ref is null;
+    perform api.close_monograph_search_request('$identitet', '$hemmelighet', '$kjoring_f', v_ref);
+    v_guard := v_guard + 1;
+    if v_guard > 500 then
+      raise exception 'Runden ble aldri lukket.';
+    end if;
+  end loop;
+end
+\$\$;
+SQL
+  [ $? -eq 0 ] || feil "$navn" 'Runden lot seg ikke lukke i fiksturen.' "$arbeid/fikstur10.log"
+
+  local aktive="
+    select j.id from workflow.pipeline_jobs j
+    join workflow.agent_handoff_jobs h on h.pipeline_job_id = j.id
+    where j.agent_role = 'source_discovery'
+      and j.input_manifest ->> 'search_plan_id' = '$plan'
+      and j.state <> 'succeeded'
+      and not workflow.pipeline_job_withdrawn(j.id)
+      and not exists (select 1 from workflow.agent_handoff_imports i where i.pipeline_job_id = j.id)"
+  local alle="select count(*) from workflow.pipeline_jobs
+              where agent_role = 'source_discovery' and input_manifest ->> 'search_plan_id' = '$plan'"
+
+  gammel=$(les "$aktive")
+  [ -n "$gammel" ] && [ "$(printf '%s\n' "$gammel" | wc -l)" = "1" ] || feil "$navn" \
+    "Runden i fiksturen har ikke nøyaktig én gjeldende oppgave («$gammel»)."
+  foer=$(les "$alle")
+
+  # To nye søk i runden planen står i. Registeret åpner dem med den samme
+  # funksjonen, med `registry_opened`.
+  # Referansene leses i en egen setning: søkene setningen selv la inn, er ikke
+  # synlige for den.
+  local nye
+  nye=$(les "select workflow.open_monograph_search_request(
+               p.id, 'source_discovery', p.discovery_round, 'registry_opened', 'targeted',
+               'Kappløpsprøven: registeret har fått en ny søkevei i runden planen står i.',
+               null, null, array[]::text[], array['kapplop-' || s.bokstav || '-${kjoring:0:8}'],
+               array[]::text[], null, null, p.created_by_actor_id)
+             from workflow.monograph_search_plans p
+             cross join (values ('a'), ('b')) as s(bokstav)
+             where p.id = '$plan'
+             order by s.bokstav" | tr '\n' ',')
+  nye=$(les "select string_agg(reference, ' ' order by array_position(
+                 string_to_array('${nye%,}', ',')::uuid[], id))
+             from workflow.monograph_search_requests
+             where id = any (string_to_array('${nye%,}', ',')::uuid[])")
+  read -r sok_a sok_b <<< "$nye"
+  [ -n "$sok_b" ] || feil "$navn" 'De to nye søkene lot seg ikke åpne.'
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  # Økt A lukker det ene søket og holder transaksjonen åpen. Det andre står
+  # fortsatt ventende for den, så den legger ikke inn noen oppgave — men den
+  # holder subjektlåsen til den committer.
+  (
+    cat <<SQL
+begin;
+select 'A:' || (api.close_monograph_search_request(
+  '$identitet', '$hemmelighet', '$kjoring_s1', '$sok_a') ->> 'enqueued_job');
+\echo KLAR
+\o /dev/null
+SQL
+    cat "$styr"
+  ) | psql "$DB_URL" -X -tA -v ON_ERROR_STOP=1 > "$a_log" 2>&1 &
+  okt_a_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 150); do
+    grep -q 'KLAR' "$a_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$a_log" 2>/dev/null || feil "$navn" 'Økt A kom ikke i gang.' "$a_log"
+
+  # Økt B lukker det siste søket i runden, samtidig.
+  psql "$DB_URL" -X -tA -v ON_ERROR_STOP=1 > "$b_log" 2>&1 <<SQL &
+begin;
+set local statement_timeout = '30s';
+select 'B:' || (api.close_monograph_search_request(
+  '$identitet', '$hemmelighet', '$kjoring_s2', '$sok_b') ->> 'enqueued_job');
+commit;
+SQL
+  okt_b_pid=$!
+
+  vent_paa_blokkering "$navn"
+
+  printf 'commit;\n' >&9
+  exec 9>&-
+  wait "$okt_a_pid" 2>/dev/null; local a_status=$?
+  okt_a_pid=""
+  wait "$okt_b_pid" 2>/dev/null; local b_status=$?
+  okt_b_pid=""
+  rm -f "$styr"
+
+  [ "$a_status" -eq 0 ] || feil "$navn" 'Økt A kom ikke gjennom.' "$a_log"
+  [ "$b_status" -eq 0 ] || feil "$navn" 'Økt B kom ikke gjennom.' "$b_log"
+
+  # Den som kom først, så et søk som ventet. Den som ventet på låsen, så begge
+  # lukket og la inn oppgaven.
+  grep -qx 'A:false' "$a_log" && grep -qx 'B:true' "$b_log" || feil "$navn" \
+    'Det var ikke økten som ventet på låsen, som la inn oppgaven.' "$b_log"
+
+  local naa
+  naa=$(les "$aktive")
+  [ -n "$naa" ] && [ "$(printf '%s\n' "$naa" | wc -l)" = "1" ] || feil "$navn" \
+    "Runden har ikke nøyaktig én gjeldende oppgave etter de to lukkingene («$naa»)."
+  [ "$(les "$alle")" = "$((foer + 1))" ] || feil "$navn" \
+    'De to lukkingene la inn noe annet enn nøyaktig én ny oppgave.'
+
+  # Den nye gjelder hele grunnlaget, og den gamle står som tilbaketrukket historikk.
+  local tilstand
+  tilstand=$(les "select (j.input_manifest -> 'search_basis'
+                          = workflow.monograph_search_basis(p.id, p.plan_version, 'source_discovery'))
+                         || '/' || (workflow.monograph_search_task_supersession(j) is null)
+                         || '/' || workflow.pipeline_job_withdrawn('$gammel')
+                  from workflow.pipeline_jobs j
+                  join workflow.monograph_search_plans p on p.id = '$plan'
+                  where j.id = '$naa'")
+  [ "$tilstand" = "true/true/true" ] || feil "$navn" \
+    "Den nye oppgaven gjelder ikke hele grunnlaget, eller den gamle er ikke trukket tilbake («$tilstand»)."
+
+  # Kjøringene avsluttes, så de ikke står åpne etter prøven.
+  les "select api.complete_agent_run('$identitet', '$hemmelighet', k.id, 'succeeded',
+         jsonb_build_object('mode', 'race-probe'))
+       from (values ('$kjoring_f'::uuid), ('$kjoring_s1'::uuid), ('$kjoring_s2'::uuid)) as k(id)" \
+    > /dev/null || feil "$navn" 'Kjøringene lot seg ikke avslutte.'
+
+  printf 'ok       %s\n' "$navn"
+}
+
 printf 'Samtidighetsprøver for de automatiske kjedeovergangene\n'
 proeve1
 proeve2
@@ -1497,4 +1711,5 @@ proeve6
 proeve7
 proeve8
 proeve9
+proeve10
 printf 'Alle prøvene bestod.\n'

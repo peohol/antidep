@@ -210,7 +210,13 @@ begin
     new.text_extraction_transform := 'antidep-reading-order@2';
   end if;
 
-  if v_prefix in ('340','400','440','460','470','480','490','580','590','600','610','620','630','660','670','680','690','700','710','760')
+  -- Bare de faste id-ene prøvene selv setter (for eksempel
+  -- 48000000-0000-4000-8000-000000000001). En tilfeldig id som tilfeldigvis
+  -- begynner med et av prefiksene, er en rad prøven la inn uten id, og den skal
+  -- stå som prøven skrev den: ellers ble omtrent én av 200 slike rader skrevet
+  -- om, og en prøve av hva som avvises eller godtas, feilet tilfeldig.
+  if (v_prefix in ('340','400','440','460','470','480','490','580','590','600','610','620','630','660','670','680','690','700','710','760')
+      and new.id::text ~ '^[0-9a-f]{8}-0000-4000-8000-')
      or v_title in ('Immutabilitetstestkilde', 'Upublisert testkilde for 400',
                     'Serialiseringstestkilde') then
     new.representation := 'full_text';
