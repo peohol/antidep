@@ -283,10 +283,27 @@ export async function runMonographDiscovery(
         ),
       }))
       const missing = methods.filter((pair) => pair.method === undefined)
-      if (missing.length > 0) {
+      // Og en kilde metoden ikke kan slå opp, forkastes ikke stille. Databasen
+      // avviser slike runder (migrasjon 014c); står en likevel her, er det den
+      // samme utrullingsfeilen, og den behandles likt.
+      const unsupported = methods.flatMap(({ method }) =>
+        method === undefined || !method.requiresSeeds
+          ? []
+          : request.seedIdentifiers
+              .filter(
+                (seed) => !method.seedIdentifierKinds.some((kind) => seed.startsWith(`${kind}:`)),
+              )
+              .map((seed) => `${seed} (${method.platform}, ${method.method})`),
+      )
+      if (missing.length > 0 || unsupported.length > 0) {
         for (const { entry } of missing) {
           problems.push(
             `Kjøreren har ikke søkemetoden ${entry.platform} (${entry.method}) som én søkerunde ba om (${plan.profileCode}); runden står åpen.`,
+          )
+        }
+        if (unsupported.length > 0) {
+          problems.push(
+            `Søkemetoden kan ikke slå opp kildene ${unsupported.join(', ')} som én søkerunde ba om (${plan.profileCode}); runden står åpen.`,
           )
         }
         continue

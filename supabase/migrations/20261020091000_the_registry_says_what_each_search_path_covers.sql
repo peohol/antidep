@@ -609,6 +609,7 @@ as $$
 declare
   v_resolved integer;
   v_seeded integer;
+  v_unsupported text;
 begin
   select count(*), count(*) filter (where rm.requires_seeds)
     into v_resolved, v_seeded
@@ -643,12 +644,31 @@ begin
       hint = 'Kilder å følge hører til metodene «references» og «citations».';
   end if;
 
+  -- Hver kilde må kunne slås opp av hver metode runden betyr. Crossref kjenner
+  -- bare DOI-er: en PubMed-identifikator sendt dit ville blitt stille
+  -- forkastet av kjøreren, og runden ville stått som forsøkt — eller som utført,
+  -- når den også hadde en DOI — uten at kilden noen gang ble fulgt.
+  select string_agg(distinct seed || ' (' || rm.platform || ', ' || rm.method || ')', ', ')
+    into v_unsupported
+  from unnest(new.seed_identifiers) as seed
+  cross join workflow.monograph_request_methods(new.platform, new.method) rm
+  join knowledge.monograph_search_methods m
+    on m.platform = rm.platform and m.method = rm.method
+  where not (split_part(seed, ':', 1) = any (m.seed_identifier_kinds));
+
+  if v_unsupported is not null then
+    raise exception using
+      errcode = 'invalid_parameter_value',
+      message = format('Metoden kan ikke slå opp disse kildene: %s.', v_unsupported),
+      hint = 'Hver kildefølgende metode oppgir identifikatorformene den kan slå opp (knowledge.monograph_search_methods.seed_identifier_kinds). Navngi plattformen, eller følg kilden med en metode som kjenner identifikatoren — Europe PMC slår opp DOI, PMID og PMCID, Crossref bare DOI.';
+  end if;
+
   return new;
 end;
 $$;
 
 comment on function workflow.validate_monograph_search_request() is
-  'Avviser en maskinell søkeforespørsel som navngir en plattform eller metode registeret ikke kjenner, som blander metoder som følger kilder med metoder som søker, eller som ber om å følge kilder uten å si hvilke. Erstatter den skrevne plattformlisten i en CHECK: det er registeret som vet hva Antidep kaller (migrasjon 014c).';
+  'Avviser en maskinell søkeforespørsel som navngir en plattform eller metode registeret ikke kjenner, som blander metoder som følger kilder med metoder som søker, som ber om å følge kilder uten å si hvilke, eller som ber en metode følge en kilde med en identifikatorform metoden ikke kan slå opp. Erstatter den skrevne plattformlisten i en CHECK: det er registeret som vet hva Antidep kaller (migrasjon 014c).';
 
 revoke execute on function workflow.validate_monograph_search_request() from public;
 

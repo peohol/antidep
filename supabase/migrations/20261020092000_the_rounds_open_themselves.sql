@@ -1603,6 +1603,10 @@ as $$
                  from workflow.monograph_candidate_source_needs cn
                  join knowledge.monograph_needs n on n.id = cn.need_id
                  join knowledge.monograph_question_templates t on t.id = n.template_id
+                 -- Bare bruken for planens egne behov: bruken en annen plan har
+                 -- foreslått for sine, er den planens (migrasjon 014c).
+                 join workflow.monograph_search_plan_needs pn
+                   on pn.need_id = cn.need_id and pn.plan_id = p_plan.id
                  where cn.candidate_source_id = c.id))
              order by c.created_at), '[]'::jsonb)
       from workflow.monograph_candidate_sources c
@@ -1825,6 +1829,10 @@ begin
                           'proposed_use', cn.proposed_use) order by n.reference), '[]'::jsonb)
                  from workflow.monograph_candidate_source_needs cn
                  join knowledge.monograph_needs n on n.id = cn.need_id
+                 -- Bare bruken for planens egne behov: bruken en annen plan har
+                 -- foreslått for sine, er den planens (migrasjon 014c).
+                 join workflow.monograph_search_plan_needs pn
+                   on pn.need_id = cn.need_id and pn.plan_id = v_plan.id
                  where cn.candidate_source_id = c.id))
                order by c.created_at), '[]'::jsonb)
       from workflow.monograph_candidate_sources c

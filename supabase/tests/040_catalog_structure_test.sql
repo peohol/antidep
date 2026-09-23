@@ -160,6 +160,11 @@ select set_eq(
            -- hvilket søk. En kilde er unik per utgave, men hører til hver plan
            -- som fant den.
            ('monograph_candidate_source_plans'),
+           -- Migrasjon 014f: bruken av en kandidatkilde som faktisk er ønsket —
+           -- bare for behov på planer som selv har valgt kilden. En visning,
+           -- slik at innhentingen og registreringen av kildebruk leser den ene
+           -- definisjonen.
+           ('monograph_wanted_candidate_needs'),
            -- Migrasjon 013h: forespørselen om et myndighets-, preparat- eller
            -- retningslinjedokument, atskilt fra den forskningsfaglige.
            ('monograph_document_requests'),
@@ -173,7 +178,7 @@ select set_eq(
            -- forhåndsgodkjente kildene og de synlige avvikene.
            ('monograph_source_restrictions'), ('monograph_restriction_sources'),
            ('monograph_revision_proposals')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i, 013j, 013k, 013v og 014c'
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i, 013j, 013k, 013v og 014c, og visningen fra 014f'
 );
 select set_eq(
   $$

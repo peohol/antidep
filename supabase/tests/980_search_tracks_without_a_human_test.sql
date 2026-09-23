@@ -21,7 +21,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(33);
+select plan(38);
 
 insert into auth.users (id, email)
 values ('98000000-0000-4000-8000-00000000000a', 'redaktor-980@test.invalid');
@@ -297,6 +297,82 @@ select is(
    where c.id = pg_temp.kilde('10.1000/980-felles')),
   'included|excluded',
   'en kilde én plan inkluderer, hentes for utgaven — uten at den andre planens eksklusjon er skrevet over'
+);
+
+-- Og bruken følger planens egen beslutning. Bivirkningsplanen foreslo en bruk
+-- for sitt behov og ekskluderte kilden; effektplanen inkluderte den med en bruk
+-- for sitt. Effektplanens valg skal verken føre opp bivirkningsplanens bruk
+-- eller sette dens behov i arbeid.
+create temporary table behov on commit drop as
+  select 'ae'::text as label,
+         (select pn.need_id from workflow.monograph_search_plan_needs pn
+          where pn.plan_id = pg_temp.plan_id('p_ae') order by pn.need_id limit 1) as need_id
+  union all
+  select 'eff',
+         (select pn.need_id from workflow.monograph_search_plan_needs pn
+          where pn.plan_id = pg_temp.plan_id('p_eff') order by pn.need_id limit 1);
+create temporary table behov_for on commit drop as
+  select b.label, b.need_id, n.work_state::text as work_state
+  from behov b join knowledge.monograph_needs n on n.id = b.need_id;
+
+insert into workflow.monograph_candidate_source_needs (candidate_source_id, need_id, proposed_use)
+values
+  (pg_temp.kilde('10.1000/980-felles'), (select need_id from behov where label = 'ae'),
+   'Foreslått av bivirkningsplanen før den ekskluderte kilden.'),
+  (pg_temp.kilde('10.1000/980-felles'), (select need_id from behov where label = 'eff'),
+   'Effektstørrelsen i den avgrensede populasjonen.');
+
+select is(
+  (select array_agg(w.need_id)
+   from workflow.monograph_wanted_candidate_needs w
+   where w.candidate_source_id = pg_temp.kilde('10.1000/980-felles')),
+  array[(select need_id from behov where label = 'eff')],
+  'bare effektplanens bruk er ønsket: planen som ekskluderte kilden, får ikke sin bruk ført videre'
+);
+select isnt(
+  (select n.work_state::text from knowledge.monograph_needs n
+   where n.id = (select need_id from behov where label = 'eff')),
+  (select work_state from behov_for where label = 'eff'),
+  'innhentingen gikk for effektplanens behov'
+);
+select is(
+  (select n.work_state::text from knowledge.monograph_needs n
+   where n.id = (select need_id from behov where label = 'ae')),
+  (select work_state from behov_for where label = 'ae'),
+  'og innhentingen effektplanens valg utløste, rørte ikke bivirkningsplanens behov'
+);
+select is(
+  (select jsonb_build_array(
+     (select jsonb_agg(u ->> 'need_reference')
+      from jsonb_array_elements(workflow.monograph_discovery_task_input(pg_temp.plan_id('p_eff'),
+             'source_discovery') -> 'candidates') as c,
+           jsonb_array_elements(c -> 'uses') as u
+      where c ->> 'identifier_value' = '10.1000/980-felles'),
+     (select jsonb_agg(u ->> 'need_reference')
+      from jsonb_array_elements(workflow.monograph_discovery_task_input(pg_temp.plan_id('p_ae'),
+             'source_discovery') -> 'candidates') as c,
+           jsonb_array_elements(c -> 'uses') as u
+      where c ->> 'identifier_value' = '10.1000/980-felles'))),
+  jsonb_build_array(
+    jsonb_build_array((select n.reference from knowledge.monograph_needs n
+                       where n.id = (select need_id from behov where label = 'eff'))),
+    jsonb_build_array((select n.reference from knowledge.monograph_needs n
+                       where n.id = (select need_id from behov where label = 'ae')))),
+  'og hver plans oppgave viser bare bruken for planens egne behov'
+);
+
+-- Velger bivirkningsplanen siden kilden selv, tas dens behov med — selv om
+-- kildens samlede utfall ikke endres, fordi effektplanen alt hadde valgt den.
+select workflow.decide_monograph_candidate_source(
+  pg_temp.kilde('10.1000/980-felles'), pg_temp.plan_id('p_ae'), 'included',
+  'Ved nærmere vurdering dekker oversikten også bivirkningen.',
+  'ac980000-0000-4000-8000-00000000000a', null);
+
+select bag_eq(
+  $$select w.need_id from workflow.monograph_wanted_candidate_needs w
+    where w.candidate_source_id = pg_temp.kilde('10.1000/980-felles')$$,
+  $$select need_id from behov$$,
+  'når bivirkningsplanen selv inkluderer kilden, er dens bruk ønsket også'
 );
 
 insert into refs (label, value)

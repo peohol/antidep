@@ -179,6 +179,42 @@ describe('runMonographDiscovery', () => {
     )
   })
 
+  it('lar runden stå åpen når en kilde ikke kan slås opp av metoden, framfor å forkaste den stille', async () => {
+    const closeRequest = vi.fn()
+    const completeRun = vi.fn().mockResolvedValue(undefined)
+    const fetcher = vi.fn(recorded('europe-pmc-references.json'))
+    const { api: port, searches } = api({
+      closeRequest,
+      completeRun,
+      work: async () => [
+        {
+          ...PLAN,
+          requests: [
+            request({
+              platform: 'Crossref',
+              method: 'references',
+              methods: [{ platform: 'Crossref', method: 'references' }],
+              seedIdentifiers: ['doi:10.1000/x', 'pmid:12345678'],
+              trackCodes: ['reference_lists'],
+            }),
+          ],
+        },
+      ],
+    })
+    const report = await runMonographDiscovery(port, { politeness: false, fetcher })
+
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(searches).toHaveLength(0)
+    expect(closeRequest).not.toHaveBeenCalled()
+    expect(report.problems.join(' ')).toContain('pmid:12345678 (Crossref, references)')
+    expect(completeRun).toHaveBeenCalledWith(
+      'c'.repeat(8),
+      'failed',
+      expect.anything(),
+      expect.stringContaining('pmid:12345678'),
+    )
+  })
+
   // Et søk som ble utført, men ikke registrert, er en teknisk svikt. Lukket
   // runden seg, ville den stått som utført eller utilgjengelig på et grunnlag
   // søkeloggen ikke har, og den semantiske oppgaven ville blitt sluppet fram.
