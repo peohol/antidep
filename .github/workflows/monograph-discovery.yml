@@ -33,6 +33,12 @@
 # registreringstildeling og hver sin søkestrategi — generatoren søker bredt,
 # kontrollen målrettet per akse — og de kjøres som to atskilte steg.
 #
+# Hvert ledd tar dessuten igjen sine egne overganger før det henter arbeidet
+# (`api.resume_search_round_tasks`, migrasjon 014h): dekningskontrollens motsøk
+# for en plan med et utført søk, og en vurderingsoppgave for en ferdig søkt
+# runde som ikke har sin. Det er denne jobben som faktisk går med jevne
+# mellomrom, så søkeleddene venter ikke på `deterministic-controls.yml`.
+#
 # ----------------------------------------------------------------------------
 # Hvorfor denne bare har én utløser
 #

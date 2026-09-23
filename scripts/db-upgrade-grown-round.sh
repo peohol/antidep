@@ -19,7 +19,8 @@
 #   5. Feilen, slik den var: kjøreren lukker de nye søkene for planen med den
 #      fullførte og planen med den oppbrukte oppgaven, og ingen ny oppgave
 #      legges inn. Køen har ingenting kjørbart, bare «blokkert».
-#   6. 014g kjøres med `supabase migration up`, som ved en utrulling.
+#   6. 014g kjøres med `supabase migration up`, som ved en utrulling — med
+#      migrasjonene etter den, som 014h, slik en utrulling i dag ville gjort.
 #   7. Hver plan med en ferdig søkt runde har nøyaktig én oppgave for hele
 #      grunnlaget; ingen plan har to; den foreldede historikken er trukket
 #      tilbake med problemene sine lukket; og ingen jobb, hendelse eller

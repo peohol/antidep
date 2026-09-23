@@ -71,6 +71,7 @@ function api(overrides: Partial<DiscoveryApi> = {}): {
     searches,
     closed,
     api: {
+      catchUp: async () => 0,
       work: async () => [PLAN],
       beginRun: async () => 'c'.repeat(8),
       recordSearch: async (_run, _plan, _request, search) => {
@@ -116,6 +117,46 @@ describe('runMonographDiscovery', () => {
     })
     expect(report.fulfilled).toBe(1)
     expect(report.tasksOpened).toBe(1)
+  })
+
+  // Kjøringen går hver halvtime i produksjon; kontrolleddene har aldri gått der.
+  // Det leddet selv ikke tar igjen, blir derfor ikke tatt igjen (migrasjon 014h).
+  it('tar igjen leddets egne overganger før arbeidet hentes, og teller oppgavene', async () => {
+    const order: string[] = []
+    const { api: port } = api({
+      catchUp: async () => {
+        order.push('catchUp')
+        return 2
+      },
+      work: async () => {
+        order.push('work')
+        return [PLAN]
+      },
+    })
+    const report = await runMonographDiscovery(port, {
+      methods: [keyword('Europe PMC')],
+      politeness: false,
+      fetcher: recorded('europe-pmc-sertraline.json'),
+    })
+    expect(order).toEqual(['catchUp', 'work'])
+    expect(report.tasksOpened).toBe(3)
+    expect(report.problems).toEqual([])
+  })
+
+  it('søker likevel når leddets overganger ikke lot seg ta igjen', async () => {
+    const { api: port, searches } = api({
+      catchUp: async () => {
+        throw new Error('nede')
+      },
+    })
+    const report = await runMonographDiscovery(port, {
+      methods: [keyword('Europe PMC')],
+      politeness: false,
+      fetcher: recorded('europe-pmc-sertraline.json'),
+    })
+    expect(searches).toHaveLength(1)
+    expect(report.tasksOpened).toBe(1)
+    expect(report.problems).toEqual(['Leddets egne overganger kunne ikke tas igjen før søkene.'])
   })
 
   it('lukker runden også når ingen søkevei svarte', async () => {

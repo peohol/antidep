@@ -136,7 +136,8 @@ jobs:
       # tatt mens grunnlaget endrer seg under den. Denne kjører øktene mot
       # hverandre (migrasjon 012b, 012c, 012d). Det samme gjelder de to siste
       # søkene i en maskinell søkerunde lukket samtidig: de skal gi nøyaktig én
-      # vurderingsoppgave (migrasjon 014g).
+      # vurderingsoppgave (migrasjon 014g), og to samtidige feiinger av søkeleddet
+      # likeså (migrasjon 014h).
       #
       # Den står sist med vilje. Prøven bestiller og laster ikke opp, og selv om
       # den rydder opp etter seg, er den den eneste kjøringen her som med vilje

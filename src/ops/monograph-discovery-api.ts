@@ -1,7 +1,7 @@
 // ============================================================================
 // Databasegrensen søkekjøreren går gjennom
 //
-// De fem kallene `runMonographDiscovery` kjenner (`DiscoveryApi`), mot de
+// De seks kallene `runMonographDiscovery` kjenner (`DiscoveryApi`), mot de
 // autoriserte api-funksjonene, med ett ledds egen identitet og legitimasjon.
 // Står for seg framfor inne i kommandoen, slik at driftskjøringen og
 // ende-til-ende-prøven (`scripts/monograph-e2e.ts`) går gjennom nøyaktig den
@@ -102,6 +102,15 @@ export function createDiscoveryApi(
 ): DiscoveryApi {
   const leg = LEGS[legName]
   return {
+    async catchUp() {
+      const { data, error } = await client.rpc('resume_search_round_tasks', identity)
+      if (error !== null) {
+        throw new Error('Leddets overganger kunne ikke tas igjen.')
+      }
+      const payload = (data ?? {}) as Record<string, unknown>
+      return Number(payload['tasks_enqueued'] ?? 0)
+    },
+
     async work() {
       const { data, error } = await client.rpc('monograph_discovery_work', {
         ...identity,

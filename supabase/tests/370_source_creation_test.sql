@@ -344,6 +344,10 @@ select is_empty(
         'api.monograph_discovery_work(text,text,text)',
         'api.record_monograph_machine_search(text,text,uuid,text,text,text,text,text,text,text,text,integer,integer,boolean,text,text,text[],jsonb,text)',
         'api.close_monograph_search_request(text,text,uuid,text)',
+        -- Migrasjon 014h. Kildeleddets egen rekonsiliering, med den samme
+        -- identiteten og legitimasjonen som søkekjøringen, og uten ett felt fra
+        -- kalleren. Kontrolleres i 991_the_search_legs_catch_up_themselves_test.sql.
+        'api.resume_search_round_tasks(text,text)',
         'api.record_monograph_track_by_editor(text,text,text,text,text,text,text,timestamp with time zone,integer,integer,boolean,text,jsonb,text)',
         'api.monograph_search_plans(text)',
         'api.close_monograph_search_plan(text,text)',
