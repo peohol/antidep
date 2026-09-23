@@ -939,6 +939,14 @@ export type Database = {
         }
         Returns: unknown
       }
+      // Kildeleddets egen rekonsiliering, kalt av søkekjøringen (migrasjon 014h).
+      resume_search_round_tasks: {
+        Args: {
+          p_identity_key: string
+          p_secret: string
+        }
+        Returns: unknown
+      }
       submit_monograph_document: {
         Args: {
           p_reference: string

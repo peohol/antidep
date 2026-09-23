@@ -150,6 +150,12 @@ export interface DiscoveryPlan {
 /** Databasegrensen kjøringen bruker. Et smalt grensesnitt, av to grunner:
  *  prøvene trenger ingen Supabase-klient, og kjøringen kan ikke røre noe annet. */
 export interface DiscoveryApi {
+  /**
+   * Tar igjen leddets egne overganger før arbeidet hentes: runder og
+   * vurderingsoppgaver databasens tilstand tilsier, men som ingen hendelse la
+   * inn (migrasjon 014h). Svarer med hvor mange oppgaver som ble lagt inn.
+   */
+  readonly catchUp: () => Promise<number>
   readonly work: () => Promise<readonly DiscoveryPlan[]>
   readonly beginRun: (planReference: string) => Promise<string>
   readonly recordSearch: (
@@ -217,6 +223,19 @@ export async function runMonographDiscovery(
   options: Partial<DiscoveryOptions> = {},
 ): Promise<DiscoveryReport> {
   const settings: DiscoveryOptions = { ...DISCOVERY_DEFAULTS, ...options }
+  const problems: string[] = []
+  let tasksOpened = 0
+
+  // Leddet tar igjen sitt eget først. Denne kjøringen er den som faktisk går
+  // med jevne mellomrom, og en runde den åpner her — dekningskontrollens
+  // motsøk — søkes i den samme kjøringen. Et problem her stanser ikke søkene:
+  // de er arbeid som alt står i kø.
+  try {
+    tasksOpened += await api.catchUp()
+  } catch {
+    problems.push('Leddets egne overganger kunne ikke tas igjen før søkene.')
+  }
+
   const plans = (await api.work()).slice(0, settings.maxPlans)
   const baseFetcher = settings.fetcher ?? guardedGet
   // Én høflig henter for hele kjøringen: takten og delingen gjelder på tvers av
@@ -237,8 +256,6 @@ export async function runMonographDiscovery(
   let candidates = 0
   let fulfilled = 0
   let stillUnavailable = 0
-  let tasksOpened = 0
-  const problems: string[] = []
 
   for (const plan of plans) {
     if (plan.requests.length === 0) {

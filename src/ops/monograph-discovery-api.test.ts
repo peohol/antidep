@@ -69,6 +69,17 @@ describe('databasegrensen for søkekjøringen', () => {
     })
   })
 
+  // Leddet tar igjen sine egne overganger med sin egen identitet, og ingenting
+  // annet: databasen avgjør selv hva tilstanden tilsier (migrasjon 014h).
+  it('tar igjen leddets overganger med identiteten alene, og teller oppgavene', async () => {
+    const { client, calls } = fake({
+      resume_search_round_tasks: { agent_role: 'source_discovery', tasks_enqueued: 2 },
+    })
+    const opened = await createDiscoveryApi(client, IDENTITY, 'discovery', PLAN).catchUp()
+    expect(calls).toEqual([{ fn: 'resume_search_round_tasks', args: IDENTITY }])
+    expect(opened).toBe(2)
+  })
+
   it('åpner kjøringen under leddets egen rolle', async () => {
     const { client, calls } = fake({ begin_agent_run: 'kjoring' })
     await createDiscoveryApi(client, IDENTITY, 'coverage').beginRun(PLAN)

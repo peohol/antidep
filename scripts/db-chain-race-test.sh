@@ -1701,6 +1701,170 @@ SQL
   printf 'ok       %s\n' "$navn"
 }
 
+# ============================================================================
+# Prøve 11 — to samtidige feiinger av søkeleddet gir én oppgave
+#
+# Søkekjøringen tar igjen leddets egne overganger før den henter arbeidet
+# (migrasjon 014h), og kontrolleddenes rekonsiliering gjør det samme. To slike
+# feiinger kan gå samtidig. Planen i prøven har en ferdig søkt runde og ingen
+# gjeldende oppgave: runden vokste mens planen sto på pause, og pausen ble
+# opphevet uten at noe kjørte overgangen. Begge feiingene ser det samme hullet;
+# bare den ene skal fylle det.
+# ============================================================================
+proeve11() {
+  local navn='to samtidige feiinger av søkeleddet gir én oppgave'
+  local styr="$arbeid/styr11" a_log="$arbeid/a11.log" b_log="$arbeid/b11.log"
+  local identitet='agent-identity:source-discovery-01'
+  local plan hemmelighet agentkjoring gammel
+
+  # Den første planen i feiingens rekkefølge, og markøren fra begynnelsen: da
+  # er det denne planen begge feiingene kommer til først, uansett hvor mange
+  # åpne planer basen har.
+  plan=$(les "select p.id from workflow.monograph_search_plans p
+              where p.closed_at is null and p.paused_at is null
+              order by p.id::text limit 1")
+  [ -n "$plan" ] || feil "$navn" 'Det finnes ingen åpen søkeplan å prøve på.'
+  les "update workflow.chain_reconciliation_cursors set cursor_position = ''
+       where step = 'kildeoppdagelse'" > /dev/null
+
+  hemmelighet=$(les "select provenance.issue_agent_identity_credential(
+                       '$identitet', 'human:kapplop-${kjoring:0:8}')")
+  agentkjoring=$(les "select api.begin_agent_run('$identitet', '$hemmelighet',
+                   'source_discovery', 'antidep', 'search-execution-and-registration', '1.0.0',
+                   'source-discovery/machine-execution/2', 'antidep-evidence/1',
+                   jsonb_build_object('search_plan_reference',
+                     (select reference from workflow.monograph_search_plans where id = '$plan')))")
+  [ -n "$agentkjoring" ] || feil "$navn" 'Kjøringen for kildeoppdagelsen lot seg ikke starte.'
+
+  # Runden lukkes til den har oppgaven sin. Så vokser den, og det nye søket
+  # lukkes mens planen står på pause. Pausen oppheves direkte i tabellen — uten
+  # redaktørveien, som fra 014h selv ville kjørt overgangen.
+  psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 > "$arbeid/fikstur11.log" 2>&1 <<SQL
+do \$\$
+declare
+  v_ref text;
+  v_guard integer := 0;
+begin
+  loop
+    select r.reference into v_ref
+    from workflow.monograph_search_requests r
+    join workflow.monograph_search_plans p on p.id = r.plan_id
+    where p.id = '$plan'
+      and r.plan_version = p.plan_version
+      and r.requested_for_role = 'source_discovery'
+      and r.state = 'pending'
+    order by r.reference
+    limit 1;
+    exit when v_ref is null;
+    perform api.close_monograph_search_request('$identitet', '$hemmelighet', '$agentkjoring', v_ref);
+    v_guard := v_guard + 1;
+    if v_guard > 500 then
+      raise exception 'Runden ble aldri lukket.';
+    end if;
+  end loop;
+end
+\$\$;
+SQL
+  [ $? -eq 0 ] || feil "$navn" 'Runden lot seg ikke lukke i fiksturen.' "$arbeid/fikstur11.log"
+
+  local gjeldende="
+    select j.id from workflow.pipeline_jobs j
+    join workflow.agent_handoff_jobs h on h.pipeline_job_id = j.id
+    where j.agent_role = 'source_discovery'
+      and j.input_manifest ->> 'search_plan_id' = '$plan'
+      and j.state in ('ready', 'leased')
+      and not workflow.pipeline_job_withdrawn(j.id)
+      and workflow.monograph_search_task_supersession(j) is null"
+
+  gammel=$(les "$gjeldende")
+  [ -n "$gammel" ] && [ "$(printf '%s\n' "$gammel" | wc -l)" = "1" ] || feil "$navn" \
+    "Runden i fiksturen har ikke nøyaktig én gjeldende oppgave («$gammel»)."
+
+  local ny
+  ny=$(les "select workflow.open_monograph_search_request(
+              p.id, 'source_discovery', p.discovery_round, 'registry_opened', 'targeted',
+              'Kappløpsprøven: registeret har fått en ny søkevei i runden planen står i.',
+              null, null, array[]::text[], array['kapplop-pause-${kjoring:0:8}'],
+              array[]::text[], null, null, p.created_by_actor_id)
+            from workflow.monograph_search_plans p where p.id = '$plan'")
+  ny=$(les "select reference from workflow.monograph_search_requests where id = '$ny'")
+  [ -n "$ny" ] || feil "$navn" 'Det nye søket lot seg ikke åpne.'
+  les "update workflow.monograph_search_plans
+       set paused_at = now(), paused_reason = 'Kappløpsprøven: runden vokser under pausen.'
+       where id = '$plan'" > /dev/null
+  les "select api.close_monograph_search_request('$identitet', '$hemmelighet', '$agentkjoring', '$ny')" \
+    > /dev/null || feil "$navn" 'Det nye søket lot seg ikke lukke.'
+  les "update workflow.monograph_search_plans set paused_at = null, paused_reason = null
+       where id = '$plan'" > /dev/null
+
+  [ -z "$(les "$gjeldende")" ] || feil "$navn" \
+    'Planen har fortsatt en gjeldende oppgave etter at runden vokste; prøven måler ingenting.'
+
+  rm -f "$styr"
+  mkfifo "$styr"
+
+  # Økt A feier og holder transaksjonen åpen — med subjektlåsen på planen.
+  (
+    cat <<SQL
+begin;
+select 'A:' || (api.resume_search_round_tasks('$identitet', '$hemmelighet') ->> 'tasks_enqueued');
+\echo KLAR
+\o /dev/null
+SQL
+    cat "$styr"
+  ) | psql "$DB_URL" -X -tA -v ON_ERROR_STOP=1 > "$a_log" 2>&1 &
+  okt_a_pid=$!
+  exec 9>"$styr"
+
+  local i
+  for i in $(seq 1 300); do
+    grep -q 'KLAR' "$a_log" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'KLAR' "$a_log" 2>/dev/null || feil "$navn" 'Økt A kom ikke i gang.' "$a_log"
+
+  # Økt B feier det samme leddet, samtidig.
+  psql "$DB_URL" -X -tA -v ON_ERROR_STOP=1 > "$b_log" 2>&1 <<SQL &
+begin;
+set local statement_timeout = '60s';
+select 'B:' || (api.resume_search_round_tasks('$identitet', '$hemmelighet') ->> 'tasks_enqueued');
+commit;
+SQL
+  okt_b_pid=$!
+
+  vent_paa_blokkering "$navn"
+
+  printf 'commit;\n' >&9
+  exec 9>&-
+  wait "$okt_a_pid" 2>/dev/null; local a_status=$?
+  okt_a_pid=""
+  wait "$okt_b_pid" 2>/dev/null; local b_status=$?
+  okt_b_pid=""
+  rm -f "$styr"
+
+  [ "$a_status" -eq 0 ] || feil "$navn" 'Økt A kom ikke gjennom.' "$a_log"
+  [ "$b_status" -eq 0 ] || feil "$navn" 'Økt B kom ikke gjennom.' "$b_log"
+
+  # Den som kom først, fylte hullet. Den som ventet på låsen, fant oppgaven.
+  grep -Eqx 'A:[1-9][0-9]*' "$a_log" && grep -qx 'B:0' "$b_log" || feil "$navn" \
+    'Det var ikke økten som kom først, som la inn oppgaven, eller begge gjorde det.' "$b_log"
+
+  local naa
+  naa=$(les "$gjeldende")
+  [ -n "$naa" ] && [ "$(printf '%s\n' "$naa" | wc -l)" = "1" ] || feil "$navn" \
+    "Runden har ikke nøyaktig én gjeldende oppgave etter de to feiingene («$naa»)."
+  [ "$(les "select workflow.pipeline_job_withdrawn('$gammel')")" = "t" ] || feil "$navn" \
+    'Oppgaven for det mindre grunnlaget er ikke trukket tilbake.'
+  [ -z "$(les "select workflow.monograph_search_task_invariant_problem()")" ] || feil "$navn" \
+    "Invarianten holder ikke etter feiingene («$(les "select workflow.monograph_search_task_invariant_problem()")»)."
+
+  les "select api.complete_agent_run('$identitet', '$hemmelighet', '$agentkjoring', 'succeeded',
+         jsonb_build_object('mode', 'race-probe'))" > /dev/null \
+    || feil "$navn" 'Kjøringen lot seg ikke avslutte.'
+
+  printf 'ok       %s\n' "$navn"
+}
+
 printf 'Samtidighetsprøver for de automatiske kjedeovergangene\n'
 proeve1
 proeve2
@@ -1712,4 +1876,5 @@ proeve7
 proeve8
 proeve9
 proeve10
+proeve11
 printf 'Alle prøvene bestod.\n'
