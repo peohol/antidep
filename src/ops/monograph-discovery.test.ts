@@ -141,8 +141,10 @@ describe('runMonographDiscovery', () => {
   // tjeneste var spurt — og sporet ville blitt gitt opp på en feil i koden.
   it('lar runden stå åpen, uten ett søk, når kjøreren mangler en metode den ber om', async () => {
     const closeRequest = vi.fn()
+    const completeRun = vi.fn().mockResolvedValue(undefined)
     const { api: port, searches } = api({
       closeRequest,
+      completeRun,
       work: async () => [
         {
           ...PLAN,
@@ -169,6 +171,56 @@ describe('runMonographDiscovery', () => {
     expect(closeRequest).not.toHaveBeenCalled()
     expect(report.problems.join(' ')).toContain('finnes_ikke')
     expect(report.problems.join(' ')).toContain('runden står åpen')
+    expect(completeRun).toHaveBeenCalledWith(
+      'c'.repeat(8),
+      'failed',
+      expect.anything(),
+      expect.stringContaining('finnes_ikke'),
+    )
+  })
+
+  // Et søk som ble utført, men ikke registrert, er en teknisk svikt. Lukket
+  // runden seg, ville den stått som utført eller utilgjengelig på et grunnlag
+  // søkeloggen ikke har, og den semantiske oppgaven ville blitt sluppet fram.
+  it('lar runden stå åpen og merker kjøringen mislykket når et søk ikke lar seg registrere', async () => {
+    const closeRequest = vi.fn()
+    const completeRun = vi.fn().mockResolvedValue(undefined)
+    const { api: port } = api({
+      closeRequest,
+      completeRun,
+      recordSearch: async () => {
+        throw new Error('nede')
+      },
+    })
+    const report = await runMonographDiscovery(port, {
+      methods: [keyword('Europe PMC')],
+      politeness: false,
+      fetcher: recorded('europe-pmc-sertraline.json'),
+    })
+
+    expect(closeRequest).not.toHaveBeenCalled()
+    expect(report.problems.join(' ')).toContain('runden står åpen')
+    expect(completeRun).toHaveBeenCalledWith(
+      'c'.repeat(8),
+      'failed',
+      expect.objectContaining({ searches_recorded: 0, requests_closed: 0 }),
+      expect.stringContaining('lot seg ikke registrere'),
+    )
+  })
+
+  it('merker kjøringen vellykket når alt ble registrert og lukket', async () => {
+    const completeRun = vi.fn().mockResolvedValue(undefined)
+    const { api: port } = api({ completeRun })
+    await runMonographDiscovery(port, {
+      methods: [keyword('Europe PMC')],
+      politeness: false,
+      fetcher: recorded('europe-pmc-sertraline.json'),
+    })
+    expect(completeRun).toHaveBeenCalledWith(
+      'c'.repeat(8),
+      'succeeded',
+      expect.objectContaining({ requests_closed: 1 }),
+    )
   })
 
   it('tar høyst så mange planer som kjøringen er bedt om', async () => {

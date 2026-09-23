@@ -351,6 +351,12 @@ function searchRequestSchema(): Schema {
         filters_note: optionalText(
           'En avgrensning som er faglig begrunnet. Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater.',
         ),
+        narrows_request: {
+          type: 'string',
+          pattern: '^[0-9a-f]{32}$',
+          description:
+            'Runden dette smalere søket erstatter, med «request_reference» ordrett fra et avkortet søk i oppgaven. Søket må bruke den samme plattformen og metoden. Et avkortet søk holder søkedekningen åpen til det samme søket er lest helt, eller til et smalere søk som uttrykkelig erstatter det, er lest helt.',
+        },
       },
     },
   }

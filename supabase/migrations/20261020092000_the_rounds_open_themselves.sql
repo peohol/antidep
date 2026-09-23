@@ -51,7 +51,8 @@ create function workflow.open_monograph_search_request(
   p_seed_identifiers text[],
   p_filters_note text,
   p_agent_run_id uuid,
-  p_actor_id uuid
+  p_actor_id uuid,
+  p_supersedes_request_id uuid default null
 )
   returns uuid
   language plpgsql
@@ -106,7 +107,7 @@ begin
   insert into workflow.monograph_search_requests (
     plan_id, plan_version, requested_for_role, search_round,
     origin, strategy, rationale, platform, method,
-    drug_aliases, query_terms, seed_identifiers, filters_note,
+    drug_aliases, query_terms, seed_identifiers, filters_note, supersedes_request_id,
     track_codes, requested_by_agent_run_id, requested_by_actor_id
   )
   values (
@@ -115,7 +116,7 @@ begin
     coalesce(p_drug_aliases, array[]::text[]),
     coalesce(p_query_terms, array[]::text[]),
     coalesce(p_seed_identifiers, array[]::text[]),
-    nullif(btrim(coalesce(p_filters_note, '')), ''),
+    nullif(btrim(coalesce(p_filters_note, '')), ''), p_supersedes_request_id,
     v_tracks, p_agent_run_id,
     coalesce(p_actor_id, v_plan.created_by_actor_id)
   )
@@ -126,10 +127,10 @@ begin
 end;
 $$;
 
-comment on function workflow.open_monograph_search_request(uuid, provenance.agent_role, integer, workflow.monograph_search_request_origin, workflow.monograph_search_strategy, text, text, text, text[], text[], text[], text, uuid, uuid) is
-  'Åpner én maskinell søkerunde på en søkeplanversjon, idempotent på innholdet (strategi, plattform, metode, synonymer, termer og kilder å følge). Sporene runden kan erklære, utledes her av registeret og ikke av kalleren: profilens obligatoriske spor som nettopp rundens søkemetoder dekker for profilen (migrasjon 014c). Dekningskontrollens motsøk får ingen spor. Svarer med rundens id, eller NULL når den fantes fra før eller planen er lukket eller står på pause.';
+comment on function workflow.open_monograph_search_request(uuid, provenance.agent_role, integer, workflow.monograph_search_request_origin, workflow.monograph_search_strategy, text, text, text, text[], text[], text[], text, uuid, uuid, uuid) is
+  'Åpner én maskinell søkerunde på en søkeplanversjon, idempotent på innholdet (strategi, plattform, metode, synonymer, termer og kilder å følge), eventuelt med den brede runden den uttrykkelig erstatter. Sporene runden kan erklære, utledes her av registeret og ikke av kalleren: profilens obligatoriske spor som nettopp rundens søkemetoder dekker for profilen (migrasjon 014c). Dekningskontrollens motsøk får ingen spor. Svarer med rundens id, eller NULL når den fantes fra før eller planen er lukket eller står på pause.';
 
-revoke execute on function workflow.open_monograph_search_request(uuid, provenance.agent_role, integer, workflow.monograph_search_request_origin, workflow.monograph_search_strategy, text, text, text, text[], text[], text[], text, uuid, uuid) from public;
+revoke execute on function workflow.open_monograph_search_request(uuid, provenance.agent_role, integer, workflow.monograph_search_request_origin, workflow.monograph_search_strategy, text, text, text, text[], text[], text[], text, uuid, uuid, uuid) from public;
 
 -- ----------------------------------------------------------------------------
 -- 2. Kildene som skal følges, valgt av kildeoppdagelsen og ikke av kjøreren
@@ -1234,6 +1235,64 @@ comment on function workflow.monograph_search_kind(workflow.monograph_searches) 
 
 revoke execute on function workflow.monograph_search_kind(workflow.monograph_searches) from public;
 
+-- Om en runde, direkte eller gjennom en kjede av smalere runder, uttrykkelig
+-- erstatter en annen.
+create function workflow.monograph_request_supersedes(p_later uuid, p_earlier uuid)
+  returns boolean
+  language sql
+  stable
+  set search_path = ''
+as $$
+  with recursive chain (id) as (
+    select r.supersedes_request_id
+    from workflow.monograph_search_requests r
+    where r.id = p_later and r.supersedes_request_id is not null
+    union
+    select r.supersedes_request_id
+    from workflow.monograph_search_requests r
+    join chain on r.id = chain.id
+    where r.supersedes_request_id is not null
+  )
+  select p_earlier is not null and exists (select 1 from chain where chain.id = p_earlier);
+$$;
+
+comment on function workflow.monograph_request_supersedes(uuid, uuid) is
+  'Om den senere søkerunden uttrykkelig erstatter den tidligere, direkte eller gjennom en kjede av stadig smalere runder.';
+
+revoke execute on function workflow.monograph_request_supersedes(uuid, uuid) from public;
+
+-- Om resten av en avkortet treffliste er dekket. Et senere, helt lest søk av
+-- det samme slaget på den samme plattformen dekker den bare når det er det
+-- samme søket — den samme strengen med de samme filtrene — eller når det står
+-- i en runde som uttrykkelig erstatter runden det avkortede søket hørte til.
+-- Et kort søk om noe annet sier ingenting om resten av en lang treffliste.
+create function workflow.monograph_truncation_resolved(p_search workflow.monograph_searches)
+  returns boolean
+  language sql
+  stable
+  set search_path = ''
+as $$
+  select not p_search.truncated or exists (
+    select 1 from workflow.monograph_searches later
+    where later.plan_id = p_search.plan_id
+      and later.plan_version = p_search.plan_version
+      and later.platform = p_search.platform
+      and workflow.monograph_search_kind(later) = workflow.monograph_search_kind(p_search)
+      and not later.truncated
+      and later.outcome in ('executed', 'zero_results')
+      and later.registration_ordinal > p_search.registration_ordinal
+      and ((later.query_string = p_search.query_string
+            and later.filters is not distinct from p_search.filters)
+           or workflow.monograph_request_supersedes(
+                later.search_request_id, p_search.search_request_id))
+  );
+$$;
+
+comment on function workflow.monograph_truncation_resolved(workflow.monograph_searches) is
+  'Om resten av et avkortet søk er dekket: av det samme søket lest helt senere, eller av et helt lest søk med den samme plattformen og metoden i en runde som uttrykkelig erstatter runden det avkortede søket hørte til (SOURCE_POLICY.md §4.1, §4.3).';
+
+revoke execute on function workflow.monograph_truncation_resolved(workflow.monograph_searches) from public;
+
 create or replace function workflow.monograph_search_closure_problem(p_plan_id uuid)
   returns text
   language plpgsql
@@ -1337,15 +1396,7 @@ begin
     return 'Ingen søk i denne planversjonen har faktisk gått. En utilgjengelig søkevei er en registrert begrensning og ikke en gjennomført søkedekning (SOURCE_POLICY.md §8.2).';
   end if;
 
-  -- 4. Ingen skjult treffavkorting.
-  --
-  --    Et senere, helt lest søk dekker resten av en avkortet treffliste bare
-  --    når det er det samme slaget søk: den samme plattformen og den samme
-  --    søkemetoden. Et kort oversiktssøk i PubMed sier ingenting om resten av et
-  --    avkortet fritekstsøk der (migrasjon 014d). Innenfor metoden er det det
-  --    målrettede oppfølgingssøket som lukker det brede (§4.1): å kreve den
-  --    samme søkestrengen lest helt ville gjort hvert bredt orienterende søk til
-  --    en port som aldri åpner.
+  -- 4. Ingen skjult treffavkorting (workflow.monograph_truncation_resolved).
   select string_agg(distinct s.platform || ' (' || workflow.monograph_search_kind(s) || ')', ', '
                     order by s.platform || ' (' || workflow.monograph_search_kind(s) || ')')
     into v_open_truncation
@@ -1353,19 +1404,10 @@ begin
   where s.plan_id = p_plan_id
     and s.plan_version = v_plan.plan_version
     and s.truncated
-    and not exists (
-      select 1 from workflow.monograph_searches later
-      where later.plan_id = s.plan_id
-        and later.plan_version = s.plan_version
-        and later.platform = s.platform
-        and workflow.monograph_search_kind(later) = workflow.monograph_search_kind(s)
-        and not later.truncated
-        and later.outcome in ('executed', 'zero_results')
-        and later.registration_ordinal > s.registration_ordinal
-    );
+    and not workflow.monograph_truncation_resolved(s);
   if v_open_truncation is not null then
     return format(
-      'Trefflisten ble avkortet på %s uten at et senere søk dekket resten. En side med ti treff er ikke et søk uten flere treff (SOURCE_POLICY.md §4.3).',
+      'Trefflisten ble avkortet på %s uten at et senere søk dekket resten. En side med ti treff er ikke et søk uten flere treff (SOURCE_POLICY.md §4.3). Resten er dekket når det samme søket er lest helt, eller når et helt lest, smalere søk med den samme metoden står i en runde som uttrykkelig erstatter den brede (narrows_request).',
       v_open_truncation);
   end if;
 
@@ -1698,6 +1740,11 @@ begin
                'screened_count', s.screened_count,
                'truncated', s.truncated,
                'truncation_note', s.truncation_note,
+               -- Om resten av en avkortet treffliste er dekket, og runden en
+               -- smalere forespørsel kan oppgi at den erstatter (narrows_request).
+               'truncation_resolved', workflow.monograph_truncation_resolved(s),
+               'request_reference', (select r.reference from workflow.monograph_search_requests r
+                                     where r.id = s.search_request_id),
                'limitation_note', s.limitation_note,
                'endpoint', s.evidence_endpoint,
                'response_digest', s.response_digest,
@@ -1839,7 +1886,8 @@ begin
       'En kilde godkjennes for en bestemt bruk og avgrensning, ikke universelt. Oppgi hva hver kilde kan brukes til for hvert behov.',
       'En søkevei som ikke svarte, står som en begrensning i oppgaven. Den er ikke null treff, og den er aldri en konklusjon om evidensen.',
       'Hvilke kilder som er sentrale, avgjør du. Referanselistene og de siterende arbeidene til kildene du velger til innhenting, inkluderer eller vurderer som mulig konklusjonsendrende, følger Antidep selv i neste runde. Vil du følge flere, be om metoden «references» eller «citations» med kildene i «seed_candidates».',
-      'Hver søkemetode står i oppgaven med hva den dekker og hva den ikke dekker. Er en begrensning vesentlig for spørsmålet — en nasjonal retningslinje Antidep ikke kan søke i, et register som ikke er med — si det i merknaden: det er en opplysning kontrollen og redaktøren skal se.'));
+      'Hver søkemetode står i oppgaven med hva den dekker og hva den ikke dekker. Er en begrensning vesentlig for spørsmålet — en nasjonal retningslinje Antidep ikke kan søke i, et register som ikke er med — si det i merknaden: det er en opplysning kontrollen og redaktøren skal se.',
+      'Et avkortet søk («truncated», og «truncation_resolved» er false) holder søkedekningen åpen: resten av trefflisten er ikke lest. Be om et smalere søk med den samme plattformen og metoden, og oppgi runden det erstatter i «narrows_request» (rundens «request_reference»). Det er din faglige avgjørelse at det smalere søket er det som betyr noe for spørsmålet; Antidep regner resten som dekket når det smalere søket er lest helt.'));
 
   if p_role = 'source_quality_assessment' then
     v_payload := v_payload || jsonb_build_object(
@@ -1925,6 +1973,8 @@ AS $function$
 declare
   v_plan_id uuid := workflow.manifest_uuid(p_input, 'search_plan_id');
   v_plan workflow.monograph_search_plans;
+  v_superseded workflow.monograph_search_requests;
+  v_supersedes uuid;
   v_unknown text;
   v_item jsonb;
   v_use jsonb;
@@ -2188,7 +2238,7 @@ begin
       from jsonb_object_keys(v_item) as k(value)
       where k.value not in (
         'rationale', 'platform', 'method', 'strategy', 'drug_aliases', 'query_terms',
-        'seed_candidates', 'filters_note');
+        'seed_candidates', 'filters_note', 'narrows_request');
       if v_unknown is not null then
         raise exception using
           errcode = 'invalid_parameter_value',
@@ -2245,6 +2295,42 @@ begin
         end if;
       end if;
 
+      -- Den brede runden en smalere runde uttrykkelig erstatter. Det er leddets
+      -- faglige avgjørelse at det smalere søket er det som betyr noe for
+      -- spørsmålet; stoppkravet regner da resten av den brede trefflisten som
+      -- dekket når det smalere søket er lest helt. Erstatningen må gjelde den
+      -- samme søkemetoden: et annet slag søk sier ingenting om resten.
+      v_supersedes := null;
+      if v_item ? 'narrows_request' then
+        select r.* into v_superseded
+        from workflow.monograph_search_requests r
+        where r.reference = btrim(coalesce(v_item ->> 'narrows_request', ''))
+          and r.plan_id = v_plan_id
+          and r.plan_version = v_plan.plan_version
+          and r.requested_for_role = p_job.agent_role;
+
+        if not found then
+          raise exception using
+            errcode = 'invalid_parameter_value',
+            message = 'Søkeforespørselen sier at den snevrer inn en søkerunde som ikke finnes på denne planen for dette leddet.',
+            hint = 'narrows_request er referansen til en av rundene i oppgaven, slik den står ved søkene i «machine_searches».';
+        end if;
+
+        if not exists (
+          select 1
+          from workflow.monograph_request_methods(v_platform, v_method) a
+          join workflow.monograph_request_methods(v_superseded.platform, v_superseded.method) b
+            on b.platform = a.platform and b.method = a.method
+        ) then
+          raise exception using
+            errcode = 'invalid_parameter_value',
+            message = 'Den smalere runden bruker ingen av søkemetodene i runden den sier den erstatter.',
+            hint = 'Et smalere søk erstatter et bredt bare når det er det samme slaget søk: den samme plattformen og den samme metoden. Et kort søk om noe annet sier ingenting om resten av en lang treffliste.';
+        end if;
+
+        v_supersedes := v_superseded.id;
+      end if;
+
       begin
         v_strategy := coalesce(v_item ->> 'strategy', 'targeted')::workflow.monograph_search_strategy;
       exception
@@ -2283,7 +2369,7 @@ begin
              coalesce(nullif(btrim(coalesce(v_item ->> 'rationale', '')), ''),
                       'Leddet ba om en mer målrettet søkerunde.'),
              v_platform, v_method, v_aliases, v_terms, v_seeds, v_item ->> 'filters_note',
-             p_run_id, p_actor_id) is not null then
+             p_run_id, p_actor_id, v_supersedes) is not null then
           v_requests := v_requests + 1;
         end if;
       end if;

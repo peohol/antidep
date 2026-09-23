@@ -104,7 +104,7 @@ Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år el
 
 ### 4.3 Søkelogg og utvalgslogg
 
-Lagre faktisk utført søk: database og plattform, eksakt søkestreng, filtre, dato/tid, versjon på søkeplanen, returnert treffantall når kjent, hvor mye som ble gjennomgått, og om paginering/resultatgrenser avkortet trefflisten. En foreslått søkestreng er ikke et utført søk. En side med ti treff er ikke et søk uten flere treff.
+Lagre faktisk utført søk: database og plattform, eksakt søkestreng, filtre, dato/tid, versjon på søkeplanen, returnert treffantall når kjent, hvor mye som ble gjennomgått, og om paginering/resultatgrenser avkortet trefflisten. En foreslått søkestreng er ikke et utført søk. En side med ti treff er ikke et søk uten flere treff. Resten av en avkortet treffliste er dekket bare når det samme søket senere er lest helt, eller når et smalere søk med den samme søkemetoden uttrykkelig erstatter det og er lest helt. At det smalere søket er det som betyr noe for spørsmålet, er kildeoppdagelsens faglige avgjørelse, og den står på søkeforespørselen; et kort søk om noe annet dekker ingenting av resten.
 
 For hvert kandidatdokument: identifikatorer, bibliografi, oppdagelsesvei, mulige behov det dekker, beslutning og begrunnelse. Beslutningen og vesentligheten står per søkeplan: den samme kilden kan være sentral for én avgrensning og uten betydning for en annen, og en eksklusjon for den ene gjør den ikke ekskludert for den andre. Bruk atskilte utfall: valgt til innhenting, inkludert for navngitt bruk, ekskludert med faglig grunn, avventer tilgang, eller avventer avklaring. Betalingsmur er ikke en faglig eksklusjonsgrunn. Registrer også kontrollerte nullsøk.
 

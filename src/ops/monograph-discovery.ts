@@ -163,10 +163,12 @@ export interface DiscoveryApi {
     agentRunId: string,
     requestReference: string,
   ) => Promise<{ readonly state: string; readonly enqueuedJob: boolean }>
+  /** Lukker kjøringen. En mislykket kjøring bærer grunnen (provenance.agent_runs). */
   readonly completeRun: (
     agentRunId: string,
     status: 'succeeded' | 'failed',
     outcome: Record<string, unknown>,
+    failureReason?: string,
   ) => Promise<void>
 }
 
@@ -253,6 +255,10 @@ export async function runMonographDiscovery(
 
     let recorded = 0
     let closed = 0
+    // Problemene denne planens kjøring fikk. En kjøring med et teknisk problem
+    // er en mislykket kjøring, og står slik i proveniensen — ikke som en
+    // vellykket kjøring med en begrensning i evidensen.
+    const planProblemsFrom = problems.length
 
     for (const request of plan.requests) {
       requests += 1
@@ -286,6 +292,7 @@ export async function runMonographDiscovery(
         continue
       }
 
+      let unrecorded = 0
       for (const { method } of methods) {
         if (method === undefined) continue
 
@@ -314,16 +321,26 @@ export async function runMonographDiscovery(
             await api.recordSearch(agentRunId, plan.planReference, request.requestReference, search)
             recorded += 1
           } catch {
+            unrecorded += 1
             problems.push(
-              `Et søk mot ${method.platform} (${method.method}) lot seg ikke registrere for én søkerunde (${plan.profileCode}).`,
+              `Et søk mot ${method.platform} (${method.method}) lot seg ikke registrere for én søkerunde (${plan.profileCode}); runden står åpen.`,
             )
           }
         }
       }
 
-      // Runden lukkes uansett hva søkene ga. Det er lukkingen som avgjør om den
-      // semantiske oppgaven finnes nå — og en runde som aldri ble lukket, ville
-      // latt planen stå uten at noe sa hvorfor.
+      // Et søk som ble utført, men ikke registrert, er en teknisk svikt og ikke
+      // en søkevei som ikke svarte. Runden lukkes da ikke: en lukket runde uten
+      // det søket ville blitt «utilgjengelig» eller «utført» på et grunnlag
+      // søkeloggen ikke har, og sluppet den semantiske oppgaven fram. Den står
+      // åpen, og neste kjøring utfører den på nytt.
+      if (unrecorded > 0) {
+        continue
+      }
+
+      // Ellers lukkes runden uansett hva søkene ga. Det er lukkingen som avgjør
+      // om den semantiske oppgaven finnes nå — og en runde som aldri ble lukket,
+      // ville latt planen stå uten at noe sa hvorfor.
       try {
         const outcome = await api.closeRequest(agentRunId, request.requestReference)
         closed += 1
@@ -335,12 +352,18 @@ export async function runMonographDiscovery(
       }
     }
 
+    const planProblems = problems.slice(planProblemsFrom)
     try {
-      await api.completeRun(agentRunId, 'succeeded', {
+      const outcome = {
         plan_reference: plan.planReference,
         searches_recorded: recorded,
         requests_closed: closed,
-      })
+      }
+      if (planProblems.length === 0) {
+        await api.completeRun(agentRunId, 'succeeded', outcome)
+      } else {
+        await api.completeRun(agentRunId, 'failed', outcome, planProblems.join(' ').slice(0, 4000))
+      }
     } catch {
       problems.push(`Kjøringen for én søkeplan (${plan.profileCode}) lot seg ikke lukkes.`)
     }

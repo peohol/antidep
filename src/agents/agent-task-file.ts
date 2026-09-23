@@ -555,7 +555,7 @@ Disse er maskinelt utførte: Antideps egen kode kalte endepunktet, leste svaret 
 registrerte et fingeravtrykk av det. Du har ikke utført dem, og du skal ikke
 rapportere dem som dine egne.
 
-${bullets(task.input['machine_searches'], (row) => `${String(row['platform'] ?? '')} (${String(row['method'] ?? 'keyword')}) [${String(row['run_role'] ?? '')}]: ${String(row['query'] ?? '')} — ${String(row['outcome'] ?? '')}, treff: ${String(row['result_count'] ?? 'ukjent')}, gjennomgått: ${String(row['screened_count'] ?? 0)}${row['truncated'] === true ? ', AVKORTET' : ''}\n    endepunkt: ${String(row['endpoint'] ?? 'ikke registrert')}\n    responsavtrykk: ${String(row['response_digest'] ?? 'ingen — tjenesten svarte ikke')}`)}
+${bullets(task.input['machine_searches'], (row) => `${String(row['platform'] ?? '')} (${String(row['method'] ?? 'keyword')}) [${String(row['run_role'] ?? '')}]: ${String(row['query'] ?? '')} — ${String(row['outcome'] ?? '')}, treff: ${String(row['result_count'] ?? 'ukjent')}, gjennomgått: ${String(row['screened_count'] ?? 0)}${row['truncated'] === true ? (row['truncation_resolved'] === true ? ', AVKORTET — resten er dekket av et senere søk' : `, AVKORTET — resten er ikke dekket; et smalere søk med samme metode kan erstatte det (narrows_request: ${String(row['request_reference'] ?? 'ukjent')})`) : ''}\n    endepunkt: ${String(row['endpoint'] ?? 'ikke registrert')}\n    responsavtrykk: ${String(row['response_digest'] ?? 'ingen — tjenesten svarte ikke')}`)}
 
 ### Søkepasseringene en redaktør utførte
 

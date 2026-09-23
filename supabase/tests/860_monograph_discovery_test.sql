@@ -30,7 +30,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(78);
+select plan(79);
 
 -- ===========================================================================
 -- Del 1 — Kontrakten
@@ -768,10 +768,45 @@ select 'sok3', api.record_monograph_machine_search(
   array['bibliographic_database'], null);
 reset role;
 
+select alike(
+  workflow.monograph_search_closure_problem((select id from plans where label = 'eff')),
+  '%avkortet%',
+  'et annet søk i den samme runden sier ingenting om resten av den avkortede trefflisten'
+);
+
+-- Kildeoppdagelsen ber om et smalere søk og sier uttrykkelig at det erstatter
+-- den brede runden (narrows_request i svaret; her åpnet direkte).
+select workflow.open_monograph_search_request(
+  (select id from plans where label = 'eff'), 'source_discovery', 2, 'agent_requested',
+  'targeted', 'Prøve i 860: den delen av det brede søket som gjelder randomiserte forsøk.',
+  'PubMed', 'keyword', array[]::text[], array['randomized'], array[]::text[], null, null,
+  'ac860000-0000-4000-8000-00000000000a',
+  (select r.id from workflow.monograph_search_requests r
+   where r.reference = (select value from refs where label = 'eff_runde')));
+insert into refs (label, value)
+select 'eff_smal', r.reference from workflow.monograph_search_requests r
+where r.plan_id = (select id from plans where label = 'eff')
+  and r.supersedes_request_id = (select r2.id from workflow.monograph_search_requests r2
+                                 where r2.reference = (select value from refs where label = 'eff_runde'));
+
+set local role anon;
+insert into svar (label, payload)
+select 'sok4', api.record_monograph_machine_search(
+  'agent-identity:source-discovery-01', (select secret from cred where label = 'discovery'),
+  (select id from runs where label = 'discovery'),
+  (select value from refs where label = 'eff'),
+  (select value from refs where label = 'eff_smal'),
+  'PubMed', 'sertraline[tiab] AND depression[tiab] AND randomized[pt] AND adult[mh]', null,
+  'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi',
+  'sha256:' || repeat('9', 63) || '1',
+  'executed', 18, 18, false, null, null,
+  array['bibliographic_database'], null, 'keyword');
+reset role;
+
 select unalike(
   workflow.monograph_search_closure_problem((select id from plans where label = 'eff')),
   '%avkortet%',
-  'et oppfølgende søk på den samme plattformen lukker avkortingen'
+  'et smalere søk med den samme metoden, i en runde som uttrykkelig erstatter den brede, lukker avkortingen'
 );
 
 -- ===========================================================================

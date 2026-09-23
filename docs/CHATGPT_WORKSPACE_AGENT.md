@@ -60,7 +60,10 @@ kandidatkilder på planen). Agenten trenger sjelden å be om dem: planen åpner 
 én runde per metode den trenger, og kildene agenten velger til innhenting,
 inkluderer eller vurderer som mulig konklusjonsendrende, følger Antidep selv i
 neste runde. Er en begrensning vesentlig for spørsmålet — en nasjonal
-retningslinje Antidep ikke kan søke i — sier agenten det i merknaden.
+retningslinje Antidep ikke kan søke i — sier agenten det i merknaden. Et
+avkortet søk holder søkedekningen åpen til resten er dekket: agenten ber da om
+et smalere søk med den samme metoden og oppgir runden det erstatter
+(`narrows_request`, rundens `request_reference` fra oppgaven).
 
 En tilkobling er bundet til nøyaktig **ett** agentledd. Rollen er ikke en
 parameter modellen kan oppgi; den er tilkoblingens egen, registrert av et

@@ -25,7 +25,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(57);
+select plan(60);
 
 -- ===========================================================================
 -- Del 1 — Kontoene, bestillingen og modelltildelingene
@@ -398,6 +398,55 @@ select throws_ok(
   null,
   'en kilde som ikke er funnet av et registrert søk, kan ikke vurderes inn'
 );
+select throws_ok(
+  format($$
+    select api.import_agent_answer(%L, jsonb_build_object(
+      'answer_version', 'antidep/agent-answer@2',
+      'task_version', 'antidep/agent-task@1',
+      'role', 'source_discovery',
+      'job_key', %L,
+      'request_digest', %L,
+      'output_schema_version', 'antidep/source-discovery-draft@4',
+      'result', jsonb_build_object(
+        'candidate_appraisals', jsonb_build_array(),
+        'search_requests', jsonb_build_array(jsonb_build_object(
+          'rationale', 'Et smalere søk enn det brede.',
+          'query_terms', jsonb_build_array('weight gain'),
+          'narrows_request', repeat('0', 32))))))
+  $$,
+  (select id from jobs where label = 'discovery'),
+  (select payload ->> 'job_key' from svar where label = 'oppgave'),
+  (select payload ->> 'request_digest' from svar where label = 'oppgave')),
+  '22023',
+  'Søkeforespørselen sier at den snevrer inn en søkerunde som ikke finnes på denne planen for dette leddet.',
+  'et smalere søk kan ikke si at det erstatter en runde som ikke finnes'
+);
+
+select throws_ok(
+  format($$
+    select api.import_agent_answer(%L, jsonb_build_object(
+      'answer_version', 'antidep/agent-answer@2',
+      'task_version', 'antidep/agent-task@1',
+      'role', 'source_discovery',
+      'job_key', %L,
+      'request_digest', %L,
+      'output_schema_version', 'antidep/source-discovery-draft@4',
+      'result', jsonb_build_object(
+        'candidate_appraisals', jsonb_build_array(),
+        'search_requests', jsonb_build_array(jsonb_build_object(
+          'rationale', 'Et smalere søk enn det brede.',
+          'query_terms', jsonb_build_array('weight gain'),
+          'platform', 'ClinicalTrials.gov', 'method', 'registry_search', 'narrows_request', %L)))))
+  $$,
+  (select id from jobs where label = 'discovery'),
+  (select payload ->> 'job_key' from svar where label = 'oppgave'),
+  (select payload ->> 'request_digest' from svar where label = 'oppgave'),
+  (select value from refs where label = 'runde1')),
+  '22023',
+  'Den smalere runden bruker ingen av søkemetodene i runden den sier den erstatter.',
+  'og et forsøksregistersøk kan ikke erstatte et avkortet fritekstsøk: det sier ingenting om resten'
+);
+
 reset role;
 
 -- ===========================================================================
@@ -433,7 +482,8 @@ select 'import', api.import_agent_answer(
       'search_requests', jsonb_build_array(jsonb_build_object(
         'rationale', 'Det uavhengige andre sporet svarte ikke, og et målrettet søk mangler.',
         'strategy', 'targeted',
-        'query_terms', jsonb_build_array('sertraline'))),
+        'query_terms', jsonb_build_array('sertraline'),
+        'narrows_request', (select value from refs where label = 'runde1'))),
       'note', 'PubMed svarte ikke i denne runden.')));
 reset role;
 
@@ -509,6 +559,13 @@ select is(
    where r.reference = (select value from refs where label = 'runde2')),
   'agent_requested',
   'runden er bestilt av det semantiske leddet, og opphavet står på raden'
+);
+select is(
+  (select e.reference from workflow.monograph_search_requests r
+   join workflow.monograph_search_requests e on e.id = r.supersedes_request_id
+   where r.reference = (select value from refs where label = 'runde2')),
+  (select value from refs where label = 'runde1'),
+  'og den står som den smalere runden som uttrykkelig erstatter den brede'
 );
 
 set local role anon;

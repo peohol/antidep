@@ -228,7 +228,8 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
   vesentlig for et spørsmål, sier kildeoppdagelsen det i merknaden.
 - **Avkortede brede søk.** Det brede orienterende søket gir mange flere treff
   enn én side, og står derfor som avkortet. Stoppkravet holder dekningen åpen til
-  et senere, målrettet søk på den samme plattformen er lest helt — det er
+  det samme søket er lest helt, eller til et smalere søk med den samme metoden,
+  som uttrykkelig erstatter det brede (`narrows_request`), er lest helt — det er
   kildeoppdagelsens søkeforespørsler, og ikke et menneske, som lukker det.
 - **Norske aksetermer i engelske databaser.** Avgrensningens akser (indikasjon,
   utfall) har norske etiketter, og et fritekstsøk med dem gir ofte null treff i

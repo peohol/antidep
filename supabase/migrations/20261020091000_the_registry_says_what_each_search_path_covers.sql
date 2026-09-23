@@ -551,10 +551,18 @@ create trigger monograph_searches_enforce_track_platform
 
 alter table workflow.monograph_search_requests
   add column method text,
-  add column seed_identifiers text[] not null default array[]::text[];
+  add column seed_identifiers text[] not null default array[]::text[],
+  add column supersedes_request_id uuid
+    references workflow.monograph_search_requests (id) on update restrict on delete restrict;
+
+alter table workflow.monograph_search_requests
+  add constraint monograph_search_requests_supersedes_other_check
+    check (supersedes_request_id is null or supersedes_request_id <> id);
 
 comment on column workflow.monograph_search_requests.method is
   'Søkemetoden forespørselen gjelder, når den gjelder én bestemt. NULL betyr de bibliografiske fritekstsøkene på den navngitte plattformen eller på alle tre, slik forespørselen betydde før metoden fantes (workflow.monograph_request_methods).';
+comment on column workflow.monograph_search_requests.supersedes_request_id is
+  'Den brede runden denne smalere runden uttrykkelig erstatter, når leddet sa det. Et avkortet søk i den brede runden regnes som dekket når et helt lest søk med den samme plattformen og metoden i en runde som erstatter den, har gått — og ellers bare når det samme søket er lest helt (workflow.monograph_truncation_resolved). Uten en uttrykkelig erstatning ville et hvilket som helst kort søk ha lukket en avkortet treffliste det ikke sa noe om.';
 comment on column workflow.monograph_search_requests.seed_identifiers is
   'De sentrale kildene en metode som følger kilder skal følge, som «doi:…», «pmid:…» eller «pmcid:…». Hver av dem er en kandidatkilde på planen: hvilke kilder som er sentrale, er kildeoppdagelsens faglige avgjørelse, og kjøreren følger bare det den ble bedt om.';
 
@@ -719,6 +727,7 @@ begin
      or new.drug_aliases is distinct from old.drug_aliases
      or new.query_terms is distinct from old.query_terms
      or new.seed_identifiers is distinct from old.seed_identifiers
+     or new.supersedes_request_id is distinct from old.supersedes_request_id
      or new.track_codes is distinct from old.track_codes
      or new.requested_by_agent_run_id is distinct from old.requested_by_agent_run_id
      or new.created_at is distinct from old.created_at then

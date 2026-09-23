@@ -181,13 +181,14 @@ export function createDiscoveryApi(
       }
     },
 
-    async completeRun(agentRunId, status, outcome) {
+    async completeRun(agentRunId, status, outcome, failureReason) {
       const { error } = await client.rpc('complete_agent_run', {
         ...identity,
         p_agent_run_id: agentRunId,
         p_status: status,
         p_output_manifest: outcome,
-        p_failure_reason: null,
+        p_failure_reason:
+          status === 'failed' ? (failureReason ?? 'Kjøringen fikk et teknisk problem.') : null,
       })
       if (error !== null) {
         throw new Error('Kjøringen kunne ikke lukkes.')

@@ -10,8 +10,9 @@
 --   * en søkevei som ikke svarte, er en begrensning og aldri null treff,
 --   * hver plan vurderer en delt kilde for sin egen avgrensning, og hver
 --     sentral kilde følges — også når sporet alt er dekket,
---   * en avkortet treffliste kan ikke lukke dekningen, heller ikke av et annet
---     slag søk på den samme plattformen, og
+--   * en avkortet treffliste kan ikke lukke dekningen: resten er dekket bare av
+--     det samme søket lest helt, eller av et smalere søk med den samme metoden
+--     som uttrykkelig erstatter det, og
 --   * dekningskontrollen er et atskilt ledd: den arver ikke generatorens søk,
 --     og generatorens søk gjør den ikke uavhengig.
 --
@@ -536,27 +537,36 @@ select alike(
   'først en hel lesning flytter porten videre — til dekningskontrollen, og ikke til en redaktør'
 );
 
--- Og et senere søk dekker bare resten av det samme slaget søk. Et kort
--- oversiktssøk i PubMed sier ingenting om resten av et avkortet fritekstsøk.
+-- Og et senere søk dekker resten av en avkortet treffliste bare når det er det
+-- samme søket lest helt, eller et smalere søk med den samme metoden i en runde
+-- som uttrykkelig erstatter den brede. Et kort søk om noe annet — et
+-- oversiktssøk, eller et annet fritekstsøk ingen har sagt erstatter det — sier
+-- ingenting om resten.
+select workflow.open_monograph_search_request(
+  pg_temp.plan_id('p_reg'), 'source_discovery', 2, 'agent_requested', 'broad',
+  'Prøve i 980: et bredt fritekstsøk.', 'PubMed', 'keyword',
+  array[]::text[], array[]::text[], array[]::text[], null, null,
+  'ac980000-0000-4000-8000-00000000000a');
+insert into refs (label, value)
+select 'bred', r.reference from workflow.monograph_search_requests r
+where r.plan_id = pg_temp.plan_id('p_reg')
+  and r.rationale = 'Prøve i 980: et bredt fritekstsøk.';
+
 select workflow.record_monograph_search(
   pg_temp.plan_id('p_reg'), 'PubMed', 'sertraline', null, now(), 5000, 25, true,
   'Første side av 5000 treff.', 'executed', null, 'machine_executed',
   'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=sertraline',
   'sha256:' || repeat('7', 64), array[]::text[], null,
-  'ac980000-0000-4000-8000-00000000000a', null, 'keyword');
+  'ac980000-0000-4000-8000-00000000000a',
+  (select r.id from workflow.monograph_search_requests r
+   where r.reference = (select value from refs where label = 'bred')),
+  'keyword');
 select workflow.record_monograph_search(
   pg_temp.plan_id('p_reg'), 'PubMed', 'sertraline AND systematic[sb]', null, now(), 4, 4, false,
   null, 'executed', null, 'machine_executed',
   'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=sertraline+systematic',
   'sha256:' || repeat('8', 64), array[]::text[], null,
   'ac980000-0000-4000-8000-00000000000a', null, 'systematic_review_filter');
-
-select alike(
-  workflow.monograph_search_closure_problem(pg_temp.plan_id('p_reg')),
-  '%avkortet på PubMed (keyword)%',
-  'et helt lest oversiktssøk lukker ikke et avkortet fritekstsøk på den samme plattformen'
-);
-
 select workflow.record_monograph_search(
   pg_temp.plan_id('p_reg'), 'PubMed', 'sertraline AND "drug shortage"', null, now(), 3, 3, false,
   null, 'executed', null, 'machine_executed',
@@ -566,8 +576,36 @@ select workflow.record_monograph_search(
 
 select alike(
   workflow.monograph_search_closure_problem(pg_temp.plan_id('p_reg')),
+  '%avkortet på PubMed (keyword)%',
+  'verken et oversiktssøk eller et annet fritekstsøk ingen har sagt erstatter det, lukker et avkortet fritekstsøk'
+);
+
+select workflow.open_monograph_search_request(
+  pg_temp.plan_id('p_reg'), 'source_discovery', 3, 'agent_requested', 'targeted',
+  'Prøve i 980: den delen av det brede søket som gjelder mangel.', 'PubMed', 'keyword',
+  array[]::text[], array['drug shortage'], array[]::text[], null, null,
+  'ac980000-0000-4000-8000-00000000000a',
+  (select r2.id from workflow.monograph_search_requests r2
+   where r2.reference = (select value from refs where label = 'bred')));
+insert into refs (label, value)
+select 'smal', r.reference from workflow.monograph_search_requests r
+where r.plan_id = pg_temp.plan_id('p_reg')
+  and r.rationale = 'Prøve i 980: den delen av det brede søket som gjelder mangel.';
+
+select workflow.record_monograph_search(
+  pg_temp.plan_id('p_reg'), 'PubMed', 'sertraline AND "drug shortage" AND norway', null, now(),
+  2, 2, false, null, 'executed', null, 'machine_executed',
+  'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=sertraline+shortage+norway',
+  'sha256:' || repeat('5', 64), array[]::text[], null,
+  'ac980000-0000-4000-8000-00000000000a',
+  (select r.id from workflow.monograph_search_requests r
+   where r.reference = (select value from refs where label = 'smal')),
+  'keyword');
+
+select alike(
+  workflow.monograph_search_closure_problem(pg_temp.plan_id('p_reg')),
   '%separate kontrollen%',
-  'mens et målrettet, helt lest fritekstsøk gjør det'
+  'mens et helt lest, smalere fritekstsøk i en runde som uttrykkelig erstatter den brede, gjør det'
 );
 
 -- ===========================================================================

@@ -336,6 +336,14 @@ function discoverySearchRequests(fields: Fields): number {
     asOptionalVocabulary(request, 'platform', SEARCH_PLATFORMS)
     asOptionalVocabulary(request, 'method', SEARCH_METHOD_NAMES)
     asOptionalVocabulary(request, 'strategy', SEARCH_STRATEGIES)
+    const narrows = asOptionalText(request, 'narrows_request')
+    if (typeof narrows === 'string' && !/^[0-9a-f]{32}$/.test(narrows)) {
+      problem(
+        request.subject,
+        `${request.where}.narrows_request`,
+        'er ikke en søkerundes referanse (32 heksadesimale tegn)',
+      )
+    }
     const seeds = optionalArray(request, 'seed_candidates')
     if (seeds.length > SEARCH_REQUEST_MAX_SEEDS) {
       problem(
