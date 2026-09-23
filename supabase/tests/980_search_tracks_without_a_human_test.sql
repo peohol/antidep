@@ -817,18 +817,28 @@ select is(
 -- foreslår hver sin bruk av den for det samme behovet og kommer til hver sin
 -- beslutning. Hver plan ser og driver bare sin egen bruk: ingen av dem skrives
 -- over av den andre, og ingen arves av den andre planen. Behovet er et
--- myndighetsbehov på effektplanen, slik at innhentingen skriver den faglige
--- grunnen inn i forespørselen den åpner.
+-- myndighetsbehov, slik at innhentingen skriver den faglige grunnen inn i
+-- forespørselen den åpner. Bestillingen har flere effektplaner, og bare noen av
+-- dem har et myndighetsbehov; hvilken av dem som er p_eff, er ikke gitt. Behovet
+-- hentes derfor fra utgavens planer, helst effektplanens eget, og legges på
+-- begge planene som mangler det.
 create temporary table delt_behov on commit drop as
   select pn.need_id
   from workflow.monograph_search_plan_needs pn
-  where pn.plan_id = pg_temp.plan_id('p_eff')
+  join workflow.monograph_search_plans p on p.id = pn.plan_id
+  where p.edition_id = (select edition_id from workflow.monograph_search_plans
+                        where id = pg_temp.plan_id('p_eff'))
     and knowledge.monograph_need_material_kind(pn.need_id) = 'authority_document'
-  order by pn.need_id
+  order by pn.plan_id = pg_temp.plan_id('p_eff') desc, pn.need_id
   limit 1;
 
 insert into workflow.monograph_search_plan_needs (plan_id, need_id)
-select pg_temp.plan_id('p_ae'), need_id from delt_behov;
+select pg_temp.plan_id(v.plan), d.need_id
+from delt_behov d
+cross join (values ('p_eff'), ('p_ae')) as v(plan)
+where not exists (
+  select 1 from workflow.monograph_search_plan_needs pn
+  where pn.plan_id = pg_temp.plan_id(v.plan) and pn.need_id = d.need_id);
 
 select workflow.record_monograph_candidate_source(
   pg_temp.plan_id(v.plan),
