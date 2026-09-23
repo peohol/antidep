@@ -62,8 +62,19 @@ inkluderer eller vurderer som mulig konklusjonsendrende, følger Antidep selv i
 neste runde. Er en begrensning vesentlig for spørsmålet — en nasjonal
 retningslinje Antidep ikke kan søke i — sier agenten det i merknaden. Et
 avkortet søk holder søkedekningen åpen til resten er dekket: agenten ber da om
-et smalere søk med den samme metoden og oppgir runden det erstatter
-(`narrows_request`, rundens `request_reference` fra oppgaven).
+et smalere søk med den samme plattformen og metoden og oppgir runden det
+erstatter (`narrows_request`). Bare rundene under «Søkerunder du kan snevre inn»
+(`narrowable_rounds`) kan oppgis — leddets egne avkortede runder, ikke det andre
+kildeleddets søk som står i oppgaven ved siden av — og står listen tom, har
+forespørselen ikke feltet.
+
+Fra migrasjon 014i er svarformen i oppgavefilen bygget av den enkelte oppgaven.
+Den lister bare kandidatkildene oppgaven har, tilbyr ikke «excluded» for en
+kilde med registrert tilgangsbegrensning (den settes som «awaiting_access»,
+uansett grunn), og tillater i `narrows_request` bare rundene i
+`narrowable_rounds`, hver med nøyaktig sin plattform og metode. Kontrollen før
+svaret sendes, leser de samme grensene, og importen avviser de samme svarene
+uansett.
 
 En tilkobling er bundet til nøyaktig **ett** agentledd. Rollen er ikke en
 parameter modellen kan oppgi; den er tilkoblingens egen, registrert av et

@@ -33,6 +33,14 @@ import {
 } from '../types/api.ts'
 import { SEARCH_REQUEST_METHODS, SEARCH_REQUEST_PLATFORMS } from '../ops/search-method-catalog.ts'
 import { ASSESSMENT_FRAMEWORKS } from './evidence-assessment-proposal.ts'
+import {
+  ACCESS_LIMITED_DECISIONS,
+  CANDIDATE_DECISIONS,
+  narrowableReferences,
+  type AppraisableCandidate,
+  type DiscoveryAnswerBounds,
+  type NarrowableRound,
+} from './discovery-answer-bounds.ts'
 
 type Schema = Record<string, unknown>
 
@@ -212,15 +220,7 @@ export function buildEvidenceAssessmentDraftSchema(): Schema {
 
 export { SEARCH_OUTCOMES } from './search-outcomes.ts'
 
-/** Utvalgsbeslutningene om én kandidatkilde. */
-export const CANDIDATE_DECISIONS = [
-  'proposed',
-  'selected_for_retrieval',
-  'included',
-  'excluded',
-  'awaiting_access',
-  'awaiting_clarification',
-] as const
+export { CANDIDATE_DECISIONS, CANDIDATE_IDENTIFIER_KINDS } from './discovery-answer-bounds.ts'
 
 /**
  * Plattformene og metodene en søkeforespørsel kan navngi.
@@ -233,6 +233,9 @@ export const CANDIDATE_DECISIONS = [
 export const SEARCH_PLATFORMS: readonly string[] = SEARCH_REQUEST_PLATFORMS
 export const SEARCH_METHOD_NAMES: readonly string[] = SEARCH_REQUEST_METHODS
 
+/** Identifikatorformene en sentral kilde kan følges med. */
+export const SEED_IDENTIFIER_KINDS = ['doi', 'pmid', 'pmcid'] as const
+
 /** Hvor mange sentrale kilder én forespørsel kan be Antidep følge. Samme tall som raden. */
 export const SEARCH_REQUEST_MAX_SEEDS = 10
 
@@ -242,21 +245,75 @@ export const SEARCH_STRATEGIES = ['broad', 'targeted'] as const
 /** Hvor mange termer én søkeforespørsel kan bære. Samme tall som raden. */
 export const SEARCH_REQUEST_MAX_TERMS = 8
 
-function candidateAppraisalSchema(): Schema {
+// ----------------------------------------------------------------------------
+// Svarformen er oppgavens egen (migrasjon 014i)
+//
+// Hvilke kilder svaret kan vurdere, hvilke av dem som ikke kan ekskluderes, og
+// hvilke runder det kan erstatte med et smalere søk, står i oppgaven. Formen
+// bygges av det (`discovery-answer-bounds.ts`), slik at det gale svaret ikke
+// bare er forbudt i prosa, men ikke finnes å skrive: en tilgangsbegrenset kilde
+// har ikke «excluded» blant sine valg, og narrows_request tar bare en av de
+// rundene leddet faktisk kan erstatte — eller finnes ikke, når ingen kan det.
+// ----------------------------------------------------------------------------
+
+const ACCESS_LIMITED_DECISION =
+  'Denne kilden har en registrert tilgangsbegrensning: Antidep har ikke fått lest den. Da finnes ikke «excluded» — heller ikke med en faglig grunn lest av tittelen eller sammendraget. Sett «awaiting_access» og skriv hvorfor i decision_reason; mener du kilden ikke er relevant, si det der og la could_change_conclusion være false.'
+
+/** Kandidatkildene gruppert på identifikatorform og tilgang, i oppgavens rekkefølge. */
+function candidateGroups(candidates: readonly AppraisableCandidate[]): Schema[] {
+  const groups = new Map<string, { kind: string; limited: boolean; values: string[] }>()
+  for (const candidate of candidates) {
+    const key = `${candidate.identifierKind}|${String(candidate.accessLimited)}`
+    const group = groups.get(key) ?? {
+      kind: candidate.identifierKind,
+      limited: candidate.accessLimited,
+      values: [],
+    }
+    group.values.push(candidate.identifierValue)
+    groups.set(key, group)
+  }
+  return [...groups.values()].map((group) => ({
+    description: group.limited
+      ? `Kilder med registrert tilgangsbegrensning (${group.kind}). ${ACCESS_LIMITED_DECISION}`
+      : `Kilder uten registrert tilgangsbegrensning (${group.kind}).`,
+    properties: {
+      identifier_kind: { const: group.kind },
+      identifier_value: { enum: group.values },
+      ...(group.limited
+        ? { decision: optionalVocabulary(ACCESS_LIMITED_DECISIONS, ACCESS_LIMITED_DECISION) }
+        : {}),
+    },
+  }))
+}
+
+function candidateAppraisalSchema(candidates: readonly AppraisableCandidate[]): Schema {
+  const description =
+    'Vurderingen din av kandidatkildene de registrerte søkene ga. Søkene er enten Antideps maskinelle kall eller passeringer en redaktør utførte og registrerte; oppgaven sier om hvert av dem hvem som utførte det. Bare kilder som står i oppgaven: en kilde som ikke er funnet av et registrert søk, har ingen oppdagelsesvei, og den skal ikke fylles inn fra hukommelsen. Mangler en kilde du mener bør være der, be om et søk som ville funnet den.'
+  if (candidates.length === 0) {
+    return {
+      type: 'array',
+      maxItems: 0,
+      description: `${description} Denne oppgaven har ingen kandidatkilder å vurdere, så listen er tom.`,
+    }
+  }
+  const kinds = [...new Set(candidates.map((candidate) => candidate.identifierKind))]
   return {
     type: 'array',
-    description:
-      'Vurderingen din av kandidatkildene de registrerte søkene ga. Søkene er enten Antideps maskinelle kall eller passeringer en redaktør utførte og registrerte; oppgaven sier om hvert av dem hvem som utførte det. Bare kilder som står i oppgaven: en kilde som ikke er funnet av et registrert søk, har ingen oppdagelsesvei, og den skal ikke fylles inn fra hukommelsen. Mangler en kilde du mener bør være der, be om et søk som ville funnet den.',
+    description,
     items: {
       type: 'object',
       additionalProperties: false,
       required: ['identifier_kind', 'identifier_value'],
       properties: {
         identifier_kind: vocabulary(
-          ['doi', 'pmid', 'pmcid', 'url', 'title', 'registry_id'],
+          kinds,
           'Identifikatorformen, ordrett fra kandidatlisten i oppgaven.',
         ),
-        identifier_value: text('Identifikatoren, ordrett fra kandidatlisten i oppgaven.'),
+        identifier_value: {
+          type: 'string',
+          enum: candidates.map((candidate) => candidate.identifierValue),
+          description: 'Identifikatoren, ordrett fra kandidatlisten i oppgaven.',
+        },
         could_change_conclusion: {
           type: ['boolean', 'null'],
           description:
@@ -267,7 +324,7 @@ function candidateAppraisalSchema(): Schema {
         ),
         decision: optionalVocabulary(
           CANDIDATE_DECISIONS,
-          'Utvalgsbeslutningen din. «excluded» krever en faglig grunn, og kan ikke brukes på en kilde Antidep bare ikke kom til: en betalingsmur er en tilgangsbegrensning, og den hører under «awaiting_access».',
+          'Utvalgsbeslutningen din. «excluded» krever en faglig grunn, og finnes bare for en kilde uten registrert tilgangsbegrensning. En kilde merket TILGANGSBEGRENSET i kandidatlisten kan ikke ekskluderes, uansett grunn: den hører under «awaiting_access».',
         ),
         decision_reason: optionalText('Begrunnelsen for beslutningen.'),
         uses: {
@@ -287,86 +344,124 @@ function candidateAppraisalSchema(): Schema {
           },
         },
       },
+      // Hver kilde hører til nøyaktig én gruppe, og gruppen sier hvilke
+      // beslutninger den kan få.
+      anyOf: candidateGroups(candidates),
     },
   }
 }
 
-function searchRequestSchema(): Schema {
+/** Én vei å erstatte en avkortet runde på: referansen, plattformen og metoden. */
+function narrowingAlternative(round: NarrowableRound): Schema {
+  return {
+    description: `Et smalere søk som erstatter runden ${round.requestReference}: ${round.platform}, ${round.method}.`,
+    required: ['narrows_request', 'platform', 'method'],
+    properties: {
+      narrows_request: { const: round.requestReference },
+      platform: { const: round.platform },
+      method: { const: round.method },
+    },
+  }
+}
+
+function searchRequestSchema(rounds: readonly NarrowableRound[]): Schema {
+  const properties: Record<string, Schema> = {
+    rationale: text(
+      'Hvorfor dette søket trengs: hvilket hull i dekningen det skal fylle, eller hvilken kilde du mener kan finnes og ikke er funnet ennå.',
+    ),
+    platform: optionalVocabulary(
+      SEARCH_PLATFORMS,
+      'Plattformen søket skal gå mot, når det gjelder én bestemt. Utelat for alle som har metoden. En annen tjeneste kan ikke oppgis, og en adresse kan ikke oppgis.',
+    ),
+    method: optionalVocabulary(
+      SEARCH_METHOD_NAMES,
+      'Søkemetoden, slik oppgaven lister dem under «Søk du kan be om» med hva hver av dem dekker. Utelat for de bibliografiske fritekstsøkene. «references» og «citations» følger de sentrale kildene du navngir i seed_candidates.',
+    ),
+    seed_candidates: {
+      type: 'array',
+      maxItems: SEARCH_REQUEST_MAX_SEEDS,
+      description:
+        'De sentrale kildene Antidep skal følge med «references» eller «citations» — kandidatkilder fra oppgaven, med identifikatoren ordrett. Hvilke kilder som er sentrale, avgjør du; Antidep følger dem. Kildene du velger til innhenting, inkluderer eller vurderer som mulig konklusjonsendrende, følges uansett i neste runde.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['identifier_kind', 'identifier_value'],
+        properties: {
+          identifier_kind: vocabulary(
+            SEED_IDENTIFIER_KINDS,
+            'Identifikatorformen, ordrett fra kandidatlisten i oppgaven.',
+          ),
+          identifier_value: text('Identifikatoren, ordrett fra kandidatlisten i oppgaven.'),
+        },
+      },
+    },
+    strategy: optionalVocabulary(
+      SEARCH_STRATEGIES,
+      '«broad» setter avgrensningsaksene som ELLER-ledd; «targeted» gjør én passering per akse eller term. Utelat for «targeted».',
+    ),
+    drug_aliases: {
+      type: 'array',
+      maxItems: SEARCH_REQUEST_MAX_TERMS,
+      items: { type: 'string', minLength: 2, maxLength: 120 },
+      description:
+        'Virkestoffnavn som skal søkes som ALTERNATIVER til det kanoniske: den engelske stavemåten, et handelsnavn, et navn på et annet språk. De hører hjemme her og ikke i query_terms — et synonym lagt til som en term ville blitt et ekstra påkrevd begrep, og da kunne ikke en artikkel som bare bruker det andre navnet, treffe i det hele tatt.',
+    },
+    query_terms: {
+      type: 'array',
+      maxItems: SEARCH_REQUEST_MAX_TERMS,
+      items: { type: 'string', minLength: 2, maxLength: 120 },
+      description:
+        'Begrepene som skal legges til avgrensningen som egne krav — et studiedesign, en aldersgruppe, et utfall. Høyst åtte, uten anførselstegn og uten linjeskift. Et annet navn på virkestoffet hører i drug_aliases.',
+    },
+    filters_note: optionalText(
+      'En avgrensning som er faglig begrunnet. Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater.',
+    ),
+  }
+  const description =
+    'Flere eller mer målrettede søk du ber Antidep utføre. Dette er den ene veien fra din vurdering til et nytt søk: du utfører ingen søk selv, og du trenger ingen nettilgang. Antidep kjører forespørslene, registrerer dem med endepunkt og responsavtrykk, og gir deg en ny vurderingsrunde på resultatet.'
+
+  // Ingen runde kan erstattes: feltet finnes ikke, og et svar som bærer det,
+  // har et felt formen ikke kjenner.
+  if (rounds.length === 0) {
+    return {
+      type: 'array',
+      description: `${description} Ingen avkortet søkerunde i denne oppgaven kan snevres inn av dette leddet, så en forespørsel har ikke feltet narrows_request.`,
+      items: { type: 'object', additionalProperties: false, required: ['rationale'], properties },
+    }
+  }
+
   return {
     type: 'array',
-    description:
-      'Flere eller mer målrettede søk du ber Antidep utføre. Dette er den ene veien fra din vurdering til et nytt søk: du utfører ingen søk selv, og du trenger ingen nettilgang. Antidep kjører forespørslene, registrerer dem med endepunkt og responsavtrykk, og gir deg en ny vurderingsrunde på resultatet.',
+    description,
     items: {
       type: 'object',
       additionalProperties: false,
       required: ['rationale'],
       properties: {
-        rationale: text(
-          'Hvorfor dette søket trengs: hvilket hull i dekningen det skal fylle, eller hvilken kilde du mener kan finnes og ikke er funnet ennå.',
-        ),
-        platform: optionalVocabulary(
-          SEARCH_PLATFORMS,
-          'Plattformen søket skal gå mot, når det gjelder én bestemt. Utelat for alle som har metoden. En annen tjeneste kan ikke oppgis, og en adresse kan ikke oppgis.',
-        ),
-        method: optionalVocabulary(
-          SEARCH_METHOD_NAMES,
-          'Søkemetoden, slik oppgaven lister dem under «Søk du kan be om» med hva hver av dem dekker. Utelat for de bibliografiske fritekstsøkene. «references» og «citations» følger de sentrale kildene du navngir i seed_candidates.',
-        ),
-        seed_candidates: {
-          type: 'array',
-          maxItems: SEARCH_REQUEST_MAX_SEEDS,
-          description:
-            'De sentrale kildene Antidep skal følge med «references» eller «citations» — kandidatkilder fra oppgaven, med identifikatoren ordrett. Hvilke kilder som er sentrale, avgjør du; Antidep følger dem. Kildene du velger til innhenting, inkluderer eller vurderer som mulig konklusjonsendrende, følges uansett i neste runde.',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['identifier_kind', 'identifier_value'],
-            properties: {
-              identifier_kind: vocabulary(
-                ['doi', 'pmid', 'pmcid'],
-                'Identifikatorformen, ordrett fra kandidatlisten i oppgaven.',
-              ),
-              identifier_value: text('Identifikatoren, ordrett fra kandidatlisten i oppgaven.'),
-            },
-          },
-        },
-        strategy: optionalVocabulary(
-          SEARCH_STRATEGIES,
-          '«broad» setter avgrensningsaksene som ELLER-ledd; «targeted» gjør én passering per akse eller term. Utelat for «targeted».',
-        ),
-        drug_aliases: {
-          type: 'array',
-          maxItems: SEARCH_REQUEST_MAX_TERMS,
-          items: { type: 'string', minLength: 2, maxLength: 120 },
-          description:
-            'Virkestoffnavn som skal søkes som ALTERNATIVER til det kanoniske: den engelske stavemåten, et handelsnavn, et navn på et annet språk. De hører hjemme her og ikke i query_terms — et synonym lagt til som en term ville blitt et ekstra påkrevd begrep, og da kunne ikke en artikkel som bare bruker det andre navnet, treffe i det hele tatt.',
-        },
-        query_terms: {
-          type: 'array',
-          maxItems: SEARCH_REQUEST_MAX_TERMS,
-          items: { type: 'string', minLength: 2, maxLength: 120 },
-          description:
-            'Begrepene som skal legges til avgrensningen som egne krav — et studiedesign, en aldersgruppe, et utfall. Høyst åtte, uten anførselstegn og uten linjeskift. Et annet navn på virkestoffet hører i drug_aliases.',
-        },
-        filters_note: optionalText(
-          'En avgrensning som er faglig begrunnet. Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater.',
-        ),
+        ...properties,
         narrows_request: {
           type: 'string',
-          pattern: '^[0-9a-f]{32}$',
+          enum: narrowableReferences(rounds),
           description:
-            'Runden dette smalere søket erstatter, med «request_reference» ordrett fra et avkortet søk i oppgaven. Søket må bruke den samme plattformen og metoden. Et avkortet søk holder søkedekningen åpen til det samme søket er lest helt, eller til et smalere søk som uttrykkelig erstatter det, er lest helt.',
+            'Den avkortede runden dette smalere søket erstatter — bare en av dem oppgaven lister under «Søkerunder du kan snevre inn», og med nøyaktig den plattformen og metoden som står ved den. Et avkortet søk holder søkedekningen åpen til det samme søket er lest helt, eller til et smalere søk som uttrykkelig erstatter det, er lest helt. Utelat feltet for et søk som ikke erstatter noen runde.',
         },
       },
+      anyOf: [
+        {
+          description: 'Et søk som ikke erstatter noen runde.',
+          not: { required: ['narrows_request'] },
+        },
+        ...rounds.map(narrowingAlternative),
+      ],
     },
   }
 }
 
-/** Formen et kildeoppdagelsessvar skal ha. */
-export function buildSourceDiscoveryDraftSchema(): Schema {
+/** Formen et svar på nettopp denne kildeoppdagelsesoppgaven skal ha. */
+export function buildSourceDiscoveryDraftSchema(bounds: DiscoveryAnswerBounds): Schema {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: 'https://antidep.no/schema/source-discovery-draft-4.json',
+    $id: 'https://antidep.no/schema/source-discovery-draft-5.json',
     title: 'Antidep SourceDiscoveryDraft',
     description:
       'Vurderingen av de registrerte søkene for én søkeplan: hvilke av kandidatkildene som er relevante og til hva, hvilke flere søk som trengs, og hvilke avgrensningsverdier monografien bør dekke. Hvilken plan, hvilken avgrensning og hvilke behov det gjelder, står i oppgaven og hører ikke hjemme i svaret. Svaret skal ikke inneholde et klinisk svar på noe av spørsmålene: dette leddet finner grunnlaget, det leser det ikke. Det rapporterer heller ikke søk — søkene er utført av andre enn deg: Antideps egen kode, eller en redaktør for de søkesporene Antidep ikke har en maskinell vei til.',
@@ -374,8 +469,8 @@ export function buildSourceDiscoveryDraftSchema(): Schema {
     additionalProperties: false,
     required: ['candidate_appraisals'],
     properties: {
-      candidate_appraisals: candidateAppraisalSchema(),
-      search_requests: searchRequestSchema(),
+      candidate_appraisals: candidateAppraisalSchema(bounds.candidates),
+      search_requests: searchRequestSchema(bounds.narrowableRounds),
       term_proposals: {
         type: 'array',
         description:
@@ -401,11 +496,11 @@ export function buildSourceDiscoveryDraftSchema(): Schema {
   }
 }
 
-/** Formen en kontroll av søkedekningen skal ha. */
-export function buildSourceCoverageControlDraftSchema(): Schema {
+/** Formen et svar på nettopp denne kontrollen av søkedekningen skal ha. */
+export function buildSourceCoverageControlDraftSchema(bounds: DiscoveryAnswerBounds): Schema {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: 'https://antidep.no/schema/source-coverage-control-draft-3.json',
+    $id: 'https://antidep.no/schema/source-coverage-control-draft-4.json',
     title: 'Antidep SourceCoverageControlDraft',
     description:
       'Den separate kontrollen av søkedekningen for én søkeplan: vurderingen av dine egne, separat utførte motsøk, av de kildene generatoren overså, og av om begrunnelsen for å avslutte holder. Motsøkene er kjørt av Antideps egen kode under din rolle og din kjøring, og de ligger i oppgaven — du kan verken erklære eller bestride at de ble gjort. Enighet med generatoren er ikke i seg selv fasit.',
@@ -429,8 +524,8 @@ export function buildSourceCoverageControlDraftSchema(): Schema {
       },
     ],
     properties: {
-      candidate_appraisals: candidateAppraisalSchema(),
-      search_requests: searchRequestSchema(),
+      candidate_appraisals: candidateAppraisalSchema(bounds.candidates),
+      search_requests: searchRequestSchema(bounds.narrowableRounds),
       control: {
         type: 'object',
         additionalProperties: false,

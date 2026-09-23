@@ -350,26 +350,26 @@ describe('kilde- og monografisvar', () => {
     ).toBeNull()
   })
 
-  it('godtar et smalere søk som oppgir runden det erstatter, og avviser noe som ikke er en referanse', () => {
-    const narrower = {
-      rationale: 'Det brede fritekstsøket er avkortet; dette er den delen som gjelder spørsmålet.',
-      method: 'keyword',
-      platform: 'PubMed',
-      query_terms: ['weight gain'],
-      narrows_request: '0123456789abcdef0123456789abcdef',
-    }
+  // Et smalere søk kan bare erstatte en runde oppgaven sier at leddet kan
+  // erstatte (migrasjon 014i). Dekkes i sin helhet av
+  // source-discovery-contract.test.ts; her står bare at noe som ikke er en av
+  // dem, stoppes før databasen.
+  it('avviser en narrows_request når oppgaven ikke har en runde som kan snevres inn', () => {
     expect(
       handoffResultProblem(task('source_discovery'), {
         ...resultFor('source_discovery'),
-        search_requests: [narrower],
+        search_requests: [
+          {
+            rationale:
+              'Det brede fritekstsøket er avkortet; dette er den delen som gjelder spørsmålet.',
+            method: 'keyword',
+            platform: 'PubMed',
+            query_terms: ['weight gain'],
+            narrows_request: '0123456789abcdef0123456789abcdef',
+          },
+        ],
       }),
-    ).toBeNull()
-    expect(
-      handoffResultProblem(task('source_discovery'), {
-        ...resultFor('source_discovery'),
-        search_requests: [{ ...narrower, narrows_request: 'det brede søket' }],
-      }),
-    ).toMatch(/narrows_request/)
+    ).toMatch(/narrows_request viser til en søkerunde, men ingen runde/)
   })
 
   it('lar ikke kontrollen erklære sin egen uavhengighet', () => {

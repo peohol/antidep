@@ -342,7 +342,7 @@ select ok(
 );
 select is(
   (select payload ->> 'output_schema_version' from svar where label = 'oppgave'),
-  'antidep/source-discovery-draft@4',
+  'antidep/source-discovery-draft@5',
   'svarformen er den som ikke har et felt for utførte søk'
 );
 
@@ -360,7 +360,7 @@ select throws_ok(
       'role', 'source_discovery',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-discovery-draft@4',
+      'output_schema_version', 'antidep/source-discovery-draft@5',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(),
         'searches', jsonb_build_array(jsonb_build_object(
@@ -383,7 +383,7 @@ select throws_ok(
       'role', 'source_discovery',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-discovery-draft@4',
+      'output_schema_version', 'antidep/source-discovery-draft@5',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(jsonb_build_object(
           'identifier_kind', 'doi',
@@ -406,7 +406,7 @@ select throws_ok(
       'role', 'source_discovery',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-discovery-draft@4',
+      'output_schema_version', 'antidep/source-discovery-draft@5',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(),
         'search_requests', jsonb_build_array(jsonb_build_object(
@@ -430,7 +430,7 @@ select throws_ok(
       'role', 'source_discovery',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-discovery-draft@4',
+      'output_schema_version', 'antidep/source-discovery-draft@5',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(),
         'search_requests', jsonb_build_array(jsonb_build_object(
@@ -464,7 +464,7 @@ select 'import', api.import_agent_answer(
     'role', 'source_discovery',
     'job_key', (select payload ->> 'job_key' from svar where label = 'oppgave'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'oppgave'),
-    'output_schema_version', 'antidep/source-discovery-draft@4',
+    'output_schema_version', 'antidep/source-discovery-draft@5',
     -- Regresjon (013u): svaret har ingen identity i det hele tatt. Det er
     -- nøyaktig det en ChatGPT Workspace Agent leverer.
     'result', jsonb_build_object(
@@ -677,7 +677,7 @@ select 'import2', api.import_agent_answer(
     'role', 'source_discovery',
     'job_key', (select payload ->> 'job_key' from svar where label = 'oppgave2'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'oppgave2'),
-    'output_schema_version', 'antidep/source-discovery-draft@4',
+    'output_schema_version', 'antidep/source-discovery-draft@5',
     'result', jsonb_build_object(
       'candidate_appraisals', jsonb_build_array(),
       'note', 'Det uavhengige sporet ga ingen treff. Ingen flere søk trengs nå.')));
@@ -823,7 +823,7 @@ select throws_ok(
       'role', 'source_quality_assessment',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-coverage-control-draft@3',
+      'output_schema_version', 'antidep/source-coverage-control-draft@4',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(),
         'control', jsonb_build_object(
@@ -848,7 +848,7 @@ select throws_ok(
       'role', 'source_quality_assessment',
       'job_key', %L,
       'request_digest', %L,
-      'output_schema_version', 'antidep/source-coverage-control-draft@3',
+      'output_schema_version', 'antidep/source-coverage-control-draft@4',
       'result', jsonb_build_object(
         'candidate_appraisals', jsonb_build_array(),
         'control', jsonb_build_object(
@@ -881,7 +881,7 @@ select 'kontrollimport1', api.import_agent_answer(
     'role', 'source_quality_assessment',
     'job_key', (select payload ->> 'job_key' from svar where label = 'kontrolloppgave'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'kontrolloppgave'),
-    'output_schema_version', 'antidep/source-coverage-control-draft@3',
+    'output_schema_version', 'antidep/source-coverage-control-draft@4',
     'result', jsonb_build_object(
       'candidate_appraisals', jsonb_build_array(),
       'search_requests', jsonb_build_array(jsonb_build_object(
@@ -975,7 +975,7 @@ select 'kontrollimport2', api.import_agent_answer(
     'role', 'source_quality_assessment',
     'job_key', (select payload ->> 'job_key' from svar where label = 'kontrolloppgave2'),
     'request_digest', (select payload ->> 'request_digest' from svar where label = 'kontrolloppgave2'),
-    'output_schema_version', 'antidep/source-coverage-control-draft@3',
+    'output_schema_version', 'antidep/source-coverage-control-draft@4',
     'result', jsonb_build_object(
       'candidate_appraisals', jsonb_build_array(jsonb_build_object(
         'identifier_kind', 'doi',

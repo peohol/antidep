@@ -168,8 +168,11 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
     // @3 fra migrasjon 013v: leddet utfører ikke lenger søk. Antideps egen kode
     // søker og registrerer med endepunkt og responsavtrykk; leddet vurderer det
     // som ble hentet, og ber om flere søk som strukturerte søkeforespørsler.
-    promptTemplateVersion: 'source-discovery/machine-search-appraisal/5',
-    outputSchemaVersion: 'antidep/source-discovery-draft@4',
+    // @5 fra migrasjon 014i: svarformen er oppgavens egen — kildene den har,
+    // uten «excluded» for en tilgangsbegrenset kilde, og bare de rundene
+    // leddet kan erstatte i narrows_request.
+    promptTemplateVersion: 'source-discovery/machine-search-appraisal/6',
+    outputSchemaVersion: 'antidep/source-discovery-draft@5',
     label: 'Kildeoppdagelse',
     summary:
       'Vurder de registrerte søkene og kandidatkildene de ga — Antideps maskinelle kall og redaktørens dokumenterte passeringer: hva er relevant, til hvilket behov, og hvilke flere søk trengs.',
@@ -178,9 +181,10 @@ export const HANDOFF_CONTRACTS: Readonly<Record<HandoffRole, HandoffRoleContract
     role: 'source_quality_assessment',
     // @2 fra migrasjon 013v: kontrollens motsøk utføres maskinelt under dens
     // egen rolle og kjøring, og uavhengigheten utledes av søkeloggen framfor å
-    // erklæres i svaret.
-    promptTemplateVersion: 'source-coverage/machine-countersearch-control/5',
-    outputSchemaVersion: 'antidep/source-coverage-control-draft@3',
+    // erklæres i svaret. @4 fra migrasjon 014i: svarformen er oppgavens egen,
+    // som for kildeoppdagelsen.
+    promptTemplateVersion: 'source-coverage/machine-countersearch-control/6',
+    outputSchemaVersion: 'antidep/source-coverage-control-draft@4',
     label: 'Kontroll av søkedekning',
     summary:
       'Vurder resultatene av dine egne, separat utførte motsøk, kontroller de sentrale eksklusjonene, og avgjør om begrunnelsen for å avslutte søket holder.',
