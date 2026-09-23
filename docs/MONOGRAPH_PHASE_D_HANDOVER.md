@@ -50,20 +50,27 @@ svarkontrollen. Et søk Antidep utførte selv, bærer endepunktet og et
 responsavtrykk; en agents beretning om et verktøykall gjør det ikke, og de to
 blandes ikke.
 
-Og et tredje ledd er menneskets. De søkeveiene Antidep faktisk kaller — Europe
-PMC, PubMed og Crossref — dekker bare det bibliografiske søkesporet. Hva hver
-søkevei kan dekke, er registrert i `knowledge.monograph_search_platforms`, og
-et søk kan ikke erklære et spor søkeveien ikke står oppført for. De øvrige
-obligatoriske sporene per kildeprofil har derfor ingen maskinell utfører: de
-føres som `no_machine_path` når planen lages, teller aldri som dekning, og
-navngis av stoppkravet framfor å bli stående som «ikke forsøkt ennå». En
-redaktør utfører søket og registrerer passeringen med
-`api.record_monograph_track_by_editor(...)`: hvor det ble søkt, med hvilken
-streng, når og hvor mange treff det ga, som en egen rad i søkeloggen med
-`editor_recorded` som utførelsesbevis. Sporet knyttes til nøyaktig den raden, og
-begge bærer hvem som gjorde det.
-Ingen av de tre leddene kan gjøre den andres arbeid, og ingen av dem kan late
-som (migrasjon 013x).
+Hvert obligatorisk søkespor har en maskinell søkemetode (migrasjon 014c). Hva
+hver metode kan dekke, og for hvilke profiler, er registrert i
+`knowledge.monograph_search_methods` og `knowledge.monograph_search_platforms`,
+og et søk må si hvilken metode det brukte og kan ikke erklære et spor metoden
+ikke står oppført for. Metodene er fritekstsøkene i Europe PMC, PubMed og
+Crossref, PubMeds og Europe PMCs filtre for oversikter, observasjonsstudier,
+humane primærstudier, veiledninger og oppdateringer, ClinicalTrials.gov for
+forsøksregistrene, FEST fra Direktoratet for medisinske produkter for REG- og
+PROD-sporene og preparatomtalene, EMAs publiserte sikkerhetsvurderinger for
+sikkerhetsprofilene, ClinPGx for farmakogenetikken, og Europe PMC og Crossref for
+referanselistene og de siterende arbeidene til kildene kildeoppdagelsen velger
+ut. Tabellen i [SOURCE_POLICY.md](SOURCE_POLICY.md) §4.2 sier hva hver av dem
+*ikke* dekker. Sammendragsleddet (SYN) søker ikke og får ingen søkeplan.
+
+Redaktørens vei, `api.record_monograph_track_by_editor(...)`, finnes fortsatt,
+men som en kontrollert reservevei for reelle unntak og ikke som arbeidsflyten:
+den brukes bare når et spor står som `no_machine_path`, og det skjer bare når
+registeret mangler veien. Passeringen blir en egen rad i søkeloggen med
+`editor_recorded` som utførelsesbevis, og sporet knyttes til nøyaktig den raden.
+Ingen av leddene kan gjøre den andres arbeid, og ingen av dem kan late som
+(migrasjon 013x, 014c).
 
 **Ingen av de seks leddene utfører nettverkskall, og ingen av dem kan.** Den
 autonome kjøreren har Antidep-appens fem verktøy og ikke ett til, og ingen av
@@ -72,14 +79,18 @@ faktiske databasesøk — en motsigelse som ble prøvd i drift, der agenten
 frigjorde oppgaven med `could_not_complete` framfor å dikte opp søk. Den er
 rettet ved å gjøre arbeidsdelingen til én ting:
 
-1. `npm run ops:discovery` utfører søkerunden planen åpnet, og registrerer hvert
-   søk med endepunkt, søkestreng, treffantall og responsavtrykk.
+1. `npm run ops:discovery` utfører søkerundene planen åpnet — én per
+   søkemetode planen trenger — og registrerer hvert søk med metode, endepunkt,
+   søkestreng, treffantall og responsavtrykk.
 2. Først da finnes den semantiske oppgaven. Porten er
    `workflow.monograph_search_phase_problem(...)`, og køen, uttaket og importen
    leser den samme.
 3. Agenten vurderer de registrerte søkene og kandidatene, og ber om flere eller
    mer målrettede søk som strukturerte søkeforespørsler.
-4. Kjøringen utfører dem, og agenten får neste vurderingsrunde. Budsjettet er
+4. Kildene agenten velger til innhenting eller vurderer som mulig
+   konklusjonsendrende, følger kjøringen selv i neste runde — referanselistene
+   og de siterende arbeidene — uten at agenten må be om det.
+5. Kjøringen utfører rundene, og agenten får neste vurderingsrunde. Budsjettet er
    fire runder per planversjon; et oppbrukt budsjett setter planen på pause som
    åpent, ventende arbeid — aldri som en konklusjon om evidensen.
 
@@ -119,6 +130,7 @@ De driftskommandoene som faktisk utfører søk og innhenting:
 ```
 npm run ops:discovery                    # kildeoppdagelsens egne søk
 npm run ops:discovery -- --leg coverage  # dekningskontrollens egne motsøk
+npm run ops:discovery -- --plan <ref>    # bare én bestemt søkeplan, nå
 npm run ops:acquire                      # henter originalmateriale der det er åpent tilgjengelig
 ```
 
@@ -208,6 +220,22 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
   forskningsfulltekst må lastes opp av et menneske gjennom `/fulltekst`.
   Forespørselen viser artikkelidentiteten og den faglige grunnen, samlet, slik
   at det ikke blir et klikk per artikkel.
+- **Hva de maskinelle søkene ikke dekker.** Nettbaserte nasjonale råd
+  (Helsedirektoratet, NICE, NHS SPS, Giftinformasjonen) har ingen åpen
+  maskinell søkevei uten egen avtale, og heller ikke WHO ICTRP, EU CTR eller
+  Cochrane CENTRAL. Det står som en begrensning ved sporet, i søkemetodens egen
+  dekningsnote, og ikke som et spor noen må søke i for hånd. Er en slik kilde
+  vesentlig for et spørsmål, sier kildeoppdagelsen det i merknaden.
+- **Avkortede brede søk.** Det brede orienterende søket gir mange flere treff
+  enn én side, og står derfor som avkortet. Stoppkravet holder dekningen åpen til
+  det samme søket er lest helt, eller til et smalere søk med den samme metoden,
+  som uttrykkelig erstatter det brede (`narrows_request`), er lest helt — det er
+  kildeoppdagelsens søkeforespørsler, og ikke et menneske, som lukker det.
+- **Norske aksetermer i engelske databaser.** Avgrensningens akser (indikasjon,
+  utfall) har norske etiketter, og et fritekstsøk med dem gir ofte null treff i
+  engelske databaser. Kildeoppdagelsen ser det i oppgaven og ber om målrettede
+  søk med engelske termer; de nye søkemetodene søker på virkestoffets synonymer
+  og ATC-kode og er ikke rammet.
 - **Søkebredden.** De maskinelle søkene er bevisst bredere enn analysen
   ([SOURCE_POLICY.md](SOURCE_POLICY.md) §4.1), og treffene inneholder derfor
   mye som ikke er relevant. Å skille dem er kildeoppdagelsens faglige arbeid,
@@ -239,7 +267,7 @@ Disse er faktiske, og de er ikke klinikeroppgaver:
 ## 7. Prøvene som viser at flyten virker
 
 ```
-npm run db:test                       # 80 filer, databaseprøvene
+npm run db:test                       # 82 filer, databaseprøvene
 npm run db:test:monograph             # hele forløpet, fersk base
 npm run db:test:monograph:upgrade     # samme forløp oppå en base med innhold
 npm run test                          # flatene og modulene

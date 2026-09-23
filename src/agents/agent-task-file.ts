@@ -478,6 +478,20 @@ function bullets(value: unknown, render: (row: Record<string, unknown>) => strin
   return value.map((entry) => `  - ${render(record(entry))}`).join('\n')
 }
 
+/** Søkemetodene som utfører et spor, på én linje. */
+function methodList(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) {
+    return ''
+  }
+  const methods = value
+    .map((entry) => record(entry))
+    .map(
+      (entry) =>
+        `${String(entry['platform'] ?? '')} (${String(entry['method'] ?? '')})${entry['follows_central_sources'] === true ? ' — følger sentrale kilder' : ''}`,
+    )
+  return `\n    utføres av: ${methods.join('; ')}`
+}
+
 function discoveryMaterial(task: AgentTask): string {
   const profile = record(task.input['source_profile'])
   const criteria = record(task.input['closure_criteria'])
@@ -533,7 +547,7 @@ ${bullets(task.input['needs'], (row) => `${String(row['template'] ?? '')} (${Str
 
 ### Obligatoriske søkespor
 
-${bullets(task.input['required_tracks'], (row) => `${String(row['code'] ?? '')} [${String(row['state'] ?? '')}] — ${String(row['label'] ?? '')}${row['note'] === null || row['note'] === undefined ? '' : ` (${String(row['note'])})`}`)}
+${bullets(task.input['required_tracks'], (row) => `${String(row['code'] ?? '')} [${String(row['state'] ?? '')}] — ${String(row['label'] ?? '')}${row['note'] === null || row['note'] === undefined ? '' : ` (${String(row['note'])})`}${methodList(row['machine_methods'])}`)}
 
 ### Søkene Antidep har utført
 
@@ -541,7 +555,7 @@ Disse er maskinelt utførte: Antideps egen kode kalte endepunktet, leste svaret 
 registrerte et fingeravtrykk av det. Du har ikke utført dem, og du skal ikke
 rapportere dem som dine egne.
 
-${bullets(task.input['machine_searches'], (row) => `${String(row['platform'] ?? '')} [${String(row['run_role'] ?? '')}]: ${String(row['query'] ?? '')} — ${String(row['outcome'] ?? '')}, treff: ${String(row['result_count'] ?? 'ukjent')}, gjennomgått: ${String(row['screened_count'] ?? 0)}${row['truncated'] === true ? ', AVKORTET' : ''}\n    endepunkt: ${String(row['endpoint'] ?? 'ikke registrert')}\n    responsavtrykk: ${String(row['response_digest'] ?? 'ingen — tjenesten svarte ikke')}`)}
+${bullets(task.input['machine_searches'], (row) => `${String(row['platform'] ?? '')} (${String(row['method'] ?? 'keyword')}) [${String(row['run_role'] ?? '')}]: ${String(row['query'] ?? '')} — ${String(row['outcome'] ?? '')}, treff: ${String(row['result_count'] ?? 'ukjent')}, gjennomgått: ${String(row['screened_count'] ?? 0)}${row['truncated'] === true ? (row['truncation_resolved'] === true ? ', AVKORTET — resten er dekket av et senere søk' : `, AVKORTET — resten er ikke dekket; et smalere søk med samme metode kan erstatte det (narrows_request: ${String(row['request_reference'] ?? 'ukjent')})`) : ''}\n    endepunkt: ${String(row['endpoint'] ?? 'ikke registrert')}\n    responsavtrykk: ${String(row['response_digest'] ?? 'ingen — tjenesten svarte ikke')}`)}
 
 ### Søkepasseringene en redaktør utførte
 
@@ -566,17 +580,24 @@ ${bullets(task.input['search_limitations'], (row) => `${String(row['platform'] ?
 Vurderingen din gjelder nøyaktig disse. En kilde som ikke står her, er ikke
 funnet av et søk — be om søket som ville funnet den.
 
-${bullets(task.input['candidates'], (row) => `${String(row['identifier_kind'] ?? '')}:${String(row['identifier_value'] ?? '')} — ${String(row['title'] ?? '')}\n    ${String(row['authors_or_issuer'] ?? 'ukjent forfatter')}, ${String(row['publisher_or_journal'] ?? 'ukjent utgiver')}, ${String(row['publication_year'] ?? 'ukjent år')}\n    funnet av: ${String(row['found_by_platform'] ?? row['discovery_path'] ?? 'ukjent')} — tilstand: ${String(row['decision'] ?? 'proposed')}${row['access_limited'] === true ? ', tilgangsbegrenset' : ''}`)}
+${bullets(task.input['candidates'], (row) => `${String(row['identifier_kind'] ?? '')}:${String(row['identifier_value'] ?? '')} — ${String(row['title'] ?? '')}\n    ${String(row['authors_or_issuer'] ?? 'ukjent forfatter')}, ${String(row['publisher_or_journal'] ?? 'ukjent utgiver')}, ${String(row['publication_year'] ?? 'ukjent år')}\n    funnet av: ${String(row['found_by_platform'] ?? row['discovery_path'] ?? 'ukjent')}${row['found_by_method'] === null || row['found_by_method'] === undefined ? '' : ` (${String(row['found_by_method'])})`} — tilstand: ${String(row['decision'] ?? 'proposed')}${row['access_limited'] === true ? ', tilgangsbegrenset' : ''}`)}
 
 ### Søk du kan be om
 
   Plattformer: ${(Array.isArray(options['platforms']) ? options['platforms'] : []).map((value) => String(value)).join(', ')}
   Strategier: ${(Array.isArray(options['strategies']) ? options['strategies'] : []).map((value) => String(value)).join(', ')}
   Høyst antall termer per forespørsel: ${String(options['max_terms'] ?? '')}
+  Høyst antall sentrale kilder å følge per forespørsel: ${String(options['max_central_sources_per_request'] ?? '')}
   Runder igjen på denne planversjonen: ${String(options['rounds_remaining'] ?? '')}
 
+Søkemetodene Antidep kan utføre, med hva hver av dem dekker og ikke dekker:
+
+${bullets(options['methods'], (row) => `${String(row['platform'] ?? '')} — method: ${String(row['method'] ?? '')}${row['follows_central_sources'] === true ? ' (følger sentrale kilder: navngi dem i seed_candidates)' : ''}${row['default_when_no_method_is_named'] === true ? ' (brukes når ingen metode er navngitt)' : ''}\n    ${String(row['description'] ?? '')}\n    dekker: ${String(row['covers'] ?? '')}${Array.isArray(row['required_tracks_it_covers_here']) && row['required_tracks_it_covers_here'].length > 0 ? `\n    obligatoriske spor den dekker her: ${(row['required_tracks_it_covers_here'] as unknown[]).map((value) => String(value)).join(', ')}` : ''}`)}
+
 Antidep utfører forespørslene og gir deg en ny vurderingsrunde på resultatet. En
-annen tjeneste kan ikke oppgis, og en adresse kan ikke oppgis.
+annen tjeneste kan ikke oppgis, og en adresse kan ikke oppgis. Referanselistene
+og de siterende arbeidene til kildene du velger til innhenting, inkluderer eller
+vurderer som mulig konklusjonsendrende, følger Antidep selv i neste runde.
 
 ### Når søket kan avsluttes
 

@@ -44,7 +44,13 @@
 import { createHash } from 'node:crypto'
 
 import { guardedGet, type GuardedGetOptions } from '../agents/guarded-http.ts'
-import { SEARCH_OUTCOMES } from '../agents/handoff-schemas.ts'
+import { SEARCH_OUTCOMES } from '../agents/search-outcomes.ts'
+import { catalogEntry } from './search-method-catalog.ts'
+
+/** Sporene et bibliografisk fritekstsøk dekker, lest av katalogen. */
+function keywordTracks(platform: string): readonly string[] {
+  return catalogEntry(platform, 'keyword').coverage.map((entry) => entry.track)
+}
 
 /** Hentefunksjonen. Injiserbar, slik at prøver kan spille av et opptak. */
 export type Fetcher = (
@@ -68,11 +74,19 @@ export interface SearchScope {
   readonly outcome?: string | undefined
   readonly population?: string | undefined
   readonly comparator?: string | undefined
+  /**
+   * Katalogens egne synonymer for virkestoffet — typisk det engelske
+   * INN-navnet. Søkes som ALTERNATIVER til det kanoniske navnet, aldri som et
+   * krav i tillegg (migrasjon 014d).
+   */
+  readonly drugAliases?: readonly string[] | undefined
+  /** ATC-kodene katalogen har for virkestoffet. FEST slås opp på dem. */
+  readonly atcCodes?: readonly string[] | undefined
 }
 
 /** Én kandidatkilde, slik `api.record_monograph_machine_search` tar imot den. */
 export interface CandidateSource {
-  readonly identifier_kind: 'doi' | 'pmid' | 'pmcid' | 'url'
+  readonly identifier_kind: 'doi' | 'pmid' | 'pmcid' | 'url' | 'registry_id' | 'title'
   readonly identifier_value: string
   readonly title: string
   readonly authors_or_issuer?: string | undefined
@@ -89,6 +103,12 @@ export type SearchOutcome = (typeof SEARCH_OUTCOMES)[number]
 /** Resultatet av ett utført søk, klart til registrering. */
 export interface MachineSearch {
   readonly platform: string
+  /**
+   * Søkemetoden, slik den står i `knowledge.monograph_search_methods`. Et
+   * PubMed-søk med oversiktsfilter og et uten er to forskjellige søk, og bare
+   * det første dekker oversiktssporet (migrasjon 014c).
+   */
+  readonly method: string
   readonly queryString: string
   readonly filters: string | null
   readonly endpoint: string
@@ -192,27 +212,38 @@ export function buildQueries(
   return unique.slice(0, MAX_QUERIES_PER_REQUEST).map((axis) => `${drug} AND "${axis}"`)
 }
 
-function digest(bytes: Uint8Array): string {
-  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+/** Fingeravtrykket av et svar: SHA-256 over bytene som faktisk kom. */
+export function digest(bytes: Uint8Array | readonly Uint8Array[]): string {
+  const hash = createHash('sha256')
+  // Flere sider tas i rekkefølge, slik at avtrykket er av hele svaret som ble
+  // lest, og ikke bare av den første siden.
+  // `ArrayBuffer.isView` og ikke `instanceof`: en Uint8Array fra et annet
+  // realm (en testmiljøs TextEncoder) er fortsatt ett svar og ikke en liste.
+  for (const part of ArrayBuffer.isView(bytes)
+    ? [bytes as Uint8Array]
+    : (bytes as readonly Uint8Array[])) {
+    hash.update(part)
+  }
+  return `sha256:${hash.digest('hex')}`
 }
 
-function text(bytes: Uint8Array): string {
+export function text(bytes: Uint8Array): string {
   return new TextDecoder('utf-8').decode(bytes)
 }
 
-function year(value: unknown): number | undefined {
+export function year(value: unknown): number | undefined {
   const parsed =
     typeof value === 'number' ? value : Number.parseInt(String(value ?? '').slice(0, 4), 10)
   return Number.isInteger(parsed) && parsed >= 1800 && parsed <= 2200 ? parsed : undefined
 }
 
-function trimmed(value: unknown): string | undefined {
+export function trimmed(value: unknown): string | undefined {
   const asString = typeof value === 'string' ? value.trim() : ''
   return asString.length > 0 ? asString : undefined
 }
 
 /** Et svar som ikke lot seg lese, er `failed` — ikke null treff. */
-function unreadable(
+export function unreadable(
   base: Omit<MachineSearch, 'outcome' | 'resultCount' | 'limitationNote'>,
   why: string,
 ): MachineSearch {
@@ -225,7 +256,7 @@ function unreadable(
 }
 
 /** En søkevei Antidep ikke kom til, er `unavailable` — heller ikke null treff. */
-function unreachable(
+export function unreachable(
   base: Omit<MachineSearch, 'outcome' | 'resultCount' | 'limitationNote' | 'responseDigest'> & {
     readonly responseDigest?: string | null
   },
@@ -256,7 +287,7 @@ export interface SearchPlatform {
 
 export const EUROPE_PMC: SearchPlatform = {
   name: 'Europe PMC',
-  trackCodes: ['bibliographic_database'],
+  trackCodes: keywordTracks('Europe PMC'),
   endpoint: (query) =>
     'https://www.ebi.ac.uk/europepmc/webservices/rest/search' +
     `?query=${encodeURIComponent(query)}&format=json&pageSize=${PAGE_SIZE}&resultType=core`,
@@ -303,7 +334,7 @@ export const EUROPE_PMC: SearchPlatform = {
 
 export const PUBMED: SearchPlatform = {
   name: 'PubMed',
-  trackCodes: ['bibliographic_database'],
+  trackCodes: keywordTracks('PubMed'),
   endpoint: (query) =>
     'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi' +
     `?db=pubmed&term=${encodeURIComponent(query)}&retmode=json&retmax=${PAGE_SIZE}`,
@@ -332,7 +363,7 @@ export const PUBMED: SearchPlatform = {
 
 export const CROSSREF: SearchPlatform = {
   name: 'Crossref',
-  trackCodes: ['bibliographic_database'],
+  trackCodes: keywordTracks('Crossref'),
   endpoint: (query) =>
     `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=${PAGE_SIZE}`,
   parse: (body) => {
@@ -386,59 +417,49 @@ export const CROSSREF: SearchPlatform = {
 
 export const SEARCH_PLATFORMS: readonly SearchPlatform[] = [EUROPE_PMC, PUBMED, CROSSREF]
 
-/**
- * Søkesporene Antideps deterministiske kode faktisk kan utføre.
- *
- * Utledet av plattformene, aldri skrevet av. En liste ved siden av
- * SEARCH_PLATFORMS ville kunne påstå at Antidep dekker et spor ingen plattform
- * søker i, og porten i basen ville trodd på påstanden — som er nøyaktig den
- * feilen skjæringen i `runSearch` finnes for å hindre, bare ett ledd lenger ute.
- *
- * Kjøringen sender denne til `api.close_monograph_search_request(...)`, og
- * basen merker de obligatoriske sporene som faller utenfor, som spor uten
- * maskinell søkevei. Erklærer kjøringen *færre* evner enn den har, blir svaret
- * en synlig begrensning og aldri en dekning den ikke hadde: feilen faller til
- * den trygge siden.
- */
-export const EXECUTABLE_TRACK_CODES: readonly string[] = [
-  ...new Set(SEARCH_PLATFORMS.flatMap((platform) => platform.trackCodes)),
-].sort()
+/** Ett søk slik én søkemetode ber om det: adressen, strengen og hvordan svaret leses. */
+export interface QuerySpec {
+  readonly platform: string
+  readonly method: string
+  readonly queryString: string
+  readonly filters: string | null
+  readonly endpoint: string
+  readonly parse: SearchPlatform['parse']
+  /** Sporene søket erklærer: allerede skåret mot runden og metodens dekning. */
+  readonly trackCodes: readonly string[]
+  /** Oppdagelsesveien kandidatene får, når metoden er noe annet enn fritekstsøket. */
+  readonly discoveryPath?: string | undefined
+  readonly maxBytes?: number | undefined
+}
 
 /**
- * Utfører ett søk mot én plattform, med den strengen runden ba om.
+ * Utfører ett søk og leser svaret til et registrerbart resultat.
  *
  * Kaster aldri: en plattform som er nede, et svar som ikke lar seg lese, og et
  * søk uten treff er tre forskjellige registrerte utfall, og ingen av dem er en
  * grunn til at resten av kjøringen skal stoppe.
  */
-export async function runSearch(
-  platform: SearchPlatform,
-  query: string,
+export async function runQuery(
+  spec: QuerySpec,
   fetcher: Fetcher = guardedGet,
-  allowedTracks: readonly string[] = [],
 ): Promise<MachineSearch> {
-  // Sporene søket kan erklære, er skjæringen mellom det runden fikk lov til og
-  // det plattformen faktisk dekker. Begge trengs, og det er den siste som er
-  // lett å miste: en runde får alle kildeprofilens obligatoriske spor, mens
-  // Europe PMC bare dekker det bibliografiske. Uten skjæringen ville ett
-  // vellykket Europe PMC-søk merket forsøksregistre, referanselister og
-  // regulatorisk veiledning som dekket — og porten ville sett dekket ut for
-  // spor ingen hadde søkt i (SOURCE_POLICY.md §4.2).
-  const trackCodes = platform.trackCodes.filter((code) => allowedTracks.includes(code))
-  const endpoint = platform.endpoint(query)
   const base = {
-    platform: platform.name,
-    queryString: query,
-    filters: `pageSize=${PAGE_SIZE}`,
-    endpoint,
+    platform: spec.platform,
+    method: spec.method,
+    queryString: spec.queryString,
+    filters: spec.filters,
+    endpoint: spec.endpoint,
     screenedCount: 0,
     truncated: false,
     truncationNote: null,
-    trackCodes,
+    trackCodes: spec.trackCodes,
     candidates: [] as readonly CandidateSource[],
   }
 
-  const response = await fetcher(endpoint, { timeoutMs: 20_000, maxBytes: 4 * 1024 * 1024 })
+  const response = await fetcher(spec.endpoint, {
+    timeoutMs: 20_000,
+    maxBytes: spec.maxBytes ?? 4 * 1024 * 1024,
+  })
   if (response.status === 'error') {
     return unreachable(base, `Søkeveien svarte ikke: ${response.message}`)
   }
@@ -452,7 +473,7 @@ export async function runSearch(
   const responseDigest = digest(response.bytes)
   let parsed: { total: number; candidates: readonly CandidateSource[] }
   try {
-    parsed = platform.parse(text(response.bytes))
+    parsed = spec.parse(text(response.bytes))
   } catch (error) {
     return unreadable(
       { ...base, responseDigest },
@@ -460,29 +481,55 @@ export async function runSearch(
     )
   }
 
-  const truncated = parsed.total > parsed.candidates.length
+  const candidates =
+    spec.discoveryPath === undefined
+      ? parsed.candidates
+      : parsed.candidates.map((candidate) => ({
+          ...candidate,
+          discovery_path: spec.discoveryPath ?? '',
+        }))
+  const truncated = parsed.total > candidates.length
   return {
     ...base,
     responseDigest,
     outcome: parsed.total === 0 ? 'zero_results' : 'executed',
     resultCount: parsed.total,
-    screenedCount: parsed.candidates.length,
+    screenedCount: candidates.length,
     truncated,
     truncationNote: truncated
-      ? `Trefflisten er avkortet: ${parsed.total} treff totalt, ${parsed.candidates.length} gjennomgått på første side.`
+      ? `Trefflisten er avkortet: ${parsed.total} treff totalt, ${candidates.length} gjennomgått på første side.`
       : null,
     limitationNote: null,
-    candidates: parsed.candidates,
+    candidates,
   }
 }
 
-/** Plattformen med dette navnet, eller alle når runden ikke navnga én. */
-export function platformsFor(
-  platforms: readonly SearchPlatform[],
-  name: string | null,
-): readonly SearchPlatform[] {
-  if (name === null) {
-    return platforms
-  }
-  return platforms.filter((platform) => platform.name === name)
+/**
+ * Utfører ett bibliografisk fritekstsøk mot én plattform, med den strengen
+ * runden ba om.
+ *
+ * Sporene søket kan erklære, er skjæringen mellom det runden fikk lov til og
+ * det plattformen faktisk dekker. Uten skjæringen ville ett vellykket Europe
+ * PMC-søk merket forsøksregistre og regulatorisk veiledning som dekket — og
+ * porten ville sett dekket ut for spor ingen hadde søkt i (SOURCE_POLICY.md
+ * §4.2).
+ */
+export async function runSearch(
+  platform: SearchPlatform,
+  query: string,
+  fetcher: Fetcher = guardedGet,
+  allowedTracks: readonly string[] = [],
+): Promise<MachineSearch> {
+  return runQuery(
+    {
+      platform: platform.name,
+      method: 'keyword',
+      queryString: query,
+      filters: `pageSize=${PAGE_SIZE}`,
+      endpoint: platform.endpoint(query),
+      parse: platform.parse,
+      trackCodes: platform.trackCodes.filter((code) => allowedTracks.includes(code)),
+    },
+    fetcher,
+  )
 }

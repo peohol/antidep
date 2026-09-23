@@ -37,14 +37,10 @@
 // skal ikke bli et sted slikt samler seg (AGENTS.md).
 // ============================================================================
 
+import { guardedGet } from '../agents/guarded-http.ts'
 import type { Fetcher, MachineSearch, SearchScope } from './monograph-search.ts'
-import {
-  buildQueries,
-  platformsFor,
-  runSearch,
-  SEARCH_PLATFORMS,
-  type SearchPlatform,
-} from './monograph-search.ts'
+import { createPoliteFetcher, type PoliteFetcherOptions } from './search-http.ts'
+import { resolveRequestMethods, SEARCH_METHODS, type SearchMethod } from './search-methods.ts'
 
 /**
  * De to leddene kjøringen kan utføre søk for.
@@ -105,8 +101,18 @@ export interface SearchRequest {
   readonly origin: string
   readonly strategy: 'broad' | 'targeted'
   readonly rationale: string
-  /** Plattformen runden gjelder, eller null for alle tre. */
+  /** Plattformen runden gjelder, eller null for alle. */
   readonly platform: string | null
+  /** Søkemetoden runden gjelder, eller null for de bibliografiske fritekstsøkene. */
+  readonly method: string | null
+  /**
+   * Nøyaktig de (plattform, metode) runden betyr, slik databasen leser den
+   * (`workflow.monograph_request_methods`). Kjøreren utfører denne listen og
+   * gjetter ikke selv hva en forespørsel uten metode betyr.
+   */
+  readonly methods: readonly { readonly platform: string; readonly method: string }[]
+  /** De sentrale kildene runden skal følge, som «doi:…», «pmid:…» eller «pmcid:…». */
+  readonly seedIdentifiers: readonly string[]
   /**
    * Virkestoffnavn som skal søkes som ALTERNATIVER til det kanoniske.
    *
@@ -157,10 +163,12 @@ export interface DiscoveryApi {
     agentRunId: string,
     requestReference: string,
   ) => Promise<{ readonly state: string; readonly enqueuedJob: boolean }>
+  /** Lukker kjøringen. En mislykket kjøring bærer grunnen (provenance.agent_runs). */
   readonly completeRun: (
     agentRunId: string,
     status: 'succeeded' | 'failed',
     outcome: Record<string, unknown>,
+    failureReason?: string,
   ) => Promise<void>
 }
 
@@ -182,13 +190,19 @@ export interface DiscoveryReport {
 export interface DiscoveryOptions {
   /** Hvor mange planer én kjøring tar. En driftskjøring er ikke en støvsuger. */
   readonly maxPlans: number
-  readonly platforms: readonly SearchPlatform[]
+  readonly methods: readonly SearchMethod[]
   readonly fetcher?: Fetcher | undefined
+  /**
+   * Takt, nye forsøk og deling innen kjøringen (`search-http.ts`). `false` slår
+   * det av — bare for prøver som spiller av et opptak og ikke skal vente.
+   */
+  readonly politeness?: Partial<PoliteFetcherOptions> | false | undefined
+  readonly now?: (() => Date) | undefined
 }
 
 export const DISCOVERY_DEFAULTS = {
   maxPlans: 5,
-  platforms: SEARCH_PLATFORMS,
+  methods: SEARCH_METHODS,
 } as const
 
 /**
@@ -204,6 +218,15 @@ export async function runMonographDiscovery(
 ): Promise<DiscoveryReport> {
   const settings: DiscoveryOptions = { ...DISCOVERY_DEFAULTS, ...options }
   const plans = (await api.work()).slice(0, settings.maxPlans)
+  const baseFetcher = settings.fetcher ?? guardedGet
+  // Én høflig henter for hele kjøringen: takten og delingen gjelder på tvers av
+  // planene, og det er nettopp der FEST og EMAs datasett leses mange ganger.
+  const fetcher =
+    settings.politeness === false
+      ? baseFetcher
+      : createPoliteFetcher(baseFetcher, settings.politeness ?? {})
+  const memo = new Map<string, unknown>()
+  const now = settings.now ?? (() => new Date())
 
   let requests = 0
   let searches = 0
@@ -232,20 +255,78 @@ export async function runMonographDiscovery(
 
     let recorded = 0
     let closed = 0
+    // Problemene denne planens kjøring fikk. En kjøring med et teknisk problem
+    // er en mislykket kjøring, og står slik i proveniensen — ikke som en
+    // vellykket kjøring med en begrensning i evidensen.
+    const planProblemsFrom = problems.length
 
     for (const request of plan.requests) {
       requests += 1
-      const platforms = platformsFor(settings.platforms, request.platform)
-      const queries = buildQueries(
-        plan.scope,
-        request.strategy,
-        request.queryTerms,
-        request.drugAliases,
-      )
+      // Hva runden betyr, er databasens svar. Mangler det — en eldre base —
+      // leses det av den samme regelen her.
+      const wanted =
+        request.methods.length > 0
+          ? request.methods
+          : resolveRequestMethods(settings.methods, request.platform, request.method)
+      const aliases = [...new Set([...(plan.scope.drugAliases ?? []), ...request.drugAliases])]
 
-      for (const platform of platforms) {
-        for (const query of queries) {
-          const search = await runSearch(platform, query, settings.fetcher, request.trackCodes)
+      // En metode databasen kjenner og kjøreren ikke har, er en feil i
+      // utrullingen og ikke et søk uten treff. Runden røres da ikke: den
+      // utføres ikke halvt, og den lukkes ikke — en lukket runde uten søk ville
+      // blitt «utilgjengelig», sluppet den semantiske oppgaven fri og til slutt
+      // blitt gitt opp, uten at en eneste tjeneste var spurt. Den står åpen til
+      // en kjører som har metoden, tar den.
+      const methods = wanted.map((entry) => ({
+        entry,
+        method: settings.methods.find(
+          (candidate) => candidate.platform === entry.platform && candidate.method === entry.method,
+        ),
+      }))
+      const missing = methods.filter((pair) => pair.method === undefined)
+      // Og en kilde metoden ikke kan slå opp, forkastes ikke stille. Databasen
+      // avviser slike runder (migrasjon 014c); står en likevel her, er det den
+      // samme utrullingsfeilen, og den behandles likt.
+      const unsupported = methods.flatMap(({ method }) =>
+        method === undefined || !method.requiresSeeds
+          ? []
+          : request.seedIdentifiers
+              .filter(
+                (seed) => !method.seedIdentifierKinds.some((kind) => seed.startsWith(`${kind}:`)),
+              )
+              .map((seed) => `${seed} (${method.platform}, ${method.method})`),
+      )
+      if (missing.length > 0 || unsupported.length > 0) {
+        for (const { entry } of missing) {
+          problems.push(
+            `Kjøreren har ikke søkemetoden ${entry.platform} (${entry.method}) som én søkerunde ba om (${plan.profileCode}); runden står åpen.`,
+          )
+        }
+        if (unsupported.length > 0) {
+          problems.push(
+            `Søkemetoden kan ikke slå opp kildene ${unsupported.join(', ')} som én søkerunde ba om (${plan.profileCode}); runden står åpen.`,
+          )
+        }
+        continue
+      }
+
+      let unrecorded = 0
+      for (const { method } of methods) {
+        if (method === undefined) continue
+
+        const results = await method.execute({
+          scope: plan.scope,
+          profileCode: plan.profileCode,
+          strategy: request.strategy,
+          queryTerms: request.queryTerms,
+          drugAliases: aliases,
+          seeds: request.seedIdentifiers,
+          allowedTracks: request.trackCodes,
+          fetcher,
+          memo,
+          now: now(),
+        })
+
+        for (const search of results) {
           searches += 1
           if (search.outcome === 'executed') executed += 1
           if (search.outcome === 'zero_results') zeroResults += 1
@@ -257,16 +338,26 @@ export async function runMonographDiscovery(
             await api.recordSearch(agentRunId, plan.planReference, request.requestReference, search)
             recorded += 1
           } catch {
+            unrecorded += 1
             problems.push(
-              `Et søk mot ${platform.name} lot seg ikke registrere for én søkerunde (${plan.profileCode}).`,
+              `Et søk mot ${method.platform} (${method.method}) lot seg ikke registrere for én søkerunde (${plan.profileCode}); runden står åpen.`,
             )
           }
         }
       }
 
-      // Runden lukkes uansett hva søkene ga. Det er lukkingen som avgjør om den
-      // semantiske oppgaven finnes nå — og en runde som aldri ble lukket, ville
-      // latt planen stå uten at noe sa hvorfor.
+      // Et søk som ble utført, men ikke registrert, er en teknisk svikt og ikke
+      // en søkevei som ikke svarte. Runden lukkes da ikke: en lukket runde uten
+      // det søket ville blitt «utilgjengelig» eller «utført» på et grunnlag
+      // søkeloggen ikke har, og sluppet den semantiske oppgaven fram. Den står
+      // åpen, og neste kjøring utfører den på nytt.
+      if (unrecorded > 0) {
+        continue
+      }
+
+      // Ellers lukkes runden uansett hva søkene ga. Det er lukkingen som avgjør
+      // om den semantiske oppgaven finnes nå — og en runde som aldri ble lukket,
+      // ville latt planen stå uten at noe sa hvorfor.
       try {
         const outcome = await api.closeRequest(agentRunId, request.requestReference)
         closed += 1
@@ -278,12 +369,18 @@ export async function runMonographDiscovery(
       }
     }
 
+    const planProblems = problems.slice(planProblemsFrom)
     try {
-      await api.completeRun(agentRunId, 'succeeded', {
+      const outcome = {
         plan_reference: plan.planReference,
         searches_recorded: recorded,
         requests_closed: closed,
-      })
+      }
+      if (planProblems.length === 0) {
+        await api.completeRun(agentRunId, 'succeeded', outcome)
+      } else {
+        await api.completeRun(agentRunId, 'failed', outcome, planProblems.join(' ').slice(0, 4000))
+      }
     } catch {
       problems.push(`Kjøringen for én søkeplan (${plan.profileCode}) lot seg ikke lukkes.`)
     }

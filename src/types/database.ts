@@ -778,6 +778,8 @@ export type Database = {
         Args: {
           p_identity_key: string
           p_secret: string
+          // Valgfri: bare den planens åpne runder (migrasjon 014d).
+          p_plan_reference?: string | null
         }
         Returns: unknown
       }
@@ -915,7 +917,10 @@ export type Database = {
           p_truncation_note: string | null
           p_limitation_note: string | null
           p_track_codes: readonly string[]
-          p_candidates: readonly unknown[]
+          p_candidates: readonly unknown[] | null
+          // Søkemetoden (knowledge.monograph_search_methods, migrasjon 014c).
+          // Uten metode er søket det bibliografiske fritekstsøket.
+          p_search_method?: string | null
         }
         Returns: unknown
       }

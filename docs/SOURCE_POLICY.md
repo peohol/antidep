@@ -71,23 +71,42 @@ Kildene skal kunne oppdages bredere enn den senere analyseavgrensningen: et for 
 
 Ikke alle kilder eller databaser er nødvendigvis tilgjengelige i en agentkjøring. En utilgjengelig obligatorisk søkevei registreres som begrensning, ikke som null treff. En erstattende søkevei må begrunnes og kontrolleres separat. Delvis søk kan gi et tydelig merket delutkast, men ikke status som ferdig søkedekning.
 
-Tre tilstander holdes fra hverandre, fordi de utløser forskjellig arbeid:
+Søkesporene utføres av Antideps egen deterministiske kode. Hvert spor har minst én søkemetode — en navngitt offentlig tjeneste, en fast metode og en fast adresse — og hver metode sier selv hva den ikke dekker. Det som ikke dekkes, er en registrert begrensning ved sporet, og ikke et spor noen må søke i for hånd:
+
+| Søkespor | Søkemetoden som utfører det | Det metoden ikke dekker |
+| --- | --- | --- |
+| Bibliografisk database | Fritekstsøk i Europe PMC, PubMed og Crossref | — |
+| Supplerende uavhengig søkespor | Fritekstsøk i Crossref: utgivernes egne deponeringer, uavhengig av MEDLINE-indekseringen | Cochrane CENTRAL, som krever lisens |
+| Oversiktssøk | PubMeds filter for systematiske oversikter og Europe PMCs publikasjonstype | Cochrane Library direkte; Cochrane-oversiktene er indeksert i PubMed |
+| Observasjons-/sikkerhetsdata | PubMed avgrenset til observasjonelle design og legemiddelovervåking | Meldedatabaser som gir signaler og ikke insidens |
+| Humane originalstudier | PubMed avgrenset til humane originalstudier, uten oversikter | Dyre- og in vitro-studier, med vilje |
+| Regulatorisk/spesialisert veiledning | PubMeds filter for retningslinjer og konsensus (alle profiler); EMAs publiserte sikkerhetsvurderinger — PSUSA, referrals, DHPC og mangel — for SAFE, POP, STOP og TOX; ClinPGx' annoterte farmakogenetiske retningslinjer (CPIC, DPWG) for PGX | Nettbaserte nasjonale råd (Helsedirektoratet, NICE, NHS SPS, Giftinformasjonen), som ikke har en åpen maskinell søkevei uten egen avtale |
+| Oppdateringssøk | PubMed avgrenset til de tre siste hele årene og inneværende år | En eldre veiledning krever et eget målrettet søk |
+| Forsøksregistre | ClinicalTrials.gov API v2 | WHO ICTRP og EU CTR, som ikke har et åpent API med stabile vilkår |
+| Referanselister | Europe PMC og Crossref, for de sentrale kildene | En kilde uten registrert referanseliste er en begrensning, ikke null referanser |
+| Siterende arbeider | Europe PMC, for de sentrale kildene | Siteringer Europe PMC ikke kjenner |
+| Norsk myndighetskilde, alle produkter, endrings-/mangelkontroll, preparatomtale og de avhengige REG/PROD-kontrollene | Oppslag på ATC-koden i FEST, Direktoratet for medisinske produkters egen distribusjon av legemiddeldata (NLOD), med filens publiseringsdato som kildeversjon | Lokal lagerstatus; lesningen av selve preparatomtalen er svarleddets |
+
+De sentrale kildene for referanselistene og de siterende arbeidene er kildeoppdagelsens faglige avgjørelse: kilder den har valgt til innhenting, inkludert eller vurdert som mulig konklusjonsendrende. Antideps kode følger dem i neste runde uten at noen må be om det. Sammendragsleddets eneste spor (SYN) er ikke et søk, men en kontroll svarleddet utfører hver gang et svar av den typen registreres; SYN får derfor ingen søkeplan.
+
+Fire tilstander holdes fra hverandre, fordi de utløser forskjellig arbeid:
 
 | Tilstand | Hva den betyr | Hva som løser den |
 | --- | --- | --- |
-| Utilgjengelig | Søkeveien ble forsøkt, men svarte ikke. | Et nytt forsøk. Antidep prøver inntil tre ganger. |
-| Ingen maskinell søkevei | Ingen av søkeveiene Antidep faktisk kaller, dekker sporet. Sporet blir ikke forsøkt maskinelt uansett hvor lenge man venter. | En redaktør utfører søket og registrerer passeringen i søkeloggen. |
+| Utilgjengelig | Søkeveien ble forsøkt, men svarte ikke. | Et nytt forsøk. Antidep prøver inntil tre ganger; det som står igjen, er en registrert begrensning. |
+| Svarkontroll | Sporet er ikke et søk, men en kontroll svarleddet utfører. | Ingenting i søkefasen. |
+| Ingen maskinell søkevei | Ingen søkemetode i registeret dekker sporet for profilen. Et unntak: hvert søkespor i standarden har en metode, og tilstanden oppstår bare når registeret mangler veien. | En ny søkemetode i registeret. Inntil da, som kontrollert unntak, at en redaktør utfører søket og registrerer passeringen. |
 | Dekket | Et dokumentert søk dekker sporet. | Ingenting. |
 
-Hvilke søkespor Antidep faktisk kan dekke maskinelt, er et registrert faktum (`knowledge.monograph_search_platforms`) og ikke en antakelse. Et søk kan ikke erklære et spor søkeveien ikke står oppført for: et bibliografisk søk som erklærte forsøksregistre dekket, ville gjort stoppkravet blindt for et spor ingen hadde søkt i. Et obligatorisk spor uten maskinell søkevei teller derfor aldri som dekning — men det blir heller ikke stående som «ikke forsøkt ennå», der det ville ventet for alltid. Stoppkravet navngir sporet og sier hva som løser det.
+Hvilke søkespor Antidep faktisk kan dekke maskinelt, er et registrert faktum (`knowledge.monograph_search_methods` og `knowledge.monograph_search_platforms`) og ikke en antakelse: hvilken plattform, hvilken metode, og for hvilke profiler. Et søk må si hvilken metode det brukte, og kan ikke erklære et spor metoden ikke står oppført for: et bibliografisk søk som erklærte forsøksregistre dekket, ville gjort stoppkravet blindt for et spor ingen hadde søkt i. Et obligatorisk spor uten maskinell søkevei teller derfor aldri som dekning — men det blir heller ikke stående som «ikke forsøkt ennå», der det ville ventet for alltid. Stoppkravet navngir sporet og sier hva som løser det.
 
 Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater. En avgrensning kan være begrunnet, men må stå i planen og i begrensningene. Søk gjerne først etter en dekkende nyere syntese; eldre originalstudier blir ikke ugyldige fordi de er gamle.
 
 ### 4.3 Søkelogg og utvalgslogg
 
-Lagre faktisk utført søk: database og plattform, eksakt søkestreng, filtre, dato/tid, versjon på søkeplanen, returnert treffantall når kjent, hvor mye som ble gjennomgått, og om paginering/resultatgrenser avkortet trefflisten. En foreslått søkestreng er ikke et utført søk. En side med ti treff er ikke et søk uten flere treff.
+Lagre faktisk utført søk: database og plattform, eksakt søkestreng, filtre, dato/tid, versjon på søkeplanen, returnert treffantall når kjent, hvor mye som ble gjennomgått, og om paginering/resultatgrenser avkortet trefflisten. En foreslått søkestreng er ikke et utført søk. En side med ti treff er ikke et søk uten flere treff. Resten av en avkortet treffliste er dekket bare når det samme søket senere er lest helt, eller når et smalere søk med den samme søkemetoden uttrykkelig erstatter det og er lest helt. At det smalere søket er det som betyr noe for spørsmålet, er kildeoppdagelsens faglige avgjørelse, og den står på søkeforespørselen; et kort søk om noe annet dekker ingenting av resten.
 
-For hvert kandidatdokument: identifikatorer, bibliografi, oppdagelsesvei, mulige behov det dekker, beslutning og begrunnelse. Bruk atskilte utfall: valgt til innhenting, inkludert for navngitt bruk, ekskludert med faglig grunn, avventer tilgang, eller avventer avklaring. Betalingsmur er ikke en faglig eksklusjonsgrunn. Registrer også kontrollerte nullsøk.
+For hvert kandidatdokument: identifikatorer, bibliografi, oppdagelsesvei, mulige behov det dekker, beslutning og begrunnelse. Beslutningen og vesentligheten står per søkeplan: den samme kilden kan være sentral for én avgrensning og uten betydning for en annen, og en eksklusjon for den ene gjør den ikke ekskludert for den andre. Det samme gjelder den foreslåtte bruken: den hører til planen som foreslo den, også når to planer dekker det samme behovet, og den føres videre bare når den planen selv har valgt eller inkludert kilden. Bruk atskilte utfall: valgt til innhenting, inkludert for navngitt bruk, ekskludert med faglig grunn, avventer tilgang, eller avventer avklaring. Betalingsmur er ikke en faglig eksklusjonsgrunn. Registrer også kontrollerte nullsøk.
 
 Søkestrategier og avgrensninger skal være lesbare for en fagperson, men tekniske identifikatorer og transport håndteres av systemet. PRISMA-S er et rapporteringsgrunnlag, ikke en erklæring om at Antidep har gjennomført en PRISMA-kompatibel systematisk oversikt (S06).
 
@@ -99,15 +118,17 @@ Rekkefølgen er en port og ikke en forventning: en semantisk kildeoppgave skal i
 
 Et modellrapportert søk og et maskinelt utført søk er fortsatt to forskjellige opplysninger (§4.3), og de blandes ikke. Kildeleddene har ingen vei til å rapportere et søk de skulle ha utført, og et svar som gjør det, avvises.
 
-En søkeforespørsel kan bare be om det den deterministiske søkeveien faktisk gjør: en navngitt søketjeneste av dem systemet allerede kaller, en søkestrategi og noen termer. En adresse kan ikke oppgis. Antall runder per planversjon er begrenset; er budsjettet brukt opp, er arbeidet åpent og ventende (§8.2) og aldri en konklusjon om evidensen.
+En søkeforespørsel kan bare be om det den deterministiske søkeveien faktisk gjør: en søkemetode av dem registeret har, en søkestrategi og noen termer — eller, for referanselister og siterende arbeider, kildene som skal følges. En adresse kan ikke oppgis. Antall runder per planversjon er begrenset; er budsjettet brukt opp, er arbeidet åpent og ventende (§8.2) og aldri en konklusjon om evidensen.
 
-Og det tredje leddet: mennesket. De søkeveiene Antidep faktisk kaller, dekker i dag bare det bibliografiske sporet. De øvrige obligatoriske sporene i §4.2 — myndighetskilden, preparatomtalen, forsøksregistrene, referanselistene, de siterende arbeidene, den regulatoriske veiledningen — har ingen maskinell utfører, og de får ikke en ved at noen venter. Slike spor føres derfor som *ingen maskinell søkevei* med én gang planen lages, de teller aldri som dekning, og stoppkravet navngir dem.
+En ny søkeplan åpner selv én maskinell runde per søkemetode den trenger, og en søkemetode som kommer inn i registeret senere, åpner en runde for de åpne planene som har sporet. Et spor med en maskinell vei venter aldri på at noen husker å be om det.
 
-Redaktøren utfører da søket og registrerer **selve passeringen**: hvor det ble søkt, med hvilken streng, med hvilke filtre, når, hvor mange treff det ga og hvor mye som ble gjennomgått — de samme opplysningene §4.3 krever om ethvert utført søk. Passeringen blir en egen rad i søkeloggen med utførelsesbeviset *redaktørregistrert*, og sporet knyttes til nøyaktig den raden. En dekning som bare pekte på en tidligere passering som gjaldt noe annet, ville vært en misvisende proveniens, og for profilene uten ett eneste maskinelt utførbart spor — REG, PROD og SYN — ville det dessuten aldri finnes et søk som faktisk hadde gått.
+Og det tredje leddet: mennesket, som et kontrollert unntak og ikke som arbeidsflyten. Mangler registeret en vei for et spor — fordi en metode er tatt ut, eller fordi standarden får et spor ingen metode dekker ennå — føres sporet som *ingen maskinell søkevei* med én gang, det teller aldri som dekning, og stoppkravet navngir det.
+
+Redaktøren utfører da søket og registrerer **selve passeringen**: hvor det ble søkt, med hvilken streng, med hvilke filtre, når, hvor mange treff det ga og hvor mye som ble gjennomgått — de samme opplysningene §4.3 krever om ethvert utført søk. Passeringen blir en egen rad i søkeloggen med utførelsesbeviset *redaktørregistrert*, og sporet knyttes til nøyaktig den raden. En dekning som bare pekte på en tidligere passering som gjaldt noe annet, ville vært en misvisende proveniens.
 
 Ga passeringen treff, må den enten bære kildene den fant, eller si hva gjennomgangen ga. For et maskinelt søk leser den semantiske agenten de registrerte treffene selv; en manuell passering er det bare redaktøren som har sett, og «fire treff, fire gjennomgått, null kandidater» uten et ord om hvorfor er treff som forsvinner stille. Et positivt manuelt søk uten kandidatkilder og uten en registrert gjennomgang holder derfor dekningen åpen.
 
-Utførelsesbeviset har tre verdier, og de blandes ikke: *agentrapportert* (en agents beretning om et verktøykall), *maskinelt utført* (Antideps eget kall, med endepunkt og responsavtrykk) og *redaktørregistrert* (et menneskes dokumenterte arbeid, uten endepunkt og uten kjøring). Oppgavematerialet den semantiske agenten leser, holder dem i hvert sitt felt og sier om hvert søk hvem som utførte det: å legge et menneskes arbeid blant Antideps egne kall ville gitt agenten falsk proveniens om nettopp det skillet resten av kjeden hviler på. Registeret over søkeveier begrenser maskinen, og bare maskinen: et menneske kan søke der Antidep ikke kan, og står oppført på raden for det. Får Antidep siden en søkevei for et slikt spor, flyttes sporet tilbake til den maskinelle køen av seg selv.
+Utførelsesbeviset har tre verdier, og de blandes ikke: *agentrapportert* (en agents beretning om et verktøykall), *maskinelt utført* (Antideps eget kall, med endepunkt og responsavtrykk) og *redaktørregistrert* (et menneskes dokumenterte arbeid, uten endepunkt og uten kjøring). Oppgavematerialet den semantiske agenten leser, holder dem i hvert sitt felt og sier om hvert søk hvem som utførte det: å legge et menneskes arbeid blant Antideps egne kall ville gitt agenten falsk proveniens om nettopp det skillet resten av kjeden hviler på. Registeret over søkeveier begrenser maskinen, og bare maskinen: et menneske kan søke der Antidep ikke kan, og står oppført på raden for det. Får Antidep siden en søkevei for et slikt spor, flyttes sporet tilbake til den maskinelle køen av seg selv, med en runde som utfører det.
 
 ## 5. Innhenting og kildeintegritet
 

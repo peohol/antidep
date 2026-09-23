@@ -43,7 +43,9 @@ import {
 import { parseProposedAssessment } from './evidence-assessment-proposal.ts'
 import {
   CANDIDATE_DECISIONS,
+  SEARCH_METHOD_NAMES,
   SEARCH_PLATFORMS,
+  SEARCH_REQUEST_MAX_SEEDS,
   SEARCH_REQUEST_MAX_TERMS,
   SEARCH_STRATEGIES,
 } from './handoff-schemas.ts'
@@ -332,7 +334,34 @@ function discoverySearchRequests(fields: Fields): number {
     const request = nestedFields(fields, value, `search_requests[${String(index)}]`)
     asText(request, 'rationale')
     asOptionalVocabulary(request, 'platform', SEARCH_PLATFORMS)
+    asOptionalVocabulary(request, 'method', SEARCH_METHOD_NAMES)
     asOptionalVocabulary(request, 'strategy', SEARCH_STRATEGIES)
+    const narrows = asOptionalText(request, 'narrows_request')
+    if (typeof narrows === 'string' && !/^[0-9a-f]{32}$/.test(narrows)) {
+      problem(
+        request.subject,
+        `${request.where}.narrows_request`,
+        'er ikke en søkerundes referanse (32 heksadesimale tegn)',
+      )
+    }
+    const seeds = optionalArray(request, 'seed_candidates')
+    if (seeds.length > SEARCH_REQUEST_MAX_SEEDS) {
+      problem(
+        request.subject,
+        `${request.where}.seed_candidates`,
+        `har flere enn ${String(SEARCH_REQUEST_MAX_SEEDS)} kilder`,
+      )
+    }
+    seeds.forEach((seedValue, seedIndex) => {
+      const seed = nestedFields(
+        request,
+        seedValue,
+        `${request.where}.seed_candidates[${String(seedIndex)}]`,
+      )
+      asVocabulary(seed, 'identifier_kind', ['doi', 'pmid', 'pmcid'])
+      asText(seed, 'identifier_value')
+      rejectUnknown(seed)
+    })
     for (const key of ['drug_aliases', 'query_terms'] as const) {
       const terms = stringArray(request, key)
       if (terms.length > SEARCH_REQUEST_MAX_TERMS) {

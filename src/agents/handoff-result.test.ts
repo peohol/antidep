@@ -350,6 +350,28 @@ describe('kilde- og monografisvar', () => {
     ).toBeNull()
   })
 
+  it('godtar et smalere søk som oppgir runden det erstatter, og avviser noe som ikke er en referanse', () => {
+    const narrower = {
+      rationale: 'Det brede fritekstsøket er avkortet; dette er den delen som gjelder spørsmålet.',
+      method: 'keyword',
+      platform: 'PubMed',
+      query_terms: ['weight gain'],
+      narrows_request: '0123456789abcdef0123456789abcdef',
+    }
+    expect(
+      handoffResultProblem(task('source_discovery'), {
+        ...resultFor('source_discovery'),
+        search_requests: [narrower],
+      }),
+    ).toBeNull()
+    expect(
+      handoffResultProblem(task('source_discovery'), {
+        ...resultFor('source_discovery'),
+        search_requests: [{ ...narrower, narrows_request: 'det brede søket' }],
+      }),
+    ).toMatch(/narrows_request/)
+  })
+
   it('lar ikke kontrollen erklære sin egen uavhengighet', () => {
     const result = resultFor('source_quality_assessment')
     const control = result['control'] as Record<string, unknown>

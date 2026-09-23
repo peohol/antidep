@@ -68,6 +68,9 @@ select set_eq(
            ('monograph_question_templates'), ('monograph_template_profiles'),
            ('monograph_search_tracks'), ('monograph_search_track_profiles'),
            ('monograph_search_platforms'),
+           -- Migrasjon 014c: hva hver søkemetode gjør og dekker, og sporene som
+           -- er en kontroll svarleddet utfører framfor et søk.
+           ('monograph_search_methods'), ('monograph_answer_control_tracks'),
            ('monograph_prescribed_scope_values'),
            -- Migrasjon 013c: bestillingen og de konkrete kunnskapsbehovene.
            ('monograph_editions'), ('monograph_needs'),
@@ -95,7 +98,7 @@ select set_eq(
            -- Migrasjon 013p: senere vurderinger av hvor sikker en oversikts
            -- inklusjon av en studie er.
            ('review_inclusion_assessments')$$,
-  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j, 013k, 013m, 013n og 013p'
+  'knowledge inneholder nøyaktig tabellene fra migrasjon 003, 004, 006, 005u, 009a, 009d, 010b, 013a, 013c, 013g, 013h, 013i, 013j, 013k, 013m, 013n, 013p og 014c'
 );
 
 -- Samme uttømmende vaktpost for de øvrige schemaene. Migrasjon 005 tok
@@ -153,6 +156,15 @@ select set_eq(
            -- gjør arbeidsdelingen til en rad: den semantiske agenten ber om
            -- søk, og Antideps deterministiske kode utfører dem.
            ('monograph_search_requests'),
+           -- Migrasjon 014c: hvilke planer som fant en kandidatkilde, og med
+           -- hvilket søk. En kilde er unik per utgave, men hører til hver plan
+           -- som fant den.
+           ('monograph_candidate_source_plans'),
+           -- Migrasjon 014f: bruken av en kandidatkilde som faktisk er ønsket —
+           -- bare for behov på planer som selv har valgt kilden. En visning,
+           -- slik at innhentingen og registreringen av kildebruk leser den ene
+           -- definisjonen.
+           ('monograph_wanted_candidate_needs'),
            -- Migrasjon 013h: forespørselen om et myndighets-, preparat- eller
            -- retningslinjedokument, atskilt fra den forskningsfaglige.
            ('monograph_document_requests'),
@@ -166,7 +178,7 @@ select set_eq(
            -- forhåndsgodkjente kildene og de synlige avvikene.
            ('monograph_source_restrictions'), ('monograph_restriction_sources'),
            ('monograph_revision_proposals')$$,
-  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i, 013j, 013k og 013v'
+  'workflow inneholder nøyaktig tabellene fra migrasjon 005, 005j, 009b, 009d, 010c, 011a, 012a, 012b, 012d, 013c, 013e, 013h, 013i, 013j, 013k, 013v og 014c, og visningen fra 014f'
 );
 select set_eq(
   $$

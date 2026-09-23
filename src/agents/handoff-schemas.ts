@@ -31,6 +31,7 @@ import {
   EVIDENCE_RELATIONSHIP_TYPES,
   GRADE_DOMAIN_RATINGS,
 } from '../types/api.ts'
+import { SEARCH_REQUEST_METHODS, SEARCH_REQUEST_PLATFORMS } from '../ops/search-method-catalog.ts'
 import { ASSESSMENT_FRAMEWORKS } from './evidence-assessment-proposal.ts'
 
 type Schema = Record<string, unknown>
@@ -209,8 +210,7 @@ export function buildEvidenceAssessmentDraftSchema(): Schema {
 // er den ene veien fra en semantisk vurdering til et nytt maskinelt søk.
 // ----------------------------------------------------------------------------
 
-/** Utfallene ett søk kan ha. De to siste er ikke null treff. */
-export const SEARCH_OUTCOMES = ['executed', 'zero_results', 'unavailable', 'failed'] as const
+export { SEARCH_OUTCOMES } from './search-outcomes.ts'
 
 /** Utvalgsbeslutningene om én kandidatkilde. */
 export const CANDIDATE_DECISIONS = [
@@ -223,13 +223,18 @@ export const CANDIDATE_DECISIONS = [
 ] as const
 
 /**
- * Plattformene en søkeforespørsel kan navngi.
+ * Plattformene og metodene en søkeforespørsel kan navngi.
  *
- * Listen er uttømmende, og den er den samme i `workflow.monograph_search_requests`.
- * En forespørsel kan ikke oppgi en adresse: en tjeneste ingen har vurdert,
- * finnes ikke å be om (ANTIDEP_CONSTITUTION.md regel 7).
+ * Utledet av katalogen over søkemetodene, som speiler registeret i databasen
+ * (`knowledge.monograph_search_methods`, migrasjon 014c). En forespørsel kan
+ * ikke oppgi en adresse: en tjeneste ingen har vurdert, finnes ikke å be om
+ * (ANTIDEP_CONSTITUTION.md regel 7).
  */
-export const SEARCH_PLATFORMS = ['Europe PMC', 'PubMed', 'Crossref'] as const
+export const SEARCH_PLATFORMS: readonly string[] = SEARCH_REQUEST_PLATFORMS
+export const SEARCH_METHOD_NAMES: readonly string[] = SEARCH_REQUEST_METHODS
+
+/** Hvor mange sentrale kilder én forespørsel kan be Antidep følge. Samme tall som raden. */
+export const SEARCH_REQUEST_MAX_SEEDS = 10
 
 /** Formene en maskinell søkerunde kan ha. */
 export const SEARCH_STRATEGIES = ['broad', 'targeted'] as const
@@ -301,8 +306,30 @@ function searchRequestSchema(): Schema {
         ),
         platform: optionalVocabulary(
           SEARCH_PLATFORMS,
-          'Plattformen søket skal gå mot, når det gjelder én bestemt. Utelat for alle tre. En annen tjeneste kan ikke oppgis, og en adresse kan ikke oppgis.',
+          'Plattformen søket skal gå mot, når det gjelder én bestemt. Utelat for alle som har metoden. En annen tjeneste kan ikke oppgis, og en adresse kan ikke oppgis.',
         ),
+        method: optionalVocabulary(
+          SEARCH_METHOD_NAMES,
+          'Søkemetoden, slik oppgaven lister dem under «Søk du kan be om» med hva hver av dem dekker. Utelat for de bibliografiske fritekstsøkene. «references» og «citations» følger de sentrale kildene du navngir i seed_candidates.',
+        ),
+        seed_candidates: {
+          type: 'array',
+          maxItems: SEARCH_REQUEST_MAX_SEEDS,
+          description:
+            'De sentrale kildene Antidep skal følge med «references» eller «citations» — kandidatkilder fra oppgaven, med identifikatoren ordrett. Hvilke kilder som er sentrale, avgjør du; Antidep følger dem. Kildene du velger til innhenting, inkluderer eller vurderer som mulig konklusjonsendrende, følges uansett i neste runde.',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['identifier_kind', 'identifier_value'],
+            properties: {
+              identifier_kind: vocabulary(
+                ['doi', 'pmid', 'pmcid'],
+                'Identifikatorformen, ordrett fra kandidatlisten i oppgaven.',
+              ),
+              identifier_value: text('Identifikatoren, ordrett fra kandidatlisten i oppgaven.'),
+            },
+          },
+        },
         strategy: optionalVocabulary(
           SEARCH_STRATEGIES,
           '«broad» setter avgrensningsaksene som ELLER-ledd; «targeted» gjør én passering per akse eller term. Utelat for «targeted».',
@@ -324,6 +351,12 @@ function searchRequestSchema(): Schema {
         filters_note: optionalText(
           'En avgrensning som er faglig begrunnet. Ingen automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller statistisk signifikante resultater.',
         ),
+        narrows_request: {
+          type: 'string',
+          pattern: '^[0-9a-f]{32}$',
+          description:
+            'Runden dette smalere søket erstatter, med «request_reference» ordrett fra et avkortet søk i oppgaven. Søket må bruke den samme plattformen og metoden. Et avkortet søk holder søkedekningen åpen til det samme søket er lest helt, eller til et smalere søk som uttrykkelig erstatter det, er lest helt.',
+        },
       },
     },
   }
@@ -333,7 +366,7 @@ function searchRequestSchema(): Schema {
 export function buildSourceDiscoveryDraftSchema(): Schema {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: 'https://antidep.no/schema/source-discovery-draft-3.json',
+    $id: 'https://antidep.no/schema/source-discovery-draft-4.json',
     title: 'Antidep SourceDiscoveryDraft',
     description:
       'Vurderingen av de registrerte søkene for én søkeplan: hvilke av kandidatkildene som er relevante og til hva, hvilke flere søk som trengs, og hvilke avgrensningsverdier monografien bør dekke. Hvilken plan, hvilken avgrensning og hvilke behov det gjelder, står i oppgaven og hører ikke hjemme i svaret. Svaret skal ikke inneholde et klinisk svar på noe av spørsmålene: dette leddet finner grunnlaget, det leser det ikke. Det rapporterer heller ikke søk — søkene er utført av andre enn deg: Antideps egen kode, eller en redaktør for de søkesporene Antidep ikke har en maskinell vei til.',
@@ -372,7 +405,7 @@ export function buildSourceDiscoveryDraftSchema(): Schema {
 export function buildSourceCoverageControlDraftSchema(): Schema {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: 'https://antidep.no/schema/source-coverage-control-draft-2.json',
+    $id: 'https://antidep.no/schema/source-coverage-control-draft-3.json',
     title: 'Antidep SourceCoverageControlDraft',
     description:
       'Den separate kontrollen av søkedekningen for én søkeplan: vurderingen av dine egne, separat utførte motsøk, av de kildene generatoren overså, og av om begrunnelsen for å avslutte holder. Motsøkene er kjørt av Antideps egen kode under din rolle og din kjøring, og de ligger i oppgaven — du kan verken erklære eller bestride at de ble gjort. Enighet med generatoren er ikke i seg selv fasit.',

@@ -33,19 +33,17 @@ import {
   describeDiscoveryReport,
   LEGS,
   runMonographDiscovery,
-  type DiscoveryApi,
   type DiscoveryLeg,
-  type DiscoveryPlan,
-  type SearchRequest,
 } from './monograph-discovery.ts'
-import type { MachineSearch } from './monograph-search.ts'
+import { createDiscoveryApi } from './monograph-discovery-api.ts'
 
 const USAGE = `Bruk:
   npm run ops:discovery [-- valg]
 
 Valg:
   --leg <discovery|coverage>  Hvilket kildeledd søkene utføres for (standard discovery)
-  --max-plans <n>             Hvor mange søkeplaner kjøringen tar (standard 5)
+  --max-plans <n>             Hvor mange søkeplaner kjøringen tar (standard 5, høyst 25)
+  --plan <referanse>          Bare de åpne rundene for én bestemt søkeplan
   --dry-run                   Vis hvilke runder som ville blitt søkt for, uten å søke
   --help                      Vis denne teksten
 
@@ -82,6 +80,7 @@ export const LEG_CREDENTIALS: Readonly<Record<DiscoveryLeg, AgentCredentialVaria
 interface Arguments {
   readonly leg: DiscoveryLeg
   readonly maxPlans: number
+  readonly plan: string | null
   readonly dryRun: boolean
   readonly help: boolean
 }
@@ -89,6 +88,7 @@ interface Arguments {
 export function parseArguments(argv: readonly string[]): Arguments {
   let leg: DiscoveryLeg = 'discovery'
   let maxPlans = 5
+  let plan: string | null = null
   let dryRun = false
   let help = false
 
@@ -107,63 +107,24 @@ export function parseArguments(argv: readonly string[]): Arguments {
       index += 1
     } else if (argument === '--max-plans') {
       const value = Number.parseInt(argv[index + 1] ?? '', 10)
-      if (!Number.isInteger(value) || value < 1 || value > 50) {
-        throw new Error('--max-plans må være et tall mellom 1 og 50.')
+      if (!Number.isInteger(value) || value < 1 || value > 25) {
+        throw new Error('--max-plans må være et tall mellom 1 og 25.')
       }
       maxPlans = value
+      index += 1
+    } else if (argument === '--plan') {
+      const value = argv[index + 1] ?? ''
+      if (!/^[0-9a-f]{32}$/.test(value)) {
+        throw new Error('--plan må være en søkeplans referanse (32 heksadesimale tegn).')
+      }
+      plan = value
       index += 1
     } else {
       throw new Error(`Ukjent valg: ${argument}`)
     }
   }
 
-  return { leg, maxPlans, dryRun, help }
-}
-
-function asText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
-}
-
-function requestFrom(row: Record<string, unknown>): SearchRequest {
-  const terms = Array.isArray(row['query_terms']) ? (row['query_terms'] as unknown[]) : []
-  const aliases = Array.isArray(row['drug_aliases']) ? (row['drug_aliases'] as unknown[]) : []
-  const tracks = Array.isArray(row['track_codes']) ? (row['track_codes'] as unknown[]) : []
-  return {
-    requestReference: String(row['request_reference'] ?? ''),
-    searchRound: Number(row['search_round'] ?? 1),
-    origin: String(row['origin'] ?? ''),
-    strategy: row['strategy'] === 'broad' ? 'broad' : 'targeted',
-    rationale: String(row['rationale'] ?? ''),
-    platform: asText(row['platform']) ?? null,
-    drugAliases: aliases.map((alias) => String(alias)).filter((alias) => alias.length > 0),
-    queryTerms: terms.map((term) => String(term)).filter((term) => term.length > 0),
-    filtersNote: asText(row['filters_note']) ?? null,
-    trackCodes: tracks.map((track) => String(track)).filter((track) => track.length > 0),
-    attempts: Number(row['attempts'] ?? 0),
-    state: String(row['state'] ?? 'pending'),
-  }
-}
-
-function planFrom(row: Record<string, unknown>): DiscoveryPlan {
-  const scope = (row['scope'] ?? {}) as Record<string, unknown>
-  const profile = (row['profile'] ?? {}) as Record<string, unknown>
-  const requests = Array.isArray(row['requests']) ? (row['requests'] as unknown[]) : []
-
-  return {
-    planReference: String(row['plan_reference'] ?? ''),
-    drug: String(row['drug'] ?? ''),
-    editionReference: String(row['edition_reference'] ?? ''),
-    profileCode: String(profile['code'] ?? '?'),
-    searchRound: Number(row['search_round'] ?? 1),
-    requests: requests.map((entry) => requestFrom(entry as Record<string, unknown>)),
-    scope: {
-      drug: asText(scope['drug']) ?? String(row['drug'] ?? ''),
-      indication: asText(scope['indication']),
-      outcome: asText(scope['outcome']),
-      population: asText(scope['population']),
-      comparator: asText(scope['comparator']),
-    },
-  }
+  return { leg, maxPlans, plan, dryRun, help }
 }
 
 async function main(): Promise<void> {
@@ -190,95 +151,7 @@ async function main(): Promise<void> {
     p_secret: config.credential.secret.reveal(),
   }
 
-  const api: DiscoveryApi = {
-    async work() {
-      const { data, error } = await client.rpc('monograph_discovery_work', identity)
-      if (error !== null) {
-        throw new Error('Søkearbeidet kunne ikke hentes.')
-      }
-      // Svaret er ett dokument med `plans` i seg, og ikke en liste: funksjonen
-      // bærer også hvilken identitet og hvilket ledd arbeidet ble hentet for.
-      // En avlesning som forventet en liste, fikk aldri én eneste plan — og
-      // ingenting sa fra, fordi «ingen åpne planer» er et gyldig svar.
-      const payload = (data ?? {}) as Record<string, unknown>
-      const rows = payload['plans']
-      if (!Array.isArray(rows)) {
-        throw new Error('Søkearbeidet kom uten en liste over søkeplaner.')
-      }
-      return rows.map((row) => planFrom(row as Record<string, unknown>))
-    },
-
-    async beginRun(planReference) {
-      const { data, error } = await client.rpc('begin_agent_run', {
-        ...identity,
-        p_agent_role: leg.agentRole,
-        p_provider: leg.premises.provider,
-        p_model: leg.premises.model,
-        p_model_version: leg.premises.modelVersion,
-        p_prompt_template_version: leg.premises.promptTemplateVersion,
-        p_pipeline_version: leg.premises.pipelineVersion,
-        p_input_manifest: { search_plan_reference: planReference, mode: 'machine_executed' },
-      })
-      if (error !== null || typeof data !== 'string') {
-        throw new Error('Kjøringen kunne ikke åpnes.')
-      }
-      return data
-    },
-
-    async recordSearch(agentRunId, planReference, requestReference, search: MachineSearch) {
-      const { error } = await client.rpc('record_monograph_machine_search', {
-        ...identity,
-        p_agent_run_id: agentRunId,
-        p_plan_reference: planReference,
-        p_request_reference: requestReference,
-        p_platform: search.platform,
-        p_query_string: search.queryString,
-        p_filters: search.filters,
-        p_endpoint: search.endpoint,
-        p_response_digest: search.responseDigest,
-        p_outcome: search.outcome,
-        p_result_count: search.resultCount,
-        p_screened_count: search.screenedCount,
-        p_truncated: search.truncated,
-        p_truncation_note: search.truncationNote,
-        p_limitation_note: search.limitationNote,
-        p_track_codes: search.trackCodes,
-        p_candidates: search.candidates,
-      })
-      if (error !== null) {
-        throw new Error('Søket kunne ikke registreres.')
-      }
-    },
-
-    async closeRequest(agentRunId, requestReference) {
-      const { data, error } = await client.rpc('close_monograph_search_request', {
-        ...identity,
-        p_agent_run_id: agentRunId,
-        p_request_reference: requestReference,
-      })
-      if (error !== null) {
-        throw new Error('Søkerunden kunne ikke lukkes.')
-      }
-      const payload = (data ?? {}) as Record<string, unknown>
-      return {
-        state: String(payload['state'] ?? 'pending'),
-        enqueuedJob: payload['enqueued_job'] === true,
-      }
-    },
-
-    async completeRun(agentRunId, status, outcome) {
-      const { error } = await client.rpc('complete_agent_run', {
-        ...identity,
-        p_agent_run_id: agentRunId,
-        p_status: status,
-        p_output_manifest: outcome,
-        p_failure_reason: null,
-      })
-      if (error !== null) {
-        throw new Error('Kjøringen kunne ikke lukkes.')
-      }
-    },
-  }
+  const api = createDiscoveryApi(client, identity, args.leg, args.plan)
 
   if (args.dryRun) {
     const plans = await api.work()
