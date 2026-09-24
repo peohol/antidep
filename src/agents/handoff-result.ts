@@ -43,12 +43,21 @@ import {
 import { parseProposedAssessment } from './evidence-assessment-proposal.ts'
 import {
   CANDIDATE_DECISIONS,
+  CANDIDATE_IDENTIFIER_KINDS,
   SEARCH_METHOD_NAMES,
   SEARCH_PLATFORMS,
   SEARCH_REQUEST_MAX_SEEDS,
   SEARCH_REQUEST_MAX_TERMS,
   SEARCH_STRATEGIES,
+  SEED_IDENTIFIER_KINDS,
 } from './handoff-schemas.ts'
+import {
+  appraisableCandidate,
+  decisionsFor,
+  discoveryAnswerBounds,
+  narrowingProblem,
+  type DiscoveryAnswerBounds,
+} from './discovery-answer-bounds.ts'
 import {
   asObjectList,
   asOptionalInteger,
@@ -284,19 +293,31 @@ function rejectRetiredDiscoveryFields(result: Record<string, unknown>): string |
   return null
 }
 
-function discoveryAppraisals(fields: Fields): void {
+/**
+ * Kildevurderingene, mot kildene oppgaven faktisk har.
+ *
+ * To av avvisningene er de samme databasen gjør, og de står her fordi det er
+ * de svarformen ble bygget for å gjøre umulige (migrasjon 014i): en kilde som
+ * ikke står i oppgaven, og «excluded» for en kilde med registrert
+ * tilgangsbegrensning. Et svar som var gyldig etter oppgavens svarform, skal
+ * ikke avvises her — og et som ikke var det, skal ikke først møte databasen.
+ */
+function discoveryAppraisals(fields: Fields, bounds: DiscoveryAnswerBounds): void {
   const appraisals = requiredArray(fields, 'candidate_appraisals')
   appraisals.forEach((value, index) => {
     const candidate = nestedFields(fields, value, `candidate_appraisals[${String(index)}]`)
-    asVocabulary(candidate, 'identifier_kind', [
-      'doi',
-      'pmid',
-      'pmcid',
-      'url',
-      'title',
-      'registry_id',
-    ])
-    asText(candidate, 'identifier_value')
+    const kind = asVocabulary(candidate, 'identifier_kind', CANDIDATE_IDENTIFIER_KINDS)
+    const identifier = asText(candidate, 'identifier_value')
+    const known = appraisableCandidate(bounds, kind, identifier)
+    if (known === null) {
+      problem(
+        candidate.subject,
+        candidate.where,
+        `vurderer kilden ${kind}:${identifier}, som ikke står blant kandidatkildene i oppgaven. ` +
+          'Bare kilder et registrert søk har funnet, kan vurderes; mangler en kilde du mener ' +
+          'bør være der, be om et søk som ville funnet den',
+      )
+    }
     const material = optionalBoolean(candidate, 'could_change_conclusion')
     const reason = asOptionalText(candidate, 'materiality_reason')
     if (material === true && reason === null) {
@@ -306,7 +327,16 @@ function discoveryAppraisals(fields: Fields): void {
         'mangler, og en kilde som kan endre hovedkonklusjonen, må ha en begrunnelse',
       )
     }
-    asOptionalVocabulary(candidate, 'decision', CANDIDATE_DECISIONS)
+    const decision = asOptionalVocabulary(candidate, 'decision', CANDIDATE_DECISIONS)
+    if (decision !== null && !decisionsFor(known).includes(decision)) {
+      problem(
+        candidate.subject,
+        `${candidate.where}.decision`,
+        `er «${decision}», men kilden ${kind}:${identifier} har en registrert ` +
+          'tilgangsbegrensning og kan ikke ekskluderes, uansett grunn: Antidep har ikke fått ' +
+          'lest den. Sett «awaiting_access» og skriv hvorfor i decision_reason',
+      )
+    }
     asOptionalText(candidate, 'decision_reason')
 
     const uses = optionalArray(candidate, 'uses')
@@ -328,21 +358,23 @@ function discoveryAppraisals(fields: Fields): void {
  * som kunne navngi en vilkårlig tjeneste, ikke ville vært en søkeforespørsel,
  * men en proxy (ANTIDEP_CONSTITUTION.md regel 7).
  */
-function discoverySearchRequests(fields: Fields): number {
+function discoverySearchRequests(fields: Fields, bounds: DiscoveryAnswerBounds): number {
   const requests = optionalArray(fields, 'search_requests')
   requests.forEach((value, index) => {
     const request = nestedFields(fields, value, `search_requests[${String(index)}]`)
     asText(request, 'rationale')
-    asOptionalVocabulary(request, 'platform', SEARCH_PLATFORMS)
-    asOptionalVocabulary(request, 'method', SEARCH_METHOD_NAMES)
+    const platform = asOptionalVocabulary(request, 'platform', SEARCH_PLATFORMS)
+    const method = asOptionalVocabulary(request, 'method', SEARCH_METHOD_NAMES)
     asOptionalVocabulary(request, 'strategy', SEARCH_STRATEGIES)
+    // Bare en runde oppgaven sier at dette leddet kan erstatte, og med den
+    // plattformen og metoden runden står med (migrasjon 014i). Databasen
+    // avviser de samme; her får agenten vite hvilke som finnes.
     const narrows = asOptionalText(request, 'narrows_request')
-    if (typeof narrows === 'string' && !/^[0-9a-f]{32}$/.test(narrows)) {
-      problem(
-        request.subject,
-        `${request.where}.narrows_request`,
-        'er ikke en søkerundes referanse (32 heksadesimale tegn)',
-      )
+    if (narrows !== null) {
+      const issue = narrowingProblem(bounds, narrows, platform, method)
+      if (issue !== null) {
+        problem(request.subject, `${request.where}.narrows_request`, issue)
+      }
     }
     const seeds = optionalArray(request, 'seed_candidates')
     if (seeds.length > SEARCH_REQUEST_MAX_SEEDS) {
@@ -358,7 +390,7 @@ function discoverySearchRequests(fields: Fields): number {
         seedValue,
         `${request.where}.seed_candidates[${String(seedIndex)}]`,
       )
-      asVocabulary(seed, 'identifier_kind', ['doi', 'pmid', 'pmcid'])
+      asVocabulary(seed, 'identifier_kind', SEED_IDENTIFIER_KINDS)
       asText(seed, 'identifier_value')
       rejectUnknown(seed)
     })
@@ -388,6 +420,7 @@ function discoverySearchRequests(fields: Fields): number {
 }
 
 function sourceDiscoveryProblem(
+  task: AgentTask,
   role: 'source_discovery' | 'source_quality_assessment',
   result: Record<string, unknown>,
 ): string | null {
@@ -397,8 +430,9 @@ function sourceDiscoveryProblem(
   }
 
   const fields = fieldsOf(result, RESULT_SUBJECT, 'utkastet')
-  discoveryAppraisals(fields)
-  const requested = discoverySearchRequests(fields)
+  const bounds = discoveryAnswerBounds(task.input)
+  discoveryAppraisals(fields, bounds)
+  const requested = discoverySearchRequests(fields, bounds)
 
   if (role === 'source_discovery') {
     const proposals = optionalArray(fields, 'term_proposals')
@@ -539,7 +573,7 @@ export function handoffResultProblem(
 
       case 'source_discovery':
       case 'source_quality_assessment':
-        return sourceDiscoveryProblem(task.role, result)
+        return sourceDiscoveryProblem(task, task.role, result)
       case 'monograph_answer':
         return monographAnswerProblem(result)
 

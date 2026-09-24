@@ -52,6 +52,11 @@ import { EXTRACTION_DRAFTING_ROLE, EXTRACTION_DRAFTING_RULES } from './extractio
 import { AGENT_ANSWER_VERSION, AGENT_TASK_VERSION, HANDOFF_CONTRACTS } from './agent-task.ts'
 import type { AgentTask, HandoffRole } from './agent-task.ts'
 import { describeModelIdentity } from './model-identity.ts'
+import {
+  discoveryAnswerBounds,
+  type DiscoveryAnswerBounds,
+  type NarrowableRound,
+} from './discovery-answer-bounds.ts'
 
 const SYNTHESIS_ROLE = `Du er synteseleddet i Antidep, et klinisk oppslagsverk om antidepressiver.
 
@@ -153,14 +158,19 @@ const DISCOVERY_RULES = `Reglene, i prioritert rekkefølge:
    registrert begrensning er ikke null treff, og den er aldri en konklusjon om
    evidensen.
 4. Ble en treffliste avkortet, står det i oppgaven. Be om et oppfølgende søk
-   framfor å behandle den første siden som hele trefflisten.
+   framfor å behandle den første siden som hele trefflisten. Skal søket
+   erstatte den avkortede runden, velg runden under «Søkerunder du kan snevre
+   inn» og bruk nøyaktig den narrows_request, platform og method som står der.
+   Står det ingen runde der, har forespørselen ikke noe narrows_request.
 5. Søk bredere enn den senere analyseavgrensningen. Be om de søkene som mangler:
    synonymer, et annet studiedesign, et virkestoffnavn på et annet språk. Ingen
    automatisk avgrensning til åpen tilgang, engelsk språk, siste fem år eller
    statistisk signifikante resultater; en avgrensning kan være begrunnet, men da
    skal den stå i «filters_note».
-6. En betalingsmur er en tilgangsbegrensning og ikke en faglig eksklusjonsgrunn.
-   Sett slike kilder til «awaiting_access», aldri «excluded».
+6. En kilde merket TILGANGSBEGRENSET i kandidatlisten kan ikke ekskluderes,
+   uansett grunn — også når tittelen viser at den er irrelevant. Antidep har
+   ikke fått lest den, og en betalingsmur er ikke en faglig eksklusjonsgrunn.
+   Sett den til «awaiting_access» og skriv hvorfor i decision_reason.
 7. En kilde godkjennes for en bestemt bruk og avgrensning, ikke universelt. Den
    samme artikkelen kan være egnet for farmakokinetikk og uegnet for
    sammenlignende klinisk effekt. Oppgi «uses» per behov.
@@ -208,6 +218,8 @@ const COVERAGE_CONTROL_RULES = `Reglene, i prioritert rekkefølge:
    liste.
 3. Gå gjennom eksklusjonene. En kilde ekskludert fordi noen ikke kom til
    fullteksten, er feil ekskludert: en betalingsmur er en tilgangsbegrensning.
+   En kilde merket TILGANGSBEGRENSET i kandidatlisten kan heller ikke du
+   ekskludere, uansett grunn: sett den til «awaiting_access».
 4. Vurder vesentligheten av hver uavklart kilde: kan den med rimelighet endre
    hovedkonklusjonen? Vurderingen skal begrunnes, og den er en egen del av
    avgjørelsen din.
@@ -220,7 +232,9 @@ const COVERAGE_CONTROL_RULES = `Reglene, i prioritert rekkefølge:
    godkjent styrke.
 7. Godtar du ikke begrunnelsen, si hva som konkret mangler. «Insufficient» uten
    en anvisning er en utsettelse og ikke en kontroll. Er det et søk som mangler,
-   be om det framfor å avvise uten en vei videre.
+   be om det framfor å avvise uten en vei videre. Et smalere motsøk kan bare
+   erstatte en av dine egne avkortede runder, slik de står under «Søkerunder du
+   kan snevre inn»; generatorens runder er generatorens.
 8. Be om flere motsøk ELLER avgjør — aldri begge i samme svar. En avgjørelse
    tatt samtidig med at grunnlaget blir bedt om, hviler ikke på det grunnlaget.
 9. Skriv på norsk bokmål. Legemiddelgruppen heter antidepressiver;
@@ -294,7 +308,8 @@ const ROLE_TEXTS: Readonly<
     {
       readonly role: string
       readonly rules: string
-      readonly schema: () => Record<string, unknown>
+      /** Svarformen, bygget av oppgaven: kildeleddenes form er oppgavens egen (014i). */
+      readonly schema: (task: AgentTask) => Record<string, unknown>
       readonly boundaries: readonly string[]
     }
   >
@@ -320,13 +335,13 @@ const ROLE_TEXTS: Readonly<
   source_discovery: {
     role: DISCOVERY_ROLE,
     rules: DISCOVERY_RULES,
-    schema: buildSourceDiscoveryDraftSchema,
+    schema: (task) => buildSourceDiscoveryDraftSchema(discoveryAnswerBounds(task.input)),
     boundaries: DISCOVERY_BOUNDARIES,
   },
   source_quality_assessment: {
     role: COVERAGE_CONTROL_ROLE,
     rules: COVERAGE_CONTROL_RULES,
-    schema: buildSourceCoverageControlDraftSchema,
+    schema: (task) => buildSourceCoverageControlDraftSchema(discoveryAnswerBounds(task.input)),
     boundaries: DISCOVERY_BOUNDARIES,
   },
   monograph_answer: {
@@ -492,7 +507,79 @@ function methodList(value: unknown): string {
   return `\n    utføres av: ${methods.join('; ')}`
 }
 
+/** Om runden ved et søk er en av dem leddet kan erstatte, og med hva. */
+function narrowingFor(
+  bounds: DiscoveryAnswerBounds,
+  row: Record<string, unknown>,
+): NarrowableRound | null {
+  return (
+    bounds.narrowableRounds.find(
+      (round) =>
+        round.requestReference === row['request_reference'] &&
+        round.platform === row['platform'] &&
+        round.method === (row['method'] ?? 'keyword'),
+    ) ?? null
+  )
+}
+
+/**
+ * Hva en avkorting betyr for dette leddet.
+ *
+ * Søkene er begge kildeleddenes, men bare leddets egne runder kan erstattes
+ * herfra. Oppgaven skrev en gang «narrows_request: <referanse>» ved hvert
+ * avkortet søk, også ved det andre leddets — og importen avviste, med rette,
+ * svaret som fulgte den (migrasjon 014i).
+ */
+function truncationNote(
+  task: AgentTask,
+  bounds: DiscoveryAnswerBounds,
+  row: Record<string, unknown>,
+): string {
+  if (row['truncated'] !== true) {
+    return ''
+  }
+  if (row['truncation_resolved'] === true) {
+    return ', AVKORTET — resten er dekket av et senere søk'
+  }
+  const round = narrowingFor(bounds, row)
+  if (round !== null) {
+    return `, AVKORTET — resten er ikke dekket; kan erstattes av et smalere søk (narrows_request: ${round.requestReference}, platform: ${round.platform}, method: ${round.method})`
+  }
+  return row['run_role'] !== undefined && row['run_role'] !== task.role
+    ? ', AVKORTET — resten er ikke dekket; runden hører til det andre kildeleddet, og bare det kan erstatte den'
+    : ', AVKORTET — resten er ikke dekket; runden kan ikke erstattes fra denne oppgaven'
+}
+
+function narrowableSection(bounds: DiscoveryAnswerBounds): string {
+  if (bounds.narrowableRounds.length === 0) {
+    return '  (ingen. Ingen avkortet runde i denne oppgaven kan snevres inn av dette leddet, og svarformen har derfor ikke feltet narrows_request.)'
+  }
+  return bounds.narrowableRounds
+    .map(
+      (round) =>
+        `  - narrows_request: ${round.requestReference} — platform: ${round.platform}, method: ${round.method}` +
+        (round.queries.length > 0 ? `\n    avkortet: ${round.queries.join('; ')}` : ''),
+    )
+    .join('\n')
+}
+
+/** Kandidatens tilgang slik svarformen leser den: uten et entydig nei er den begrenset. */
+function accessNote(bounds: DiscoveryAnswerBounds, row: Record<string, unknown>): string {
+  const candidate = bounds.candidates.find(
+    (entry) =>
+      entry.identifierKind === row['identifier_kind'] &&
+      entry.identifierValue === row['identifier_value'],
+  )
+  if (candidate !== undefined && !candidate.accessLimited) {
+    return ''
+  }
+  const note =
+    typeof row['access_limitation_note'] === 'string' ? ` (${row['access_limitation_note']})` : ''
+  return `\n    TILGANGSBEGRENSET${note} — kan ikke ekskluderes; sett «awaiting_access»`
+}
+
 function discoveryMaterial(task: AgentTask): string {
+  const bounds = discoveryAnswerBounds(task.input)
   const profile = record(task.input['source_profile'])
   const criteria = record(task.input['closure_criteria'])
   const options = record(task.input['search_request_options'])
@@ -555,7 +642,15 @@ Disse er maskinelt utførte: Antideps egen kode kalte endepunktet, leste svaret 
 registrerte et fingeravtrykk av det. Du har ikke utført dem, og du skal ikke
 rapportere dem som dine egne.
 
-${bullets(task.input['machine_searches'], (row) => `${String(row['platform'] ?? '')} (${String(row['method'] ?? 'keyword')}) [${String(row['run_role'] ?? '')}]: ${String(row['query'] ?? '')} — ${String(row['outcome'] ?? '')}, treff: ${String(row['result_count'] ?? 'ukjent')}, gjennomgått: ${String(row['screened_count'] ?? 0)}${row['truncated'] === true ? (row['truncation_resolved'] === true ? ', AVKORTET — resten er dekket av et senere søk' : `, AVKORTET — resten er ikke dekket; et smalere søk med samme metode kan erstatte det (narrows_request: ${String(row['request_reference'] ?? 'ukjent')})`) : ''}\n    endepunkt: ${String(row['endpoint'] ?? 'ikke registrert')}\n    responsavtrykk: ${String(row['response_digest'] ?? 'ingen — tjenesten svarte ikke')}`)}
+${bullets(task.input['machine_searches'], (row) => `${String(row['platform'] ?? '')} (${String(row['method'] ?? 'keyword')}) [${String(row['run_role'] ?? '')}]: ${String(row['query'] ?? '')} — ${String(row['outcome'] ?? '')}, treff: ${String(row['result_count'] ?? 'ukjent')}, gjennomgått: ${String(row['screened_count'] ?? 0)}${truncationNote(task, bounds, row)}\n    endepunkt: ${String(row['endpoint'] ?? 'ikke registrert')}\n    responsavtrykk: ${String(row['response_digest'] ?? 'ingen — tjenesten svarte ikke')}`)}
+
+### Søkerunder du kan snevre inn
+
+Bare disse avkortede rundene kan erstattes av et smalere søk fra denne
+oppgaven, og bare med nøyaktig den plattformen og metoden som står ved dem.
+Svarformen tillater ingen andre verdier i narrows_request.
+
+${narrowableSection(bounds)}
 
 ### Søkepasseringene en redaktør utførte
 
@@ -580,7 +675,7 @@ ${bullets(task.input['search_limitations'], (row) => `${String(row['platform'] ?
 Vurderingen din gjelder nøyaktig disse. En kilde som ikke står her, er ikke
 funnet av et søk — be om søket som ville funnet den.
 
-${bullets(task.input['candidates'], (row) => `${String(row['identifier_kind'] ?? '')}:${String(row['identifier_value'] ?? '')} — ${String(row['title'] ?? '')}\n    ${String(row['authors_or_issuer'] ?? 'ukjent forfatter')}, ${String(row['publisher_or_journal'] ?? 'ukjent utgiver')}, ${String(row['publication_year'] ?? 'ukjent år')}\n    funnet av: ${String(row['found_by_platform'] ?? row['discovery_path'] ?? 'ukjent')}${row['found_by_method'] === null || row['found_by_method'] === undefined ? '' : ` (${String(row['found_by_method'])})`} — tilstand: ${String(row['decision'] ?? 'proposed')}${row['access_limited'] === true ? ', tilgangsbegrenset' : ''}`)}
+${bullets(task.input['candidates'], (row) => `${String(row['identifier_kind'] ?? '')}:${String(row['identifier_value'] ?? '')} — ${String(row['title'] ?? '')}\n    ${String(row['authors_or_issuer'] ?? 'ukjent forfatter')}, ${String(row['publisher_or_journal'] ?? 'ukjent utgiver')}, ${String(row['publication_year'] ?? 'ukjent år')}\n    funnet av: ${String(row['found_by_platform'] ?? row['discovery_path'] ?? 'ukjent')}${row['found_by_method'] === null || row['found_by_method'] === undefined ? '' : ` (${String(row['found_by_method'])})`} — tilstand: ${String(row['decision'] ?? 'proposed')}${accessNote(bounds, row)}`)}
 
 ### Søk du kan be om
 
@@ -795,7 +890,7 @@ ${texts.rules}
 Svaret ditt skal validere mot dette skjemaet. Ukjente felter avvises.
 
 \`\`\`json
-${json(texts.schema())}
+${json(texts.schema(task))}
 \`\`\`
 
 ---

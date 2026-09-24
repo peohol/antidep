@@ -21,6 +21,7 @@ import { HANDOFF_ROLES, parseAgentTask } from './agent-task.ts'
 import { renderAgentTaskFile } from './agent-task-file.ts'
 import { handoffResultProblem } from './handoff-result.ts'
 import { buildSourceCoverageControlDraftSchema } from './handoff-schemas.ts'
+import { discoveryAnswerBounds } from './discovery-answer-bounds.ts'
 import { resultFor, taskPayload, TEST_CANDIDATE_DOI } from './handoff-test-support.ts'
 import { TOOL_NAMES } from '../mcp/tools.ts'
 
@@ -104,7 +105,9 @@ describe.each(KILDELEDD)('kildeoppgaven til %s', (role) => {
 // av handoffen, ville vært vår feil og ikke agentens.
 // ----------------------------------------------------------------------------
 describe('svarformen for dekningskontrollen', () => {
-  const schema = buildSourceCoverageControlDraftSchema()
+  const schema = buildSourceCoverageControlDraftSchema(
+    discoveryAnswerBounds(parseAgentTask(taskPayload('source_quality_assessment')).input),
+  )
 
   it('krever nøyaktig ett av de to utfallene en kontrollrunde kan ha', () => {
     const alternatives = schema['oneOf'] as readonly Record<string, unknown>[]

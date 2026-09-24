@@ -30,6 +30,9 @@ export const TEST_NEED_REFERENCE = 'abcdef0123456789abcdef0123456789'
 /** Kandidatkilden de maskinelle søkene i prøvematerialet ga. */
 export const TEST_CANDIDATE_DOI = '10.1000/syntetisk-oversikt'
 
+/** Søkerunden de maskinelle søkene i prøvematerialet hørte til. */
+export const TEST_ROUND_REFERENCE = '0123456789abcdef0123456789abcdef'
+
 export const TEST_CONTENT_HASH = `sha256:${'9'.repeat(64)}`
 
 /** Den syntetiske «artikkelen» ekstraksjonsoppgaven inneholder. */
@@ -117,6 +120,7 @@ export function taskPayload(
 
   const machineSearch = {
     platform: 'Europe PMC',
+    method: 'keyword',
     query: '"testmiddel" AND ("vektendring")',
     filters: 'pageSize=25',
     outcome: 'executed',
@@ -124,6 +128,8 @@ export function taskPayload(
     screened_count: 12,
     truncated: false,
     truncation_note: null,
+    truncation_resolved: true,
+    request_reference: TEST_ROUND_REFERENCE,
     limitation_note: null,
     endpoint: 'https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=testmiddel',
     response_digest: `sha256:${'e'.repeat(64)}`,
@@ -204,6 +210,8 @@ export function taskPayload(
       },
     ],
     machine_searches: [machineSearch],
+    // Ingen avkortet runde: svarformen har da ikke feltet narrows_request.
+    narrowable_rounds: [],
     editor_searches: [editorSearch],
     search_limitations: [],
     candidates: [machineCandidate],
