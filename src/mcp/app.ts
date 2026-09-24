@@ -14,7 +14,15 @@
 //   /oauth/authorize                       tilkoblingssiden, der mennesket
 //                                          beviser editor-mandat én gang
 //   /oauth/token                           kode → token, og fornyelsen
-//   /mcp                                   selve protokollendepunktet
+//   /mcp/<ledd>                            selve protokollendepunktet, én
+//                                          inngang per agentledd
+//   /mcp                                   den opprinnelige inngangen, for
+//                                          kildeoppdagelsen
+//
+// Inngangene er seks apper for ChatGPT og én autorisasjonsserver for Antidep:
+// hver inngang er sin egen ressurs med sitt eget metadatadokument, og tokenet
+// utstedes for nøyaktig én av dem. Se `entries.ts` for hvorfor, og for hvorfor
+// adressen likevel ikke gir noen fullmakt.
 //
 // ----------------------------------------------------------------------------
 // Hvorfor autorisasjonsserveren ligger her og ikke hos en leverandør
@@ -32,6 +40,14 @@ import {
   UnauthorizedError,
   type RunnerOutcome,
 } from './errors.ts'
+import {
+  canonicalResource,
+  entryForMcpPath,
+  entryForMetadataPath,
+  entryForResource,
+  metadataUrlFor,
+  type McpAppEntry,
+} from './entries.ts'
 import type { RunnerGateway } from './gateway.ts'
 import { renderConnectPage, type ConnectPageFields } from './html.ts'
 import {
@@ -163,11 +179,13 @@ function html(body: string, status = 200, formAction = "'self'"): Response {
   })
 }
 
-function unauthorized(baseUrl: string, description: string): Response {
+function unauthorized(baseUrl: string, entry: McpAppEntry, description: string): Response {
   // RFC 9728: svaret sier hvor klienten finner ut hvordan den skal autorisere
   // seg. Uten henvisningen måtte klienten gjette, og en MCP-klient gjetter ikke.
+  // Henvisningen er inngangens egen, slik at klienten ber om et token for
+  // nettopp den appen den kalte.
   const challenge =
-    `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource/mcp", ` +
+    `Bearer resource_metadata="${metadataUrlFor(baseUrl, entry)}", ` +
     `scope="${RUNNER_SCOPE}", error="invalid_token", error_description="${description}"`
   return new Response(JSON.stringify({ error: 'invalid_token', error_description: description }), {
     status: 401,
@@ -197,6 +215,49 @@ function forbiddenOrigin(route: McpRoute): Response {
   return route === 'mcp'
     ? json(jsonRpcFailure(null, JSON_RPC_INVALID_REQUEST, description), 403)
     : json({ error: 'access_denied', error_description: description }, 403)
+}
+
+/**
+ * Svaret på en sti som ikke er en av inngangene.
+ *
+ * Ingen inngang å falle tilbake på: en adresse som svarte som en annen, ville
+ * gjort den til et alias ingen hadde registrert, og en klient som kom dit, ville
+ * fått et token for en app den ikke trodde den snakket med.
+ */
+function unknownEntry(route: McpRoute): Response {
+  const description =
+    'Antidep har ingen MCP-app på denne adressen. Se docs/CHATGPT_WORKSPACE_AGENT.md.'
+  return route === 'mcp'
+    ? json(jsonRpcFailure(null, JSON_RPC_INVALID_REQUEST, description), 404)
+    : json({ error: 'invalid_request', error_description: description }, 404)
+}
+
+/**
+ * Setningen når en tilkobling tilhører et annet agentledd enn inngangen.
+ *
+ * Den samme ved tilkoblingen og på et kall, fordi rettelsen er den samme: appen
+ * kobles til med koden for kjøreren i sitt eget ledd.
+ */
+function wrongRoleProblem(entry: McpAppEntry, connectionRole: string): string {
+  return (
+    `Tilkoblingen tilhører agentleddet «${connectionRole}», men ${entry.appName} tar bare imot ` +
+    `«${entry.agentRole}». Koble appen til med tilkoblingskoden for kjøreren i dette leddet.`
+  )
+}
+
+/**
+ * Svaret når et gyldig token tilhører et annet ledd enn inngangen det kom til.
+ *
+ * 403 og ikke 401: tokenet holder, og en fornyelse ville gitt det samme leddet
+ * igjen. Det er tilkoblingen som står i feil app. Tokenet hadde uansett bare
+ * fått arbeid i sitt eget ledd — avslaget sørger for at en app aldri ser ut til
+ * å virke for et ledd den ikke er satt opp for.
+ */
+function wrongRole(entry: McpAppEntry, connectionRole: string): Response {
+  return json(
+    jsonRpcFailure(null, JSON_RPC_INVALID_REQUEST, wrongRoleProblem(entry, connectionRole)),
+    403,
+  )
 }
 
 /**
@@ -266,19 +327,6 @@ function connectFields(source: URLSearchParams | Record<string, string>): Connec
     scope: read('scope'),
     resource: read('resource'),
   }
-}
-
-/**
- * Den kanoniske adressen tokenet utstedes for (RFC 8707, RFC 9728).
- *
- * Det er denne `resource` må navngi hele veien gjennom OAuth-flyten, og den
- * samme serveren kontrollerer at et access-token faktisk ble utstedt for, før
- * det slipper inn. Uten bindingen kunne et token utstedt for en helt annen
- * MCP-server blitt brukt her — og en tjeneste som tar imot andres tokens, er
- * nettopp den forvirrede stedfortrederen spesifikasjonen advarer mot.
- */
-function canonicalResource(baseUrl: string): string {
-  return `${baseUrl}/mcp`
 }
 
 /**
@@ -361,8 +409,8 @@ function missingConnectField(fields: ConnectPageFields, baseUrl: string): string
   if (fields.resource.length === 0) {
     return 'Forespørselen mangler resource. Et token skal utstedes for én navngitt MCP-server, ikke for hvem som helst.'
   }
-  if (fields.resource !== canonicalResource(baseUrl)) {
-    return `Forespørselen ber om et token for «${fields.resource}», mens denne appen er ${canonicalResource(baseUrl)}.`
+  if (entryForResource(baseUrl, fields.resource) === null) {
+    return `Forespørselen ber om et token for «${fields.resource}», som ikke er en av Antideps MCP-apper.`
   }
   return null
 }
@@ -511,13 +559,25 @@ function modernEnvelopeProblem(request: Request, message: JsonRpcRequest): Moder
 // ---------------------------------------------------------------------------
 // Rutene
 // ---------------------------------------------------------------------------
-function protectedResourceMetadata(baseUrl: string): Response {
+/**
+ * Metadatadokumentet for én inngang (RFC 9728).
+ *
+ * `resource` er inngangens egen adresse, og klienten skal kontrollere at den er
+ * nøyaktig den adressen den kalte. Et felles dokument for alle inngangene ville
+ * enten vært usant for fem av dem, eller latt dem alle be om det samme tokenet.
+ *
+ * Autorisasjonsserveren er den samme for alle: én server kan utstede tokens for
+ * flere ressurser, og det er nettopp det `resource`-parameteren finnes for
+ * (RFC 8707). Det er ressursen tokenet bindes til, og ikke serveren som
+ * utstedte det, som avgjør hvor det virker.
+ */
+function protectedResourceMetadata(baseUrl: string, entry: McpAppEntry): Response {
   return publicJson({
-    resource: `${baseUrl}/mcp`,
+    resource: canonicalResource(baseUrl, entry),
     authorization_servers: [baseUrl],
     scopes_supported: [RUNNER_SCOPE],
     bearer_methods_supported: ['header'],
-    resource_name: 'Antidep agentarbeid',
+    resource_name: entry.resourceName,
     resource_documentation: `${baseUrl}/agentarbeid`,
   })
 }
@@ -603,7 +663,11 @@ async function authorize(
     // Det er NETTOPP denne siden som sendes inn, så den må bære kildene
     // innsendingen får lov til å ende hos.
     return html(
-      renderConnectPage(fields, missingConnectField(fields, baseUrl)),
+      renderConnectPage(
+        fields,
+        missingConnectField(fields, baseUrl),
+        entryForResource(baseUrl, fields.resource)?.appName ?? null,
+      ),
       200,
       formActionSources(fields.redirectUri),
     )
@@ -613,13 +677,21 @@ async function authorize(
   const fields = connectFields(form)
   const formAction = formActionSources(fields.redirectUri)
   const missing = missingConnectField(fields, baseUrl)
-  if (missing !== null) {
-    return html(renderConnectPage(fields, missing), 400, formAction)
+  // Kontrollert over: `resource` er en av inngangene når ingenting mangler.
+  const entry = entryForResource(baseUrl, fields.resource)
+  if (missing !== null || entry === null) {
+    return html(
+      renderConnectPage(fields, missing ?? 'Forespørselen mangler resource.', null),
+      400,
+      formAction,
+    )
   }
+  const page = (problem: string): Response =>
+    html(renderConnectPage(fields, problem, entry.appName), 400, formAction)
 
   const pairingCode = (form['pairing_code'] ?? '').trim()
   if (pairingCode.length === 0) {
-    return html(renderConnectPage(fields, 'Du må lime inn tilkoblingskoden.'), 400, formAction)
+    return page('Du må lime inn tilkoblingskoden.')
   }
 
   let grant
@@ -635,11 +707,25 @@ async function authorize(
   } catch (error) {
     // Avvisningen er alltid den samme setningen fra databasen, og den skiller
     // ikke mellom en ukjent kode og en ukjent klient. Den vises som den er.
-    const problem =
+    return page(
       error instanceof GatewayError
         ? error.message
-        : 'Tilkoblingen kunne ikke fullføres. Prøv med en ny kode.'
-    return html(renderConnectPage(fields, problem), 400, formAction)
+        : 'Tilkoblingen kunne ikke fullføres. Prøv med en ny kode.',
+    )
+  }
+
+  // Koden hører til en kjører for et annet ledd enn denne appen.
+  //
+  // Et ekstra vern, ikke kilden til rollen: tokenet ville uansett bare fått
+  // arbeid i sin egen kjørers ledd. Men en app som bar et annet ledds
+  // tilkobling, er nettopp feilen inngangene finnes for å gjøre umulig — en
+  // agent satt opp for ett ledd ville hentet et annet ledds arbeid. Koden er
+  // brukt opp i databasen, men autorisasjonskoden leveres aldri, og uten den og
+  // PKCE-verifikatoren blir den aldri et token.
+  if (grant.agentRole !== entry.agentRole) {
+    return page(
+      `${wrongRoleProblem(entry, grant.agentRole)} Koden er brukt opp; hent en ny for riktig kjører.`,
+    )
   }
 
   // Først her er adressen bevist å tilhøre en registrert klient. En omdirigering
@@ -680,11 +766,15 @@ async function token(
   if (resource.length === 0) {
     return oauthError(400, 'invalid_target', 'resource mangler.')
   }
-  if (resource !== canonicalResource(baseUrl)) {
+  // Hvilken av inngangene er databasens sak å holde fast ved: koden og
+  // refresh-tokenet er bundet til den ressursen de ble utstedt for, og et avvik
+  // avvises der. Her avvises bare det som ikke er en av Antideps apper i det
+  // hele tatt.
+  if (entryForResource(baseUrl, resource) === null) {
     return oauthError(
       400,
       'invalid_target',
-      `Denne autorisasjonsserveren utsteder bare tokens for ${canonicalResource(baseUrl)}.`,
+      `Denne autorisasjonsserveren utsteder bare tokens for Antideps egne MCP-apper, ikke for ${resource}.`,
     )
   }
 
@@ -738,6 +828,7 @@ async function mcpEndpoint(
   request: Request,
   deps: McpAppDependencies,
   baseUrl: string,
+  entry: McpAppEntry,
 ): Promise<{
   readonly response: Response
   readonly tool?: string
@@ -761,14 +852,16 @@ async function mcpEndpoint(
   const accessToken = bearerToken(request)
   if (accessToken === null) {
     return {
-      response: unauthorized(baseUrl, 'Forespørselen mangler et access-token.'),
+      response: unauthorized(baseUrl, entry, 'Forespørselen mangler et access-token.'),
       outcome: 'auth_failed',
     }
   }
 
   // Tokenet og adressen det gjelder for, reiser sammen herfra og helt inn i
-  // databasen: publikumskontrollen skal ikke kunne bli glemt av et kall.
-  const credentials = { accessToken, resource: canonicalResource(baseUrl) }
+  // databasen: publikumskontrollen skal ikke kunne bli glemt av et kall. Det er
+  // inngangens egen adresse, så et token utstedt for en annen av Antideps apper
+  // autentiserer ikke her.
+  const credentials = { accessToken, resource: canonicalResource(baseUrl, entry) }
 
   // Tokenet kontrolleres på hver forespørsel, og ikke bare i verktøykallet.
   // Uten dette ville et utløpt eller tilbaketrukket token sett ut som en levende
@@ -782,11 +875,18 @@ async function mcpEndpoint(
   } catch (error) {
     if (error instanceof GatewayError || error instanceof UnauthorizedError) {
       return {
-        response: unauthorized(baseUrl, 'Tilkoblingen er ikke autentisert.'),
+        response: unauthorized(baseUrl, entry, 'Tilkoblingen er ikke autentisert.'),
         outcome: 'auth_failed',
       }
     }
     throw error
+  }
+
+  // Rollen er tilkoblingens egen, og den er det eneste arbeidet tokenet kan få.
+  // Inngangen legger ingenting til den; den avviser bare en tilkobling for et
+  // annet ledd, før noe i meldingen er lest.
+  if (identity.agentRole !== entry.agentRole) {
+    return { response: wrongRole(entry, identity.agentRole), outcome: 'wrong_role' }
   }
 
   let message
@@ -924,7 +1024,7 @@ async function mcpEndpoint(
       // autorisasjonsfeil og ikke verktøyfeil, og klienten skal få vite at den
       // må fornye framfor å få et verktøyresultat som ser ut som en vanlig
       // avvisning.
-      return { response: unauthorized(baseUrl, error.message), outcome: 'auth_failed' }
+      return { response: unauthorized(baseUrl, entry, error.message), outcome: 'auth_failed' }
     }
     throw error
   }
@@ -935,6 +1035,12 @@ async function mcpEndpoint(
  *
  * Adapteren sier hvilken rute forespørselen traff; appen utleder den ikke av en
  * sti, fordi stien kan være omskrevet av plattformen foran den.
+ *
+ * Inngangen er noe annet enn ruten, og den leses av stien fordi den ER stien:
+ * adressen appen er registrert på i ChatGPT. Den gir ingen fullmakt — den
+ * bestemmer bare hvilken ressurs et token må være utstedt for, og hvilket ledd
+ * inngangen tar imot — så en sti som ble lest feil, kan bare avvise, aldri
+ * slippe inn (`entries.ts`).
  */
 export async function handleMcpRequest(
   route: McpRoute,
@@ -963,6 +1069,7 @@ export async function handleMcpRequest(
 
   let response: Response
   let tool: string | undefined
+  let entry: McpAppEntry | null = null
   let outcome: RunnerOutcome | 'auth_failed' | 'bad_request' = 'ok'
 
   try {
@@ -985,7 +1092,13 @@ export async function handleMcpRequest(
     } else {
       switch (route) {
         case 'protected-resource-metadata':
-          response = protectedResourceMetadata(baseUrl)
+          entry = entryForMetadataPath(new URL(request.url).pathname)
+          if (entry === null) {
+            outcome = 'bad_request'
+            response = unknownEntry(route)
+          } else {
+            response = protectedResourceMetadata(baseUrl, entry)
+          }
           break
         case 'authorization-server-metadata':
           response = authorizationServerMetadata(baseUrl)
@@ -1009,7 +1122,15 @@ export async function handleMcpRequest(
           response = await token(request, deps, baseUrl)
           break
         case 'mcp': {
-          const handled = await mcpEndpoint(request, deps, baseUrl)
+          // Inngangen er stien klienten registrerte appen på. Den bestemmer
+          // hvilken ressurs tokenet må være utstedt for, og ingenting annet.
+          entry = entryForMcpPath(new URL(request.url).pathname)
+          if (entry === null) {
+            outcome = 'bad_request'
+            response = unknownEntry(route)
+            break
+          }
+          const handled = await mcpEndpoint(request, deps, baseUrl, entry)
           response = handled.response
           tool = handled.tool
           outcome = handled.outcome
@@ -1042,6 +1163,9 @@ export async function handleMcpRequest(
     // ugjennomsiktige som slapp inn, for uten den linjen ville ingen sett at
     // tilkoblingen faktisk kom den veien.
     origin: loggableOrigin(verdict),
+    // Hvilken app kallet kom til. Uten den kunne loggen ikke skilt en kjører
+    // som står i riktig app, fra en som står i en annens.
+    entry: entry?.path,
     tool,
     outcome,
     status: response.status,

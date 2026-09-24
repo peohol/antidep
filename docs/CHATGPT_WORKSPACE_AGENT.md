@@ -1,11 +1,13 @@
-# Antidep som privat app i ChatGPT Business
+# Antidep som private apper i ChatGPT Business
 
-Antidep har en privat MCP-app som lar en planlagt ChatGPT Workspace Agent hente
-agentarbeid selv, utføre det og levere svaret tilbake gjennom nøyaktig de samme
-kontrollene et manuelt opplastet `svar.json` går gjennom.
+Antidep har en privat MCP-app per agentledd som lar en planlagt ChatGPT
+Workspace Agent hente agentarbeid selv, utføre det og levere svaret tilbake
+gjennom nøyaktig de samme kontrollene et manuelt opplastet `svar.json` går
+gjennom. De seks appene er seks adresser mot den samme backenden, med de samme
+fem verktøyene.
 
-Dette dokumentet er to ting: kontrakten appen tilbyr, og engangsoppsettet
-repo-eier gjør i ChatGPT etter at koden er deployet.
+Dette dokumentet er to ting: kontrakten appene tilbyr, og oppsettet repo-eier
+gjør i ChatGPT etter at koden er deployet — én gang per agentledd.
 
 **Oppsettet er et teknisk deploy-/driftssteg.** Det gjøres av Claude Code, av
 ChatGPT, eller av repo-eier — aldri av en kliniker, og aldri fra en produktflate.
@@ -80,6 +82,69 @@ En tilkobling er bundet til nøyaktig **ett** agentledd. Rollen er ikke en
 parameter modellen kan oppgi; den er tilkoblingens egen, registrert av et
 menneske med redaktørmandat.
 
+## Én app per agentledd
+
+**Hvert agentledd er sin egen egendefinerte app i ChatGPT.** Grunnen er
+plattformen, ikke Antidep: ChatGPT knytter én OAuth-forbindelse til én app. Da
+Antidep var én app, fikk hver Workspace Agent som la den til, den forbindelsen
+som allerede fantes — en ny agent med «agenteid konto» utløste ingen ny
+tilkobling. En agent satt opp for dekningskontrollen hentet derfor
+kildeoppdagelsens arbeid, under kildeoppdagelsens tilkobling. Rollen holdt, men
+det var feil kjører som holdt den.
+
+Seks apper gir seks forbindelser. Alle går til den samme backenden, med den
+samme behandleren og de samme fem verktøyene, men hver har sin egen adresse og
+sitt eget token:
+
+| Agentledd                   | Navnet appen skal ha i ChatGPT | Adressen som registreres i ChatGPT                         |
+| --------------------------- | ------------------------------ | ---------------------------------------------------------- |
+| `source_discovery`          | Antidep – Kildeoppdagelse      | `https://antidep.vercel.app/mcp/source-discovery`          |
+| `source_quality_assessment` | Antidep – Dekningskontroll     | `https://antidep.vercel.app/mcp/source-quality-assessment` |
+| `evidence_extraction`       | Antidep – Evidensekstraksjon   | `https://antidep.vercel.app/mcp/evidence-extraction`       |
+| `claim_synthesis`           | Antidep – Påstandssyntese      | `https://antidep.vercel.app/mcp/claim-synthesis`           |
+| `evidence_assessment`       | Antidep – Evidensvurdering     | `https://antidep.vercel.app/mcp/evidence-assessment`       |
+| `monograph_answer`          | Antidep – Monografisvar        | `https://antidep.vercel.app/mcp/monograph-answer`          |
+
+Adressene, navnene og rollene står i koden ett sted (`src/mcp/entries.ts`), og
+prøvene holder denne tabellen og koden sammen.
+
+- **Hver app kobles til med tilkoblingskoden for sitt eget ledds kjører.** Koden
+  avgjør hvilken kjører — og dermed hvilken rolle — tilkoblingen får.
+- **Én Workspace Agent per ledd er fortsatt anbefalt**, med nøyaktig én
+  Antidep-app: sitt eget ledds. En agent som har to Antidep-apper, har to
+  tilkoblinger og to roller, og instruksen kan ikke holde dem fra hverandre.
+- **Tokenet gjelder bare den appen det ble utstedt for.** Hver adresse er sin egen
+  ressurs (RFC 8707, RFC 9728): metadatadokumentet for
+  `/mcp/source-quality-assessment` ligger på
+  `/.well-known/oauth-protected-resource/mcp/source-quality-assessment` og
+  navngir nettopp den adressen, og databasen avviser et token brukt mot en annen
+  adresse enn den det ble utstedt for. Prøver ChatGPT å gjenbruke en forbindelse
+  på tvers av apper, blir den avvist og bedt om en ny tilkobling — den får aldri
+  en annen apps arbeid. Autorisasjonsserveren er den samme for alle seks:
+  én server kan utstede tokens for flere ressurser, og det er ressursen og ikke
+  serveren tokenet er bundet til.
+- **Rollen bestemmes av tokenet, ikke av adressen.** En forespørsel til
+  `/mcp/source-quality-assessment` får ikke rollen `source_quality_assessment`
+  av at den kom dit. Rollen er tilkoblingens egen, satt da kjøreren ble
+  registrert, og nås bare gjennom tokenet som en fersk tilkoblingskode for den
+  kjøreren ga. Adressen gjør bare forbindelsene entydige for ChatGPT.
+- **Appen avviser en tilkobling for et annet ledd.** Limes koden for én kjører
+  inn i et annet ledds app, sier tilkoblingssiden nei, og ingen tilkobling
+  opprettes. Koden er da brukt opp; hent en ny for riktig kjører. Den samme
+  kontrollen står på hvert kall. Det er et ekstra vern og ikke kilden til
+  rollen: uten det ville tokenet fortsatt bare fått arbeid i sitt eget ledd.
+
+**`/mcp` består som kildeoppdagelsens inngang.** Kildeoppdagelsen har en
+tilkobling i drift mot `https://antidep.vercel.app/mcp` — appen «Antidep –
+Kildeoppdagelse» — og tokenet den har, er utstedt for nettopp den adressen.
+Adressen virker derfor som før, med de samme metadataene, og kildeoppdagelsen
+trenger ingen ny tilkobling. Den tar bare imot `source_discovery`: ingen annen
+rolles tilkobling kan kobles til der. Opprett aldri en ny app på `/mcp`; alle
+nye apper bruker adressene i tabellen. Den gamle tilkoblingen kan flyttes til
+`/mcp/source-discovery` når det passer, se «Flytte kildeoppdagelsen til sin
+egen adresse» under — den flyttes ikke av seg selv, fordi tokenet er bundet til
+adressen det ble utstedt for.
+
 ## Protokollen appen faktisk snakker
 
 Appen svarer i to epoker, og skillet er skarpt.
@@ -109,12 +174,16 @@ oppgir ingen opprinnelse, og den merker ingenting.
 
 - **Ingen hemmelighet i ChatGPT-prompten.** Tilkoblingen bruker OAuth 2.1 med
   PKCE. Tokenet lever i ChatGPTs egen tilkobling, ikke i en instruks.
-- **Tokenet gjelder bare denne appen.** `resource` følger både autorisasjons- og
-  tokenforespørselen (RFC 8707), tokenet bærer adressen det ble utstedt for, og
-  hvert MCP-kall kontrollerer at den er nettopp denne appens. Et token utstedt
-  for en annen MCP-server virker ikke her, uansett hvor gyldig det er der det
-  hører hjemme. Autorisasjonssvaret navngir utstederen sin (`iss`, RFC 9207),
-  slik at klienten kan se at koden kom fra den serveren den faktisk spurte.
+- **Tokenet gjelder bare den appen det ble utstedt for.** `resource` følger både
+  autorisasjons- og tokenforespørselen (RFC 8707), tokenet bærer adressen det
+  ble utstedt for, og hvert MCP-kall kontrollerer at den er nettopp den appens
+  adresse kallet kom til. Et token utstedt for en annen MCP-server — eller for
+  en annen av Antideps seks apper — virker ikke her, uansett hvor gyldig det er
+  der det hører hjemme. Autorisasjonssvaret navngir utstederen sin (`iss`, RFC
+  9207), slik at klienten kan se at koden kom fra den serveren den faktisk
+  spurte.
+- **Adressen gir ingen fullmakt.** Rollen er tilkoblingens, og adressen kan bare
+  avvise: et token for et annet ledd, eller en kode for et annet ledds kjører.
 - **MCP-serveren holder ingen databasehemmelighet.** Den videresender tokenet
   kalleren la ved, og databasen avgjør hva det får gjøre. En kompromittert
   server er ikke en kompromittert database.
@@ -148,12 +217,13 @@ instruks og lar dem kjøre den samme modellen. Hvert ledd blir da en atskilt
 kjøring. Fram til migrasjon 013t krevde databasen seks forskjellige modeller, og
 det var et krav plattformen ikke kunne innfri.
 
-**Det er heller ikke et krav at hvert ledd har sin egen Workspace Agent.** Én
-agent per ledd er ryddig og gjør instruksene lettere å holde fra hverandre, men
-databasen krever det ikke: den samme agenten kan ha tilkoblinger til flere ledd,
-og hver tilkobling har sin egen nøkkel, sitt eget token og sin egen rolle. Å
+**Databasen krever heller ikke at hvert ledd har sin egen Workspace Agent.**
+Hver tilkobling har sin egen nøkkel, sitt eget token og sin egen rolle, og å
 gjøre to agentkonfigurasjoner til et absolutt krav ville vært den gamle
-modellregelen i ny drakt.
+modellregelen i ny drakt. Men i ChatGPT er én tilkobling én app: et ledd kan
+aldri dele app med et annet ledd (se «Én app per agentledd» over). Én
+Workspace Agent per ledd, med nøyaktig sitt eget ledds app, er derfor det
+anbefalte oppsettet.
 
 En Workspace Agent er ikke en modell. Den er en konfigurasjon som kjører *en*
 modell, og plattformen viser ikke nødvendigvis hvilken. Antidep fører derfor tre
@@ -211,7 +281,7 @@ attestert avgjørelse med hvem og hvorfor, og ikke noe et svar kan etablere — 
 det er også derfor den ikke brukes som en kontroll av svaret: den ville ikke
 kunnet bære mer enn den er.
 
-## Engangsoppsettet i ChatGPT
+## Oppsettet i ChatGPT, for ett agentledd
 
 Stegene under følger OpenAIs gjeldende dokumentasjon per september 2026.
 Menynavn i ChatGPT endrer seg raskere enn dette dokumentet; er et navn borte,
@@ -224,7 +294,14 @@ framfor teksten her.
 Du trenger: en ChatGPT Business-konto med Workspace Agents aktivert, og
 administratortilgang i workspacet.
 
+Stegene gjøres én gang per agentledd, med leddets egen adresse og navn fra
+tabellen i «Én app per agentledd». Eksemplet under er ekstraksjonen.
+
 ### 1. Registrer kjøreren i Antidep
+
+Sjekk først om leddet allerede har en kjører: `npm run ops:agents -- runners`.
+Har det en, bruk den nøkkelen videre og registrer ingen ny — et ledd har høyst
+én gjeldende kjører.
 
 Fra en terminal med redaktørens egen legitimasjon (`.env.editor.local`):
 
@@ -246,15 +323,20 @@ Antidep hevder da ikke at separasjonen er bevist av plattformen.
 Ikke hent tilkoblingskoden ennå. Den lever i ti minutter, og du trenger den
 først i steg 4.
 
-### 2. Slå på developer mode og legg inn appen
+### 2. Slå på developer mode og legg inn leddets egen app
 
 1. I ChatGPT: **Settings → Security and login**, og slå på **Developer mode**.
 2. Gå til **ChatGPT Plugins** (chatgpt.com/plugins), velg plussknappen, og
-   opprett en developer mode-app for en ekstern MCP-server.
-3. Adressen er `https://<antidep-domenet>/mcp`.
-4. Velg **OAuth** som autentisering. Ikke oppgi statiske legitimasjoner: appen
+   opprett en **ny** developer mode-app for en ekstern MCP-server. Gjenbruk
+   aldri en Antidep-app som allerede finnes: den bærer et annet ledds
+   tilkobling.
+3. Navnet er leddets navn fra tabellen, for ekstraksjonen «Antidep –
+   Evidensekstraksjon».
+4. Adressen er leddets adresse fra tabellen, for ekstraksjonen
+   `https://antidep.vercel.app/mcp/evidence-extraction`. Aldri `/mcp` alene.
+5. Velg **OAuth** som autentisering. Ikke oppgi statiske legitimasjoner: appen
    registrerer seg selv (RFC 7591) og bruker PKCE.
-5. Appen legger seg under **Drafts** i appinnstillingene.
+6. Appen legger seg under **Drafts** i appinnstillingene.
 
 Tilkoblingen krever ingen miljøvariabel. Møter du en 403 her, se
 feilsøkingsoppføringen for 403-setningen og «Drift» nederst.
@@ -266,14 +348,25 @@ avsnittet «Godkjenning av skrivehandlinger» under.
 ### 3. Koble til
 
 Når ChatGPT ber om autorisasjon, åpnes Antideps egen tilkoblingsside. Den ber om
-én ting: engangskoden.
+én ting: engangskoden. Siden sier hvilken app du kobler til — «Du kobler til
+Antidep – Evidensekstraksjon». Står det et annet navn, er adressen i steg 2 feil.
+
+Åpnes ingen tilkoblingsside når du legger til appen, bruker ChatGPT en
+forbindelse den allerede har. Det skal ikke skje med en ny app på en adresse
+ingen annen app har; sjekk at adressen er leddets egen.
 
 ### 4. Hent engangskoden og lim den inn
 
-1. I terminalen: `npm run ops:agents -- pair --key ekstraksjon-01`
+1. I terminalen: `npm run ops:agents -- pair --key ekstraksjon-01` — nøkkelen
+   til kjøreren i **dette** leddet.
 2. Kopier koden og lim den inn i tilkoblingsvinduet i ChatGPT.
 3. Koden gjelder i ti minutter og kan brukes én gang. Blir den for gammel, hent
-   en ny med den samme kommandoen.
+   en ny med den samme kommandoen. Å hente en ny kode rører ikke tilkoblinger som
+   allerede står: den trekker bare tilbake en tidligere, ubrukt kode for den
+   samme kjøreren.
+4. Hører koden til en kjører for et annet ledd, sier siden nei og navngir begge
+   leddene. Ingen tilkobling er opprettet, men koden er brukt opp: hent en ny for
+   riktig kjører.
 
 Dette er den ene gangen du beviser at du har redaktørmandat. Etterpå godkjenner
 du ingen enkeltoppgaver.
@@ -293,7 +386,8 @@ du ingen enkeltoppgaver.
    Tildelingen inngår i oppgavens avtrykk, og den må gjøres **før** agenten
    henter sin første oppgave: et ledd uten tildelt tjeneste kan ikke ta imot et
    svar (ANTIDEP_CONSTITUTION.md regel 3).
-4. Legg til Antidep-appen blant agentens apper/verktøy.
+4. Legg til leddets egen Antidep-app blant agentens apper/verktøy — og bare
+   den. Har agenten en annen Antidep-app fra før, fjern den.
 5. Lim inn agentinstruksen under som agentens instruks.
 
 ### 6. Tillat at skrivehandlingen kjører uten godkjenning
@@ -331,6 +425,55 @@ frakoblet mesteparten av tiden.
 
 Måtte du godkjenne noe underveis, er ikke skrivehandlingen auto-godkjent ennå.
 Gå tilbake til steg 6.
+
+### Legge til neste agent uten at ChatGPT gjenbruker en forbindelse
+
+Dette er hele fremgangsmåten når et nytt ledd skal få sin Workspace Agent. Den
+er stegene over, i den rekkefølgen som gjør gjenbruk umulig:
+
+1. `npm run ops:agents -- runners`: finn kjøreren for leddet. Finnes den ikke,
+   registrer den (steg 1). Registrer aldri en til for et ledd som har en.
+2. Opprett en **ny** app i ChatGPT med leddets navn og adresse fra tabellen
+   (steg 2). Ikke legg en eksisterende Antidep-app til den nye agenten: den
+   eksisterende appen har allerede en tilkobling, og det er nettopp den ChatGPT
+   ville gjenbrukt.
+3. Koble appen til (steg 3). En ny app på en ny adresse har ingen forbindelse å
+   gjenbruke, så ChatGPT åpner Antideps tilkoblingsside — og siden navngir
+   appen.
+4. Hent koden for leddets kjører med `pair --key <kjørerens nøkkel>`, og lim den
+   inn innen ti minutter (steg 4).
+5. Opprett eller rediger Workspace Agent-en, og gi den nøyaktig denne ene
+   Antidep-appen (steg 5). Fjern en annen Antidep-app om den står der.
+6. Prøv (steg 8): `npm run ops:agents -- runners` skal vise kjøreren som
+   **tilkoblet**, og serverloggen viser leddets adresse i feltet `entry` for
+   kallene agenten gjør.
+
+For dekningskontrollen, som er registrert som
+`agent-runner:source-quality-assessment-01`, er appen «Antidep –
+Dekningskontroll» på `https://antidep.vercel.app/mcp/source-quality-assessment`,
+og koden hentes med
+`npm run ops:agents -- pair --key agent-runner:source-quality-assessment-01`.
+Workspace Agent-en for dekningskontrollen skal ha den appen og ikke «Antidep –
+Kildeoppdagelse».
+
+### Flytte kildeoppdagelsen til sin egen adresse
+
+Valgfritt, og ikke nødvendig for at noe skal virke: `/mcp` består som
+kildeoppdagelsens inngang. Når det passer å gjøre adressene like for alle seks:
+
+1. Opprett en ny app på `https://antidep.vercel.app/mcp/source-discovery`. Gi den
+   et midlertidig navn, for eksempel «Antidep – Kildeoppdagelse (ny)», så de to
+   ikke forveksles.
+2. Koble den til med en fersk kode for kildeoppdagelsens kjører
+   (`pair --key agent-runner:source-discovery-01`).
+3. Bytt appen i kildeoppdagelsens Workspace Agent til den nye, og prøv en
+   kjøring.
+4. Slett den gamle appen på `/mcp` i ChatGPT, og gi den nye det endelige navnet
+   «Antidep – Kildeoppdagelse».
+
+Den gamle tilkoblingens token blir liggende til det løper ut. Skal det gå
+umiddelbart, trekkes kjøreren tilbake og registreres på nytt, som i
+«Sikkerheten, kort».
 
 ## Agentinstruksen
 
@@ -465,6 +608,18 @@ Ser du ingen rader i det hele tatt, har ingen planlagt kjøring nådd fram. Prø
 appen i developer mode først; da ser du om det er tilkoblingen eller tidsplanen
 som mangler.
 
+Serverloggen har feltet `entry` med adressen kallet kom til (`/mcp/…`). Den
+viser om en agent faktisk bruker sitt eget ledds app.
+
+**«Tilkoblingen tilhører agentleddet …, men Antidep – … tar bare imot …» (403
+på et kall, eller på tilkoblingssiden).** Appen er koblet til med koden for et
+annet ledds kjører. Ingenting ble utført. Koble appen til på nytt med koden for
+kjøreren i appens eget ledd. I loggen står kallet som `"outcome":"wrong_role"`.
+
+**«Antidep har ingen MCP-app på denne adressen» (404).** Adressen i ChatGPT er
+ikke en av de sju inngangene (de seks i tabellen, og `/mcp`). Rett adressen i
+appen.
+
 **«Forespørselen kom fra en opprinnelse Antidep ikke slipper inn» (403).**
 Opprinnelseskontrollen avviste forespørselen før autentiseringen. Serverloggen
 navngir hva som ble avvist, i feltet `origin` på linjen med
@@ -494,6 +649,12 @@ MCP-appen peke et annet sted enn nettklienten, settes `ANTIDEP_SUPABASE_URL` og
 
 `ANTIDEP_MCP_BASE_URL` er valgfri og settes bare dersom appen står bak noe som
 gjør at den ikke kjenner sin egen adresse.
+
+De seks inngangene krever ingen egen konfigurasjon. `vercel.json` sender
+`/mcp/<ledd>` til den samme funksjonen som `/mcp`, og
+`/.well-known/oauth-protected-resource/mcp/<ledd>` til det samme
+metadatadokumentet; appen leser inngangen av stien og avviser en sti som ikke
+er en av dem.
 
 Oppdagelsesdokumentene under `/.well-known/` svarer uansett om databaseoppsettet
 mangler. Det er med vilje: det er der en MCP-klient leser hvor den skal
@@ -527,8 +688,8 @@ redaktørmandat nettopp har hentet, og uten den koden svarer ruten det samme til
 alle. En sandkasse har dessuten ingen legitimasjon å bære: en ugjennomsiktig
 opprinnelse har verken cookies eller lager hos oss.
 
-Unntaket er tilkoblingssidens, og ingen andres. `/mcp`, `/oauth/token` og
-`/oauth/register` avviser `null` som før — verktøyflaten bærer et token, og i
+Unntaket er tilkoblingssidens, og ingen andres. `/mcp` og de seks
+inngangene under den, `/oauth/token` og `/oauth/register` avviser `null` som før — verktøyflaten bærer et token, og i
 utviklingsoppsettet står appen på maskinen selv, som er nettopp der DNS
 rebinding lever.
 

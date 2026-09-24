@@ -18,7 +18,8 @@ Abstract og metadata stopper ved discovery. Begrensede representasjoner kan aldr
 - **Lesbarhets- og tabellkontroll.** Fullteksten prøves mot krav til mengde tekst, linjer, bokstavandel og antall datarader, og mot at et dokument som erklærer tabeller, faktisk har innhold under dem. En artikkel der tabellene ble droppet som bilder, ser hel ut i brødteksten samtidig som de kliniske tallene mangler; den registreres ikke.
 - **Autonom kjører over den samme handoffen.** Det semantiske arbeidet kan nå
   hentes av en planlagt KI-agent framfor av et menneske med en fil. Antidep har
-  en privat MCP-app med fem smale operasjoner — se om det finnes arbeid, ta én
+  private MCP-apper — én per agentledd, mot den samme backenden — med de samme
+  fem smale operasjonene — se om det finnes arbeid, ta én
   oppgave med en leie, les den, lever ett svar, gi oppgaven fra deg — og
   ingenting annet: ingen SQL, ingen generell databaseadgang, ingen
   service-nøkkel, ingen HTTP-proxy. Kjøreren er en ny transport og ikke en ny
@@ -32,7 +33,10 @@ Abstract og metadata stopper ved discovery. Begrensede representasjoner kan aldr
   hashet i Antideps egen database, og MCP-serveren holder ingen
   databasehemmelighet av egen kraft. Ett agentledd har høyst én gjeldende kjører;
   den samme Workspace Agent-en kan derimot kjøre flere ledd, som atskilte
-  kjøringer under hver sin rolle og hver sin instruks (migrasjon 013t).
+  kjøringer under hver sin rolle og hver sin instruks (migrasjon 013t) — men
+  aldri gjennom den samme appen: ChatGPT knytter én tilkobling til én app, så
+  hvert ledd har sin egen adresse og sitt eget token, og rollen følger tokenet
+  og ikke adressen (`src/mcp/entries.ts`).
   Pinner plattformen ikke modellen bak agenten, registreres det
   som `not_exposed`, og Antidep hevder ikke at separasjonen er bevist av
   plattformen. Den manuelle nedlast/opplast-veien består som teknisk

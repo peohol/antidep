@@ -104,7 +104,7 @@ En søkevei som ikke svarte, registreres som den begrensningen den er, prøves p
 nytt, og holder ingenting tilbake: en tjeneste som er nede, skal ikke kunne
 stanse arbeidet for alltid.
 
-ChatGPT henter arbeid gjennom den private MCP-appen
+ChatGPT henter arbeid gjennom de private MCP-appene, én per ledd
 ([CHATGPT_WORKSPACE_AGENT.md](CHATGPT_WORKSPACE_AGENT.md)): fem verktøy, ingen
 SQL, ingen generell databasevei. Ingen ny modellnøkkel og ingen betalt modell-API
 er innført i fase C. Nedlast/opplast-veien (`npm run ops:agents -- export-task` /
@@ -120,7 +120,8 @@ attestere at et menneske har vurdert innhold.
 
 Grensen er en egen kjøring i en egen rolle — ikke en annen modell, og ikke en
 annen Workspace Agent. De to leddene kan godt kjøre den samme modellen, og godt
-være den samme agentkonfigurasjonen. Det er en svakere påstand enn den forrige
+være den samme agentkonfigurasjonen — men hvert med sin egen app i ChatGPT, fordi
+plattformen knytter én tilkobling til én app. Det er en svakere påstand enn den forrige
 utgaven av dette dokumentet gjorde, og den er den sanne: plattformen viser
 normalt ikke hvilken modell en Workspace Agent kjører, så Antidep kunne uansett
 aldri kontrollere at to oppgitte navn var to modeller.

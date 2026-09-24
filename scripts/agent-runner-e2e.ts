@@ -14,6 +14,8 @@
 //   6. «agenten» skriver et gyldig svar av oppgaven den nettopp leste
 //   7. submit_agent_answer → den ekte importen registrerer evidensfunnet
 //   8. oppgaven er ikke lenger ventende, og proveniensen er på plass
+//   9. én app per ledd: kildeoppdagelsen kobles til den opprinnelige `/mcp`,
+//      og hver tilkobling virker bare på inngangen den ble utstedt for
 //
 // Mellom steg 4 og 8 rører ingen mennesker noe. Det er nettopp det prøven
 // finnes for å vise (docs/CHATGPT_WORKSPACE_AGENT.md).
@@ -32,6 +34,7 @@
 import { execFileSync } from 'node:child_process'
 
 import { handleMcpRequest, type McpRoute } from '../src/mcp/app.ts'
+import { entryPathFor } from '../src/mcp/entries.ts'
 import { createSupabaseRunnerGateway } from '../src/mcp/gateway.ts'
 import { silentRunnerLogger } from '../src/mcp/logging.ts'
 import { createClient } from '@supabase/supabase-js'
@@ -44,8 +47,15 @@ const SOURCE_TITLE = 'Syntetisk kilde for ende-til-ende-prøven av kjøreren'
 
 const BASE = 'https://antidep.test'
 const REDIRECT_URI = 'https://chatgpt.test/oauth/callback'
-/** Den kanoniske adressen tokenet utstedes for, og kontrolleres mot (RFC 8707). */
-const RESOURCE = `${BASE}/mcp`
+/**
+ * Ekstraksjonsleddets egen app-inngang: adressen appen er registrert på, og den
+ * kanoniske adressen tokenet utstedes for og kontrolleres mot (RFC 8707).
+ */
+const RESOURCE = `${BASE}${entryPathFor('evidence_extraction')}`
+/** Den opprinnelige inngangen, som kildeoppdagelsens tilkobling i drift står på. */
+const LEGACY_RESOURCE = `${BASE}/mcp`
+/** Kildeoppdagelsens egen inngang, der en ny tilkobling for leddet hører hjemme. */
+const DISCOVERY_RESOURCE = `${BASE}${entryPathFor('source_discovery')}`
 /** Prøven kjører den moderne epoken. Det er den en nåværende klient bruker. */
 const PROTOCOL_VERSION = '2026-07-28'
 
@@ -84,11 +94,12 @@ function serve(route: McpRoute, request: Request): Promise<Response> {
  * speiler kroppen: `Mcp-Method` alltid, `Mcp-Name` for et verktøykall. En prøve
  * som utelot dem, ville ikke prøvd den veien en nåværende klient faktisk går.
  */
-async function rpc(
+function mcpRequest(
   token: string,
   method: string,
   params: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+  resource: string,
+): Promise<Response> {
   const headers: Record<string, string> = {
     authorization: `Bearer ${token}`,
     'content-type': 'application/json',
@@ -112,10 +123,20 @@ async function rpc(
       },
     },
   }
-  const response = await serve(
+  // Adressen er appens egen inngang: den kanoniske ressursen er nettopp den.
+  return serve(
     'mcp',
-    new Request(`${BASE}/mcp`, { method: 'POST', headers, body: JSON.stringify(body) }),
+    new Request(resource, { method: 'POST', headers, body: JSON.stringify(body) }),
   )
+}
+
+async function rpc(
+  token: string,
+  method: string,
+  params: Record<string, unknown>,
+  resource = RESOURCE,
+): Promise<Record<string, unknown>> {
+  const response = await mcpRequest(token, method, params, resource)
   return (await response.json()) as Record<string, unknown>
 }
 
@@ -123,8 +144,9 @@ async function callTool(
   token: string,
   name: string,
   args: Record<string, unknown>,
+  resource = RESOURCE,
 ): Promise<{ text: string; structured: Record<string, unknown>; isError: boolean }> {
-  const body = await rpc(token, 'tools/call', { name, arguments: args })
+  const body = await rpc(token, 'tools/call', { name, arguments: args }, resource)
   const result = body['result'] as Record<string, unknown> | undefined
   if (result === undefined) {
     throw new Error(`Verktøyet ${name} svarte med en protokollfeil: ${JSON.stringify(body)}`)
@@ -135,6 +157,91 @@ async function callTool(
     structured: (result['structuredContent'] ?? {}) as Record<string, unknown>,
     isError: result['isError'] === true,
   }
+}
+
+/** Utfallet av én tilkobling, steg for steg, slik ChatGPT ville gått den. */
+interface Connection {
+  readonly registerStatus: number
+  readonly clientId: string
+  readonly authorizeStatus: number
+  readonly accessToken: string
+}
+
+/**
+ * Én app kobles til: klienten registrerer seg (RFC 7591), engangskoden limes inn
+ * på tilkoblingssiden, og koden byttes i et token — alt for én navngitt
+ * inngang. Slik en ny egendefinert app i ChatGPT gjør det, hver for seg.
+ */
+async function connect(
+  resource: string,
+  pairingCode: string,
+  clientName: string,
+): Promise<Connection> {
+  const registered = await serve(
+    'register',
+    new Request(`${BASE}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ client_name: clientName, redirect_uris: [REDIRECT_URI] }),
+    }),
+  )
+  const clientId = String(((await registered.json()) as Record<string, unknown>)['client_id'] ?? '')
+
+  const authorized = await serve(
+    'authorize',
+    new Request(`${BASE}/oauth/authorize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: REDIRECT_URI,
+        code_challenge: CODE_CHALLENGE,
+        code_challenge_method: 'S256',
+        state: 'e2e',
+        resource,
+        pairing_code: pairingCode,
+      }).toString(),
+    }),
+  )
+  const authorizationCode =
+    authorized.status === 302
+      ? (new URL(authorized.headers.get('location') ?? REDIRECT_URI).searchParams.get('code') ?? '')
+      : ''
+  const base = {
+    registerStatus: registered.status,
+    clientId,
+    authorizeStatus: authorized.status,
+  }
+  if (authorizationCode === '') {
+    return { ...base, accessToken: '' }
+  }
+
+  const tokenResponse = await serve(
+    'token',
+    new Request(`${BASE}/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: authorizationCode,
+        code_verifier: CODE_VERIFIER,
+        client_id: clientId,
+        redirect_uri: REDIRECT_URI,
+        resource,
+      }).toString(),
+    }),
+  )
+  const tokens = (await tokenResponse.json()) as Record<string, unknown>
+  return { ...base, accessToken: String(tokens['access_token'] ?? '') }
+}
+
+/** Metadatadokumentet for én inngang (RFC 9728), slik klienten finner det. */
+async function protectedResource(resource: string): Promise<Record<string, unknown>> {
+  const response = await serve(
+    'protected-resource-metadata',
+    new Request(`${BASE}/.well-known/oauth-protected-resource${new URL(resource).pathname}`),
+  )
+  return (await response.json()) as Record<string, unknown>
 }
 
 async function main(): Promise<void> {
@@ -246,86 +353,39 @@ async function main(): Promise<void> {
   // ------------------------------------------------------------------
   // 2. Tilkoblingen. Herfra og ut rører ingen mennesker noe.
   // ------------------------------------------------------------------
-  const discovery = await serve(
-    'protected-resource-metadata',
-    new Request(`${BASE}/.well-known/oauth-protected-resource/mcp`),
-  )
-  const metadata = (await discovery.json()) as Record<string, unknown>
+  const metadata = await protectedResource(RESOURCE)
   check(
-    'appen sier hvor autorisasjonsserveren er (RFC 9728)',
-    metadata['resource'] === `${BASE}/mcp`,
+    'appen sier hvor autorisasjonsserveren er, for sin egen inngang (RFC 9728)',
+    metadata['resource'] === RESOURCE &&
+      (metadata['authorization_servers'] as string[])[0] === BASE,
+    JSON.stringify(metadata),
   )
 
   const unauthorised = await serve(
     'mcp',
-    new Request(`${BASE}/mcp`, {
+    new Request(RESOURCE, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
     }),
   )
   check(
-    'et kall uten token avvises med en henvisning til autorisasjonen',
+    'et kall uten token avvises med en henvisning til inngangens egen autorisasjon',
     unauthorised.status === 401 &&
-      (unauthorised.headers.get('www-authenticate') ?? '').includes('resource_metadata'),
+      (unauthorised.headers.get('www-authenticate') ?? '').includes(
+        `resource_metadata="${BASE}/.well-known/oauth-protected-resource${new URL(RESOURCE).pathname}"`,
+      ),
   )
 
-  const clientResponse = await serve(
-    'register',
-    new Request(`${BASE}/oauth/register`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        client_name: 'Antidep E2E-klient',
-        redirect_uris: [REDIRECT_URI],
-      }),
-    }),
-  )
-  const client = (await clientResponse.json()) as Record<string, unknown>
-  check('klienten registrerer seg selv (RFC 7591)', clientResponse.status === 201)
-
-  const authorized = await serve(
-    'authorize',
-    new Request(`${BASE}/oauth/authorize`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: String(client['client_id'] ?? ''),
-        redirect_uri: REDIRECT_URI,
-        code_challenge: CODE_CHALLENGE,
-        code_challenge_method: 'S256',
-        state: 'e2e',
-        resource: RESOURCE,
-        pairing_code: pairingCode,
-      }).toString(),
-    }),
-  )
+  const extraction = await connect(RESOURCE, pairingCode, 'Antidep – Evidensekstraksjon')
+  check('klienten registrerer seg selv (RFC 7591)', extraction.registerStatus === 201)
   check(
     'engangskoden gir én autorisasjonskode, levert til den registrerte adressen',
-    authorized.status === 302,
-    String(authorized.status),
+    extraction.authorizeStatus === 302,
+    String(extraction.authorizeStatus),
   )
-  const authorizationCode =
-    new URL(authorized.headers.get('location') ?? `${REDIRECT_URI}`).searchParams.get('code') ?? ''
-
-  const tokenResponse = await serve(
-    'token',
-    new Request(`${BASE}/oauth/token`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code: authorizationCode,
-        code_verifier: CODE_VERIFIER,
-        client_id: String(client['client_id'] ?? ''),
-        redirect_uri: REDIRECT_URI,
-        resource: RESOURCE,
-      }).toString(),
-    }),
-  )
-  const tokens = (await tokenResponse.json()) as Record<string, unknown>
-  check('koden byttes i et access-token', typeof tokens['access_token'] === 'string')
-  const accessToken = String(tokens['access_token'] ?? '')
+  check('koden byttes i et access-token', extraction.accessToken !== '')
+  const accessToken = extraction.accessToken
   if (accessToken === '') {
     return
   }
@@ -340,7 +400,7 @@ async function main(): Promise<void> {
   // lykkes, og det kunne det ikke gjort om oppgaven allerede var tatt.
   const foreign = await serve(
     'mcp',
-    new Request(`${BASE}/mcp`, {
+    new Request(RESOURCE, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -691,6 +751,120 @@ async function main(): Promise<void> {
       (task) => task.subject_label === SOURCE_TITLE,
     ),
     afterwards.text,
+  )
+
+  // ------------------------------------------------------------------
+  // 5. Én app per ledd
+  //
+  // ChatGPT knytter én OAuth-forbindelse til én app. Hvert ledd har derfor sin
+  // egen inngang, og hver tilkobling virker bare på den inngangen tokenet ble
+  // utstedt for. Kildeoppdagelsen kobles her til den opprinnelige `/mcp`,
+  // slik den står i drift, og skal virke uten noe nytt.
+  // ------------------------------------------------------------------
+  const discoveryRunner = await editor.rpc('register_agent_runner', {
+    p_connection_key: 'agent-runner:source-discovery',
+    p_display_name: 'Antidep – Kildeoppdagelse (prøve)',
+    p_agent_role: 'source_discovery',
+    p_platform_agent_reference: 'Antidep Kildeoppdagelse (ende-til-ende-prøve)',
+    p_platform_model_disclosure: 'not_exposed',
+    p_reason: 'Ende-til-ende-prøven av app-inngangene.',
+  })
+  check(
+    'kildeoppdagelsens kjører registreres, bundet til sitt eget ledd',
+    discoveryRunner.error === null,
+    discoveryRunner.error?.message ?? '',
+  )
+  const issuePairingCode = async (connectionKey: string): Promise<string> => {
+    const issued = await editor.rpc('issue_agent_runner_pairing_code', {
+      p_connection_key: connectionKey,
+    })
+    return (issued.data as { pairing_code?: string } | null)?.pairing_code ?? ''
+  }
+
+  const legacyMetadata = await protectedResource(LEGACY_RESOURCE)
+  check(
+    'den opprinnelige /mcp beskriver seg selv som før',
+    legacyMetadata['resource'] === LEGACY_RESOURCE &&
+      legacyMetadata['resource_name'] === 'Antidep agentarbeid',
+    JSON.stringify(legacyMetadata),
+  )
+
+  const legacy = await connect(
+    LEGACY_RESOURCE,
+    await issuePairingCode('agent-runner:source-discovery'),
+    'Antidep – Kildeoppdagelse',
+  )
+  check(
+    'kildeoppdagelsen kobles fortsatt til den opprinnelige /mcp',
+    legacy.accessToken !== '',
+    `autorisasjonen svarte ${legacy.authorizeStatus}`,
+  )
+  const legacyTools = (
+    ((await rpc(legacy.accessToken, 'tools/list', {}, LEGACY_RESOURCE))['result'] as {
+      tools?: { name: string }[]
+    }) ?? {}
+  ).tools?.map((tool) => tool.name)
+  check(
+    '/mcp gir de samme fem verktøyene, og ingen flere',
+    JSON.stringify([...(legacyTools ?? [])].sort()) === JSON.stringify([...toolNames].sort()),
+    (legacyTools ?? []).join(', '),
+  )
+  const legacyPending = await callTool(
+    legacy.accessToken,
+    'list_pending_agent_tasks',
+    {},
+    LEGACY_RESOURCE,
+  )
+  check(
+    'og kildeoppdagelsens tilkobling får arbeid i sitt eget ledd, og bare der',
+    !legacyPending.isError && legacyPending.structured['agent_role'] === 'source_discovery',
+    legacyPending.text,
+  )
+  check(
+    'hver app har sin egen OAuth-klient og sitt eget token',
+    legacy.clientId !== extraction.clientId && legacy.accessToken !== accessToken,
+  )
+
+  // Et token virker bare på inngangen det ble utstedt for. Kildeoppdagelsens
+  // tilkobling på /mcp flyttes heller ikke til /mcp/source-discovery av seg
+  // selv: det krever en ny tilkobling med en fersk kode.
+  const statusAt = async (token: string, resource: string): Promise<number> =>
+    (await mcpRequest(token, 'tools/list', {}, resource)).status
+  for (const [token, owner, resource] of [
+    [accessToken, 'ekstraksjonens token', LEGACY_RESOURCE],
+    [accessToken, 'ekstraksjonens token', DISCOVERY_RESOURCE],
+    [legacy.accessToken, 'kildeoppdagelsens token fra /mcp', RESOURCE],
+    [legacy.accessToken, 'kildeoppdagelsens token fra /mcp', DISCOVERY_RESOURCE],
+  ] as const) {
+    const status = await statusAt(token, resource)
+    check(
+      `${owner} autentiserer ikke på ${new URL(resource).pathname}`,
+      status === 401,
+      String(status),
+    )
+  }
+
+  // En kode for kildeoppdagelsens kjører limt inn i ekstraksjonens app: rollen
+  // følger koden, og inngangen gir ingen tilkobling for et annet ledd.
+  const misplaced = await connect(
+    RESOURCE,
+    await issuePairingCode('agent-runner:source-discovery'),
+    'Antidep – Evidensekstraksjon (feil kode)',
+  )
+  check(
+    'en kode for et annet ledd gir ingen tilkobling i denne appen',
+    misplaced.authorizeStatus === 400 && misplaced.accessToken === '',
+    `autorisasjonen svarte ${misplaced.authorizeStatus}`,
+  )
+
+  // Ingenting av dette rørte tilkoblingene som allerede fantes.
+  check(
+    'ekstraksjonens tilkobling virker fortsatt, uendret',
+    (await statusAt(accessToken, RESOURCE)) === 200,
+  )
+  check(
+    'kildeoppdagelsens tilkobling på /mcp virker fortsatt, uendret',
+    (await statusAt(legacy.accessToken, LEGACY_RESOURCE)) === 200,
   )
 
   if (process.exitCode === 1) {

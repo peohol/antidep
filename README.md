@@ -12,7 +12,7 @@ Alt et menneske gjør i brukergrensesnittet, er klinisk eller redaksjonelt arbei
 
 Sluttkontrollen er bundet til nøyaktig den kandidaten som ble lest, og publiserer ingenting. Publiseringen er en egen handling med et annet mandat: et menneske med publisher-rolle tar i bruk nøyaktig det godkjente avtrykket, klinikerflaten viser den forseglede raden ordrett, og tilbaketrekking og rollback er nye, synlige hendelser som aldri sletter historikk.
 
-Det semantiske agentarbeidet gjøres av KI-tjenester eieren allerede har tilgang til. Antidep bygger oppgaven, binder svaret til nøyaktig det grunnlaget oppgaven ble laget av, og registrerer resultatet gjennom de samme kontrollerte skriveveiene som før. En planlagt ChatGPT Workspace Agent henter arbeidet selv gjennom Antideps private MCP-app, utfører det og leverer svaret tilbake uten et menneske i transporten; nedlast/opplast-veien består som teknisk recovery-mekanisme utenfor produkt-UI. Ingen modellnøkkel og ingen betalt modell-API er nødvendig.
+Det semantiske agentarbeidet gjøres av KI-tjenester eieren allerede har tilgang til. Antidep bygger oppgaven, binder svaret til nøyaktig det grunnlaget oppgaven ble laget av, og registrerer resultatet gjennom de samme kontrollerte skriveveiene som før. En planlagt ChatGPT Workspace Agent henter arbeidet selv gjennom sitt eget ledds private MCP-app, utfører det og leverer svaret tilbake uten et menneske i transporten; nedlast/opplast-veien består som teknisk recovery-mekanisme utenfor produkt-UI. Ingen modellnøkkel og ingen betalt modell-API er nødvendig.
 
 Denne kodeleveransen har ikke i seg selv endret noen hosted database.
 

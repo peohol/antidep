@@ -15,6 +15,7 @@
 import type { HandoffRole } from '../agents/agent-task.ts'
 import { parseAgentTask } from '../agents/agent-task.ts'
 import { taskPayload } from '../agents/handoff-test-support.ts'
+import { entryPathFor } from './entries.ts'
 import { GatewayError } from './errors.ts'
 import type {
   ClaimResult,
@@ -31,14 +32,27 @@ export const FAKE_REFRESH_TOKEN = 'r'.repeat(64)
 export const FAKE_AUTHORIZATION_CODE = 'c'.repeat(64)
 export const FAKE_CLIENT_ID = '0123456789abcdef0123456789abcdef'
 export const FAKE_REDIRECT_URI = 'https://chatgpt.example/callback'
-/** Basisadressen prøvene kjører appen på, og den kanoniske ressursen under den. */
+/** Basisadressen prøvene kjører appen på. */
 export const FAKE_BASE_URL = 'https://antidep.example'
-export const FAKE_RESOURCE = `${FAKE_BASE_URL}/mcp`
+
+/** Den kanoniske ressursen for leddets egen inngang: der kjøreren er koblet til. */
+export function fakeResourceFor(role: HandoffRole): string {
+  return `${FAKE_BASE_URL}${entryPathFor(role)}`
+}
+
+/** Standardkjørerens inngang, som prøvene kaller når de ikke sier noe annet. */
+export const FAKE_RESOURCE = fakeResourceFor('evidence_extraction')
 export const FAKE_TASK_REF = 'task_0123456789abcdef01234567'
 export const FAKE_TASK_HANDLE = '11111111-2222-4333-8444-555555555555'
 
 export interface FakeGatewayOptions {
   readonly role?: HandoffRole
+  /**
+   * Ressursen tilkoblingen ble koblet til, og som koden og tokenet er utstedt
+   * for. Standard er leddets egen inngang; en annen verdi er en tilkobling
+   * koblet til feil app, eller den opprinnelige `/mcp`.
+   */
+  readonly resource?: string
   /** `true` gjør køen tom, slik at kjøreren skal avslutte stille. */
   readonly empty?: boolean
   /** Antall oppgaver som venter på et menneske. */
@@ -62,6 +76,7 @@ export interface FakeGateway extends RunnerGateway {
 /** En grenseflate som oppfører seg som databasen gjør, i minnet. */
 export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway {
   const role: HandoffRole = options.role ?? 'evidence_extraction'
+  const resource = options.resource ?? fakeResourceFor(role)
   const task = parseAgentTask(taskPayload(role))
   const submitted: Record<string, unknown>[] = []
   const recorded: string[] = []
@@ -83,7 +98,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
     if (credentials.accessToken !== FAKE_ACCESS_TOKEN) {
       throw new GatewayError('Tilkoblingen er ikke autentisert.', '42501')
     }
-    if (credentials.resource !== FAKE_RESOURCE) {
+    if (credentials.resource !== resource) {
       throw new GatewayError('Tokenet er ikke utstedt for denne adressen.', '42501')
     }
   }
@@ -122,7 +137,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
       if (input.pairingCode !== FAKE_PAIRING_CODE) {
         return Promise.reject(new GatewayError('Tilkoblingen er ikke autentisert.', '42501'))
       }
-      if (input.resource !== FAKE_RESOURCE) {
+      if (input.resource !== resource) {
         return Promise.reject(new GatewayError('Ukjent resource.', '22023'))
       }
       return Promise.resolve({
@@ -137,7 +152,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
       if (input.code !== FAKE_AUTHORIZATION_CODE) {
         return Promise.reject(new GatewayError('Tilkoblingen er ikke autentisert.', '42501'))
       }
-      if (input.resource !== FAKE_RESOURCE) {
+      if (input.resource !== resource) {
         return Promise.reject(new GatewayError('Ukjent resource.', '22023'))
       }
       return Promise.resolve({
@@ -152,7 +167,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}): FakeGateway
       if (input.refreshToken !== FAKE_REFRESH_TOKEN) {
         return Promise.reject(new GatewayError('Tilkoblingen er ikke autentisert.', '42501'))
       }
-      if (input.resource !== FAKE_RESOURCE) {
+      if (input.resource !== resource) {
         return Promise.reject(new GatewayError('Ukjent resource.', '22023'))
       }
       return Promise.resolve({
