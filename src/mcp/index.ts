@@ -19,6 +19,8 @@ import { parseAllowedOrigins } from './origin.ts'
 
 export { MCP_ROUTES, RUNNER_SCOPE, handleMcpRequest } from './app.ts'
 export type { McpRoute, McpAppDependencies } from './app.ts'
+export { LEGACY_MCP_ENTRY, MCP_APP_ENTRIES, entryPathFor } from './entries.ts'
+export type { McpAppEntry } from './entries.ts'
 export type { RunnerGateway } from './gateway.ts'
 
 /** Den delen av miljøet MCP-appen leser. */

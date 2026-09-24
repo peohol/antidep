@@ -203,8 +203,8 @@ seg selv, og ingen kontroll er svekket for å få flaten enklere.
 
 ## Den primære arbeidsformen
 
-En planlagt ChatGPT Workspace Agent kobler seg til Antideps private MCP-app,
-spør om det finnes arbeid i sitt eget agentledd, tar én oppgave med en leie,
+En planlagt ChatGPT Workspace Agent kobler seg til sitt eget agentledds
+private MCP-app, spør om det finnes arbeid i det leddet, tar én oppgave med en leie,
 leser den, utfører den og leverer svaret tilbake. Mennesket er ute av
 transporten.
 
@@ -221,7 +221,10 @@ tilkobling er bundet til nøyaktig ett agentledd, og ett ledd har høyst én
 gjeldende kjører. Den samme Workspace Agent-en kan derimot kjøre flere ledd, som
 atskilte kjøringer under hver sin rolle og hver sin instruks: uavhengigheten
 ligger i rollen og i kjøringen, ikke i antallet agentkonfigurasjoner
-(migrasjon 013t).
+(migrasjon 013t). I ChatGPT er én tilkobling likevel én app, så hvert ledd har
+sin egen app — sin egen adresse under `/mcp/` og sitt eget token — mot den samme
+backenden, og én agent per ledd er det anbefalte oppsettet. Adressen gir ingen
+fullmakt: rollen følger tokenet.
 
 Engangsoppsettet står i [Antidep som privat app i ChatGPT Business](CHATGPT_WORKSPACE_AGENT.md),
 og det er et **teknisk deploy-/driftssteg** — ikke en redaksjonell beslutning.

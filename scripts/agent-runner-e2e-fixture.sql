@@ -26,7 +26,9 @@ delete from workflow.agent_handoff_imports i
 where i.pipeline_job_id in (
   select j.id from workflow.pipeline_jobs j
   where j.enqueued_by_actor_id = '7f000000-0000-4000-8000-0000000000e1');
--- Tilkoblingen slettes ikke. Ett agentledd har høyst én gjeldende kjører. En annen prøve kan ha lagt igjen
+-- Tilkoblingene slettes ikke. Prøven registrerer kjørere i to ledd — ekstraksjonen,
+-- og kildeoppdagelsen som prøver app-inngangene — og ett agentledd har høyst én
+-- gjeldende kjører. En annen prøve kan ha lagt igjen
 -- sin egen; den trekkes tilbake gjennom den vanlige veien framfor å slettes, så
 -- regelen prøves og ikke omgås.
 update workflow.agent_runner_connections c
@@ -34,14 +36,14 @@ set valid_to = statement_timestamp(),
     revoked_by_actor_id = (select a.id from provenance.actors a
                            where a.actor_key = 'human:peder-holman'),
     revocation_reason = 'Ryddet av ende-til-ende-prøven av den autonome kjøreren.'
-where c.agent_role = 'evidence_extraction' and c.valid_to is null;
+where c.agent_role in ('evidence_extraction', 'source_discovery') and c.valid_to is null;
 
 update workflow.agent_runner_secrets s
 set revoked_at = statement_timestamp()
 where s.revoked_at is null
   and s.connection_id in (
     select c.id from workflow.agent_runner_connections c
-    where c.agent_role = 'evidence_extraction');
+    where c.agent_role in ('evidence_extraction', 'source_discovery'));
 delete from knowledge.evidence_field_groundings g
 where g.evidence_item_id in (
   select e.id from knowledge.evidence_items e

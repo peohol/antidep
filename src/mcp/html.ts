@@ -36,10 +36,24 @@ function hidden(name: string, value: string): string {
     : `      <input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}" />\n`
 }
 
-/** Tilkoblingssiden, med eller uten en feilmelding over feltet. */
-export function renderConnectPage(fields: ConnectPageFields, problem: string | null): string {
+/**
+ * Tilkoblingssiden, med eller uten en feilmelding over feltet.
+ *
+ * `appName` er appen tilkoblingen gjelder, når forespørselen navngir en av
+ * inngangene. Siden sier den, slik at den som limer inn koden, ser hvilket
+ * ledds kjører koden skal høre til — før den brukes opp.
+ */
+export function renderConnectPage(
+  fields: ConnectPageFields,
+  problem: string | null,
+  appName: string | null,
+): string {
   const notice =
     problem === null ? '' : `    <p class="problem" role="alert">${escapeHtml(problem)}</p>\n`
+  const app =
+    appName === null
+      ? ''
+      : `      <p>Du kobler til <strong>${escapeHtml(appName)}</strong>. Bruk koden for kjøreren i dette leddet.</p>\n`
 
   return `<!doctype html>
 <html lang="nb">
@@ -81,7 +95,7 @@ export function renderConnectPage(fields: ConnectPageFields, problem: string | n
         Lim inn engangskoden du hentet i Antidep under «Autonom kjører» på
         agentarbeidsflaten. Koden gjelder i ti minutter og kan brukes én gang.
       </p>
-${notice}      <form method="post">
+${app}${notice}      <form method="post">
 ${hidden('client_id', fields.clientId)}${hidden('redirect_uri', fields.redirectUri)}${hidden('code_challenge', fields.codeChallenge)}${hidden('code_challenge_method', fields.codeChallengeMethod)}${hidden('state', fields.state)}${hidden('scope', fields.scope)}${hidden('resource', fields.resource)}        <label for="pairing_code">Tilkoblingskode</label>
         <input id="pairing_code" name="pairing_code" type="text" autocomplete="off"
                spellcheck="false" autocapitalize="none" required />

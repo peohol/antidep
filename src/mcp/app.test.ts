@@ -45,7 +45,7 @@ function rpc(body: unknown, token: string | null = FAKE_ACCESS_TOKEN): Request {
   if (token !== null) {
     headers['authorization'] = `Bearer ${token}`
   }
-  return new Request(`${BASE}/mcp`, { method: 'POST', headers, body: JSON.stringify(body) })
+  return new Request(FAKE_RESOURCE, { method: 'POST', headers, body: JSON.stringify(body) })
 }
 
 async function call(
@@ -95,7 +95,9 @@ describe('autorisasjonen', () => {
     )
     expect(response.status).toBe(401)
     const challenge = response.headers.get('www-authenticate') ?? ''
-    expect(challenge).toContain(`${BASE}/.well-known/oauth-protected-resource/mcp`)
+    expect(challenge).toContain(
+      `resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp/evidence-extraction"`,
+    )
     expect(challenge).toContain('antidep.agent-runner')
   })
 
@@ -458,7 +460,7 @@ describe('protokollen', () => {
     const gateway = createFakeGateway()
     const response = await send(
       'mcp',
-      new Request(`${BASE}/mcp`, {
+      new Request(FAKE_RESOURCE, {
         method: 'GET',
         headers: { authorization: `Bearer ${FAKE_ACCESS_TOKEN}` },
       }),
@@ -831,7 +833,7 @@ function modernRpc(
               'io.modelcontextprotocol/clientCapabilities': {},
             },
           }
-  return new Request(`${BASE}/mcp`, {
+  return new Request(FAKE_RESOURCE, {
     method: 'POST',
     headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 9, method, params: { ...params, ...meta } }),
@@ -1513,7 +1515,7 @@ const FOREIGN_ORIGIN = 'https://angriper.example'
 
 function originRequest(
   origin: string | null,
-  url = `${BASE}/mcp`,
+  url = FAKE_RESOURCE,
   token: string | null = FAKE_ACCESS_TOKEN,
 ): Request {
   const headers: Record<string, string> = {
@@ -1561,7 +1563,7 @@ describe('opprinnelsen', () => {
   // 401, som er kontrollen etter denne.
   it('avviser før tokenet i det hele tatt leses', async () => {
     const gateway = createFakeGateway()
-    const response = await send('mcp', originRequest(FOREIGN_ORIGIN, `${BASE}/mcp`, null), gateway)
+    const response = await send('mcp', originRequest(FOREIGN_ORIGIN, FAKE_RESOURCE, null), gateway)
     expect(response.status).toBe(403)
   })
 
@@ -1630,7 +1632,7 @@ describe('opprinnelsen', () => {
     const gateway = createFakeGateway()
     const response = await handleMcpRequest(
       'mcp',
-      originRequest('http://antidep.example', 'http://antidep.example/mcp'),
+      originRequest('http://antidep.example', 'http://antidep.example/mcp/evidence-extraction'),
       { gateway, logger: silentRunnerLogger },
     )
     expect(response.status).toBe(403)
@@ -1640,7 +1642,7 @@ describe('opprinnelsen', () => {
   it('lar preflighten følge den samme grensen', async () => {
     const response = await send(
       'mcp',
-      new Request(`${BASE}/mcp`, { method: 'OPTIONS', headers: { origin: FOREIGN_ORIGIN } }),
+      new Request(FAKE_RESOURCE, { method: 'OPTIONS', headers: { origin: FOREIGN_ORIGIN } }),
       createFakeGateway(),
     )
     expect(response.status).toBe(403)
@@ -1650,7 +1652,7 @@ describe('opprinnelsen', () => {
   it('svarer på en tillatt preflight uten wildcard', async () => {
     const response = await send(
       'mcp',
-      new Request(`${BASE}/mcp`, { method: 'OPTIONS', headers: { origin: BASE } }),
+      new Request(FAKE_RESOURCE, { method: 'OPTIONS', headers: { origin: BASE } }),
       createFakeGateway(),
     )
     expect(response.status).toBe(204)

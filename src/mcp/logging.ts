@@ -30,6 +30,13 @@ export interface RunnerLogRecord {
    * autentiseringen, skal ikke kunne fylles med kallerens egne tegn.
    */
   readonly origin?: string | undefined
+  /**
+   * Stien til app-inngangen kallet kom til, når ruten har en.
+   *
+   * Én fast sti per app, og ingen verdi kalleren velger: en sti som ikke er en
+   * av inngangene, avvises før den kommer hit.
+   */
+  readonly entry?: string | undefined
   readonly tool?: string | undefined
   readonly outcome: RunnerOutcome | 'auth_failed' | 'bad_request'
   readonly status: number
@@ -46,6 +53,7 @@ export const consoleRunnerLogger: RunnerLogger = (record) => {
       component: 'antidep-mcp',
       route: record.route,
       origin: record.origin ?? null,
+      entry: record.entry ?? null,
       tool: record.tool ?? null,
       outcome: record.outcome,
       status: record.status,

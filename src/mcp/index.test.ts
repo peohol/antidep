@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  MCP_APP_ENTRIES,
   readGatewayConfig,
   readTransportConfig,
   resetMcpAppForTests,
@@ -26,8 +27,13 @@ const BASE = 'https://antidep.example'
 /** Et miljø uten databaseoppsettet: nøyaktig det produksjon hadde. */
 const WITHOUT_DATABASE = { ANTIDEP_MCP_BASE_URL: BASE } as const
 
-function get(route: 'protected-resource-metadata' | 'authorization-server-metadata') {
-  return serveMcpRoute(route, new Request(`${BASE}/.well-known/x`), WITHOUT_DATABASE)
+function get(
+  route: 'protected-resource-metadata' | 'authorization-server-metadata',
+  path = route === 'protected-resource-metadata'
+    ? '/.well-known/oauth-protected-resource'
+    : '/.well-known/oauth-authorization-server',
+) {
+  return serveMcpRoute(route, new Request(`${BASE}${path}`), WITHOUT_DATABASE)
 }
 
 beforeEach(() => {
@@ -42,6 +48,24 @@ describe('oppdagelsesdokumentene uten databaseoppsett', () => {
       resource: `${BASE}/mcp`,
       authorization_servers: [BASE],
     })
+  })
+
+  // Hver app-inngang er sin egen ressurs, og klienten leser dokumentet for den
+  // før den har noe token. Det svarer derfor like lite på databasen som det
+  // opprinnelige gjør.
+  it('navngir hver app-inngangs egen ressurs', async () => {
+    for (const entry of MCP_APP_ENTRIES) {
+      const response = await get(
+        'protected-resource-metadata',
+        `/.well-known/oauth-protected-resource${entry.path}`,
+      )
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({
+        resource: `${BASE}${entry.path}`,
+        authorization_servers: [BASE],
+        resource_name: entry.appName,
+      })
+    }
   })
 
   it('navngir autorisasjonstjeneren', async () => {
